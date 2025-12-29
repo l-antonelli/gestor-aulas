@@ -13,6 +13,7 @@ from src.database.models import (
     AsistenciaDB,
     AsignacionAulaDB,
 )
+from src.database.converters import to_db, to_domain, to_db_list, to_domain_list
 
 __all__ = [
     "get_engine",
