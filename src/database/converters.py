@@ -83,9 +83,12 @@ def to_db(domain: DomainModel) -> DBModel:
     
     if isinstance(domain, Aula):
         return AulaDB(
-            codigo=domain.codigo,
+            id=domain.id,
+            sede=domain.sede,
+            nombre=domain.nombre,
             capacidad=domain.capacidad,
             tipo=domain.tipo,
+            descripcion=domain.descripcion,
         )
     
     if isinstance(domain, Materia):
@@ -143,7 +146,7 @@ def to_db(domain: DomainModel) -> DBModel:
         return AsignacionAulaDB(
             id=domain.id,
             clase_id=domain.clase_id,
-            aula_codigo=domain.aula_codigo,
+            aula_id=domain.aula_id,
             fecha_asignacion=domain.fecha_asignacion,
             vigente=domain.vigente,
         )
@@ -187,9 +190,12 @@ def to_domain(db: DBModel) -> DomainModel:
     
     if isinstance(db, AulaDB):
         return Aula(
-            codigo=db.codigo,
+            id=db.id,
+            sede=db.sede,
+            nombre=db.nombre,
             capacidad=db.capacidad,
             tipo=db.tipo,
+            descripcion=db.descripcion,
         )
     
     if isinstance(db, MateriaDB):
@@ -247,7 +253,7 @@ def to_domain(db: DBModel) -> DomainModel:
         return AsignacionAula(
             id=db.id,
             clase_id=db.clase_id,
-            aula_codigo=db.aula_codigo,
+            aula_id=db.aula_id,
             fecha_asignacion=db.fecha_asignacion,
             vigente=db.vigente,
         )

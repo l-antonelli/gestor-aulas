@@ -96,9 +96,12 @@ class AulaDB(SQLModel, table=True):
     """Espacio físico donde se dictan las clases."""
     __tablename__ = "aulas"
     
-    codigo: str = Field(primary_key=True, min_length=1)
+    id: str = Field(primary_key=True, min_length=1)
+    sede: str = Field(index=True)
+    nombre: str = Field(min_length=1)
     capacidad: int = Field(gt=0)
     tipo: str = Field(default="teorica")
+    descripcion: str = Field(default="")
     
     # Relationships
     asignaciones: list["AsignacionAulaDB"] = Relationship(back_populates="aula")
@@ -160,7 +163,7 @@ class AsignacionAulaDB(SQLModel, table=True):
     
     id: str = Field(primary_key=True)
     clase_id: str = Field(foreign_key="clases.id", unique=True, index=True)
-    aula_codigo: str = Field(foreign_key="aulas.codigo", index=True)
+    aula_id: str = Field(foreign_key="aulas.id", index=True)
     fecha_asignacion: date
     vigente: bool = Field(default=True)
     

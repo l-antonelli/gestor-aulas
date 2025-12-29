@@ -5,7 +5,7 @@ from datetime import date
 from pydantic import Field, field_validator
 
 from src.domain.base import Entity
-from src.domain.types import AsignacionId, ClaseId, CodigoAula
+from src.domain.types import AsignacionId, ClaseId
 
 
 class AsignacionAula(Entity):
@@ -18,14 +18,14 @@ class AsignacionAula(Entity):
     Attributes:
         id: Unique assignment identifier
         clase_id: Reference to the Clase being assigned
-        aula_codigo: Reference to the assigned Aula
+        aula_id: Reference to the assigned Aula
         fecha_asignacion: Date when the assignment was made
         vigente: Whether the assignment is currently active
     """
     
     id: AsignacionId = Field(..., description="Unique assignment identifier")
     clase_id: ClaseId = Field(..., description="Reference to Clase")
-    aula_codigo: CodigoAula = Field(..., description="Reference to assigned Aula")
+    aula_id: str = Field(..., description="Reference to assigned Aula")
     fecha_asignacion: date = Field(..., description="Date of assignment")
     vigente: bool = Field(default=True, description="Whether assignment is active")
     
@@ -45,10 +45,10 @@ class AsignacionAula(Entity):
             raise ValueError("clase_id cannot be empty")
         return v
     
-    @field_validator("aula_codigo")
+    @field_validator("aula_id")
     @classmethod
-    def validate_aula_codigo(cls, v: str) -> str:
-        """Validate that aula_codigo is not empty."""
+    def validate_aula_id(cls, v: str) -> str:
+        """Validate that aula_id is not empty."""
         if not v or not v.strip():
-            raise ValueError("aula_codigo cannot be empty")
+            raise ValueError("aula_id cannot be empty")
         return v
