@@ -9,7 +9,7 @@ from typing import TypeVar, Generic, Type, Optional
 from src.database.models import (
     AlumnoDB, MateriaDB, ComisionDB, HorarioCronogramaDB,
     AulaDB, ClaseDB, InscripcionDB, AsistenciaDB, AsignacionAulaDB,
-    ConfiguracionHoraria
+    ConfiguracionHoraria, CarreraDB, ProfesorDB, CicloDB, DictadoDB
 )
 
 T = TypeVar("T")
@@ -64,6 +64,35 @@ clase_crud = CRUDBase[ClaseDB](ClaseDB)
 inscripcion_crud = CRUDBase[InscripcionDB](InscripcionDB)
 asistencia_crud = CRUDBase[AsistenciaDB](AsistenciaDB)
 asignacion_crud = CRUDBase[AsignacionAulaDB](AsignacionAulaDB)
+carrera_crud = CRUDBase[CarreraDB](CarreraDB)
+profesor_crud = CRUDBase[ProfesorDB](ProfesorDB)
+ciclo_crud = CRUDBase[CicloDB](CicloDB)
+dictado_crud = CRUDBase[DictadoDB](DictadoDB)
+
+
+def create_materia_with_comision(session: Session, materia: MateriaDB) -> tuple[MateriaDB, ComisionDB]:
+    """
+    Create a materia with its default 'Comisión Única'.
+    Returns both the materia and the created comision.
+    """
+    session.add(materia)
+    session.commit()
+    session.refresh(materia)
+    
+    # Create default comision
+    comision = ComisionDB(
+        id=f"{materia.codigo}-C1",
+        materia_codigo=materia.codigo,
+        nombre="Comisión Única",
+        numero=1,
+        cupo=materia.cupo,
+        descripcion="Comisión creada automáticamente"
+    )
+    session.add(comision)
+    session.commit()
+    session.refresh(comision)
+    
+    return materia, comision
 
 
 def get_or_create_config(session: Session) -> ConfiguracionHoraria:
