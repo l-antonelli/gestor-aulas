@@ -1,14 +1,56 @@
-"""Gestión de Materias."""
+"""Gestión de Materias - Refactored to use UI components."""
 
 import streamlit as st
-from src.database.connection import get_session
-from src.database.models import MateriaDB
-from src.database.crud import materia_crud, comision_crud, carrera_crud, create_materia_with_comision
+from src.database.connection import get_session, init_db
+from src.database.crud import materia_crud, comision_crud, create_materia_with_comision
+from src.database.converters import to_domain, to_db
+from src.domain.problem.materia import Materia
+from src.ui.crud_form_renderer import CRUDFormRenderer
+
+# Initialize database
+init_db()
 
 st.set_page_config(page_title="Materias", page_icon="📚", layout="wide")
 st.title("📚 Gestión de Materias")
 
-tab_list, tab_create = st.tabs(["📋 Listado", "➕ Nueva Materia"])
+tab_list, tab_create, tab_view = st.tabs(["📋 Listado", "➕ Nueva Materia", "👁️ Ver Detalle"])
+
+
+# CRUD wrapper functions for Materia
+def create_materia(instance: Materia, **kwargs) -> Materia:
+    """Create a new materia with auto-generated comision."""
+    for session in get_session():
+        db_instance = to_db(instance)
+        # Use the special function that creates materia with comision
+        created_materia, _ = create_materia_with_comision(session, db_instance)
+        return to_domain(created_materia)
+    return None
+
+
+def read_materia(entity_id: str, **kwargs) -> Materia:
+    """Read a materia by codigo."""
+    for session in get_session():
+        db_instance = materia_crud.get(session, entity_id)
+        if db_instance:
+            return to_domain(db_instance)
+    return None
+
+
+def update_materia(instance: Materia, **kwargs) -> Materia:
+    """Update an existing materia."""
+    for session in get_session():
+        db_instance = to_db(instance)
+        updated = materia_crud.update(session, db_instance)
+        return to_domain(updated)
+    return None
+
+
+def delete_materia(entity_id: str, **kwargs) -> bool:
+    """Delete a materia by codigo."""
+    for session in get_session():
+        return materia_crud.delete(session, entity_id)
+    return False
+
 
 with tab_list:
     with next(get_session()) as session:
@@ -34,75 +76,74 @@ with tab_list:
         st.dataframe(materias_data, use_container_width=True, hide_index=True)
         st.caption(f"Total: {len(materias_data)} materias")
         
-        # Delete section
+        # Delete section using CRUDFormRenderer
         st.divider()
         st.subheader("Eliminar Materia")
         col1, col2 = st.columns([3, 1])
         with col1:
             codigo_delete = st.selectbox(
                 "Seleccionar materia a eliminar",
-                options=[m.codigo for m in materias],
+                options=[m["Código"] for m in materias_data],
+                format_func=lambda x: f"{x} - {next((m['Nombre'] for m in materias_data if m['Código'] == x), '')}",
                 key="delete_materia"
             )
         with col2:
             st.write("")
             st.write("")
             if st.button("🗑️ Eliminar", type="secondary"):
-                with next(get_session()) as session:
-                    if materia_crud.delete(session, codigo_delete):
-                        st.success(f"Materia {codigo_delete} eliminada")
-                        st.rerun()
+                if delete_materia(codigo_delete):
+                    st.success(f"Materia {codigo_delete} eliminada")
+                    st.rerun()
+                else:
+                    st.error("Error al eliminar la materia")
 
 with tab_create:
     st.info("Al crear una materia se genera automáticamente una 'Comisión Única' que luego podés editar o agregar más.")
     
-    with next(get_session()) as session:
-        carreras = carrera_crud.get_all(session, limit=100)
+    # Use CRUDFormRenderer for create operation
+    result = CRUDFormRenderer.render_create_form(
+        model=Materia,
+        crud_create_func=create_materia,
+        key="create_materia",
+        exclude_fields=[],  # Include all fields
+        custom_labels={
+            "codigo": "Código",
+            "nombre": "Nombre",
+            "cupo": "Cupo máximo",
+            "horas_semanales": "Horas semanales",
+        },
+        submit_label="💾 Guardar",
+        success_message="Materia creada exitosamente con comisión única",
+    )
     
-    with st.form("create_materia"):
-        col1, col2 = st.columns(2)
+    if result:
+        st.rerun()
+
+with tab_view:
+    with next(get_session()) as session:
+        materias = materia_crud.get_all(session, limit=500)
+    
+    if not materias:
+        st.info("No hay materias para ver.")
+    else:
+        codigo_view = st.selectbox(
+            "Seleccionar materia",
+            options=[m.codigo for m in materias],
+            format_func=lambda x: f"{x} - {next((m.nombre for m in materias if m.codigo == x), '')}",
+            key="view_materia"
+        )
         
-        with col1:
-            codigo = st.text_input("Código", placeholder="MAT101")
-            nombre = st.text_input("Nombre", placeholder="Análisis Matemático I")
-            periodo = st.selectbox("Período", options=["cuatrimestral", "anual"])
-        
-        with col2:
-            cupo = st.number_input("Cupo máximo", min_value=1, value=100)
-            horas = st.number_input("Horas semanales", min_value=1, value=6)
-            anio_carrera = st.number_input("Año en carrera", min_value=1, max_value=6, value=1)
-            cuatrimestre_carrera = st.selectbox("Cuatrimestre sugerido", options=[1, 2])
-        
-        # Optional: associate with carreras
-        if carreras:
-            carreras_sel = st.multiselect(
-                "Carreras (opcional)",
-                options=[c.codigo for c in carreras],
-                format_func=lambda x: next((c.nombre for c in carreras if c.codigo == x), x)
+        if codigo_view:
+            # Use CRUDFormRenderer for read operation
+            CRUDFormRenderer.render_read_form(
+                model=Materia,
+                entity_id=codigo_view,
+                crud_read_func=read_materia,
+                custom_labels={
+                    "codigo": "Código",
+                    "nombre": "Nombre",
+                    "cupo": "Cupo máximo",
+                    "horas_semanales": "Horas semanales",
+                },
+                title=f"Detalle de Materia: {codigo_view}",
             )
-        else:
-            carreras_sel = []
-            st.caption("No hay carreras registradas aún.")
-        
-        submitted = st.form_submit_button("💾 Guardar", type="primary")
-        
-        if submitted:
-            if not codigo or not nombre:
-                st.error("Código y nombre son obligatorios")
-            else:
-                materia = MateriaDB(
-                    codigo=codigo,
-                    nombre=nombre,
-                    cupo=cupo,
-                    horas_semanales=horas,
-                    periodo=periodo,
-                    anio_carrera=anio_carrera,
-                    cuatrimestre_carrera=cuatrimestre_carrera
-                )
-                try:
-                    with next(get_session()) as session:
-                        materia, comision = create_materia_with_comision(session, materia)
-                    st.success(f"Materia '{nombre}' creada con comisión '{comision.nombre}'")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al crear materia: {e}")
