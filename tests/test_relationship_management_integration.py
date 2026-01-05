@@ -48,6 +48,9 @@ from src.database.converters import to_db, to_domain
 # Services
 from src.services.cascading_operations import CascadingOperations
 from src.services.cross_entity_validator import CrossEntityValidator
+
+# Import relationship definitions to register relationships
+import src.services.relationship_definitions
 from src.services.relationship_registry import RelationshipRegistry
 from src.services.relationship_definitions import register_all_relationships
 
