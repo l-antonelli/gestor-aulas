@@ -9,9 +9,13 @@ from typing import Any, Callable, Dict, List, Optional, Type
 
 import streamlit as st
 from pydantic import BaseModel, ValidationError
+from sqlmodel import Session
 
 from src.ui.form_input_renderer import FormInputRenderer
 from src.ui.form_output_renderer import FormOutputRenderer
+from src.services.cascading_operations import CascadingOperations
+from src.services.relationship_registry import RelationshipRegistry
+from src.services.cross_entity_validator import CrossEntityValidator
 
 
 class CRUDFormRenderer:
@@ -27,6 +31,8 @@ class CRUDFormRenderer:
         custom_labels: Dict[str, str] = None,
         submit_label: str = "Crear",
         success_message: str = "Entidad creada exitosamente",
+        enable_cascading: bool = True,
+        session: Session = None,
         **kwargs,
     ) -> Optional[BaseModel]:
         """
@@ -42,6 +48,8 @@ class CRUDFormRenderer:
             custom_labels: Custom labels for fields
             submit_label: Label for submit button
             success_message: Message to display on successful creation
+            enable_cascading: Whether to enable cascading entity creation
+            session: Database session (required if enable_cascading=True)
             **kwargs: Additional arguments passed to crud_create_func
             
         Returns:
@@ -74,7 +82,50 @@ class CRUDFormRenderer:
                     # Create model instance
                     instance = model(**form_data)
                     
-                    # Call CRUD create function
+                    # Validate cross-entity constraints if session is provided
+                    if session is not None:
+                        validation_errors = CRUDFormRenderer._validate_cross_entity_constraints(
+                            instance=instance,
+                            model=model,
+                            session=session,
+                            operation="create",
+                        )
+                        
+                        if validation_errors:
+                            CRUDFormRenderer._display_constraint_errors(validation_errors)
+                            return None
+                    
+                    # Check if cascading is enabled and session is provided
+                    if enable_cascading and session is not None:
+                        # Check if this model has cascading relationships
+                        relationships = RelationshipRegistry.get_relationships_for_model(model)
+                        has_cascading = any(r.cascading_create for r in relationships)
+                        
+                        if has_cascading:
+                            # Use cascading creation
+                            created, children = CascadingOperations.create_with_cascading(
+                                parent_instance=instance,
+                                parent_crud_func=crud_create_func,
+                                session=session,
+                            )
+                            
+                            # Display success message with cascading info
+                            CRUDFormRenderer.show_operation_feedback(
+                                operation="create",
+                                success=True,
+                                message=success_message,
+                            )
+                            
+                            # Display confirmation for cascading entities
+                            if children:
+                                CRUDFormRenderer._show_cascading_confirmation(
+                                    parent=created,
+                                    children=children,
+                                )
+                            
+                            return created
+                    
+                    # Standard creation (no cascading)
                     created = crud_create_func(instance, **kwargs)
                     
                     CRUDFormRenderer.show_operation_feedback(
@@ -272,6 +323,20 @@ class CRUDFormRenderer:
                     # Create updated model instance
                     updated_instance = model(**form_data)
                     
+                    # Validate cross-entity constraints if session is provided
+                    if 'session' in kwargs:
+                        validation_errors = CRUDFormRenderer._validate_cross_entity_constraints(
+                            instance=updated_instance,
+                            model=model,
+                            session=kwargs['session'],
+                            operation="update",
+                            entity_id=entity_id,
+                        )
+                        
+                        if validation_errors:
+                            CRUDFormRenderer._display_constraint_errors(validation_errors)
+                            return None
+                    
                     # Call CRUD update function
                     result = crud_update_func(updated_instance, **kwargs)
                     
@@ -313,6 +378,8 @@ class CRUDFormRenderer:
         custom_labels: Dict[str, str] = None,
         confirm_message: str = None,
         success_message: str = "Entidad eliminada exitosamente",
+        enable_cascading: bool = True,
+        session: Session = None,
         **kwargs,
     ) -> bool:
         """
@@ -330,6 +397,8 @@ class CRUDFormRenderer:
             custom_labels: Custom labels for fields
             confirm_message: Custom confirmation message
             success_message: Message to display on successful deletion
+            enable_cascading: Whether to enable cascading deletion
+            session: Database session (required if enable_cascading=True)
             **kwargs: Additional arguments passed to crud functions
             
         Returns:
@@ -365,6 +434,46 @@ class CRUDFormRenderer:
         # Display entity details
         st.subheader(f"Eliminar {model.__name__}")
         
+        # Check for related entities if cascading is enabled
+        if enable_cascading and session is not None:
+            relationships = RelationshipRegistry.get_relationships_for_model(model)
+            
+            # Check for restrict relationships
+            restrict_warnings = []
+            cascade_warnings = []
+            
+            for relationship in relationships:
+                children = CascadingOperations._get_children(
+                    parent_id=entity_id,
+                    relationship=relationship,
+                    session=session,
+                )
+                
+                if children:
+                    if relationship.delete_behavior == "restrict":
+                        restrict_warnings.append(
+                            f"⚠️ No se puede eliminar: existen {len(children)} "
+                            f"{relationship.get_child_model_name()} relacionados"
+                        )
+                    elif relationship.delete_behavior == "cascade":
+                        cascade_warnings.append(
+                            f"🔗 Se eliminarán también {len(children)} "
+                            f"{relationship.get_child_model_name()} relacionados"
+                        )
+            
+            # Show restrict warnings (these prevent deletion)
+            if restrict_warnings:
+                for warning in restrict_warnings:
+                    st.error(warning)
+                st.info("Elimine primero las entidades relacionadas antes de continuar.")
+                return False
+            
+            # Show cascade warnings (these are informational)
+            if cascade_warnings:
+                st.warning("⚠️ Eliminación en cascada:")
+                for warning in cascade_warnings:
+                    st.markdown(f"- {warning}")
+        
         # Show warning
         default_confirm = "¿Está seguro que desea eliminar esta entidad? Esta acción no se puede deshacer."
         st.warning(confirm_message or default_confirm)
@@ -390,7 +499,16 @@ class CRUDFormRenderer:
         with col2:
             if st.button("🗑️ Confirmar Eliminación", key=f"{form_key}_confirm", type="primary", use_container_width=True):
                 try:
-                    result = crud_delete_func(entity_id, **kwargs)
+                    # Use cascading deletion if enabled
+                    if enable_cascading and session is not None:
+                        result = CascadingOperations.delete_with_cascading(
+                            parent_id=entity_id,
+                            parent_model=model,
+                            parent_crud_func=crud_delete_func,
+                            session=session,
+                        )
+                    else:
+                        result = crud_delete_func(entity_id, **kwargs)
                     
                     if result:
                         CRUDFormRenderer.show_operation_feedback(
@@ -408,6 +526,15 @@ class CRUDFormRenderer:
                         )
                         return False
                         
+                except ValueError as e:
+                    # Handle restrict behavior errors
+                    CRUDFormRenderer.show_operation_feedback(
+                        operation="delete",
+                        success=False,
+                        message=str(e),
+                    )
+                    return False
+                    
                 except Exception as e:
                     CRUDFormRenderer.show_operation_feedback(
                         operation="delete",
@@ -576,3 +703,255 @@ class CRUDFormRenderer:
         else:
             st.error(f"Unknown operation: {operation!r}")
             return None
+
+    @staticmethod
+    def _show_cascading_confirmation(
+        parent: BaseModel,
+        children: List[BaseModel],
+    ) -> None:
+        """
+        Display confirmation message for cascading entity creation.
+        
+        Args:
+            parent: The parent entity that was created
+            children: List of child entities that were auto-created
+        """
+        if not children:
+            return
+        
+        # Create a nice info box showing what was created
+        with st.expander("✨ Entidades relacionadas creadas automáticamente", expanded=True):
+            st.info(
+                f"Se crearon automáticamente {len(children)} entidad(es) relacionada(s) "
+                f"con {type(parent).__name__}."
+            )
+            
+            for child in children:
+                child_type = type(child).__name__
+                child_id = CascadingOperations._get_primary_key_value(child)
+                
+                # Try to get a display name
+                display_name = "Sin nombre"
+                if hasattr(child, "nombre"):
+                    display_name = child.nombre
+                elif hasattr(child, "name"):
+                    display_name = child.name
+                
+                st.markdown(f"- **{child_type}**: {display_name} (ID: {child_id})")
+
+    @staticmethod
+    def _validate_cross_entity_constraints(
+        instance: BaseModel,
+        model: Type[BaseModel],
+        session: Session,
+        operation: str = "create",
+        entity_id: str = None,
+    ) -> List[str]:
+        """
+        Validate cross-entity constraints for an instance.
+        
+        Args:
+            instance: The entity instance to validate
+            model: The model class
+            session: Database session for querying related entities
+            operation: Operation type ("create" or "update")
+            entity_id: Entity ID (for update operations)
+        
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        from sqlmodel import select
+        
+        errors = []
+        
+        # Get relationships where this model is a child
+        # We need to check if this instance violates any parent constraints
+        all_relationships = RelationshipRegistry.get_all_relationships()
+        
+        for relationship in all_relationships:
+            # Check if this model is the child in the relationship
+            if relationship.child_model != model:
+                continue
+            
+            # Get the foreign key value
+            foreign_key_field = relationship.foreign_key_field
+            if not hasattr(instance, foreign_key_field):
+                continue
+            
+            parent_id = getattr(instance, foreign_key_field)
+            if parent_id is None:
+                continue
+            
+            # Get the parent instance
+            parent_model_db = CRUDFormRenderer._get_db_model_for_domain_model(
+                relationship.parent_model
+            )
+            if parent_model_db is None:
+                continue
+            
+            parent_instance = session.get(parent_model_db, parent_id)
+            if parent_instance is None:
+                errors.append(
+                    f"Parent {relationship.get_parent_model_name()} with ID '{parent_id}' not found"
+                )
+                continue
+            
+            # Get all sibling instances (other children of the same parent)
+            child_model_db = CRUDFormRenderer._get_db_model_for_domain_model(
+                relationship.child_model
+            )
+            if child_model_db is None:
+                continue
+            
+            # Query all children
+            statement = select(child_model_db).where(
+                getattr(child_model_db, foreign_key_field) == parent_id
+            )
+            all_children = list(session.exec(statement).all())
+            
+            # For update operations, exclude the current instance
+            if operation == "update" and entity_id:
+                all_children = [
+                    child for child in all_children
+                    if CRUDFormRenderer._get_entity_id(child) != entity_id
+                ]
+            
+            # Add the new/updated instance to the list for validation
+            # Convert instance to DB model if needed
+            instance_db = CRUDFormRenderer._convert_to_db_model(instance, child_model_db)
+            all_children.append(instance_db)
+            
+            # Run validation rules from relationship metadata
+            if relationship.validation_rules:
+                is_valid, rule_errors = CrossEntityValidator.validate_relationship(
+                    parent_instance=parent_instance,
+                    child_instance=instance_db,
+                    validation_rules=relationship.validation_rules,
+                )
+                if not is_valid:
+                    errors.extend(rule_errors)
+            
+            # Check sum constraints (e.g., sum of comision cupos <= materia cupo)
+            # This is a common pattern, so we check if both parent and child have a "cupo" field
+            if hasattr(parent_instance, "cupo") and hasattr(instance_db, "cupo"):
+                is_valid, error_msg = CrossEntityValidator.validate_sum_constraint(
+                    parent_instance=parent_instance,
+                    child_instances=all_children,
+                    parent_field="cupo",
+                    child_field="cupo",
+                )
+                if not is_valid:
+                    errors.append(error_msg)
+                    # Add suggestions
+                    suggestions = CrossEntityValidator.get_constraint_suggestions(
+                        parent_instance=parent_instance,
+                        child_instances=all_children,
+                        validation_error=error_msg,
+                    )
+                    errors.extend([f"💡 Sugerencia: {s}" for s in suggestions])
+        
+        return errors
+    
+    @staticmethod
+    def _display_constraint_errors(errors: List[str]) -> None:
+        """
+        Display constraint violation errors with suggestions.
+        
+        Args:
+            errors: List of error messages
+        """
+        st.error("❌ Errores de validación de restricciones:")
+        
+        for error in errors:
+            if error.startswith("💡"):
+                st.info(error)
+            else:
+                st.markdown(f"- {error}")
+    
+    @staticmethod
+    def _get_db_model_for_domain_model(domain_model: Type[BaseModel]) -> Optional[Type]:
+        """
+        Get the corresponding database model for a domain model.
+        
+        Args:
+            domain_model: The domain model class
+        
+        Returns:
+            The database model class or None if not found
+        """
+        from src.database.models import (
+            MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
+            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
+            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB
+        )
+        from src.domain.problem.materia import Materia
+        from src.domain.problem.comision import Comision
+        from src.domain.problem.alumno import Alumno
+        from src.domain.problem.clase import Clase
+        from src.domain.problem.aula import Aula
+        from src.domain.solution.inscripcion import Inscripcion
+        from src.domain.solution.asistencia import Asistencia
+        from src.domain.solution.asignacion_aula import AsignacionAula
+        
+        # Mapping from domain models to DB models
+        mapping = {
+            Materia: MateriaDB,
+            Comision: ComisionDB,
+            Alumno: AlumnoDB,
+            Clase: ClaseDB,
+            Aula: AulaDB,
+            Inscripcion: InscripcionDB,
+            Asistencia: AsistenciaDB,
+            AsignacionAula: AsignacionAulaDB,
+        }
+        
+        # Also check by name for models that might be passed directly as DB models
+        if domain_model in [MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
+                            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
+                            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB]:
+            return domain_model
+        
+        return mapping.get(domain_model)
+    
+    @staticmethod
+    def _convert_to_db_model(instance: BaseModel, db_model: Type) -> Any:
+        """
+        Convert a domain model instance to a database model instance.
+        
+        Args:
+            instance: The domain model instance
+            db_model: The database model class
+        
+        Returns:
+            Database model instance
+        """
+        # If already a DB model, return as is
+        if isinstance(instance, db_model):
+            return instance
+        
+        # Convert using model_dump
+        if hasattr(instance, "model_dump"):
+            data = instance.model_dump()
+        else:
+            data = dict(instance)
+        
+        return db_model(**data)
+    
+    @staticmethod
+    def _get_entity_id(entity: Any) -> Optional[str]:
+        """
+        Get the ID of an entity.
+        
+        Args:
+            entity: The entity instance
+        
+        Returns:
+            The entity ID or None
+        """
+        # Try common ID field names
+        for id_field in ["id", "codigo", "legajo"]:
+            if hasattr(entity, id_field):
+                return str(getattr(entity, id_field))
+        
+        return None
+

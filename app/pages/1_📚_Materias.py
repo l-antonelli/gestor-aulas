@@ -2,10 +2,12 @@
 
 import streamlit as st
 from src.database.connection import get_session, init_db
-from src.database.crud import materia_crud, comision_crud, create_materia_with_comision
+from src.database.crud import materia_crud, comision_crud
 from src.database.converters import to_domain, to_db
 from src.domain.problem.materia import Materia
+from src.domain.problem.comision import Comision
 from src.ui.crud_form_renderer import CRUDFormRenderer
+from src.ui.nested_entity_display import NestedEntityDisplay
 
 # Initialize database
 init_db()
@@ -17,14 +19,11 @@ tab_list, tab_create, tab_view = st.tabs(["📋 Listado", "➕ Nueva Materia", "
 
 
 # CRUD wrapper functions for Materia
-def create_materia(instance: Materia, **kwargs) -> Materia:
-    """Create a new materia with auto-generated comision."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        # Use the special function that creates materia with comision
-        created_materia, _ = create_materia_with_comision(session, db_instance)
-        return to_domain(created_materia)
-    return None
+def create_materia(session, instance: Materia) -> Materia:
+    """Create a new materia using cascading operations."""
+    db_instance = to_db(instance)
+    created = materia_crud.create(session, db_instance)
+    return to_domain(created)
 
 
 def read_materia(entity_id: str, **kwargs) -> Materia:
@@ -36,20 +35,16 @@ def read_materia(entity_id: str, **kwargs) -> Materia:
     return None
 
 
-def update_materia(instance: Materia, **kwargs) -> Materia:
+def update_materia(session, instance: Materia) -> Materia:
     """Update an existing materia."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        updated = materia_crud.update(session, db_instance)
-        return to_domain(updated)
-    return None
+    db_instance = to_db(instance)
+    updated = materia_crud.update(session, db_instance)
+    return to_domain(updated)
 
 
-def delete_materia(entity_id: str, **kwargs) -> bool:
+def delete_materia(session, entity_id: str) -> bool:
     """Delete a materia by codigo."""
-    for session in get_session():
-        return materia_crud.delete(session, entity_id)
-    return False
+    return materia_crud.delete(session, entity_id)
 
 
 with tab_list:
@@ -98,26 +93,30 @@ with tab_list:
                     st.error("Error al eliminar la materia")
 
 with tab_create:
-    st.info("Al crear una materia se genera automáticamente una 'Comisión Única' que luego podés editar o agregar más.")
+    st.info("💡 Al crear una materia se genera automáticamente una 'Comisión Única' asociada.")
     
-    # Use CRUDFormRenderer for create operation
-    result = CRUDFormRenderer.render_create_form(
-        model=Materia,
-        crud_create_func=create_materia,
-        key="create_materia",
-        exclude_fields=[],  # Include all fields
-        custom_labels={
-            "codigo": "Código",
-            "nombre": "Nombre",
-            "cupo": "Cupo máximo",
-            "horas_semanales": "Horas semanales",
-        },
-        submit_label="💾 Guardar",
-        success_message="Materia creada exitosamente con comisión única",
-    )
-    
-    if result:
-        st.rerun()
+    # Get session for cascading operations
+    with next(get_session()) as session:
+        # Use CRUDFormRenderer for create operation with cascading enabled
+        result = CRUDFormRenderer.render_create_form(
+            model=Materia,
+            crud_create_func=create_materia,
+            key="create_materia",
+            exclude_fields=[],  # Include all fields
+            custom_labels={
+                "codigo": "Código",
+                "nombre": "Nombre",
+                "cupo": "Cupo máximo",
+                "horas_semanales": "Horas semanales",
+            },
+            submit_label="💾 Guardar",
+            success_message="✅ Materia creada exitosamente",
+            enable_cascading=True,
+            session=session,
+        )
+        
+        if result:
+            st.rerun()
 
 with tab_view:
     with next(get_session()) as session:
@@ -135,15 +134,29 @@ with tab_view:
         
         if codigo_view:
             # Use CRUDFormRenderer for read operation
-            CRUDFormRenderer.render_read_form(
-                model=Materia,
-                entity_id=codigo_view,
-                crud_read_func=read_materia,
-                custom_labels={
-                    "codigo": "Código",
-                    "nombre": "Nombre",
-                    "cupo": "Cupo máximo",
-                    "horas_semanales": "Horas semanales",
-                },
-                title=f"Detalle de Materia: {codigo_view}",
-            )
+            materia = read_materia(codigo_view)
+            
+            if materia:
+                CRUDFormRenderer.render_read_form(
+                    model=Materia,
+                    entity_id=codigo_view,
+                    crud_read_func=read_materia,
+                    custom_labels={
+                        "codigo": "Código",
+                        "nombre": "Nombre",
+                        "cupo": "Cupo máximo",
+                        "horas_semanales": "Horas semanales",
+                    },
+                    title=f"Detalle de Materia: {codigo_view}",
+                )
+                
+                # Display nested Comisiones
+                st.divider()
+                with next(get_session()) as session:
+                    NestedEntityDisplay.render_nested_entities(
+                        parent_instance=materia,
+                        parent_model=Materia,
+                        child_model=Comision,
+                        child_crud_func=lambda s: comision_crud.get_all(s, limit=500),
+                        session=session,
+                    )

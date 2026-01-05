@@ -9,9 +9,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 import streamlit as st
 from pydantic import BaseModel, ValidationError
+from sqlmodel import Session
 
 from src.ui.schema_introspector import SchemaIntrospector
 from src.ui.widget_mapper import WidgetMapper
+from src.ui.relationship_selector import RelationshipSelector
+from src.services.relationship_registry import RelationshipRegistry
 
 
 # Error message templates for different constraint types
@@ -121,6 +124,8 @@ class FormInputRenderer:
         field_order: List[str] = None,
         custom_labels: Dict[str, str] = None,
         default_values: Dict[str, Any] = None,
+        session: Session = None,
+        crud_functions: Dict[str, Callable] = None,
     ) -> Dict[str, Any]:
         """
         Generate form input fields for all model attributes.
@@ -132,6 +137,8 @@ class FormInputRenderer:
             field_order: Custom field ordering
             custom_labels: Custom labels for fields (field_name -> label)
             default_values: Default values to pre-populate fields
+            session: Database session for loading related entities
+            crud_functions: Dictionary mapping model names to CRUD functions
             
         Returns:
             Dictionary of input values keyed by field name
@@ -139,6 +146,7 @@ class FormInputRenderer:
         exclude_fields = exclude_fields or []
         custom_labels = custom_labels or {}
         default_values = default_values or {}
+        crud_functions = crud_functions or {}
         
         fields = SchemaIntrospector.get_fields(model)
         
@@ -161,6 +169,8 @@ class FormInputRenderer:
                 key=f"{key}_{field_name}" if key else field_name,
                 custom_label=custom_labels.get(field_name),
                 default_value=default_values.get(field_name),
+                session=session,
+                crud_functions=crud_functions,
             )
             form_data[field_name] = value
         
@@ -173,6 +183,8 @@ class FormInputRenderer:
         key: str = None,
         custom_label: str = None,
         default_value: Any = None,
+        session: Session = None,
+        crud_functions: Dict[str, Callable] = None,
     ) -> Any:
         """
         Render a single field input widget.
@@ -183,10 +195,57 @@ class FormInputRenderer:
             key: Streamlit widget key
             custom_label: Custom label for the field
             default_value: Default value to pre-populate
+            session: Database session for loading related entities
+            crud_functions: Dictionary mapping model names to CRUD functions
             
         Returns:
             The value entered by the user
         """
+        crud_functions = crud_functions or {}
+        
+        # Check if this field is a foreign key
+        foreign_keys = RelationshipSelector.get_foreign_key_fields(model)
+        
+        if field_name in foreign_keys and session is not None:
+            # This is a foreign key field - render relationship selector
+            parent_model = foreign_keys[field_name]
+            parent_model_name = parent_model.__name__
+            
+            # Get CRUD function for parent model
+            crud_func = crud_functions.get(parent_model_name)
+            
+            if crud_func:
+                # Get relationship metadata to determine if searchable
+                relationship = RelationshipRegistry.get_relationship(parent_model, model)
+                
+                label = custom_label or field_name.replace("_", " ").title()
+                
+                # Use searchable selector if search fields are defined
+                if relationship and relationship.search_fields:
+                    return RelationshipSelector.render_searchable_selector(
+                        field_name=field_name,
+                        parent_model=parent_model,
+                        child_model=model,
+                        crud_func=crud_func,
+                        session=session,
+                        search_fields=relationship.search_fields,
+                        default_value=default_value,
+                        key=key,
+                        label=label,
+                    )
+                else:
+                    return RelationshipSelector.render_relationship_selector(
+                        field_name=field_name,
+                        parent_model=parent_model,
+                        child_model=model,
+                        crud_func=crud_func,
+                        session=session,
+                        default_value=default_value,
+                        key=key,
+                        label=label,
+                    )
+        
+        # Not a foreign key or no session - render normal widget
         field_type = SchemaIntrospector.get_field_type(model, field_name)
         constraints = SchemaIntrospector.get_field_constraints(model, field_name)
         is_required = SchemaIntrospector.is_field_required(model, field_name)
@@ -209,6 +268,8 @@ class FormInputRenderer:
                 model=nested_model,
                 key=f"{key}_nested" if key else f"{field_name}_nested",
                 default_values=default_value.model_dump() if default_value else None,
+                session=session,
+                crud_functions=crud_functions,
             )
         
         return WidgetMapper.render_widget(
@@ -339,6 +400,8 @@ class FormInputRenderer:
         default_values: Dict[str, Any] = None,
         submit_label: str = "Submit",
         on_submit: Callable[[BaseModel], None] = None,
+        session: Session = None,
+        crud_functions: Dict[str, Callable] = None,
     ) -> Optional[BaseModel]:
         """
         Render a form with validation and optional submit handling.
@@ -358,6 +421,8 @@ class FormInputRenderer:
             default_values: Default values to pre-populate fields
             submit_label: Label for submit button
             on_submit: Callback function when form is successfully submitted
+            session: Database session for loading related entities
+            crud_functions: Dictionary mapping model names to CRUD functions
             
         Returns:
             Validated model instance if submitted successfully, None otherwise
@@ -377,6 +442,8 @@ class FormInputRenderer:
                 field_order=field_order,
                 custom_labels=custom_labels,
                 default_values=default_values,
+                session=session,
+                crud_functions=crud_functions,
             )
             
             submitted = st.form_submit_button(submit_label)

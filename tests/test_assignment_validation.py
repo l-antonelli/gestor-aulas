@@ -35,9 +35,9 @@ def sample_clases():
 def sample_aulas():
     """Create sample Aula entities for testing."""
     return [
-        Aula(codigo="AULA-101", capacidad=50, tipo="teorica"),
-        Aula(codigo="AULA-102", capacidad=30, tipo="practica"),
-        Aula(codigo="AULA-103", capacidad=100, tipo="anfiteatro"),
+        Aula(id="AULA-101", sede="Sede Central", nombre="Aula 101", capacidad=50, tipo="teorica"),
+        Aula(id="AULA-102", sede="Sede Central", nombre="Aula 102", capacidad=30, tipo="practica"),
+        Aula(id="AULA-103", sede="Sede Central", nombre="Aula 103", capacidad=100, tipo="anfiteatro"),
     ]
 
 
@@ -48,7 +48,7 @@ def sample_assignments(sample_clases):
         AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 3, 1),
             vigente=True
         ),
@@ -81,7 +81,7 @@ class TestClaseAssignmentUniqueness:
         inactive_assignment = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )
@@ -121,7 +121,7 @@ class TestAulaAvailability:
         inactive_assignment = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )
@@ -199,7 +199,7 @@ class TestConflictDetection:
         inactive_assignment = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )

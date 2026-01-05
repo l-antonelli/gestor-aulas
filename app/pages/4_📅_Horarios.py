@@ -8,6 +8,10 @@ from src.database.crud import (
     horario_crud, clase_crud, comision_crud, materia_crud,
     get_or_create_config, update_config
 )
+from src.domain.problem.comision import Comision
+from src.domain.problem.clase import Clase
+from src.domain.problem.horario_cronograma import HorarioCronograma
+from src.ui.relationship_selector import RelationshipSelector
 import uuid
 
 st.set_page_config(page_title="Horarios", page_icon="📅", layout="wide")
@@ -218,48 +222,51 @@ with tab_clases:
             st.warning("Primero creá franjas horarias")
         else:
             with st.form("create_clase"):
-                # Build comision options with materia name
+                # Use relationship selectors
                 with next(get_session()) as session:
-                    comision_options = []
-                    for c in comisiones:
-                        materia = materia_crud.get(session, c.materia_codigo)
-                        label = f"{c.id} ({materia.nombre if materia else c.materia_codigo})"
-                        comision_options.append((c.id, label))
-                
-                comision_id = st.selectbox(
-                    "Comisión",
-                    options=[c[0] for c in comision_options],
-                    format_func=lambda x: next((c[1] for c in comision_options if c[0] == x), x)
-                )
-                
-                horario_id = st.selectbox(
-                    "Franja horaria",
-                    options=[h.id for h in horarios],
-                    format_func=lambda x: next(
-                        (f"{h.dia_semana} {h.hora_inicio.strftime('%H:%M')}-{h.hora_fin.strftime('%H:%M')}" 
-                         for h in horarios if h.id == x), x
+                    comision_id = RelationshipSelector.render_searchable_selector(
+                        field_name="comision_id",
+                        parent_model=Comision,
+                        child_model=Clase,
+                        crud_func=lambda s: comision_crud.get_all(s, limit=500),
+                        session=session,
+                        search_fields=["id", "nombre"],
+                        key="clase_comision_selector",
+                        label="Comisión",
                     )
-                )
+                    
+                    horario_id = RelationshipSelector.render_relationship_selector(
+                        field_name="horario_id",
+                        parent_model=HorarioCronograma,
+                        child_model=Clase,
+                        crud_func=lambda s: horario_crud.get_all(s, limit=500),
+                        session=session,
+                        key="clase_horario_selector",
+                        label="Franja horaria",
+                    )
                 
                 # Get dia from horario
-                horario_sel = next((h for h in horarios if h.id == horario_id), None)
+                horario_sel = next((h for h in horarios if h.id == horario_id), None) if horario_id else None
                 dia = horario_sel.dia_semana if horario_sel else "Lunes"
                 
                 if st.form_submit_button("➕ Crear Clase"):
-                    clase_id = f"CLS-{uuid.uuid4().hex[:8].upper()}"
-                    clase = ClaseDB(
-                        id=clase_id,
-                        comision_id=comision_id,
-                        horario_id=horario_id,
-                        dia=dia
-                    )
-                    try:
-                        with next(get_session()) as session:
-                            clase_crud.create(session, clase)
-                        st.success(f"Clase '{clase_id}' creada")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    if not comision_id or not horario_id:
+                        st.error("Debe seleccionar una comisión y una franja horaria")
+                    else:
+                        clase_id = f"CLS-{uuid.uuid4().hex[:8].upper()}"
+                        clase = ClaseDB(
+                            id=clase_id,
+                            comision_id=comision_id,
+                            horario_id=horario_id,
+                            dia=dia
+                        )
+                        try:
+                            with next(get_session()) as session:
+                                clase_crud.create(session, clase)
+                            st.success(f"✅ Clase '{clase_id}' creada")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {e}")
     
     # Delete section
     if clases:

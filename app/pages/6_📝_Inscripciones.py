@@ -7,7 +7,10 @@ from src.database.connection import get_session, init_db
 from src.database.crud import inscripcion_crud, alumno_crud, comision_crud
 from src.database.converters import to_domain, to_db
 from src.domain.solution.inscripcion import Inscripcion
+from src.domain.problem.alumno import Alumno
+from src.domain.problem.comision import Comision
 from src.ui.crud_form_renderer import CRUDFormRenderer
+from src.ui.relationship_selector import RelationshipSelector
 
 # Initialize database
 init_db()
@@ -111,44 +114,61 @@ with tab_create:
             inscripcion_id = f"INS-{uuid.uuid4().hex[:8].upper()}"
             st.text_input("ID", value=inscripcion_id, disabled=True, key="inscripcion_id_display")
             
-            # Relationship selectors
-            alumno_legajo = st.selectbox(
-                "Alumno",
-                options=[a.legajo for a in alumnos],
-                format_func=lambda x: f"{x} - {next((a.nombre for a in alumnos if a.legajo == x), '')}"
-            )
-            comision_id = st.selectbox(
-                "Comisión",
-                options=[c.id for c in comisiones]
-            )
+            # Use relationship selectors
+            with next(get_session()) as session:
+                alumno_legajo = RelationshipSelector.render_searchable_selector(
+                    field_name="alumno_legajo",
+                    parent_model=Alumno,
+                    child_model=Inscripcion,
+                    crud_func=lambda s: alumno_crud.get_all(s, limit=500),
+                    session=session,
+                    search_fields=["legajo", "nombre"],
+                    key="inscripcion_alumno_selector",
+                    label="Alumno",
+                )
+                
+                comision_id = RelationshipSelector.render_searchable_selector(
+                    field_name="comision_id",
+                    parent_model=Comision,
+                    child_model=Inscripcion,
+                    crud_func=lambda s: comision_crud.get_all(s, limit=500),
+                    session=session,
+                    search_fields=["id", "nombre"],
+                    key="inscripcion_comision_selector",
+                    label="Comisión",
+                )
+            
             fecha = st.date_input("Fecha de inscripción", value=date.today())
             activa = st.checkbox("Activa", value=True)
             
             submitted = st.form_submit_button("💾 Guardar", type="primary")
             
             if submitted:
-                try:
-                    inscripcion = Inscripcion(
-                        id=inscripcion_id,
-                        alumno_legajo=alumno_legajo,
-                        comision_id=comision_id,
-                        fecha_inscripcion=fecha,
-                        activa=activa
-                    )
-                    result = create_inscripcion(inscripcion)
-                    if result:
+                if not alumno_legajo or not comision_id:
+                    st.error("Debe seleccionar un alumno y una comisión")
+                else:
+                    try:
+                        inscripcion = Inscripcion(
+                            id=inscripcion_id,
+                            alumno_legajo=alumno_legajo,
+                            comision_id=comision_id,
+                            fecha_inscripcion=fecha,
+                            activa=activa
+                        )
+                        result = create_inscripcion(inscripcion)
+                        if result:
+                            CRUDFormRenderer.show_operation_feedback(
+                                operation="create",
+                                success=True,
+                                message=f"✅ Inscripción '{inscripcion_id}' creada exitosamente"
+                            )
+                            st.rerun()
+                    except Exception as e:
                         CRUDFormRenderer.show_operation_feedback(
                             operation="create",
-                            success=True,
-                            message=f"Inscripción '{inscripcion_id}' creada exitosamente"
+                            success=False,
+                            message=f"❌ Error al crear inscripción: {e}"
                         )
-                        st.rerun()
-                except Exception as e:
-                    CRUDFormRenderer.show_operation_feedback(
-                        operation="create",
-                        success=False,
-                        message=f"Error al crear inscripción: {e}"
-                    )
 
 with tab_view:
     with next(get_session()) as session:

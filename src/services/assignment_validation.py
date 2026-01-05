@@ -127,7 +127,7 @@ def validate_aula_availability(
         if not assignment.vigente:
             continue
             
-        if assignment.aula_codigo != aula_codigo:
+        if assignment.aula_id != aula_codigo:
             continue
             
         # Get the horario_id for the assigned clase
@@ -154,7 +154,7 @@ def validate_capacity_constraint(
         CapacityExceededError: If the Aula capacity is insufficient
     """
     if aula.capacidad < expected_attendance:
-        raise CapacityExceededError(aula.codigo, aula.capacidad, expected_attendance)
+        raise CapacityExceededError(aula.id, aula.capacidad, expected_attendance)
 
 
 def detect_assignment_conflicts(
@@ -191,7 +191,7 @@ def detect_assignment_conflicts(
             continue
         
         # Check for same Aula at same HorarioCronograma
-        if assignment.aula_codigo == new_aula_codigo:
+        if assignment.aula_id == new_aula_codigo:
             existing_clase = clase_map.get(assignment.clase_id)
             
             if existing_clase and existing_clase.horario_id == new_clase.horario_id:
@@ -239,7 +239,7 @@ def validate_assignment(
     
     # Check Aula availability (3.2)
     validate_aula_availability(
-        new_aula.codigo, 
+        new_aula.id, 
         new_clase.horario_id, 
         existing_assignments, 
         clases
@@ -251,7 +251,7 @@ def validate_assignment(
     # Detect conflicts (3.4)
     conflicts = detect_assignment_conflicts(
         new_clase, 
-        new_aula.codigo, 
+        new_aula.id, 
         existing_assignments, 
         clases
     )

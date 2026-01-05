@@ -7,12 +7,14 @@ read-only layout using Streamlit components.
 
 import datetime
 from enum import Enum
-from typing import Any, Dict, List, Type, get_args, get_origin, Union
+from typing import Any, Callable, Dict, List, Optional, Type, get_args, get_origin, Union
 
 import streamlit as st
 from pydantic import BaseModel
+from sqlmodel import Session
 
 from src.ui.schema_introspector import SchemaIntrospector
+from src.services.relationship_registry import RelationshipRegistry
 
 
 class FormOutputRenderer:
@@ -25,6 +27,9 @@ class FormOutputRenderer:
         field_order: List[str] = None,
         custom_labels: Dict[str, str] = None,
         show_descriptions: bool = True,
+        show_nested_entities: bool = False,
+        session: Session = None,
+        child_crud_funcs: Dict[Type[BaseModel], Callable] = None,
     ) -> None:
         """
         Display a Pydantic model instance in formatted layout.
@@ -35,6 +40,9 @@ class FormOutputRenderer:
             field_order: Custom field ordering
             custom_labels: Custom labels for fields (field_name -> label)
             show_descriptions: Whether to show field descriptions
+            show_nested_entities: Whether to display related entities
+            session: Database session (required if show_nested_entities=True)
+            child_crud_funcs: Dictionary mapping child models to their CRUD functions
         """
         exclude_fields = exclude_fields or []
         custom_labels = custom_labels or {}
@@ -62,6 +70,15 @@ class FormOutputRenderer:
                 field_type=field_type,
                 custom_label=custom_label,
                 description=description,
+            )
+        
+        # Render nested entities if enabled
+        if show_nested_entities and session is not None:
+            FormOutputRenderer.render_nested_entity_sections(
+                instance=instance,
+                model=model,
+                session=session,
+                child_crud_funcs=child_crud_funcs or {},
             )
 
     @staticmethod
@@ -209,6 +226,9 @@ class FormOutputRenderer:
         exclude_fields: List[str] = None,
         field_order: List[str] = None,
         custom_labels: Dict[str, str] = None,
+        show_nested_entities: bool = False,
+        session: Session = None,
+        child_crud_funcs: Dict[Type[BaseModel], Callable] = None,
     ) -> None:
         """
         Display a Pydantic model instance in a card-style container.
@@ -219,6 +239,9 @@ class FormOutputRenderer:
             exclude_fields: Fields to exclude from display
             field_order: Custom field ordering
             custom_labels: Custom labels for fields
+            show_nested_entities: Whether to display related entities
+            session: Database session (required if show_nested_entities=True)
+            child_crud_funcs: Dictionary mapping child models to their CRUD functions
         """
         with st.container():
             if title:
@@ -233,6 +256,9 @@ class FormOutputRenderer:
                 exclude_fields=exclude_fields,
                 field_order=field_order,
                 custom_labels=custom_labels,
+                show_nested_entities=show_nested_entities,
+                session=session,
+                child_crud_funcs=child_crud_funcs,
             )
 
     @staticmethod
@@ -329,3 +355,57 @@ class FormOutputRenderer:
                 result[label] = FormOutputRenderer.format_field_value(field_value, field_type)
         
         return result
+
+    @staticmethod
+    def render_nested_entity_sections(
+        instance: BaseModel,
+        model: Type[BaseModel],
+        session: Session,
+        child_crud_funcs: Dict[Type[BaseModel], Callable],
+    ) -> None:
+        """
+        Render nested entity sections for all relationships.
+        
+        Automatically detects relationships for the displayed entity and
+        renders collapsible sections for each related entity type.
+        
+        Args:
+            instance: The parent entity instance
+            model: The parent model class
+            session: Database session
+            child_crud_funcs: Dictionary mapping child models to their CRUD functions
+        """
+        # Import here to avoid circular dependency
+        from src.ui.nested_entity_display import NestedEntityDisplay
+        
+        # Get all relationships where this model is the parent
+        relationships = RelationshipRegistry.get_relationships_for_model(model)
+        
+        if not relationships:
+            return
+        
+        # Render a section for each relationship
+        st.divider()
+        st.subheader("Entidades Relacionadas")
+        
+        for relationship in relationships:
+            child_model = relationship.child_model
+            
+            # Get CRUD function for this child model
+            child_crud_func = child_crud_funcs.get(child_model)
+            
+            if not child_crud_func:
+                st.warning(
+                    f"No CRUD function provided for {child_model.__name__}. "
+                    f"Cannot display related entities."
+                )
+                continue
+            
+            # Render nested entities for this relationship
+            NestedEntityDisplay.render_nested_entities(
+                parent_instance=instance,
+                parent_model=model,
+                child_model=child_model,
+                child_crud_func=child_crud_func,
+                session=session,
+            )
