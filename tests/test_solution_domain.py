@@ -141,13 +141,13 @@ class TestAsignacionAula:
         asignacion = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 2, 15),
             vigente=True
         )
         assert asignacion.id == "ASG-001"
         assert asignacion.clase_id == "CLS-001"
-        assert asignacion.aula_codigo == "AULA-101"
+        assert asignacion.aula_id == "AULA-101"
         assert asignacion.fecha_asignacion == date(2025, 2, 15)
         assert asignacion.vigente is True
     
@@ -156,7 +156,7 @@ class TestAsignacionAula:
         asignacion = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
-            aula_codigo="AULA-101",
+            aula_id="AULA-101",
             fecha_asignacion=date(2025, 2, 15)
         )
         assert asignacion.vigente is True
@@ -167,7 +167,7 @@ class TestAsignacionAula:
             AsignacionAula(
                 id="",
                 clase_id="CLS-001",
-                aula_codigo="AULA-101",
+                aula_id="AULA-101",
                 fecha_asignacion=date(2025, 2, 15)
             )
     
@@ -177,16 +177,16 @@ class TestAsignacionAula:
             AsignacionAula(
                 id="ASG-001",
                 clase_id="",
-                aula_codigo="AULA-101",
+                aula_id="AULA-101",
                 fecha_asignacion=date(2025, 2, 15)
             )
     
     def test_invalid_empty_aula_codigo(self):
-        """Test that empty aula_codigo is rejected."""
+        """Test that empty aula_id is rejected."""
         with pytest.raises(ValidationError):
             AsignacionAula(
                 id="ASG-001",
                 clase_id="CLS-001",
-                aula_codigo="",
+                aula_id="",
                 fecha_asignacion=date(2025, 2, 15)
             )

@@ -159,23 +159,27 @@ class TestAula:
     def test_valid_aula(self):
         """Test creating a valid Aula."""
         aula = Aula(
-            codigo="AULA-101",
+            id="AULA-101",
+            sede="Sede Central",
+            nombre="Aula 101",
             capacidad=60,
             tipo="teorica"
         )
-        assert aula.codigo == "AULA-101"
+        assert aula.id == "AULA-101"
+        assert aula.sede == "Sede Central"
+        assert aula.nombre == "Aula 101"
         assert aula.capacidad == 60
         assert aula.tipo == "teorica"
     
     def test_invalid_zero_capacidad(self):
         """Test that zero capacidad is rejected."""
         with pytest.raises(ValidationError):
-            Aula(codigo="AULA-101", capacidad=0, tipo="teorica")
+            Aula(id="AULA-101", sede="Sede Central", nombre="Aula 101", capacidad=0, tipo="teorica")
     
     def test_invalid_tipo(self):
         """Test that invalid tipo is rejected."""
         with pytest.raises(ValidationError):
-            Aula(codigo="AULA-101", capacidad=60, tipo="invalid")
+            Aula(id="AULA-101", sede="Sede Central", nombre="Aula 101", capacidad=60, tipo="invalid")
 
 
 class TestClase:
