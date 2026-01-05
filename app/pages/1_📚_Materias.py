@@ -9,21 +9,44 @@ from src.domain.problem.comision import Comision
 from src.ui.crud_form_renderer import CRUDFormRenderer
 from src.ui.nested_entity_display import NestedEntityDisplay
 
+# Import relationship definitions to register relationships
+import src.services.relationship_definitions  # noqa: F401
+
 # Initialize database
 init_db()
 
 st.set_page_config(page_title="Materias", page_icon="📚", layout="wide")
 st.title("📚 Gestión de Materias")
 
+# Initialize session state for success messages
+if "materia_created" not in st.session_state:
+    st.session_state.materia_created = None
+
 tab_list, tab_create, tab_view = st.tabs(["📋 Listado", "➕ Nueva Materia", "👁️ Ver Detalle"])
 
 
 # CRUD wrapper functions for Materia
+def create_materia_with_cascading(session, instance: Materia) -> tuple:
+    """Create a new materia using cascading operations.
+    
+    Returns:
+        Tuple of (created_materia, created_children)
+    """
+    from src.services.cascading_operations import CascadingOperations
+    
+    db_instance = to_db(instance)
+    created, children = CascadingOperations.create_with_cascading(
+        parent_instance=db_instance,
+        parent_crud_func=materia_crud.create,
+        session=session,
+    )
+    return to_domain(created), children
+
+
 def create_materia(session, instance: Materia) -> Materia:
     """Create a new materia using cascading operations."""
-    db_instance = to_db(instance)
-    created = materia_crud.create(session, db_instance)
-    return to_domain(created)
+    created, _ = create_materia_with_cascading(session, instance)
+    return created
 
 
 def read_materia(entity_id: str, **kwargs) -> Materia:
@@ -95,28 +118,58 @@ with tab_list:
 with tab_create:
     st.info("💡 Al crear una materia se genera automáticamente una 'Comisión Única' asociada.")
     
-    # Get session for cascading operations
-    with next(get_session()) as session:
-        # Use CRUDFormRenderer for create operation with cascading enabled
-        result = CRUDFormRenderer.render_create_form(
-            model=Materia,
-            crud_create_func=create_materia,
-            key="create_materia",
-            exclude_fields=[],  # Include all fields
-            custom_labels={
-                "codigo": "Código",
-                "nombre": "Nombre",
-                "cupo": "Cupo máximo",
-                "horas_semanales": "Horas semanales",
-            },
-            submit_label="💾 Guardar",
-            success_message="✅ Materia creada exitosamente",
-            enable_cascading=True,
-            session=session,
-        )
+    # Show success message if materia was just created
+    if st.session_state.materia_created:
+        created_info = st.session_state.materia_created
+        st.success(f"✅ Materia '{created_info['nombre']}' ({created_info['codigo']}) creada exitosamente")
+        if created_info.get('children'):
+            st.info(f"🔗 Se creó automáticamente {len(created_info['children'])} comisión(es) asociada(s):")
+            for child in created_info['children']:
+                st.write(f"  • **{child['nombre']}** (ID: {child['id']}, Cupo: {child['cupo']})")
+        st.balloons()
+        # Clear the message after showing
+        st.session_state.materia_created = None
+    
+    # Form for creating a new Materia
+    with st.form("create_materia_form"):
+        codigo = st.text_input("Código *", placeholder="Ej: MAT101")
+        nombre = st.text_input("Nombre *", placeholder="Ej: Cálculo I")
+        cupo = st.number_input("Cupo máximo *", min_value=1, value=30)
+        horas_semanales = st.number_input("Horas semanales *", min_value=1, value=4)
         
-        if result:
-            st.rerun()
+        submitted = st.form_submit_button("💾 Guardar", type="primary")
+        
+        if submitted:
+            if not codigo or not nombre:
+                st.error("❌ Por favor complete todos los campos obligatorios")
+            else:
+                try:
+                    with next(get_session()) as session:
+                        # Create the Materia instance
+                        materia = Materia(
+                            codigo=codigo,
+                            nombre=nombre,
+                            cupo=cupo,
+                            horas_semanales=horas_semanales,
+                        )
+                        
+                        # Create with cascading
+                        created, children = create_materia_with_cascading(session, materia)
+                        
+                        # Store success info in session state
+                        st.session_state.materia_created = {
+                            'codigo': created.codigo,
+                            'nombre': created.nombre,
+                            'children': [
+                                {'id': c.id, 'nombre': c.nombre, 'cupo': c.cupo}
+                                for c in children
+                            ] if children else []
+                        }
+                        
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"❌ Error al crear la materia: {str(e)}")
 
 with tab_view:
     with next(get_session()) as session:

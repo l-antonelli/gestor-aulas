@@ -50,10 +50,11 @@ class RelationshipRegistry:
         Returns:
             List of RelationshipMetadata instances where model is the parent
         """
+        model_name = model.__name__
         return [
             metadata
             for metadata in cls._relationships.values()
-            if metadata.parent_model == model
+            if metadata.parent_model.__name__ == model_name
         ]
     
     @classmethod

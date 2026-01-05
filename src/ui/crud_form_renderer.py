@@ -126,7 +126,7 @@ class CRUDFormRenderer:
                             return created
                     
                     # Standard creation (no cascading)
-                    created = crud_create_func(instance, **kwargs)
+                    created = crud_create_func(session, instance)
                     
                     CRUDFormRenderer.show_operation_feedback(
                         operation="create",
