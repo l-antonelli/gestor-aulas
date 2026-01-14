@@ -30,29 +30,30 @@ Este sistema permite gestionar la asignación óptima de aulas para el dictado d
 
 Usa el menú lateral para navegar entre las secciones:
 
+- **🎛️ Gestión Unificada**: Vista integrada de todas las entidades
 - **📚 Materias**: Gestión de asignaturas académicas
-- **👥 Comisiones**: División de materias en comisiones
 - **🏛️ Aulas**: Gestión de espacios físicos
+- **👥 Comisiones**: División de materias en comisiones
 - **📅 Horarios**: Franjas horarias del cronograma
-- **🎓 Alumnos**: Gestión de estudiantes
-- **📝 Inscripciones**: Inscripción de alumnos a comisiones
+- **🎓 Carreras**: Carreras de la facultad
+- **📆 Ciclos**: Períodos lectivos
 
 ### Estado del Sistema
 """)
 
 # Show quick stats
 from src.database.connection import get_session
-from src.database.models import MateriaDB, AulaDB, AlumnoDB, ComisionDB
+from src.database.models import MateriaDB, AulaDB, ComisionDB, HorarioCronogramaDB
 from sqlmodel import select
 
 with next(get_session()) as session:
     n_materias = len(list(session.exec(select(MateriaDB)).all()))
     n_aulas = len(list(session.exec(select(AulaDB)).all()))
-    n_alumnos = len(list(session.exec(select(AlumnoDB)).all()))
     n_comisiones = len(list(session.exec(select(ComisionDB)).all()))
+    n_horarios = len(list(session.exec(select(HorarioCronogramaDB)).all()))
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Materias", n_materias)
 col2.metric("Aulas", n_aulas)
-col3.metric("Alumnos", n_alumnos)
-col4.metric("Comisiones", n_comisiones)
+col3.metric("Comisiones", n_comisiones)
+col4.metric("Horarios", n_horarios)

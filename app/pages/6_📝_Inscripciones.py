@@ -1,200 +1,38 @@
-"""Gestión de Inscripciones - Refactored to use UI components."""
+"""
+🚧 PÁGINA DEPRECADA - Gestión de Inscripciones
+
+Esta página ha sido deprecada en la primera iteración del sistema.
+
+Razón: Para el objetivo de asignación de aulas, no es necesario registrar
+inscripciones individuales. Se utilizará un dataset agregado con la cantidad
+de inscriptos por materia/comisión por ciclo lectivo.
+
+Las entidades Inscripcion permanecen en el modelo de datos para futuras iteraciones.
+"""
 
 import streamlit as st
-from datetime import date
-import uuid
-from src.database.connection import get_session, init_db
-from src.database.crud import inscripcion_crud, alumno_crud, comision_crud
-from src.database.converters import to_domain, to_db
-from src.domain.solution.inscripcion import Inscripcion
-from src.domain.problem.alumno import Alumno
-from src.domain.problem.comision import Comision
-from src.ui.crud_form_renderer import CRUDFormRenderer
-from src.ui.relationship_selector import RelationshipSelector
 
-# Initialize database
-init_db()
+st.set_page_config(page_title="Inscripciones (Deprecado)", page_icon="📝", layout="wide")
 
-st.set_page_config(page_title="Inscripciones", page_icon="📝", layout="wide")
 st.title("📝 Gestión de Inscripciones")
+st.warning("🚧 **Página Deprecada**")
 
-tab_list, tab_create, tab_view = st.tabs(["📋 Listado", "➕ Nueva Inscripción", "👁️ Ver Detalle"])
+st.markdown("""
+### Esta funcionalidad no está disponible en la primera iteración
 
+**Razón:** Para el objetivo de asignación óptima de aulas, no es necesario 
+registrar cada inscripción individualmente.
 
-# CRUD wrapper functions for Inscripcion
-def create_inscripcion(instance: Inscripcion, **kwargs) -> Inscripcion:
-    """Create a new inscripcion."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        created = inscripcion_crud.create(session, db_instance)
-        return to_domain(created)
-    return None
+En su lugar, el sistema utilizará:
+- El campo `cupo` en cada **Comisión** para indicar la cantidad esperada de alumnos
+- Datos agregados importados desde el sistema de gestión académica
 
+### Próximos pasos
+Las entidades `Inscripcion` permanecen en el modelo de datos y podrán ser 
+habilitadas en futuras iteraciones si se requiere:
+- Tracking detallado de inscripciones por alumno
+- Análisis de patrones de inscripción
+- Integración bidireccional con SIU Guaraní
+""")
 
-def read_inscripcion(entity_id: str, **kwargs) -> Inscripcion:
-    """Read an inscripcion by id."""
-    for session in get_session():
-        db_instance = inscripcion_crud.get(session, entity_id)
-        if db_instance:
-            return to_domain(db_instance)
-    return None
-
-
-def update_inscripcion(instance: Inscripcion, **kwargs) -> Inscripcion:
-    """Update an existing inscripcion."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        updated = inscripcion_crud.update(session, db_instance)
-        return to_domain(updated)
-    return None
-
-
-def delete_inscripcion(entity_id: str, **kwargs) -> bool:
-    """Delete an inscripcion by id."""
-    for session in get_session():
-        return inscripcion_crud.delete(session, entity_id)
-    return False
-
-
-with tab_list:
-    with next(get_session()) as session:
-        inscripciones = inscripcion_crud.get_all(session)
-        inscripciones_data = []
-        for i in inscripciones:
-            alumno = alumno_crud.get(session, i.alumno_legajo)
-            comision = comision_crud.get(session, i.comision_id)
-            inscripciones_data.append({
-                "ID": i.id,
-                "Alumno": f"{i.alumno_legajo} - {alumno.nombre if alumno else 'N/A'}",
-                "Comisión": i.comision_id,
-                "Fecha": i.fecha_inscripcion.isoformat(),
-                "Activa": "✅" if i.activa else "❌",
-            })
-    
-    if not inscripciones_data:
-        st.info("No hay inscripciones registradas.")
-    else:
-        st.dataframe(inscripciones_data, use_container_width=True, hide_index=True)
-        st.caption(f"Total: {len(inscripciones_data)} inscripciones")
-        
-        st.divider()
-        st.subheader("Eliminar Inscripción")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            id_delete = st.selectbox(
-                "Seleccionar inscripción a eliminar",
-                options=[i["ID"] for i in inscripciones_data],
-                key="delete_inscripcion"
-            )
-        with col2:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Eliminar", type="secondary"):
-                if delete_inscripcion(id_delete):
-                    st.success(f"Inscripción {id_delete} eliminada")
-                    st.rerun()
-                else:
-                    st.error("Error al eliminar la inscripción")
-
-with tab_create:
-    with next(get_session()) as session:
-        alumnos = alumno_crud.get_all(session)
-        comisiones = comision_crud.get_all(session)
-    
-    if not alumnos:
-        st.warning("Primero debes crear al menos un alumno.")
-    elif not comisiones:
-        st.warning("Primero debes crear al menos una comisión.")
-    else:
-        # Custom form for inscripcion with relationship selectors
-        with st.form("create_inscripcion"):
-            st.subheader("Crear Inscripción")
-            
-            # Generate unique ID
-            inscripcion_id = f"INS-{uuid.uuid4().hex[:8].upper()}"
-            st.text_input("ID", value=inscripcion_id, disabled=True, key="inscripcion_id_display")
-            
-            # Use relationship selectors
-            with next(get_session()) as session:
-                alumno_legajo = RelationshipSelector.render_searchable_selector(
-                    field_name="alumno_legajo",
-                    parent_model=Alumno,
-                    child_model=Inscripcion,
-                    crud_func=lambda s: alumno_crud.get_all(s, limit=500),
-                    session=session,
-                    search_fields=["legajo", "nombre"],
-                    key="inscripcion_alumno_selector",
-                    label="Alumno",
-                )
-                
-                comision_id = RelationshipSelector.render_searchable_selector(
-                    field_name="comision_id",
-                    parent_model=Comision,
-                    child_model=Inscripcion,
-                    crud_func=lambda s: comision_crud.get_all(s, limit=500),
-                    session=session,
-                    search_fields=["id", "nombre"],
-                    key="inscripcion_comision_selector",
-                    label="Comisión",
-                )
-            
-            fecha = st.date_input("Fecha de inscripción", value=date.today())
-            activa = st.checkbox("Activa", value=True)
-            
-            submitted = st.form_submit_button("💾 Guardar", type="primary")
-            
-            if submitted:
-                if not alumno_legajo or not comision_id:
-                    st.error("Debe seleccionar un alumno y una comisión")
-                else:
-                    try:
-                        inscripcion = Inscripcion(
-                            id=inscripcion_id,
-                            alumno_legajo=alumno_legajo,
-                            comision_id=comision_id,
-                            fecha_inscripcion=fecha,
-                            activa=activa
-                        )
-                        result = create_inscripcion(inscripcion)
-                        if result:
-                            CRUDFormRenderer.show_operation_feedback(
-                                operation="create",
-                                success=True,
-                                message=f"✅ Inscripción '{inscripcion_id}' creada exitosamente"
-                            )
-                            st.rerun()
-                    except Exception as e:
-                        CRUDFormRenderer.show_operation_feedback(
-                            operation="create",
-                            success=False,
-                            message=f"❌ Error al crear inscripción: {e}"
-                        )
-
-with tab_view:
-    with next(get_session()) as session:
-        inscripciones = inscripcion_crud.get_all(session)
-    
-    if not inscripciones:
-        st.info("No hay inscripciones para ver.")
-    else:
-        id_view = st.selectbox(
-            "Seleccionar inscripción",
-            options=[i.id for i in inscripciones],
-            key="view_inscripcion"
-        )
-        
-        if id_view:
-            # Use CRUDFormRenderer for read operation
-            CRUDFormRenderer.render_read_form(
-                model=Inscripcion,
-                entity_id=id_view,
-                crud_read_func=read_inscripcion,
-                custom_labels={
-                    "id": "ID",
-                    "alumno_legajo": "Legajo del Alumno",
-                    "comision_id": "ID de Comisión",
-                    "fecha_inscripcion": "Fecha de Inscripción",
-                    "activa": "Activa",
-                },
-                title=f"Detalle de Inscripción: {id_view}",
-            )
+st.info("📊 Para especificar la cantidad de alumnos esperados, edite el campo **cupo** en cada Comisión.")

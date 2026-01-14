@@ -1,42 +1,38 @@
-"""Gestión de Alumnos - Refactored to use CRUD Service and EntityPageTemplate.
+"""
+🚧 PÁGINA DEPRECADA - Gestión de Alumnos
 
-Requirements: 7.1, 7.2, 7.4, 7.5
+Esta página ha sido deprecada en la primera iteración del sistema.
+
+Razón: Para el objetivo de asignación de aulas, no es necesario registrar
+alumnos individuales. Se utilizará un dataset agregado con la cantidad de
+inscriptos por materia/comisión por ciclo lectivo.
+
+Las entidades Alumno permanecen en el modelo de datos para futuras iteraciones.
 """
 
 import streamlit as st
-from src.database.connection import get_session, init_db
-from src.services.crud_services import alumno_service
-from src.domain.problem.alumno import Alumno
-from src.ui.page_template import EntityPageTemplate, EntityPageConfig
 
-# Import relationship definitions to register relationships
-import src.services.relationship_definitions  # noqa: F401
+st.set_page_config(page_title="Alumnos (Deprecado)", page_icon="🎓", layout="wide")
 
-# Initialize database
-init_db()
+st.title("🎓 Gestión de Alumnos")
+st.warning("🚧 **Página Deprecada**")
 
-st.set_page_config(page_title="Alumnos", page_icon="🎓", layout="wide")
+st.markdown("""
+### Esta funcionalidad no está disponible en la primera iteración
 
-# Configure the entity page
-config = EntityPageConfig(
-    model=Alumno,
-    service=alumno_service,
-    page_title="Gestión de Alumnos",
-    page_icon="🎓",
-    display_fields=["legajo", "nombre", "email", "dni"],
-    custom_labels={
-        "legajo": "Legajo",
-        "nombre": "Nombre",
-        "email": "Email",
-        "dni": "DNI",
-    },
-    id_field="legajo",
-    display_field="nombre",
-    enable_cascading=False,  # Alumnos don't have cascading children
-    enable_hierarchy_view=False,  # Alumnos don't have hierarchical children
-    exclude_from_create=[],
-)
+**Razón:** Para el objetivo de asignación óptima de aulas, no es necesario 
+registrar cada alumno individualmente. 
 
-# Render the page using EntityPageTemplate
-with next(get_session()) as session:
-    EntityPageTemplate.render_entity_page(config, session)
+En su lugar, el sistema utilizará:
+- Datos agregados de inscriptos por materia/comisión
+- Dataset provisto con totales de inscripción por ciclo lectivo
+
+### Próximos pasos
+Las entidades `Alumno` permanecen en el modelo de datos y podrán ser 
+habilitadas en futuras iteraciones si se requiere:
+- Tracking individual de asistencia
+- Predicción de ocupación basada en historial personal
+- Integración con sistemas de gestión académica (SIU Guaraní)
+""")
+
+st.info("📊 Para gestionar datos de inscripción agregados, utilice la sección de **Comisiones** donde puede especificar el cupo esperado.")
