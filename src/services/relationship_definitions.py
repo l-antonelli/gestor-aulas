@@ -4,6 +4,7 @@ from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.clase import Clase
 from src.domain.problem.alumno import Alumno
+from src.domain.problem.carrera import Carrera
 from src.domain.solution.inscripcion import Inscripcion
 from src.domain.solution.asistencia import Asistencia
 from src.domain.solution.asignacion_aula import AsignacionAula
@@ -16,9 +17,28 @@ def register_all_relationships() -> None:
     """
     Register all entity relationships in the system.
     
-    This function defines and registers all one-to-many relationships
-    between domain entities, including cascading behavior and display configuration.
+    This function defines and registers all relationships between domain entities,
+    including one-to-many and many-to-many relationships, cascading behavior,
+    and display configuration.
     """
+    
+    # Carrera → Materia relationship (many-to-many through link table)
+    carrera_materia = RelationshipMetadata(
+        parent_model=Carrera,
+        child_model=Materia,
+        foreign_key_field="codigo",  # Not used for M:N, but required by dataclass
+        display_fields=["codigo", "nombre", "cupo", "horas_semanales"],
+        search_fields=["codigo", "nombre"],
+        cascading_create=False,
+        cascading_create_defaults={},
+        delete_behavior="restrict",  # Prevent deletion if materias are associated
+        validation_rules=[],
+        is_many_to_many=True,
+        link_table="materia_carrera",
+        parent_link_field="carrera_codigo",
+        child_link_field="materia_codigo",
+    )
+    RelationshipRegistry.register_relationship(carrera_materia)
     
     # Materia → Comisión relationship
     materia_comision = RelationshipMetadata(

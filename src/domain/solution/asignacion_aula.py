@@ -19,6 +19,7 @@ class AsignacionAula(Entity):
         id: Unique assignment identifier
         clase_id: Reference to the Clase being assigned
         aula_id: Reference to the assigned Aula
+        ciclo_id: Reference to the Ciclo (academic period)
         fecha_asignacion: Date when the assignment was made
         vigente: Whether the assignment is currently active
     """
@@ -26,6 +27,7 @@ class AsignacionAula(Entity):
     id: AsignacionId = Field(..., description="Unique assignment identifier")
     clase_id: ClaseId = Field(..., description="Reference to Clase")
     aula_id: str = Field(..., description="Reference to assigned Aula")
+    ciclo_id: str = Field(..., description="Reference to Ciclo (academic period)")
     fecha_asignacion: date = Field(..., description="Date of assignment")
     vigente: bool = Field(default=True, description="Whether assignment is active")
     
@@ -51,4 +53,12 @@ class AsignacionAula(Entity):
         """Validate that aula_id is not empty."""
         if not v or not v.strip():
             raise ValueError("aula_id cannot be empty")
+        return v
+    
+    @field_validator("ciclo_id")
+    @classmethod
+    def validate_ciclo_id(cls, v: str) -> str:
+        """Validate that ciclo_id is not empty."""
+        if not v or not v.strip():
+            raise ValueError("ciclo_id cannot be empty")
         return v

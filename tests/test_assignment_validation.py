@@ -49,6 +49,7 @@ def sample_assignments(sample_clases):
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 3, 1),
             vigente=True
         ),
@@ -82,6 +83,7 @@ class TestClaseAssignmentUniqueness:
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )
@@ -122,6 +124,7 @@ class TestAulaAvailability:
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )
@@ -200,6 +203,7 @@ class TestConflictDetection:
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 3, 1),
             vigente=False
         )

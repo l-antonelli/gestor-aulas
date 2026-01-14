@@ -1,146 +1,42 @@
-"""Gestión de Alumnos - Refactored to use UI components."""
+"""Gestión de Alumnos - Refactored to use CRUD Service and EntityPageTemplate.
+
+Requirements: 7.1, 7.2, 7.4, 7.5
+"""
 
 import streamlit as st
 from src.database.connection import get_session, init_db
-from src.database.crud import alumno_crud
-from src.database.converters import to_domain, to_db
+from src.services.crud_services import alumno_service
 from src.domain.problem.alumno import Alumno
-from src.ui.crud_form_renderer import CRUDFormRenderer
+from src.ui.page_template import EntityPageTemplate, EntityPageConfig
+
+# Import relationship definitions to register relationships
+import src.services.relationship_definitions  # noqa: F401
 
 # Initialize database
 init_db()
 
 st.set_page_config(page_title="Alumnos", page_icon="🎓", layout="wide")
-st.title("🎓 Gestión de Alumnos")
 
-tab_list, tab_create, tab_edit = st.tabs(["📋 Listado", "➕ Nuevo Alumno", "✏️ Editar"])
+# Configure the entity page
+config = EntityPageConfig(
+    model=Alumno,
+    service=alumno_service,
+    page_title="Gestión de Alumnos",
+    page_icon="🎓",
+    display_fields=["legajo", "nombre", "email", "dni"],
+    custom_labels={
+        "legajo": "Legajo",
+        "nombre": "Nombre",
+        "email": "Email",
+        "dni": "DNI",
+    },
+    id_field="legajo",
+    display_field="nombre",
+    enable_cascading=False,  # Alumnos don't have cascading children
+    enable_hierarchy_view=False,  # Alumnos don't have hierarchical children
+    exclude_from_create=[],
+)
 
-
-# CRUD wrapper functions for Alumno
-def create_alumno(instance: Alumno, **kwargs) -> Alumno:
-    """Create a new alumno."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        created = alumno_crud.create(session, db_instance)
-        return to_domain(created)
-    return None
-
-
-def read_alumno(entity_id: str, **kwargs) -> Alumno:
-    """Read an alumno by legajo."""
-    for session in get_session():
-        db_instance = alumno_crud.get(session, entity_id)
-        if db_instance:
-            return to_domain(db_instance)
-    return None
-
-
-def update_alumno(instance: Alumno, **kwargs) -> Alumno:
-    """Update an existing alumno."""
-    for session in get_session():
-        db_instance = to_db(instance)
-        updated = alumno_crud.update(session, db_instance)
-        return to_domain(updated)
-    return None
-
-
-def delete_alumno(entity_id: str, **kwargs) -> bool:
-    """Delete an alumno by legajo."""
-    for session in get_session():
-        return alumno_crud.delete(session, entity_id)
-    return False
-
-
-with tab_list:
-    with next(get_session()) as session:
-        alumnos = alumno_crud.get_all(session)
-    
-    if not alumnos:
-        st.info("No hay alumnos registrados.")
-    else:
-        data = [
-            {
-                "Legajo": a.legajo,
-                "Nombre": a.nombre,
-                "Email": a.email,
-                "DNI": a.dni,
-            }
-            for a in alumnos
-        ]
-        st.dataframe(data, use_container_width=True, hide_index=True)
-        st.caption(f"Total: {len(data)} alumnos")
-        
-        st.divider()
-        st.subheader("Eliminar Alumno")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            legajo_delete = st.selectbox(
-                "Seleccionar alumno a eliminar",
-                options=[a.legajo for a in alumnos],
-                format_func=lambda x: f"{x} - {next((a.nombre for a in alumnos if a.legajo == x), '')}",
-                key="delete_alumno"
-            )
-        with col2:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Eliminar", type="secondary"):
-                if delete_alumno(legajo_delete):
-                    st.success(f"Alumno {legajo_delete} eliminado")
-                    st.rerun()
-                else:
-                    st.error("Error al eliminar el alumno")
-
-with tab_create:
-    # Use CRUDFormRenderer for create operation
-    result = CRUDFormRenderer.render_create_form(
-        model=Alumno,
-        crud_create_func=create_alumno,
-        key="create_alumno",
-        custom_labels={
-            "legajo": "Legajo",
-            "nombre": "Nombre completo",
-            "email": "Email",
-            "dni": "DNI",
-        },
-        submit_label="💾 Guardar",
-        success_message="Alumno creado exitosamente",
-    )
-    
-    if result:
-        st.rerun()
-
-with tab_edit:
-    with next(get_session()) as session:
-        alumnos = alumno_crud.get_all(session)
-    
-    if not alumnos:
-        st.info("No hay alumnos para editar.")
-    else:
-        legajo_edit = st.selectbox(
-            "Seleccionar alumno a editar",
-            options=[a.legajo for a in alumnos],
-            format_func=lambda x: f"{x} - {next((a.nombre for a in alumnos if a.legajo == x), '')}",
-            key="edit_alumno_select"
-        )
-        
-        if legajo_edit:
-            # Use CRUDFormRenderer for update operation
-            result = CRUDFormRenderer.render_update_form(
-                model=Alumno,
-                entity_id=legajo_edit,
-                crud_read_func=read_alumno,
-                crud_update_func=update_alumno,
-                key=f"update_alumno_{legajo_edit}",
-                id_field="legajo",
-                custom_labels={
-                    "legajo": "Legajo",
-                    "nombre": "Nombre completo",
-                    "email": "Email",
-                    "dni": "DNI",
-                },
-                submit_label="💾 Guardar Cambios",
-                success_message="Alumno actualizado exitosamente",
-            )
-            
-            if result:
-                st.rerun()
+# Render the page using EntityPageTemplate
+with next(get_session()) as session:
+    EntityPageTemplate.render_entity_page(config, session)

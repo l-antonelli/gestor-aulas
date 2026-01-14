@@ -25,6 +25,7 @@ from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.horario_cronograma import HorarioCronograma
 from src.domain.problem.clase import Clase
+from src.domain.problem.carrera import Carrera
 from src.domain.solution.inscripcion import Inscripcion
 from src.domain.solution.asistencia import Asistencia
 from src.domain.solution.asignacion_aula import AsignacionAula
@@ -40,11 +41,12 @@ from src.database.models import (
     InscripcionDB,
     AsistenciaDB,
     AsignacionAulaDB,
+    CarreraDB,
 )
 
 # Type aliases for clarity
-DomainModel = Union[Alumno, Aula, Materia, Comision, HorarioCronograma, Clase, Inscripcion, Asistencia, AsignacionAula]
-DBModel = Union[AlumnoDB, AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, InscripcionDB, AsistenciaDB, AsignacionAulaDB]
+DomainModel = Union[Alumno, Aula, Materia, Comision, HorarioCronograma, Clase, Inscripcion, Asistencia, AsignacionAula, Carrera]
+DBModel = Union[AlumnoDB, AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, InscripcionDB, AsistenciaDB, AsignacionAulaDB, CarreraDB]
 
 
 # =============================================================================
@@ -69,6 +71,8 @@ def to_db(domain: Inscripcion) -> InscripcionDB: ...
 def to_db(domain: Asistencia) -> AsistenciaDB: ...
 @overload
 def to_db(domain: AsignacionAula) -> AsignacionAulaDB: ...
+@overload
+def to_db(domain: Carrera) -> CarreraDB: ...
 
 def to_db(domain: DomainModel) -> DBModel:
     """Convert a domain model to its DB equivalent."""
@@ -147,8 +151,17 @@ def to_db(domain: DomainModel) -> DBModel:
             id=domain.id,
             clase_id=domain.clase_id,
             aula_id=domain.aula_id,
+            ciclo_id=domain.ciclo_id,
             fecha_asignacion=domain.fecha_asignacion,
             vigente=domain.vigente,
+        )
+    
+    if isinstance(domain, Carrera):
+        return CarreraDB(
+            codigo=domain.codigo,
+            nombre=domain.nombre,
+            titulo_otorgado=domain.titulo_otorgado,
+            duracion_anios=domain.duracion_anios,
         )
     
     raise TypeError(f"Unknown domain model type: {type(domain)}")
@@ -176,6 +189,8 @@ def to_domain(db: InscripcionDB) -> Inscripcion: ...
 def to_domain(db: AsistenciaDB) -> Asistencia: ...
 @overload
 def to_domain(db: AsignacionAulaDB) -> AsignacionAula: ...
+@overload
+def to_domain(db: CarreraDB) -> Carrera: ...
 
 def to_domain(db: DBModel) -> DomainModel:
     """Convert a DB model to its domain equivalent."""
@@ -254,8 +269,17 @@ def to_domain(db: DBModel) -> DomainModel:
             id=db.id,
             clase_id=db.clase_id,
             aula_id=db.aula_id,
+            ciclo_id=db.ciclo_id,
             fecha_asignacion=db.fecha_asignacion,
             vigente=db.vigente,
+        )
+    
+    if isinstance(db, CarreraDB):
+        return Carrera(
+            codigo=db.codigo,
+            nombre=db.nombre,
+            titulo_otorgado=db.titulo_otorgado,
+            duracion_anios=db.duracion_anios,
         )
     
     raise TypeError(f"Unknown DB model type: {type(db)}")

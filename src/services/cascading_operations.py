@@ -245,7 +245,7 @@ class CascadingOperations:
                 )
                 
                 child_crud_func = CascadingOperations._get_crud_func_for_model(
-                    relationship.child_model
+                    relationship.child_model, operation="delete"
                 )
                 
                 if child_crud_func:
@@ -312,28 +312,45 @@ class CascadingOperations:
             return f"{parent_pk}-1"
     
     @staticmethod
-    def _get_crud_func_for_model(model: Type[BaseModel]) -> Optional[Callable]:
+    def _get_crud_func_for_model(model: Type[BaseModel], operation: str = "create") -> Optional[Callable]:
         """
         Get the appropriate CRUD function for a model.
         
         This is a helper to map models to their CRUD functions.
         In a real implementation, this might use a registry or dependency injection.
+        
+        Args:
+            model: The domain model class
+            operation: The CRUD operation ("create" or "delete")
+            
+        Returns:
+            The CRUD function for the specified operation, or None if not found
         """
         from src.database import crud
         
-        # Map model names to CRUD functions
-        crud_map = {
-            "Materia": crud.materia_crud.create,
-            "Comision": crud.comision_crud.create,
-            "Clase": crud.clase_crud.create,
-            "Alumno": crud.alumno_crud.create,
-            "Inscripcion": crud.inscripcion_crud.create,
-            "Asistencia": crud.asistencia_crud.create,
-            "AsignacionAula": crud.asignacion_crud.create,
+        # Map model names to CRUD instances
+        crud_instance_map = {
+            "Materia": crud.materia_crud,
+            "Comision": crud.comision_crud,
+            "Clase": crud.clase_crud,
+            "Alumno": crud.alumno_crud,
+            "Inscripcion": crud.inscripcion_crud,
+            "Asistencia": crud.asistencia_crud,
+            "AsignacionAula": crud.asignacion_crud,
         }
         
         model_name = model.__name__
-        return crud_map.get(model_name)
+        crud_instance = crud_instance_map.get(model_name)
+        
+        if crud_instance is None:
+            return None
+        
+        if operation == "create":
+            return crud_instance.create
+        elif operation == "delete":
+            return crud_instance.delete
+        else:
+            return None
     
     @staticmethod
     def _get_children(

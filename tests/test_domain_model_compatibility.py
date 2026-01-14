@@ -135,6 +135,7 @@ def create_valid_asignacion() -> AsignacionAula:
         id="ASG-001",
         clase_id="CLS-001",
         aula_id="AULA-001",
+        ciclo_id="2024-1C",
         fecha_asignacion=datetime.date(2024, 3, 1),
         vigente=True,
     )

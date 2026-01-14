@@ -77,9 +77,17 @@ def test_db_session() -> Generator[Session, None, None]:
 @pytest.fixture(autouse=True)
 def setup_relationships():
     """Ensure relationships are registered before each test."""
-    # Relationships are auto-registered on import via relationship_definitions module
-    # No need to re-register them here
-    pass
+    # Re-register all relationships to ensure they're available
+    # This is needed because other tests may clear the registry
+    from src.services.relationship_definitions import register_all_relationships
+    from src.services.relationship_registry import RelationshipRegistry
+    
+    # Only register if not already registered
+    from src.domain.problem.materia import Materia
+    from src.domain.problem.comision import Comision
+    
+    if not RelationshipRegistry.is_registered(Materia, Comision):
+        register_all_relationships()
 
 
 # =============================================================================
@@ -192,11 +200,25 @@ class TestEndToEndWorkflows:
         db_aula = to_db(aula)
         created_aula = aula_crud.create(test_db_session, db_aula)
         
+        # Step 4.5: Create Ciclo (needed for AsignacionAula)
+        from src.database.models import CicloDB
+        ciclo = CicloDB(
+            id="2024-1C",
+            anio=2024,
+            numero=1,
+            fecha_inicio=datetime.date(2024, 3, 1),
+            fecha_fin=datetime.date(2024, 7, 31),
+            descripcion="Primer cuatrimestre 2024",
+        )
+        test_db_session.add(ciclo)
+        test_db_session.commit()
+        
         # Step 5: Create AsignacionAula
         asignacion = AsignacionAula(
             id="ASG-001",
             clase_id=created_clase.id,
             aula_id=created_aula.id,
+            ciclo_id="2024-1C",
             fecha_asignacion=datetime.date(2024, 3, 1),
             vigente=True,
         )
@@ -777,11 +799,25 @@ class TestComplexRelationshipScenarios:
         db_aula2 = to_db(aula2)
         aula_crud.create(test_db_session, db_aula2)
         
+        # Create Ciclo (needed for AsignacionAula)
+        from src.database.models import CicloDB
+        ciclo = CicloDB(
+            id="2024-1C",
+            anio=2024,
+            numero=1,
+            fecha_inicio=datetime.date(2024, 3, 1),
+            fecha_fin=datetime.date(2024, 7, 31),
+            descripcion="Primer cuatrimestre 2024",
+        )
+        test_db_session.add(ciclo)
+        test_db_session.commit()
+        
         # Create first AsignacionAula (old, not vigente)
         asignacion1 = AsignacionAula(
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-001",
+            ciclo_id="2024-1C",
             fecha_asignacion=datetime.date(2024, 1, 1),
             vigente=False,
         )
@@ -793,6 +829,7 @@ class TestComplexRelationshipScenarios:
             id="ASG-002",
             clase_id="CLS-001",
             aula_id="AULA-002",
+            ciclo_id="2024-1C",
             fecha_asignacion=datetime.date(2024, 3, 1),
             vigente=True,
         )

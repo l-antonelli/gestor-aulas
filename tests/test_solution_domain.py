@@ -142,12 +142,14 @@ class TestAsignacionAula:
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 2, 15),
             vigente=True
         )
         assert asignacion.id == "ASG-001"
         assert asignacion.clase_id == "CLS-001"
         assert asignacion.aula_id == "AULA-101"
+        assert asignacion.ciclo_id == "2024-1C"
         assert asignacion.fecha_asignacion == date(2025, 2, 15)
         assert asignacion.vigente is True
     
@@ -157,6 +159,7 @@ class TestAsignacionAula:
             id="ASG-001",
             clase_id="CLS-001",
             aula_id="AULA-101",
+            ciclo_id="2024-1C",
             fecha_asignacion=date(2025, 2, 15)
         )
         assert asignacion.vigente is True
@@ -168,6 +171,7 @@ class TestAsignacionAula:
                 id="",
                 clase_id="CLS-001",
                 aula_id="AULA-101",
+                ciclo_id="2024-1C",
                 fecha_asignacion=date(2025, 2, 15)
             )
     
@@ -178,6 +182,7 @@ class TestAsignacionAula:
                 id="ASG-001",
                 clase_id="",
                 aula_id="AULA-101",
+                ciclo_id="2024-1C",
                 fecha_asignacion=date(2025, 2, 15)
             )
     
@@ -188,5 +193,17 @@ class TestAsignacionAula:
                 id="ASG-001",
                 clase_id="CLS-001",
                 aula_id="",
+                ciclo_id="2024-1C",
+                fecha_asignacion=date(2025, 2, 15)
+            )
+    
+    def test_invalid_empty_ciclo_id(self):
+        """Test that empty ciclo_id is rejected."""
+        with pytest.raises(ValidationError):
+            AsignacionAula(
+                id="ASG-001",
+                clase_id="CLS-001",
+                aula_id="AULA-101",
+                ciclo_id="",
                 fecha_asignacion=date(2025, 2, 15)
             )

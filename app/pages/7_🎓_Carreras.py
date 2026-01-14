@@ -1,95 +1,105 @@
-"""Gestión de Carreras."""
+"""Gestión de Carreras - Refactored to use CRUD Service and EntityPageTemplate.
+
+Requirements: 7.1, 7.2, 7.4, 7.5, 8.1
+"""
 
 import streamlit as st
-from src.database.connection import get_session
-from src.database.models import CarreraDB
-from src.database.crud import carrera_crud
+from src.database.connection import get_session, init_db
+from src.services.crud_services import carrera_service, materia_service
+from src.domain.problem.carrera import Carrera
+from src.domain.problem.materia import Materia
+from src.ui.page_template import EntityPageTemplate, EntityPageConfig
+from src.ui.hierarchical_entity_viewer import HierarchicalEntityViewer, ChildConfig, HierarchyLevel
+
+# Import relationship definitions to register relationships
+import src.services.relationship_definitions  # noqa: F401
+
+# Initialize database
+init_db()
 
 st.set_page_config(page_title="Carreras", page_icon="🎓", layout="wide")
-st.title("🎓 Gestión de Carreras")
 
-tab_list, tab_create, tab_edit = st.tabs(["📋 Listado", "➕ Nueva Carrera", "✏️ Editar"])
+# Configure child entities for hierarchical view
+# Note: Carrera -> Materia is a many-to-many relationship through MateriaCarreraLink
+# We'll display associated materias in the detail view
 
-with tab_list:
-    with next(get_session()) as session:
-        carreras = carrera_crud.get_all(session, limit=100)
+# Configure the entity page
+config = EntityPageConfig(
+    model=Carrera,
+    service=carrera_service,
+    page_title="Gestión de Carreras",
+    page_icon="🎓",
+    display_fields=["codigo", "nombre", "titulo_otorgado", "duracion_anios"],
+    custom_labels={
+        "codigo": "Código",
+        "nombre": "Nombre",
+        "titulo_otorgado": "Título Otorgado",
+        "duracion_anios": "Duración (años)",
+    },
+    id_field="codigo",
+    display_field="nombre",
+    enable_cascading=False,  # Carreras don't have cascading children
+    enable_hierarchy_view=True,
+    exclude_from_create=[],
+)
+
+# Render the page using EntityPageTemplate
+with next(get_session()) as session:
+    EntityPageTemplate.render_entity_page(config, session)
     
-    if not carreras:
-        st.info("No hay carreras registradas.")
-    else:
-        data = [
-            {
-                "Código": c.codigo,
-                "Nombre": c.nombre,
-                "Título": c.titulo_otorgado,
-                "Duración (años)": c.duracion_anios,
-            }
-            for c in carreras
-        ]
-        st.dataframe(data, use_container_width=True, hide_index=True)
-        
-        st.divider()
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            codigo_delete = st.selectbox("Eliminar carrera", options=[c.codigo for c in carreras])
-        with col2:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Eliminar"):
-                with next(get_session()) as session:
-                    carrera_crud.delete(session, codigo_delete)
-                st.rerun()
-
-with tab_create:
-    with st.form("create_carrera"):
-        codigo = st.text_input("Código", placeholder="ING-ELECT")
-        nombre = st.text_input("Nombre", placeholder="Ingeniería Electrónica")
-        titulo = st.text_input("Título otorgado", placeholder="Ingeniero/a Electrónico/a")
-        duracion = st.number_input("Duración (años)", min_value=1, max_value=10, value=5)
-        
-        if st.form_submit_button("💾 Guardar", type="primary"):
-            if not codigo or not nombre:
-                st.error("Código y nombre son obligatorios")
-            else:
-                carrera = CarreraDB(
-                    codigo=codigo,
-                    nombre=nombre,
-                    titulo_otorgado=titulo,
-                    duracion_anios=duracion
-                )
-                try:
-                    with next(get_session()) as session:
-                        carrera_crud.create(session, carrera)
-                    st.success(f"Carrera '{nombre}' creada")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-with tab_edit:
-    with next(get_session()) as session:
-        carreras = carrera_crud.get_all(session, limit=100)
+    # Add a section for managing Carrera-Materia relationships
+    st.divider()
+    st.subheader("📚 Materias por Carrera")
     
-    if not carreras:
-        st.info("No hay carreras para editar.")
-    else:
-        codigo_edit = st.selectbox("Seleccionar carrera", options=[c.codigo for c in carreras])
-        carrera_sel = next((c for c in carreras if c.codigo == codigo_edit), None)
+    # Get all carreras for selector
+    carreras = carrera_service.get_all(session)
+    
+    if carreras:
+        carrera_options = [(c.codigo, c.nombre) for c in carreras]
         
-        if carrera_sel:
-            with st.form("edit_carrera"):
-                st.text_input("Código", value=carrera_sel.codigo, disabled=True)
-                nombre = st.text_input("Nombre", value=carrera_sel.nombre)
-                titulo = st.text_input("Título otorgado", value=carrera_sel.titulo_otorgado)
-                duracion = st.number_input("Duración (años)", min_value=1, max_value=10, value=carrera_sel.duracion_anios)
-                
-                if st.form_submit_button("💾 Guardar Cambios", type="primary"):
-                    with next(get_session()) as session:
-                        c = session.get(CarreraDB, codigo_edit)
-                        if c:
-                            c.nombre = nombre
-                            c.titulo_otorgado = titulo
-                            c.duracion_anios = duracion
-                            session.add(c)
-                            session.commit()
-                            st.success("Carrera actualizada")
-                            st.rerun()
+        selected_carrera = st.selectbox(
+            "Seleccionar Carrera",
+            options=[opt[0] for opt in carrera_options],
+            format_func=lambda x: f"{x} - {next((opt[1] for opt in carrera_options if opt[0] == x), '')}",
+            key="carrera_materias_view"
+        )
+        
+        if selected_carrera:
+            # Get materias for this carrera
+            materias = carrera_service.get_materias(session, selected_carrera)
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                if materias:
+                    st.write(f"**{len(materias)} materia(s) asociada(s):**")
+                    for m in materias:
+                        st.markdown(f"- **{m.codigo}**: {m.nombre} (Cupo: {m.cupo})")
+                else:
+                    st.info("Esta carrera no tiene materias asociadas.")
+            
+            with col2:
+                # Add materia to carrera
+                with st.expander("➕ Asociar Materia"):
+                    all_materias = materia_service.get_all(session)
+                    # Filter out already associated materias
+                    associated_codigos = {m.codigo for m in materias}
+                    available_materias = [m for m in all_materias if m.codigo not in associated_codigos]
+                    
+                    if available_materias:
+                        materia_to_add = st.selectbox(
+                            "Materia",
+                            options=[m.codigo for m in available_materias],
+                            format_func=lambda x: f"{x} - {next((m.nombre for m in available_materias if m.codigo == x), '')}",
+                            key="add_materia_to_carrera"
+                        )
+                        
+                        if st.button("Asociar", key="btn_add_materia"):
+                            try:
+                                carrera_service.add_materia(session, selected_carrera, materia_to_add)
+                                st.success(f"Materia {materia_to_add} asociada a {selected_carrera}")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    else:
+                        st.info("No hay materias disponibles para asociar.")

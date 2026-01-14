@@ -512,6 +512,7 @@ from src.domain.problem.clase import Clase
 from src.domain.problem.alumno import Alumno
 from src.domain.problem.aula import Aula
 from src.domain.problem.horario_cronograma import HorarioCronograma
+from src.domain.problem.carrera import Carrera
 
 # Import DB models
 from src.database.models import (
@@ -651,6 +652,147 @@ class HorarioService(BaseCRUDService[HorarioCronograma, HorarioCronogramaDB]):
         )
 
 
+class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
+    """
+    CRUD service for Carrera entities.
+    
+    Provides domain-level operations for university degree programs,
+    including retrieval of associated Materias.
+    """
+    
+    def __init__(self):
+        super().__init__(
+            domain_model=Carrera,
+            db_model=CarreraDB,
+            crud=carrera_crud,
+            id_field="codigo"
+        )
+    
+    def get_materias(self, session: Session, carrera_codigo: str) -> List[Materia]:
+        """
+        Get all materias associated with a carrera.
+        
+        This method queries the many-to-many relationship between
+        Carrera and Materia through the MateriaCarreraLink table.
+        
+        Args:
+            session: Database session
+            carrera_codigo: The carrera's codigo
+            
+        Returns:
+            List of Materia domain model instances associated with the carrera
+        """
+        from sqlmodel import select
+        from src.database.models import MateriaCarreraLink
+        
+        # Query materias through the link table
+        statement = (
+            select(MateriaDB)
+            .join(MateriaCarreraLink, MateriaDB.codigo == MateriaCarreraLink.materia_codigo)
+            .where(MateriaCarreraLink.carrera_codigo == carrera_codigo)
+        )
+        results = session.exec(statement).all()
+        return [to_domain(r) for r in results]
+    
+    def add_materia(self, session: Session, carrera_codigo: str, materia_codigo: str) -> bool:
+        """
+        Associate a materia with a carrera.
+        
+        Args:
+            session: Database session
+            carrera_codigo: The carrera's codigo
+            materia_codigo: The materia's codigo
+            
+        Returns:
+            True if the association was created, False if it already exists
+            
+        Raises:
+            EntityNotFoundError: If carrera or materia doesn't exist
+        """
+        from src.database.models import MateriaCarreraLink
+        from src.database.crud import materia_crud
+        
+        # Verify carrera exists
+        carrera = self.crud.get(session, carrera_codigo)
+        if carrera is None:
+            raise EntityNotFoundError("Carrera", carrera_codigo)
+        
+        # Verify materia exists
+        materia = materia_crud.get(session, materia_codigo)
+        if materia is None:
+            raise EntityNotFoundError("Materia", materia_codigo)
+        
+        # Check if link already exists
+        from sqlmodel import select
+        existing = session.exec(
+            select(MateriaCarreraLink).where(
+                MateriaCarreraLink.carrera_codigo == carrera_codigo,
+                MateriaCarreraLink.materia_codigo == materia_codigo
+            )
+        ).first()
+        
+        if existing:
+            return False
+        
+        # Create the link
+        link = MateriaCarreraLink(
+            carrera_codigo=carrera_codigo,
+            materia_codigo=materia_codigo
+        )
+        session.add(link)
+        session.commit()
+        return True
+    
+    def remove_materia(self, session: Session, carrera_codigo: str, materia_codigo: str) -> bool:
+        """
+        Remove the association between a materia and a carrera.
+        
+        Args:
+            session: Database session
+            carrera_codigo: The carrera's codigo
+            materia_codigo: The materia's codigo
+            
+        Returns:
+            True if the association was removed, False if it didn't exist
+        """
+        from src.database.models import MateriaCarreraLink
+        from sqlmodel import select
+        
+        # Find the link
+        link = session.exec(
+            select(MateriaCarreraLink).where(
+                MateriaCarreraLink.carrera_codigo == carrera_codigo,
+                MateriaCarreraLink.materia_codigo == materia_codigo
+            )
+        ).first()
+        
+        if link is None:
+            return False
+        
+        session.delete(link)
+        session.commit()
+        return True
+    
+    def get_children_count(self, session: Session, carrera_codigo: str) -> int:
+        """
+        Get the count of materias associated with a carrera.
+        
+        Args:
+            session: Database session
+            carrera_codigo: The carrera's codigo
+            
+        Returns:
+            Number of materias associated with the carrera
+        """
+        from sqlmodel import select, func
+        from src.database.models import MateriaCarreraLink
+        
+        statement = select(func.count()).where(
+            MateriaCarreraLink.carrera_codigo == carrera_codigo
+        )
+        return session.exec(statement).one()
+
+
 # =============================================================================
 # Service Instances (Singletons)
 # =============================================================================
@@ -662,3 +804,4 @@ clase_service = ClaseService()
 alumno_service = AlumnoService()
 aula_service = AulaService()
 horario_service = HorarioService()
+carrera_service = CarreraService()
