@@ -425,29 +425,53 @@ class EntityPageTemplate:
                     child_dict = child.model_dump() if hasattr(child, 'model_dump') else child.dict()
                     child_id = str(child_dict.get(child_config.id_field, ""))
                     
-                    col1, col2 = st.columns([4, 1])
+                    # Check if we're editing this child
+                    edit_key = f"edit_{child_model.__name__}_{child_id}_{parent_id}"
+                    is_editing = st.session_state.get(edit_key, False)
                     
-                    with col1:
-                        # Display configured fields
-                        parts = []
-                        for f in child_config.display_fields:
-                            if f in child_dict:
-                                parts.append(f"**{f}**: {child_dict[f]}")
-                        st.markdown(" | ".join(parts) if parts else f"ID: {child_id}")
-                    
-                    with col2:
-                        if child_config.allow_delete:
-                            if st.button(
-                                "🗑️",
-                                key=f"delete_child_{child_model.__name__}_{child_id}_{parent_id}",
-                                help="Eliminar",
-                            ):
-                                try:
-                                    child_service.delete(session, child_id)
-                                    st.success(f"{child_model.__name__} eliminado")
+                    if is_editing:
+                        # Render inline edit form
+                        EntityPageTemplate._render_inline_edit_form(
+                            child=child,
+                            child_id=child_id,
+                            parent_id=parent_id,
+                            child_config=child_config,
+                            session=session,
+                        )
+                    else:
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        
+                        with col1:
+                            # Display configured fields
+                            parts = []
+                            for f in child_config.display_fields:
+                                if f in child_dict:
+                                    parts.append(f"**{f}**: {child_dict[f]}")
+                            st.markdown(" | ".join(parts) if parts else f"ID: {child_id}")
+                        
+                        with col2:
+                            if child_config.allow_edit:
+                                if st.button(
+                                    "✏️",
+                                    key=f"edit_btn_{child_model.__name__}_{child_id}_{parent_id}",
+                                    help="Editar",
+                                ):
+                                    st.session_state[edit_key] = True
                                     st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {str(e)}")
+                        
+                        with col3:
+                            if child_config.allow_delete:
+                                if st.button(
+                                    "🗑️",
+                                    key=f"delete_child_{child_model.__name__}_{child_id}_{parent_id}",
+                                    help="Eliminar",
+                                ):
+                                    try:
+                                        child_service.delete(session, child_id)
+                                        st.success(f"{child_model.__name__} eliminado")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)}")
                     
                     st.divider()
             
@@ -534,6 +558,23 @@ class EntityPageTemplate:
             
             if submit:
                 try:
+                    # Validate cross-entity constraints before creating
+                    validation_errors = EntityPageTemplate._validate_child_cupo_constraint(
+                        parent_id=parent_id,
+                        child_config=child_config,
+                        form_data=form_data,
+                        session=session,
+                        operation="create",
+                    )
+                    
+                    if validation_errors:
+                        for error in validation_errors:
+                            if error.startswith("💡"):
+                                st.info(error)
+                            else:
+                                st.error(error)
+                        return
+                    
                     instance = child_model(**form_data)
                     child_config.service.create(session, instance)
                     
@@ -544,6 +585,239 @@ class EntityPageTemplate:
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al crear: {str(e)}")
+    
+    @staticmethod
+    def _render_inline_edit_form(
+        child: BaseModel,
+        child_id: str,
+        parent_id: str,
+        child_config: ChildConfig,
+        session: Session,
+    ) -> None:
+        """
+        Render an inline form for editing a child entity.
+        
+        Args:
+            child: The child entity instance to edit
+            child_id: The child entity ID
+            parent_id: The parent entity ID
+            child_config: Configuration for the child entity type
+            session: Database session
+        """
+        child_model = child_config.model
+        form_key = f"inline_edit_{child_model.__name__}_{child_id}_{parent_id}"
+        edit_key = f"edit_{child_model.__name__}_{child_id}_{parent_id}"
+        
+        # Get current values
+        child_dict = child.model_dump() if hasattr(child, 'model_dump') else child.dict()
+        
+        st.markdown(f"**Editar {child_model.__name__}**")
+        
+        with st.form(key=form_key):
+            form_data = {}
+            
+            # Get all fields from model
+            fields = list(child_model.model_fields.keys())
+            
+            for field_name in fields:
+                current_value = child_dict.get(field_name)
+                
+                if field_name == child_config.id_field:
+                    # Show ID as read-only
+                    st.text_input(
+                        field_name.replace("_", " ").title(),
+                        value=str(current_value) if current_value else "",
+                        disabled=True,
+                        key=f"{form_key}_{field_name}_display",
+                    )
+                    form_data[field_name] = current_value
+                elif field_name == child_config.foreign_key_field:
+                    # Show foreign key as read-only
+                    st.text_input(
+                        field_name.replace("_", " ").title(),
+                        value=parent_id,
+                        disabled=True,
+                        key=f"{form_key}_{field_name}_display",
+                    )
+                    form_data[field_name] = parent_id
+                else:
+                    # Render normal field input with current value as default
+                    value = FormInputRenderer.render_field_input(
+                        model=child_model,
+                        field_name=field_name,
+                        key=f"{form_key}_{field_name}",
+                        default_value=current_value,
+                        session=session,
+                    )
+                    form_data[field_name] = value
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                cancel = st.form_submit_button("Cancelar", use_container_width=True)
+            
+            with col2:
+                submit = st.form_submit_button("Guardar", type="primary", use_container_width=True)
+            
+            if cancel:
+                st.session_state[edit_key] = False
+                st.rerun()
+            
+            if submit:
+                try:
+                    # Validate cross-entity constraints before updating
+                    validation_errors = EntityPageTemplate._validate_child_cupo_constraint(
+                        parent_id=parent_id,
+                        child_config=child_config,
+                        form_data=form_data,
+                        session=session,
+                        operation="update",
+                        exclude_child_id=child_id,
+                    )
+                    
+                    if validation_errors:
+                        for error in validation_errors:
+                            if error.startswith("💡"):
+                                st.info(error)
+                            else:
+                                st.error(error)
+                        return
+                    
+                    instance = child_model(**form_data)
+                    child_config.service.update(session, instance)
+                    
+                    st.session_state[edit_key] = False
+                    
+                    st.success(f"✅ {child_model.__name__} actualizado exitosamente")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al actualizar: {str(e)}")
+    
+    @staticmethod
+    def _validate_child_cupo_constraint(
+        parent_id: str,
+        child_config: ChildConfig,
+        form_data: Dict[str, Any],
+        session: Session,
+        operation: str = "create",
+        exclude_child_id: str = None,
+    ) -> List[str]:
+        """
+        Validate cupo constraint for child entities.
+        
+        Ensures that the sum of child cupos doesn't exceed parent cupo.
+        
+        Args:
+            parent_id: The parent entity ID
+            child_config: Configuration for the child entity type
+            form_data: Form data for the new/updated child
+            session: Database session
+            operation: "create" or "update"
+            exclude_child_id: Child ID to exclude (for updates)
+            
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        from src.services.relationship_registry import RelationshipRegistry
+        
+        errors = []
+        child_model = child_config.model
+        
+        # Check if child has a cupo field
+        if "cupo" not in form_data:
+            return errors
+        
+        new_cupo = form_data.get("cupo")
+        if new_cupo is None:
+            return errors
+        
+        # Find the relationship to get parent model
+        all_relationships = RelationshipRegistry.get_all_relationships()
+        parent_model = None
+        
+        for rel in all_relationships:
+            if rel.child_model == child_model and rel.foreign_key_field == child_config.foreign_key_field:
+                parent_model = rel.parent_model
+                break
+        
+        if parent_model is None:
+            return errors
+        
+        # Get parent service
+        from src.services.crud_services import (
+            materia_service, comision_service, clase_service,
+            alumno_service, aula_service, horario_service, carrera_service
+        )
+        
+        service_map = {
+            'Materia': materia_service,
+            'Comision': comision_service,
+            'Clase': clase_service,
+            'Alumno': alumno_service,
+            'Aula': aula_service,
+            'HorarioCronograma': horario_service,
+            'Carrera': carrera_service,
+        }
+        
+        parent_service = service_map.get(parent_model.__name__)
+        if parent_service is None:
+            return errors
+        
+        # Get parent instance
+        parent_instance = parent_service.get(session, parent_id)
+        if parent_instance is None:
+            return errors
+        
+        # Check if parent has cupo field and if it's not None
+        if not hasattr(parent_instance, "cupo"):
+            return errors
+        
+        parent_cupo = getattr(parent_instance, "cupo", None)
+        if parent_cupo is None:
+            # No limit set on parent, skip validation
+            return errors
+        
+        # Get all existing children
+        all_children = child_config.service.get_all(session)
+        siblings = [
+            c for c in all_children
+            if (c.model_dump() if hasattr(c, 'model_dump') else c.dict()).get(child_config.foreign_key_field) == parent_id
+        ]
+        
+        # For updates, exclude the current child
+        if operation == "update" and exclude_child_id:
+            siblings = [
+                c for c in siblings
+                if str((c.model_dump() if hasattr(c, 'model_dump') else c.dict()).get(child_config.id_field, "")) != exclude_child_id
+            ]
+        
+        # Calculate sum of existing sibling cupos
+        existing_sum = 0
+        for sibling in siblings:
+            sibling_dict = sibling.model_dump() if hasattr(sibling, 'model_dump') else sibling.dict()
+            sibling_cupo = sibling_dict.get("cupo", 0)
+            if sibling_cupo is not None:
+                existing_sum += sibling_cupo
+        
+        # Check if new total exceeds parent cupo
+        new_total = existing_sum + new_cupo
+        
+        if new_total > parent_cupo:
+            available = parent_cupo - existing_sum
+            errors.append(
+                f"❌ La suma de cupos de {child_model.__name__} ({new_total}) "
+                f"excede el cupo de {parent_model.__name__} ({parent_cupo})"
+            )
+            errors.append(
+                f"💡 Sugerencia: El cupo máximo disponible es {available}. "
+                f"Reduzca el cupo a {available} o menos."
+            )
+            errors.append(
+                f"💡 Sugerencia: Alternativamente, aumente el cupo de {parent_model.__name__} "
+                f"de {parent_cupo} a al menos {new_total}."
+            )
+        
+        return errors
     
     @staticmethod
     def _get_foreign_key_fields(model: Type[BaseModel]) -> Dict[str, Type[BaseModel]]:
