@@ -834,21 +834,24 @@ class CRUDFormRenderer:
             # Check sum constraints (e.g., sum of comision cupos <= materia cupo)
             # This is a common pattern, so we check if both parent and child have a "cupo" field
             if hasattr(parent_instance, "cupo") and hasattr(instance_db, "cupo"):
-                is_valid, error_msg = CrossEntityValidator.validate_sum_constraint(
-                    parent_instance=parent_instance,
-                    child_instances=all_children,
-                    parent_field="cupo",
-                    child_field="cupo",
-                )
-                if not is_valid:
-                    errors.append(error_msg)
-                    # Add suggestions
-                    suggestions = CrossEntityValidator.get_constraint_suggestions(
+                # Skip validation if parent cupo is None (no limit)
+                parent_cupo = getattr(parent_instance, "cupo", None)
+                if parent_cupo is not None:
+                    is_valid, error_msg = CrossEntityValidator.validate_sum_constraint(
                         parent_instance=parent_instance,
                         child_instances=all_children,
-                        validation_error=error_msg,
+                        parent_field="cupo",
+                        child_field="cupo",
                     )
-                    errors.extend([f"💡 Sugerencia: {s}" for s in suggestions])
+                    if not is_valid:
+                        errors.append(error_msg)
+                        # Add suggestions
+                        suggestions = CrossEntityValidator.get_constraint_suggestions(
+                            parent_instance=parent_instance,
+                            child_instances=all_children,
+                            validation_error=error_msg,
+                        )
+                        errors.extend([f"💡 Sugerencia: {s}" for s in suggestions])
         
         return errors
     
