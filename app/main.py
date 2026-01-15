@@ -30,13 +30,22 @@ Este sistema permite gestionar la asignación óptima de aulas para el dictado d
 
 Usa el menú lateral para navegar entre las secciones:
 
-- **🎛️ Gestión Unificada**: Vista integrada de todas las entidades
-- **📚 Materias**: Gestión de asignaturas académicas
+- **📚 Materias**: Gestión de asignaturas académicas (con creación automática de comisiones)
+- **👥 Comisiones**: División de materias en comisiones (con validación de cupo)
 - **🏛️ Aulas**: Gestión de espacios físicos
-- **👥 Comisiones**: División de materias en comisiones
 - **📅 Horarios**: Franjas horarias del cronograma
+- **🎓 Alumnos**: Gestión de estudiantes
+- **📝 Inscripciones**: Gestión de inscripciones
 - **🎓 Carreras**: Carreras de la facultad
+- **👨‍🏫 Profesores**: Gestión de profesores
 - **📆 Ciclos**: Períodos lectivos
+
+### Funcionalidades Destacadas
+
+- **Creación automática**: Al crear una materia, se crea automáticamente una comisión por defecto
+- **Validación de cupo**: Al crear/editar comisiones, se valida que la suma de cupos no exceda el cupo de la materia
+- **Edición inline**: Posibilidad de editar comisiones directamente desde la vista de materia
+- **Navegación jerárquica**: Navegación intuitiva entre entidades relacionadas
 
 ### Estado del Sistema
 """)
