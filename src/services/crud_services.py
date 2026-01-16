@@ -618,25 +618,36 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         for link in existing_links:
             session.delete(link)
         
-        # Create new associations
+        # Create new associations with default values
         for carrera_codigo in carrera_codigos:
             link = MateriaCarreraLink(
                 materia_codigo=materia_codigo,
-                carrera_codigo=carrera_codigo
+                carrera_codigo=carrera_codigo,
+                anio_carrera=1,
+                cuatrimestre_carrera=1
             )
             session.add(link)
         
         session.commit()
         return True
     
-    def add_carrera(self, session: Session, materia_codigo: str, carrera_codigo: str) -> bool:
+    def add_carrera(
+        self, 
+        session: Session, 
+        materia_codigo: str, 
+        carrera_codigo: str,
+        anio_carrera: int = 1,
+        cuatrimestre_carrera: int = 1
+    ) -> bool:
         """
-        Associate a carrera with a materia.
+        Associate a carrera with a materia, specifying year and semester.
         
         Args:
             session: Database session
             materia_codigo: The materia's codigo
             carrera_codigo: The carrera's codigo
+            anio_carrera: Year in the curriculum (1-6)
+            cuatrimestre_carrera: Semester (1 or 2)
             
         Returns:
             True if the association was created, False if it already exists
@@ -669,10 +680,12 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         if existing:
             return False
         
-        # Create the link
+        # Create the link with year and semester
         link = MateriaCarreraLink(
             materia_codigo=materia_codigo,
-            carrera_codigo=carrera_codigo
+            carrera_codigo=carrera_codigo,
+            anio_carrera=anio_carrera,
+            cuatrimestre_carrera=cuatrimestre_carrera
         )
         session.add(link)
         session.commit()
@@ -855,14 +868,23 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
     
-    def add_materia(self, session: Session, carrera_codigo: str, materia_codigo: str) -> bool:
+    def add_materia(
+        self, 
+        session: Session, 
+        carrera_codigo: str, 
+        materia_codigo: str,
+        anio_carrera: int = 1,
+        cuatrimestre_carrera: int = 1
+    ) -> bool:
         """
-        Associate a materia with a carrera.
+        Associate a materia with a carrera, specifying year and semester.
         
         Args:
             session: Database session
             carrera_codigo: The carrera's codigo
             materia_codigo: The materia's codigo
+            anio_carrera: Year in the curriculum (1-6)
+            cuatrimestre_carrera: Semester (1 or 2)
             
         Returns:
             True if the association was created, False if it already exists
@@ -895,10 +917,12 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         if existing:
             return False
         
-        # Create the link
+        # Create the link with year and semester
         link = MateriaCarreraLink(
             carrera_codigo=carrera_codigo,
-            materia_codigo=materia_codigo
+            materia_codigo=materia_codigo,
+            anio_carrera=anio_carrera,
+            cuatrimestre_carrera=cuatrimestre_carrera
         )
         session.add(link)
         session.commit()
@@ -952,6 +976,45 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             MateriaCarreraLink.carrera_codigo == carrera_codigo
         )
         return session.exec(statement).one()
+    
+    def get_materias_by_year_and_semester(
+        self, 
+        session: Session, 
+        carrera_codigo: str, 
+        anio: int,
+        cuatrimestre: Optional[int] = None
+    ) -> List[Tuple[Materia, int, int]]:
+        """
+        Get materias for a carrera filtered by year and optionally semester.
+        
+        Args:
+            session: Database session
+            carrera_codigo: The carrera's codigo
+            anio: Year in the curriculum (1-6)
+            cuatrimestre: Optional semester filter (1 or 2)
+            
+        Returns:
+            List of tuples (Materia, anio_carrera, cuatrimestre_carrera)
+        """
+        from sqlmodel import select
+        from src.database.models import MateriaCarreraLink
+        
+        # Build query
+        statement = (
+            select(MateriaDB, MateriaCarreraLink.anio_carrera, MateriaCarreraLink.cuatrimestre_carrera)
+            .join(MateriaCarreraLink, MateriaDB.codigo == MateriaCarreraLink.materia_codigo)
+            .where(
+                MateriaCarreraLink.carrera_codigo == carrera_codigo,
+                MateriaCarreraLink.anio_carrera == anio
+            )
+        )
+        
+        # Add semester filter if provided
+        if cuatrimestre is not None:
+            statement = statement.where(MateriaCarreraLink.cuatrimestre_carrera == cuatrimestre)
+        
+        results = session.exec(statement).all()
+        return [(to_domain(materia_db), anio, cuatri) for materia_db, anio, cuatri in results]
 
 
 # =============================================================================

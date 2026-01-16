@@ -84,8 +84,8 @@ def validar_factibilidad_horarios_carrera(
         select(MateriaDB)
         .join(MateriaCarreraLink)
         .where(MateriaCarreraLink.carrera_codigo == carrera_codigo)
-        .where(MateriaDB.anio_carrera == anio)
-        .where(MateriaDB.cuatrimestre_carrera == cuatrimestre)
+        .where(MateriaCarreraLink.anio_carrera == anio)
+        .where(MateriaCarreraLink.cuatrimestre_carrera == cuatrimestre)
     ).all()
     
     if not materias:

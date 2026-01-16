@@ -27,7 +27,7 @@ class MateriaFormRenderer:
         custom_labels: Dict[str, str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Render create form for Materia with carrera selection.
+        Render create form for Materia with carrera selection including year/semester.
         
         Args:
             session: Database session
@@ -36,14 +36,14 @@ class MateriaFormRenderer:
             custom_labels: Custom labels for fields
             
         Returns:
-            Dictionary with form data including selected carreras, or None if not submitted
+            Dictionary with form data including carreras with year/semester, or None if not submitted
         """
         form_key = key or "create_materia_form"
         
         with st.form(key=form_key):
             st.subheader("Crear Materia")
             
-            # Render standard materia fields (excluding carreras)
+            # Render standard materia fields
             all_exclude = list(exclude_fields or [])
             
             form_data = FormInputRenderer.render_form_input(
@@ -53,32 +53,139 @@ class MateriaFormRenderer:
                 custom_labels=custom_labels,
             )
             
-            # Add carrera selection
+            # Add carrera selection with year/semester using data_editor
             st.markdown("### Asignación de Carreras")
-            selected_carreras = ManyToManySelector.render_carrera_selector_for_materia(
-                session=session,
-                key=f"{form_key}_carreras",
+            st.caption("Debe asignar al menos una carrera especificando año y cuatrimestre")
+            
+            # Get all carreras
+            from src.services.crud_services import carrera_service
+            import pandas as pd
+            
+            all_carreras = carrera_service.get_all(session)
+            
+            if not all_carreras:
+                st.warning("No hay carreras disponibles. Cree una carrera primero.")
+                return None
+            
+            # Check if materia is annual based on form data
+            is_anual = form_data.get("periodo") == "anual"
+            
+            if is_anual:
+                st.info("ℹ️ Materia anual: El cuatrimestre se establece automáticamente en 0 (anual).")
+            
+            # Create initial dataframe for carreras
+            if f"{form_key}_carrera_data" not in st.session_state:
+                st.session_state[f"{form_key}_carrera_data"] = pd.DataFrame({
+                    "Carrera": [],
+                    "Año": [],
+                    "Cuatrimestre": []
+                })
+            
+            # Configure column settings based on periodo
+            if is_anual:
+                column_config = {
+                    "Carrera": st.column_config.SelectboxColumn(
+                        "Carrera",
+                        options=[f"{c.codigo} - {c.nombre}" for c in all_carreras],
+                        required=True,
+                        width="large"
+                    ),
+                    "Año": st.column_config.NumberColumn(
+                        "Año",
+                        min_value=1,
+                        max_value=6,
+                        default=1,
+                        required=True,
+                        width="small"
+                    ),
+                    "Cuatrimestre": st.column_config.TextColumn(
+                        "Cuatrimestre",
+                        default="Anual",
+                        disabled=True,
+                        width="small"
+                    ),
+                }
+            else:
+                column_config = {
+                    "Carrera": st.column_config.SelectboxColumn(
+                        "Carrera",
+                        options=[f"{c.codigo} - {c.nombre}" for c in all_carreras],
+                        required=True,
+                        width="large"
+                    ),
+                    "Año": st.column_config.NumberColumn(
+                        "Año",
+                        min_value=1,
+                        max_value=6,
+                        default=1,
+                        required=True,
+                        width="small"
+                    ),
+                    "Cuatrimestre": st.column_config.SelectboxColumn(
+                        "Cuatrimestre",
+                        options=[1, 2],
+                        default=1,
+                        required=True,
+                        width="small"
+                    ),
+                }
+            
+            # Render editable dataframe
+            edited_df = st.data_editor(
+                st.session_state[f"{form_key}_carrera_data"],
+                column_config=column_config,
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"{form_key}_carreras_editor",
+                hide_index=True,
             )
             
-            submitted = st.form_submit_button("Crear Materia")
+            # Update session state
+            st.session_state[f"{form_key}_carrera_data"] = edited_df
+            
+            submitted = st.form_submit_button("Crear Materia", type="primary")
             
             if submitted:
                 # Validate form data
                 is_valid, errors = FormInputRenderer.validate_form_data(form_data, Materia)
                 
+                # Process carrera data
+                carrera_details = []
+                if not edited_df.empty:
+                    for _, row in edited_df.iterrows():
+                        if pd.notna(row["Carrera"]):
+                            # Extract codigo from "CODIGO - Nombre" format
+                            carrera_codigo = row["Carrera"].split(" - ")[0]
+                            anio = int(row["Año"]) if pd.notna(row["Año"]) else 1
+                            
+                            if is_anual:
+                                cuatri = 0  # 0 for annual materias
+                            else:
+                                cuatri = int(row["Cuatrimestre"]) if pd.notna(row["Cuatrimestre"]) else 1
+                            
+                            carrera_details.append({
+                                "carrera_codigo": carrera_codigo,
+                                "anio_carrera": anio,
+                                "cuatrimestre_carrera": cuatri
+                            })
+                
                 # Validate carrera selection
-                if not selected_carreras:
+                if not carrera_details:
                     if "carreras" not in errors:
                         errors["carreras"] = []
-                    errors["carreras"].append("Debe seleccionar al menos una carrera")
+                    errors["carreras"].append("Debe asignar al menos una carrera")
                     is_valid = False
                 
                 if not is_valid:
                     FormInputRenderer.display_validation_errors(errors)
                     return None
                 
-                # Add carreras to form data
-                form_data["carreras"] = selected_carreras
+                # Clear session state
+                if f"{form_key}_carrera_data" in st.session_state:
+                    del st.session_state[f"{form_key}_carrera_data"]
+                
+                # Add carreras with details to form data
+                form_data["carrera_details"] = carrera_details
                 return form_data
         
         return None
@@ -195,18 +302,18 @@ class MateriaFormRenderer:
         session: Session,
     ) -> Optional[Materia]:
         """
-        Create a materia with carrera associations.
+        Create a materia with carrera associations including year/semester.
         
         Args:
-            form_data: Form data including carreras
+            form_data: Form data including carrera_details
             session: Database session
             
         Returns:
             Created Materia instance or None if failed
         """
         try:
-            # Extract carreras from form data
-            carrera_codigos = form_data.pop("carreras", [])
+            # Extract carrera details from form data
+            carrera_details = form_data.pop("carrera_details", [])
             
             # Create materia instance
             materia = Materia(**form_data)
@@ -214,9 +321,15 @@ class MateriaFormRenderer:
             # Create materia in database
             created_materia = materia_service.create(session, materia)
             
-            # Set carrera associations
-            if carrera_codigos:
-                materia_service.set_carreras(session, created_materia.codigo, carrera_codigos)
+            # Set carrera associations with year/semester
+            for detail in carrera_details:
+                materia_service.add_carrera(
+                    session,
+                    created_materia.codigo,
+                    detail["carrera_codigo"],
+                    anio_carrera=detail["anio_carrera"],
+                    cuatrimestre_carrera=detail["cuatrimestre_carrera"]
+                )
             
             return created_materia
             

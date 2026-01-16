@@ -30,11 +30,13 @@ class ConfiguracionHoraria(SQLModel, table=True):
 # =============================================================================
 
 class MateriaCarreraLink(SQLModel, table=True):
-    """Relación M:M entre Materia y Carrera."""
+    """Relación M:M entre Materia y Carrera con ubicación curricular."""
     __tablename__ = "materia_carrera"
     
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
+    anio_carrera: int = Field(default=1, ge=1, le=6)  # Año en el plan de estudios
+    cuatrimestre_carrera: int = Field(default=0, ge=0, le=2)  # 0=anual, 1=1C, 2=2C
 
 
 class ComisionProfesorLink(SQLModel, table=True):
@@ -147,11 +149,7 @@ class MateriaDB(SQLModel, table=True):
     nombre: str = Field(min_length=1)
     cupo: int = Field(gt=0)
     horas_semanales: int = Field(gt=0)
-    
-    # Ubicación en el plan de estudios
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
-    anio_carrera: int = Field(default=1, ge=1, le=6)  # Año sugerido en la carrera
-    cuatrimestre_carrera: int = Field(default=1, ge=1, le=2)  # 1 o 2
     
     # Relationships
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")

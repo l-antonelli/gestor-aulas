@@ -102,8 +102,6 @@ def to_db(domain: DomainModel) -> DBModel:
             cupo=domain.cupo,
             horas_semanales=domain.horas_semanales,
             periodo=domain.periodo,
-            anio_carrera=domain.anio_carrera,
-            cuatrimestre_carrera=domain.cuatrimestre_carrera,
         )
     
     if isinstance(domain, Comision):
@@ -224,8 +222,6 @@ def to_domain(db: DBModel) -> DomainModel:
             cupo=db.cupo,
             horas_semanales=db.horas_semanales,
             periodo=db.periodo,
-            anio_carrera=db.anio_carrera,
-            cuatrimestre_carrera=db.cuatrimestre_carrera,
         )
     
     if isinstance(db, ComisionDB):

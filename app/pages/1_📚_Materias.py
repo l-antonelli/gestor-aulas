@@ -8,6 +8,8 @@ from src.database.connection import get_session, init_db
 from src.services.crud_services import materia_service
 from src.ui.materia_form_renderer import MateriaFormRenderer
 from src.ui.carrera_status_widget import CarreraStatusWidget
+from src.ui.materia_carrera_editor import MateriaCarreraEditor
+from src.ui.comision_manager import ComisionManager
 
 # Import relationship definitions to register relationships
 import src.services.relationship_definitions  # noqa: F401
@@ -26,8 +28,6 @@ def render_custom_materia_page():
         "codigo": "Código",
         "nombre": "Nombre",
         "periodo": "Período",
-        "anio_carrera": "Año",
-        "cuatrimestre_carrera": "Cuatrimestre",
         "cupo": "Cupo",
         "horas_semanales": "Hs/Sem",
     }
@@ -64,19 +64,18 @@ def render_custom_materia_page():
                                 st.write(f"**Código:** {materia.codigo}")
                                 st.write(f"**Nombre:** {materia.nombre}")
                                 st.write(f"**Período:** {materia.periodo}")
-                                st.write(f"**Año:** {materia.anio_carrera}")
-                                st.write(f"**Cuatrimestre:** {materia.cuatrimestre_carrera}")
                             
                             with col2:
                                 st.write(f"**Cupo:** {materia.cupo}")
                                 st.write(f"**Horas/Semana:** {materia.horas_semanales}")
                                 
-                                # Show associated carreras
+                                # Show associated carreras (read-only)
                                 try:
                                     carreras = materia_service.get_carreras(session, materia.codigo)
                                     if carreras:
-                                        carrera_names = [f"{c.codigo} - {c.nombre}" for c in carreras]
+                                        carrera_names = [f"{c.codigo}" for c in carreras]
                                         st.write(f"**Carreras:** {', '.join(carrera_names)}")
+                                        st.caption("💡 Gestione año/cuatrimestre en 'Planes de Estudio'")
                                     else:
                                         st.warning("⚠️ Sin carreras asignadas")
                                 except Exception as e:
@@ -95,27 +94,117 @@ def render_custom_materia_page():
                                     st.session_state["delete_materia"] = materia.codigo
                                     st.rerun()
                     
-                    # Handle edit action
+                    # Handle edit action - with carrera and comision management
                     if "edit_materia" in st.session_state:
                         materia_codigo = st.session_state["edit_materia"]
                         st.subheader(f"Editar Materia: {materia_codigo}")
                         
-                        form_data = MateriaFormRenderer.render_materia_update_form(
-                            materia_codigo=materia_codigo,
-                            session=session,
-                            custom_labels=custom_labels,
-                        )
-                        
-                        if form_data:
-                            updated_materia = MateriaFormRenderer.update_materia_with_carreras(
-                                form_data=form_data,
-                                session=session,
-                            )
+                        # Get existing materia
+                        try:
+                            from src.ui.form_input_renderer import FormInputRenderer
+                            from src.domain.problem.materia import Materia
                             
-                            if updated_materia:
-                                st.success("✅ Materia actualizada exitosamente")
+                            existing_materia = materia_service.get(session, materia_codigo)
+                            if existing_materia is None:
+                                st.error(f"Materia con código '{materia_codigo}' no encontrada")
                                 del st.session_state["edit_materia"]
                                 st.rerun()
+                            
+                            # Extract default values
+                            if hasattr(existing_materia, "model_dump"):
+                                default_values = existing_materia.model_dump()
+                            else:
+                                default_values = dict(existing_materia)
+                            
+                            # Create tabs for different aspects
+                            edit_tab1, edit_tab2, edit_tab3 = st.tabs([
+                                "📝 Datos Básicos",
+                                "🎓 Carreras",
+                                "👥 Comisiones"
+                            ])
+                            
+                            with edit_tab1:
+                                st.markdown("### Editar Datos de la Materia")
+                                
+                                with st.form(key=f"edit_materia_{materia_codigo}_form"):
+                                    # Show codigo as read-only
+                                    st.text_input(
+                                        "Código",
+                                        value=materia_codigo,
+                                        disabled=True,
+                                        key=f"edit_{materia_codigo}_codigo_display",
+                                    )
+                                    
+                                    # Render other fields (excluding codigo)
+                                    form_data = FormInputRenderer.render_form_input(
+                                        model=Materia,
+                                        key=f"edit_{materia_codigo}_input",
+                                        exclude_fields=["codigo"],
+                                        custom_labels=custom_labels,
+                                        default_values=default_values,
+                                    )
+                                    
+                                    col_submit, col_cancel = st.columns(2)
+                                    
+                                    with col_submit:
+                                        submitted = st.form_submit_button("💾 Guardar Cambios", type="primary")
+                                    
+                                    with col_cancel:
+                                        cancelled = st.form_submit_button("❌ Cancelar")
+                                    
+                                    if cancelled:
+                                        del st.session_state["edit_materia"]
+                                        st.rerun()
+                                    
+                                    if submitted:
+                                        # Add back the codigo field
+                                        form_data["codigo"] = materia_codigo
+                                        
+                                        # Validate form data
+                                        is_valid, errors = FormInputRenderer.validate_form_data(form_data, Materia)
+                                        
+                                        if not is_valid:
+                                            FormInputRenderer.display_validation_errors(errors)
+                                        else:
+                                            try:
+                                                # Create materia instance and update
+                                                materia = Materia(**form_data)
+                                                updated_materia = materia_service.update(session, materia)
+                                                
+                                                if updated_materia:
+                                                    st.success("✅ Materia actualizada exitosamente")
+                                                    st.rerun()
+                                                else:
+                                                    st.error("❌ No se pudo actualizar la materia")
+                                            except Exception as e:
+                                                st.error(f"❌ Error al actualizar: {str(e)}")
+                            
+                            with edit_tab2:
+                                # Carrera associations editor
+                                MateriaCarreraEditor.render_associations_editor(
+                                    session=session,
+                                    materia_codigo=materia_codigo,
+                                    key=f"edit_{materia_codigo}_carreras"
+                                )
+                            
+                            with edit_tab3:
+                                # Comisiones manager
+                                ComisionManager.render_comisiones_manager(
+                                    session=session,
+                                    materia_codigo=materia_codigo,
+                                    key=f"edit_{materia_codigo}_comisiones"
+                                )
+                            
+                            # Close button at the bottom
+                            st.divider()
+                            if st.button("✅ Cerrar Editor", key=f"close_edit_{materia_codigo}"):
+                                del st.session_state["edit_materia"]
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error al cargar materia: {str(e)}")
+                            del st.session_state["edit_materia"]
+                            st.rerun()
                     
                     # Handle delete action
                     if "delete_materia" in st.session_state:
