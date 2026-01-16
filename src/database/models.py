@@ -99,6 +99,7 @@ class CarreraDB(SQLModel, table=True):
     nombre: str = Field(min_length=1)
     titulo_otorgado: str = Field(default="")
     duracion_anios: int = Field(default=5, ge=1)
+    cantidad_materias: Optional[int] = Field(default=None, ge=1)
     
     # Relationships
     materias: list["MateriaDB"] = Relationship(

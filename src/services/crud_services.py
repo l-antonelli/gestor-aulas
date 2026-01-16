@@ -532,7 +532,7 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
     CRUD service for Materia entities.
     
     Provides domain-level operations for academic subjects,
-    including cascading creation of default Comisión.
+    including cascading creation of default Comisión and carrera relationships.
     """
     
     def __init__(self):
@@ -546,6 +546,167 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
     def get_comisiones(self, session: Session, materia_codigo: str) -> List[Comision]:
         """Get all comisiones for a materia."""
         return self.get_children(session, materia_codigo, Comision)
+    
+    def get_carreras(self, session: Session, materia_codigo: str) -> List[Carrera]:
+        """
+        Get all carreras associated with a materia.
+        
+        This method queries the many-to-many relationship between
+        Materia and Carrera through the MateriaCarreraLink table.
+        
+        Args:
+            session: Database session
+            materia_codigo: The materia's codigo
+            
+        Returns:
+            List of Carrera domain model instances associated with the materia
+        """
+        from sqlmodel import select
+        from src.database.models import MateriaCarreraLink
+        
+        # Query carreras through the link table
+        statement = (
+            select(CarreraDB)
+            .join(MateriaCarreraLink, CarreraDB.codigo == MateriaCarreraLink.carrera_codigo)
+            .where(MateriaCarreraLink.materia_codigo == materia_codigo)
+        )
+        results = session.exec(statement).all()
+        return [to_domain(r) for r in results]
+    
+    def set_carreras(self, session: Session, materia_codigo: str, carrera_codigos: List[str]) -> bool:
+        """
+        Set the carreras associated with a materia, replacing any existing associations.
+        
+        Args:
+            session: Database session
+            materia_codigo: The materia's codigo
+            carrera_codigos: List of carrera codigos to associate
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            EntityNotFoundError: If materia or any carrera doesn't exist
+            ValidationError: If no carreras are provided (business rule)
+        """
+        from src.database.models import MateriaCarreraLink
+        from src.database.crud import carrera_crud
+        from sqlmodel import select
+        
+        # Validate that at least one carrera is provided
+        if not carrera_codigos:
+            raise ValidationError("Materia", "Debe asignar al menos una carrera a la materia")
+        
+        # Verify materia exists
+        materia = self.crud.get(session, materia_codigo)
+        if materia is None:
+            raise EntityNotFoundError("Materia", materia_codigo)
+        
+        # Verify all carreras exist
+        for carrera_codigo in carrera_codigos:
+            carrera = carrera_crud.get(session, carrera_codigo)
+            if carrera is None:
+                raise EntityNotFoundError("Carrera", carrera_codigo)
+        
+        # Remove existing associations
+        existing_links = session.exec(
+            select(MateriaCarreraLink).where(
+                MateriaCarreraLink.materia_codigo == materia_codigo
+            )
+        ).all()
+        
+        for link in existing_links:
+            session.delete(link)
+        
+        # Create new associations
+        for carrera_codigo in carrera_codigos:
+            link = MateriaCarreraLink(
+                materia_codigo=materia_codigo,
+                carrera_codigo=carrera_codigo
+            )
+            session.add(link)
+        
+        session.commit()
+        return True
+    
+    def add_carrera(self, session: Session, materia_codigo: str, carrera_codigo: str) -> bool:
+        """
+        Associate a carrera with a materia.
+        
+        Args:
+            session: Database session
+            materia_codigo: The materia's codigo
+            carrera_codigo: The carrera's codigo
+            
+        Returns:
+            True if the association was created, False if it already exists
+            
+        Raises:
+            EntityNotFoundError: If materia or carrera doesn't exist
+        """
+        from src.database.models import MateriaCarreraLink
+        from src.database.crud import carrera_crud
+        from sqlmodel import select
+        
+        # Verify materia exists
+        materia = self.crud.get(session, materia_codigo)
+        if materia is None:
+            raise EntityNotFoundError("Materia", materia_codigo)
+        
+        # Verify carrera exists
+        carrera = carrera_crud.get(session, carrera_codigo)
+        if carrera is None:
+            raise EntityNotFoundError("Carrera", carrera_codigo)
+        
+        # Check if link already exists
+        existing = session.exec(
+            select(MateriaCarreraLink).where(
+                MateriaCarreraLink.materia_codigo == materia_codigo,
+                MateriaCarreraLink.carrera_codigo == carrera_codigo
+            )
+        ).first()
+        
+        if existing:
+            return False
+        
+        # Create the link
+        link = MateriaCarreraLink(
+            materia_codigo=materia_codigo,
+            carrera_codigo=carrera_codigo
+        )
+        session.add(link)
+        session.commit()
+        return True
+    
+    def remove_carrera(self, session: Session, materia_codigo: str, carrera_codigo: str) -> bool:
+        """
+        Remove the association between a materia and a carrera.
+        
+        Args:
+            session: Database session
+            materia_codigo: The materia's codigo
+            carrera_codigo: The carrera's codigo
+            
+        Returns:
+            True if the association was removed, False if it didn't exist
+        """
+        from src.database.models import MateriaCarreraLink
+        from sqlmodel import select
+        
+        # Find the link
+        link = session.exec(
+            select(MateriaCarreraLink).where(
+                MateriaCarreraLink.materia_codigo == materia_codigo,
+                MateriaCarreraLink.carrera_codigo == carrera_codigo
+            )
+        ).first()
+        
+        if link is None:
+            return False
+        
+        session.delete(link)
+        session.commit()
+        return True
 
 
 class ComisionService(BaseCRUDService[Comision, ComisionDB]):

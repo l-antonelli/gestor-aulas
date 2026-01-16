@@ -1,4 +1,4 @@
-"""Gestión de Carreras - Refactored to use CRUD Service and EntityPageTemplate.
+"""Gestión de Carreras - Enhanced with materia completeness tracking.
 
 Requirements: 7.1, 7.2, 7.4, 7.5, 8.1
 """
@@ -10,6 +10,7 @@ from src.domain.problem.carrera import Carrera
 from src.domain.problem.materia import Materia
 from src.ui.page_template import EntityPageTemplate, EntityPageConfig
 from src.ui.hierarchical_entity_viewer import HierarchicalEntityViewer, ChildConfig, HierarchyLevel
+from src.ui.carrera_status_widget import CarreraStatusWidget
 
 # Import relationship definitions to register relationships
 import src.services.relationship_definitions  # noqa: F401
@@ -29,12 +30,13 @@ config = EntityPageConfig(
     service=carrera_service,
     page_title="Gestión de Carreras",
     page_icon="🎓",
-    display_fields=["codigo", "nombre", "titulo_otorgado", "duracion_anios"],
+    display_fields=["codigo", "nombre", "titulo_otorgado", "duracion_anios", "cantidad_materias"],
     custom_labels={
         "codigo": "Código",
         "nombre": "Nombre",
         "titulo_otorgado": "Título Otorgado",
         "duracion_anios": "Duración (años)",
+        "cantidad_materias": "Cantidad de Materias",
     },
     id_field="codigo",
     display_field="nombre",
@@ -67,6 +69,12 @@ with next(get_session()) as session:
         if selected_carrera:
             # Get materias for this carrera
             materias = carrera_service.get_materias(session, selected_carrera)
+            
+            # Show status widget
+            st.markdown("### Estado de Completitud")
+            CarreraStatusWidget.render_inline_status(session, selected_carrera)
+            
+            st.divider()
             
             col1, col2 = st.columns([3, 1])
             
