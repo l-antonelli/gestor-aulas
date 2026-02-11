@@ -509,20 +509,19 @@ class BaseCRUDService(Generic[DomainModel, DBModel]):
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.clase import Clase
-from src.domain.problem.alumno import Alumno
 from src.domain.problem.aula import Aula
 from src.domain.problem.horario_cronograma import HorarioCronograma
 from src.domain.problem.carrera import Carrera
 
 # Import DB models
 from src.database.models import (
-    MateriaDB, ComisionDB, ClaseDB, AlumnoDB, AulaDB, 
+    MateriaDB, ComisionDB, ClaseDB, AulaDB, 
     HorarioCronogramaDB, CarreraDB
 )
 
 # Import CRUD instances
 from src.database.crud import (
-    materia_crud, comision_crud, clase_crud, alumno_crud,
+    materia_crud, comision_crud, clase_crud,
     aula_crud, horario_crud, carrera_crud
 )
 
@@ -778,22 +777,6 @@ class ClaseService(BaseCRUDService[Clase, ClaseDB]):
         return [to_domain(r) for r in results]
 
 
-class AlumnoService(BaseCRUDService[Alumno, AlumnoDB]):
-    """
-    CRUD service for Alumno entities.
-    
-    Provides domain-level operations for students.
-    """
-    
-    def __init__(self):
-        super().__init__(
-            domain_model=Alumno,
-            db_model=AlumnoDB,
-            crud=alumno_crud,
-            id_field="legajo"
-        )
-
-
 class AulaService(BaseCRUDService[Aula, AulaDB]):
     """
     CRUD service for Aula entities.
@@ -1025,7 +1008,6 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
 materia_service = MateriaService()
 comision_service = ComisionService()
 clase_service = ClaseService()
-alumno_service = AlumnoService()
 aula_service = AulaService()
 horario_service = HorarioService()
 carrera_service = CarreraService()

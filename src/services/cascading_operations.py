@@ -333,9 +333,6 @@ class CascadingOperations:
             "Materia": crud.materia_crud,
             "Comision": crud.comision_crud,
             "Clase": crud.clase_crud,
-            "Alumno": crud.alumno_crud,
-            "Inscripcion": crud.inscripcion_crud,
-            "Asistencia": crud.asistencia_crud,
             "AsignacionAula": crud.asignacion_crud,
         }
         
@@ -389,17 +386,13 @@ class CascadingOperations:
         This is a helper to convert between domain and database layers.
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, ClaseDB, AlumnoDB,
-            InscripcionDB, AsistenciaDB, AsignacionAulaDB
+            MateriaDB, ComisionDB, ClaseDB, AsignacionAulaDB
         )
         
         db_model_map = {
             "Materia": MateriaDB,
             "Comision": ComisionDB,
             "Clase": ClaseDB,
-            "Alumno": AlumnoDB,
-            "Inscripcion": InscripcionDB,
-            "Asistencia": AsistenciaDB,
             "AsignacionAula": AsignacionAulaDB,
         }
         
@@ -413,16 +406,13 @@ class CascadingOperations:
         
         This is the reverse of _get_db_model_for_domain_model.
         """
-        from src.domain.problem import Materia, Comision, Clase, Alumno
-        from src.domain.solution import Inscripcion, Asistencia, AsignacionAula
+        from src.domain.problem import Materia, Comision, Clase
+        from src.domain.solution import AsignacionAula
         
         domain_model_map = {
             "MateriaDB": Materia,
             "ComisionDB": Comision,
             "ClaseDB": Clase,
-            "AlumnoDB": Alumno,
-            "InscripcionDB": Inscripcion,
-            "AsistenciaDB": Asistencia,
             "AsignacionAulaDB": AsignacionAula,
         }
         

@@ -3,10 +3,7 @@
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.clase import Clase
-from src.domain.problem.alumno import Alumno
 from src.domain.problem.carrera import Carrera
-from src.domain.solution.inscripcion import Inscripcion
-from src.domain.solution.asistencia import Asistencia
 from src.domain.solution.asignacion_aula import AsignacionAula
 
 from src.services.relationship_metadata import RelationshipMetadata
@@ -70,34 +67,6 @@ def register_all_relationships() -> None:
         validation_rules=[],
     )
     RelationshipRegistry.register_relationship(comision_clase)
-    
-    # Alumno → Inscripción relationship
-    alumno_inscripcion = RelationshipMetadata(
-        parent_model=Alumno,
-        child_model=Inscripcion,
-        foreign_key_field="alumno_legajo",
-        display_fields=["id", "comision_id", "fecha_inscripcion", "activa"],
-        search_fields=["comision_id"],
-        cascading_create=False,
-        cascading_create_defaults={},
-        delete_behavior="cascade",
-        validation_rules=[],
-    )
-    RelationshipRegistry.register_relationship(alumno_inscripcion)
-    
-    # Clase → Asistencia relationship
-    clase_asistencia = RelationshipMetadata(
-        parent_model=Clase,
-        child_model=Asistencia,
-        foreign_key_field="clase_id",
-        display_fields=["id", "alumno_legajo", "fecha", "presente"],
-        search_fields=["alumno_legajo"],
-        cascading_create=False,
-        cascading_create_defaults={},
-        delete_behavior="cascade",
-        validation_rules=[],
-    )
-    RelationshipRegistry.register_relationship(clase_asistencia)
     
     # Clase → AsignacionAula relationship
     clase_asignacion = RelationshipMetadata(

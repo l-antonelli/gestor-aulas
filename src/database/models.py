@@ -39,15 +39,6 @@ class MateriaCarreraLink(SQLModel, table=True):
     cuatrimestre_carrera: int = Field(default=0, ge=0, le=2)  # 0=anual, 1=1C, 2=2C
 
 
-class ComisionProfesorLink(SQLModel, table=True):
-    """Relación M:M entre Comision y Profesor."""
-    __tablename__ = "comision_profesor"
-    
-    comision_id: str = Field(foreign_key="comisiones.id", primary_key=True)
-    profesor_id: str = Field(foreign_key="profesores.id", primary_key=True)
-    es_titular: bool = Field(default=False)
-
-
 # =============================================================================
 # Solution Domain Models - Temporal
 # =============================================================================
@@ -110,37 +101,6 @@ class CarreraDB(SQLModel, table=True):
     )
 
 
-class ProfesorDB(SQLModel, table=True):
-    """Docente de la facultad."""
-    __tablename__ = "profesores"
-    
-    id: str = Field(primary_key=True, min_length=1)
-    nombre: str = Field(min_length=1)
-    email: str = Field(default="")
-    dni: str = Field(default="")
-    
-    # Relationships
-    comisiones: list["ComisionDB"] = Relationship(
-        back_populates="profesores",
-        link_model=ComisionProfesorLink
-    )
-    clases: list["ClaseDB"] = Relationship(back_populates="profesor")
-
-
-class AlumnoDB(SQLModel, table=True):
-    """Estudiante inscripto en la facultad."""
-    __tablename__ = "alumnos"
-    
-    legajo: str = Field(primary_key=True, min_length=1)
-    email: str = Field(index=True)
-    nombre: str = Field(min_length=1)
-    dni: str = Field(min_length=7, max_length=8)
-    
-    # Relationships
-    inscripciones: list["InscripcionDB"] = Relationship(back_populates="alumno")
-    asistencias: list["AsistenciaDB"] = Relationship(back_populates="alumno")
-
-
 class MateriaDB(SQLModel, table=True):
     """Asignatura académica."""
     __tablename__ = "materias"
@@ -176,11 +136,6 @@ class ComisionDB(SQLModel, table=True):
     materia: Optional[MateriaDB] = Relationship(back_populates="comisiones")
     dictado: Optional[DictadoDB] = Relationship(back_populates="comisiones")
     clases: list["ClaseDB"] = Relationship(back_populates="comision")
-    inscripciones: list["InscripcionDB"] = Relationship(back_populates="comision")
-    profesores: list[ProfesorDB] = Relationship(
-        back_populates="comisiones",
-        link_model=ComisionProfesorLink
-    )
 
 
 class HorarioCronogramaDB(SQLModel, table=True):
@@ -218,50 +173,17 @@ class ClaseDB(SQLModel, table=True):
     id: str = Field(primary_key=True)
     comision_id: str = Field(foreign_key="comisiones.id", index=True)
     horario_id: str = Field(foreign_key="horarios_cronograma.id", index=True)
-    profesor_id: Optional[str] = Field(default=None, foreign_key="profesores.id", index=True)
     dia: str
     
     # Relationships
     comision: Optional[ComisionDB] = Relationship(back_populates="clases")
     horario: Optional[HorarioCronogramaDB] = Relationship(back_populates="clases")
-    profesor: Optional[ProfesorDB] = Relationship(back_populates="clases")
-    asistencias: list["AsistenciaDB"] = Relationship(back_populates="clase")
     asignacion: Optional["AsignacionAulaDB"] = Relationship(back_populates="clase")
 
 
 # =============================================================================
 # Solution Domain Models - Gestión
 # =============================================================================
-
-class InscripcionDB(SQLModel, table=True):
-    """Relación entre alumno y comisión (resuelve M:M Alumno-Materia)."""
-    __tablename__ = "inscripciones"
-    
-    id: str = Field(primary_key=True)
-    alumno_legajo: str = Field(foreign_key="alumnos.legajo", index=True)
-    comision_id: str = Field(foreign_key="comisiones.id", index=True)
-    fecha_inscripcion: date
-    activa: bool = Field(default=True)
-    
-    # Relationships
-    alumno: Optional[AlumnoDB] = Relationship(back_populates="inscripciones")
-    comision: Optional[ComisionDB] = Relationship(back_populates="inscripciones")
-
-
-class AsistenciaDB(SQLModel, table=True):
-    """Registro de presencia de alumno en clase."""
-    __tablename__ = "asistencias"
-    
-    id: str = Field(primary_key=True)
-    alumno_legajo: str = Field(foreign_key="alumnos.legajo", index=True)
-    clase_id: str = Field(foreign_key="clases.id", index=True)
-    fecha: date
-    presente: bool = Field(default=False)
-    
-    # Relationships
-    alumno: Optional[AlumnoDB] = Relationship(back_populates="asistencias")
-    clase: Optional[ClaseDB] = Relationship(back_populates="asistencias")
-
 
 class AsignacionAulaDB(SQLModel, table=True):
     """Asignación de un aula a una clase en un ciclo (resuelve M:M Clase-Aula)."""
@@ -270,7 +192,7 @@ class AsignacionAulaDB(SQLModel, table=True):
     id: str = Field(primary_key=True)
     clase_id: str = Field(foreign_key="clases.id", index=True)
     aula_id: str = Field(foreign_key="aulas.id", index=True)
-    ciclo_id: str = Field(foreign_key="ciclos.id", index=True)  # Agregado para validar por ciclo
+    ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
     fecha_asignacion: date
     vigente: bool = Field(default=True)
     

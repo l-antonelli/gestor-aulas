@@ -3,58 +3,39 @@ Converters between SQLModel (DB) and Pydantic (Domain) models.
 
 This module provides bidirectional conversion functions to maintain
 separation between persistence layer and domain logic.
-
-Usage:
-    # Load from DB, convert to domain for processing
-    with get_session() as session:
-        aulas_db = aula_crud.get_all(session)
-    aulas = [to_domain(a) for a in aulas_db]
-    
-    # Process with optimization algorithm...
-    
-    # Convert result back to DB model for persistence
-    asignacion_db = to_db(asignacion_domain)
 """
 
 from typing import TypeVar, Union, overload
 
 # Domain models
-from src.domain.problem.alumno import Alumno
 from src.domain.problem.aula import Aula
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.horario_cronograma import HorarioCronograma
 from src.domain.problem.clase import Clase
 from src.domain.problem.carrera import Carrera
-from src.domain.solution.inscripcion import Inscripcion
-from src.domain.solution.asistencia import Asistencia
 from src.domain.solution.asignacion_aula import AsignacionAula
 
 # DB models
 from src.database.models import (
-    AlumnoDB,
     AulaDB,
     MateriaDB,
     ComisionDB,
     HorarioCronogramaDB,
     ClaseDB,
-    InscripcionDB,
-    AsistenciaDB,
     AsignacionAulaDB,
     CarreraDB,
 )
 
 # Type aliases for clarity
-DomainModel = Union[Alumno, Aula, Materia, Comision, HorarioCronograma, Clase, Inscripcion, Asistencia, AsignacionAula, Carrera]
-DBModel = Union[AlumnoDB, AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, InscripcionDB, AsistenciaDB, AsignacionAulaDB, CarreraDB]
+DomainModel = Union[Aula, Materia, Comision, HorarioCronograma, Clase, AsignacionAula, Carrera]
+DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, AsignacionAulaDB, CarreraDB]
 
 
 # =============================================================================
 # Domain → DB Converters
 # =============================================================================
 
-@overload
-def to_db(domain: Alumno) -> AlumnoDB: ...
 @overload
 def to_db(domain: Aula) -> AulaDB: ...
 @overload
@@ -66,24 +47,12 @@ def to_db(domain: HorarioCronograma) -> HorarioCronogramaDB: ...
 @overload
 def to_db(domain: Clase) -> ClaseDB: ...
 @overload
-def to_db(domain: Inscripcion) -> InscripcionDB: ...
-@overload
-def to_db(domain: Asistencia) -> AsistenciaDB: ...
-@overload
 def to_db(domain: AsignacionAula) -> AsignacionAulaDB: ...
 @overload
 def to_db(domain: Carrera) -> CarreraDB: ...
 
 def to_db(domain: DomainModel) -> DBModel:
     """Convert a domain model to its DB equivalent."""
-    
-    if isinstance(domain, Alumno):
-        return AlumnoDB(
-            legajo=domain.legajo,
-            email=domain.email,
-            nombre=domain.nombre,
-            dni=domain.dni,
-        )
     
     if isinstance(domain, Aula):
         return AulaDB(
@@ -129,24 +98,6 @@ def to_db(domain: DomainModel) -> DBModel:
             dia=domain.dia,
         )
     
-    if isinstance(domain, Inscripcion):
-        return InscripcionDB(
-            id=domain.id,
-            alumno_legajo=domain.alumno_legajo,
-            comision_id=domain.comision_id,
-            fecha_inscripcion=domain.fecha_inscripcion,
-            activa=domain.activa,
-        )
-    
-    if isinstance(domain, Asistencia):
-        return AsistenciaDB(
-            id=domain.id,
-            alumno_legajo=domain.alumno_legajo,
-            clase_id=domain.clase_id,
-            fecha=domain.fecha,
-            presente=domain.presente,
-        )
-    
     if isinstance(domain, AsignacionAula):
         return AsignacionAulaDB(
             id=domain.id,
@@ -174,8 +125,6 @@ def to_db(domain: DomainModel) -> DBModel:
 # =============================================================================
 
 @overload
-def to_domain(db: AlumnoDB) -> Alumno: ...
-@overload
 def to_domain(db: AulaDB) -> Aula: ...
 @overload
 def to_domain(db: MateriaDB) -> Materia: ...
@@ -186,24 +135,12 @@ def to_domain(db: HorarioCronogramaDB) -> HorarioCronograma: ...
 @overload
 def to_domain(db: ClaseDB) -> Clase: ...
 @overload
-def to_domain(db: InscripcionDB) -> Inscripcion: ...
-@overload
-def to_domain(db: AsistenciaDB) -> Asistencia: ...
-@overload
 def to_domain(db: AsignacionAulaDB) -> AsignacionAula: ...
 @overload
 def to_domain(db: CarreraDB) -> Carrera: ...
 
 def to_domain(db: DBModel) -> DomainModel:
     """Convert a DB model to its domain equivalent."""
-    
-    if isinstance(db, AlumnoDB):
-        return Alumno(
-            legajo=db.legajo,
-            email=db.email,
-            nombre=db.nombre,
-            dni=db.dni,
-        )
     
     if isinstance(db, AulaDB):
         return Aula(
@@ -247,24 +184,6 @@ def to_domain(db: DBModel) -> DomainModel:
             comision_id=db.comision_id,
             horario_id=db.horario_id,
             dia=db.dia,
-        )
-    
-    if isinstance(db, InscripcionDB):
-        return Inscripcion(
-            id=db.id,
-            alumno_legajo=db.alumno_legajo,
-            comision_id=db.comision_id,
-            fecha_inscripcion=db.fecha_inscripcion,
-            activa=db.activa,
-        )
-    
-    if isinstance(db, AsistenciaDB):
-        return Asistencia(
-            id=db.id,
-            alumno_legajo=db.alumno_legajo,
-            clase_id=db.clase_id,
-            fecha=db.fecha,
-            presente=db.presente,
         )
     
     if isinstance(db, AsignacionAulaDB):
