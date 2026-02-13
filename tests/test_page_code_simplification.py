@@ -27,7 +27,6 @@ REFACTORED_PAGES = [
     "app/pages/1_📚_Materias.py",
     "app/pages/2_🏛️_Aulas.py",
     "app/pages/3_👥_Comisiones.py",
-    "app/pages/5_🎓_Alumnos.py",
     "app/pages/7_🎓_Carreras.py",
 ]
 
@@ -342,19 +341,6 @@ class TestPageStructureVerification:
         
         # Should have comision_service import
         assert "comision_service" in content
-        
-        # Should have EntityPageConfig
-        assert "EntityPageConfig" in content
-    
-    def test_alumnos_page_structure(self):
-        """Test Alumnos page follows expected structure."""
-        content = get_page_content("app/pages/5_🎓_Alumnos.py")
-        
-        if not content:
-            pytest.skip("Alumnos page not found")
-        
-        # Should have alumno_service import
-        assert "alumno_service" in content
         
         # Should have EntityPageConfig
         assert "EntityPageConfig" in content

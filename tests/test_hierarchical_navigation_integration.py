@@ -2,7 +2,7 @@
 Comprehensive Integration Tests for Hierarchical Navigation.
 
 This module tests complete end-to-end hierarchical navigation workflows:
-- Navigate Carrera → Materia → Comisión → Clase
+- Navigate Carrera → Materia → Comisión → Horario
 - Verify breadcrumbs update correctly
 - Verify context is preserved
 - Verify back navigation works
@@ -11,6 +11,7 @@ Requirements: 2.4, 2.5, 2.6, 3.1, 3.2, 5.1, 5.3
 """
 
 import datetime
+from datetime import time
 from typing import Generator, Dict, Any
 from unittest.mock import patch, MagicMock
 
@@ -21,17 +22,16 @@ from sqlmodel import Session, SQLModel, create_engine
 from src.domain.problem import (
     Materia,
     Comision,
-    Clase,
-    HorarioCronograma,
+    Horario,
 )
 from src.domain.problem.carrera import Carrera
 
 # Database models and CRUD
 from src.database.models import (
-    MateriaDB, ComisionDB, ClaseDB, HorarioCronogramaDB, CarreraDB,
+    MateriaDB, ComisionDB, HorarioDB, CarreraDB,
 )
 from src.database.crud import (
-    materia_crud, comision_crud, clase_crud, horario_crud,
+    materia_crud, comision_crud, horario_crud,
 )
 from src.database.converters import to_db
 
@@ -102,18 +102,8 @@ def mock_breadcrumb_state():
 
 @pytest.fixture
 def sample_hierarchy_data(test_db_session: Session):
-    """Create a complete hierarchy of test data: Materia → Comisión → Clase."""
-    # Create Horario (needed for Clase)
-    horario = HorarioCronograma(
-        id="HOR-001",
-        dia_semana="Lunes",
-        hora_inicio=datetime.time(8, 0),
-        hora_fin=datetime.time(10, 0),
-    )
-    db_horario = to_db(horario)
-    horario_crud.create(test_db_session, db_horario)
-    
-    # Create Materia with cascading Comisión
+    """Create a complete hierarchy of test data: Materia → Comisión → Horario."""
+    # Create Materia
     materia = Materia(
         codigo="MAT101",
         nombre="Cálculo I",
@@ -121,39 +111,44 @@ def sample_hierarchy_data(test_db_session: Session):
         horas_semanales=4,
     )
     db_materia = to_db(materia)
-    created_materia, created_children = CascadingOperations.create_with_cascading(
-        parent_instance=db_materia,
-        parent_crud_func=materia_crud.create,
-        session=test_db_session,
+    created_materia = materia_crud.create(test_db_session, db_materia)
+
+    # Create Comisiones manually (no cascading comision creation)
+    comision1 = Comision(
+        id="MAT101-C1",
+        materia_codigo="MAT101",
+        nombre="Comision Unica",
+        numero=1,
+        cupo=30,
     )
-    
-    comision = created_children[0] if created_children else None
-    
-    # Create additional Comisión
+    db_comision1 = to_db(comision1)
+    created_comision1 = comision_crud.create(test_db_session, db_comision1)
+
     comision2 = Comision(
         id="COM-002",
         materia_codigo="MAT101",
-        nombre="Comisión B",
+        nombre="Comision B",
         numero=2,
         cupo=25,
     )
     db_comision2 = to_db(comision2)
     comision_crud.create(test_db_session, db_comision2)
-    
-    # Create Clase for the first Comisión
-    if comision:
-        clase = Clase(
-            id="CLS-001",
-            comision_id=comision.id,
-            horario_id="HOR-001",
-            dia="Lunes",
-        )
-        db_clase = to_db(clase)
-        clase_crud.create(test_db_session, db_clase)
-    
+
+    # Create Horario for the first Comision
+    horario = Horario(
+        id="HOR-001",
+        comision_id=created_comision1.id,
+        codigo_materia="MAT101",
+        dia="Lunes",
+        hora_inicio=time(8, 0),
+        hora_fin=time(10, 0),
+    )
+    db_horario = to_db(horario)
+    horario_crud.create(test_db_session, db_horario)
+
     return {
         "materia": created_materia,
-        "comision1": comision,
+        "comision1": created_comision1,
         "comision2": comision2,
         "horario": horario,
     }
@@ -360,10 +355,10 @@ class TestContextPreservation:
     def test_context_chain_maintained(self, mock_session_state):
         """
         Test that full context chain is maintained through navigation.
-        
+
         Requirements: 5.1, 5.3
         """
-        # Build navigation chain: Materia → Comisión → Clase
+        # Build navigation chain: Materia → Comisión → Horario
         EntityContextManager.set_selected_entity(
             model=Materia,
             entity_id="MAT101",
@@ -373,16 +368,16 @@ class TestContextPreservation:
             entity_id="COM-001",
         )
         EntityContextManager.set_selected_entity(
-            model=Clase,
-            entity_id="CLS-001",
+            model=Horario,
+            entity_id="HOR-001",
         )
-        
+
         # Verify full chain
         chain = EntityContextManager.get_context_chain()
         assert len(chain) == 3
         assert chain[0].model_name == "Materia"
         assert chain[1].model_name == "Comision"
-        assert chain[2].model_name == "Clase"
+        assert chain[2].model_name == "Horario"
     
     def test_navigate_to_parent_restores_context(self, mock_session_state):
         """
@@ -527,7 +522,7 @@ class TestHierarchicalChildRetrieval:
         
         Requirements: 2.1, 2.2, 2.3
         """
-        # Create two materias with different comisiones
+        # Create two materias with their comisiones
         materia1 = Materia(
             codigo="MAT101",
             nombre="Cálculo I",
@@ -535,12 +530,12 @@ class TestHierarchicalChildRetrieval:
             horas_semanales=4,
         )
         db_materia1 = to_db(materia1)
-        CascadingOperations.create_with_cascading(
-            parent_instance=db_materia1,
-            parent_crud_func=materia_crud.create,
-            session=test_db_session,
-        )
-        
+        materia_crud.create(test_db_session, db_materia1)
+
+        com1 = Comision(id="MAT101-C1", materia_codigo="MAT101",
+                        nombre="Comision Unica", numero=1, cupo=30)
+        comision_crud.create(test_db_session, to_db(com1))
+
         materia2 = Materia(
             codigo="MAT102",
             nombre="Álgebra I",
@@ -548,22 +543,22 @@ class TestHierarchicalChildRetrieval:
             horas_semanales=4,
         )
         db_materia2 = to_db(materia2)
-        CascadingOperations.create_with_cascading(
-            parent_instance=db_materia2,
-            parent_crud_func=materia_crud.create,
-            session=test_db_session,
-        )
-        
+        materia_crud.create(test_db_session, db_materia2)
+
+        com2 = Comision(id="MAT102-C1", materia_codigo="MAT102",
+                        nombre="Comision Unica", numero=1, cupo=25)
+        comision_crud.create(test_db_session, to_db(com2))
+
         # Get comisiones for each materia
         all_comisiones = comision_crud.get_all(test_db_session)
-        
+
         mat101_comisiones = [c for c in all_comisiones if c.materia_codigo == "MAT101"]
         mat102_comisiones = [c for c in all_comisiones if c.materia_codigo == "MAT102"]
-        
+
         # Each should have their own comisiones
-        assert len(mat101_comisiones) >= 1
-        assert len(mat102_comisiones) >= 1
-        
+        assert len(mat101_comisiones) == 1
+        assert len(mat102_comisiones) == 1
+
         # No overlap
         mat101_ids = {c.id for c in mat101_comisiones}
         mat102_ids = {c.id for c in mat102_comisiones}
@@ -659,7 +654,7 @@ class TestBreadcrumbNavigationIntegration:
         items = [
             BreadcrumbItem(model_name="Materia", entity_id="MAT101", display_name="Cálculo I"),
             BreadcrumbItem(model_name="Comision", entity_id="COM-001", display_name="Comisión A"),
-            BreadcrumbItem(model_name="Clase", entity_id="CLS-001", display_name="Clase 1"),
+            BreadcrumbItem(model_name="Horario", entity_id="HOR-001", display_name="Horario 1"),
         ]
         
         for item in items:

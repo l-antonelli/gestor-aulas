@@ -7,7 +7,7 @@ from src.ui.form_input_renderer import (
     FormInputRenderer,
     ValidationErrorHandler,
 )
-from src.domain.problem import Alumno, Materia
+from src.domain.problem import Materia
 
 
 class SimpleModel(BaseModel):
@@ -130,31 +130,6 @@ class TestFormInputRendererValidation:
         assert is_valid is False
         # At least one error should be present
         assert len(errors) >= 1
-
-    def test_validate_with_domain_model_alumno(self):
-        """Test validation with Alumno domain model."""
-        form_data = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
-            "nombre": "Juan Pérez",
-            "dni": "12345678",
-        }
-        is_valid, errors = FormInputRenderer.validate_form_data(form_data, Alumno)
-        assert is_valid is True
-        assert errors == {}
-
-    def test_validate_alumno_invalid_email(self):
-        """Test validation fails for invalid email in Alumno."""
-        form_data = {
-            "legajo": "A-12345",
-            "email": "invalid-email",  # Missing @
-            "nombre": "Juan Pérez",
-            "dni": "12345678",
-        }
-        is_valid, errors = FormInputRenderer.validate_form_data(form_data, Alumno)
-        assert is_valid is False
-        assert "email" in errors
-        assert isinstance(errors["email"], list)
 
     def test_validate_materia_valid(self):
         """Test validation with valid Materia data."""

@@ -25,7 +25,7 @@ class TestCascadingOperations:
         
         # Apply cascading defaults
         defaults = {
-            "nombre": "Comisión Única",
+            "nombre": "Comision Unica",
             "numero": 1,
             "cupo": 30,
         }
@@ -39,7 +39,7 @@ class TestCascadingOperations:
         
         # Verify the child has correct values
         assert comision.materia_codigo == "MAT101"
-        assert comision.nombre == "Comisión Única"
+        assert comision.nombre == "Comision Unica"
         assert comision.numero == 1
         assert comision.cupo == 30
         assert comision.id == "MAT101-C1"  # Generated ID
@@ -79,7 +79,7 @@ class TestCascadingOperations:
         )
         
         child_data = {
-            "nombre": "Comisión Única",
+            "nombre": "Comision Unica",
             "numero": 2,
         }
         

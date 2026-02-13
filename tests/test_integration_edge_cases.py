@@ -20,16 +20,12 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 # Domain models
 from src.domain.problem import (
-    Alumno,
     Materia,
     Comision,
-    Clase,
+    Horario,
     Aula,
-    HorarioCronograma,
 )
 from src.domain.solution import (
-    Inscripcion,
-    Asistencia,
     AsignacionAula,
 )
 
@@ -288,47 +284,35 @@ class TestInvalidDataHandling:
     def test_none_for_required_field(self):
         """Test validation with None for required field."""
         invalid_data = {
-            "legajo": None,
-            "email": "test@example.com",
+            "codigo": None,
             "nombre": "Test",
-            "dni": "12345678",
+            "cupo": 30,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Materia)
         assert is_valid is False
 
     def test_empty_string_for_required_field(self):
         """Test validation with empty string for required field."""
         invalid_data = {
-            "legajo": "",
-            "email": "test@example.com",
+            "codigo": "",
             "nombre": "Test",
-            "dni": "12345678",
+            "cupo": 30,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Materia)
         assert is_valid is False
 
     def test_whitespace_only_for_required_field(self):
         """Test validation with whitespace-only string for required field."""
         invalid_data = {
-            "legajo": "   ",
-            "email": "test@example.com",
+            "codigo": "   ",
             "nombre": "Test",
-            "dni": "12345678",
+            "cupo": 30,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Materia)
         assert is_valid is False
-
-    def test_invalid_email_format(self):
-        """Test validation with invalid email format."""
-        invalid_data = {
-            "legajo": "A-12345",
-            "email": "not_an_email",
-            "nombre": "Test",
-            "dni": "12345678",
-        }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
-        assert is_valid is False
-        assert "email" in errors
 
     def test_invalid_literal_value(self):
         """Test validation with invalid Literal value."""
@@ -346,19 +330,19 @@ class TestInvalidDataHandling:
     def test_invalid_json_deserialization(self):
         """Test deserialization with invalid JSON."""
         with pytest.raises(DeserializationError, match="Invalid JSON format"):
-            SerializationUtils.deserialize_from_json("not valid json", Alumno)
+            SerializationUtils.deserialize_from_json("not valid json", Materia)
 
     def test_malformed_json_deserialization(self):
         """Test deserialization with malformed JSON."""
         with pytest.raises(DeserializationError):
-            SerializationUtils.deserialize_from_json('{"incomplete": ', Alumno)
+            SerializationUtils.deserialize_from_json('{"incomplete": ', Materia)
 
     def test_wrong_model_deserialization(self):
         """Test deserialization with wrong model type."""
-        # Alumno JSON deserialized as Materia
-        alumno_json = '{"legajo": "A-12345", "email": "test@example.com", "nombre": "Test", "dni": "12345678"}'
+        # Materia JSON deserialized as Aula
+        materia_json = '{"codigo": "MAT101", "nombre": "Test", "cupo": 30, "horas_semanales": 4}'
         with pytest.raises(DeserializationError, match="Validation failed"):
-            SerializationUtils.deserialize_from_json(alumno_json, Materia)
+            SerializationUtils.deserialize_from_json(materia_json, Aula)
 
 
 # =============================================================================
@@ -371,7 +355,7 @@ class TestMissingRequiredFields:
     def test_missing_all_required_fields(self):
         """Test validation with all required fields missing."""
         invalid_data = {}
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Materia)
         assert is_valid is False
         # Should have errors for all required fields
         assert len(errors) >= 1
@@ -379,12 +363,12 @@ class TestMissingRequiredFields:
     def test_missing_one_required_field(self):
         """Test validation with one required field missing."""
         invalid_data = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
+            "codigo": "MAT101",
             # "nombre" is missing
-            "dni": "12345678",
+            "cupo": 30,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Materia)
         assert is_valid is False
         assert "nombre" in errors
 
@@ -538,102 +522,102 @@ class TestConstraintViolations:
 class TestDomainModelEdgeCases:
     """Tests for edge cases specific to domain models."""
 
-    def test_alumno_dni_boundary_values(self):
-        """Test Alumno DNI with boundary values (7-8 digits)."""
-        # Valid 7 digits
-        valid_7 = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
+    def test_materia_cupo_boundary_values(self):
+        """Test Materia cupo with boundary values (must be > 0)."""
+        # Valid cupo
+        valid_data = {
+            "codigo": "MAT101",
             "nombre": "Test",
-            "dni": "1234567",
+            "cupo": 1,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(valid_7, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(valid_data, Materia)
         assert is_valid is True
-        
-        # Valid 8 digits
-        valid_8 = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
+
+        # Invalid cupo (0)
+        invalid_zero = {
+            "codigo": "MAT101",
             "nombre": "Test",
-            "dni": "12345678",
+            "cupo": 0,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(valid_8, Alumno)
-        assert is_valid is True
-        
-        # Invalid 6 digits
-        invalid_6 = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
-            "nombre": "Test",
-            "dni": "123456",
-        }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_6, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_zero, Materia)
         assert is_valid is False
-        
-        # Invalid 9 digits
-        invalid_9 = {
-            "legajo": "A-12345",
-            "email": "test@example.com",
+
+        # Invalid cupo (negative)
+        invalid_negative = {
+            "codigo": "MAT101",
             "nombre": "Test",
-            "dni": "123456789",
+            "cupo": -1,
+            "horas_semanales": 4,
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_9, Alumno)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_negative, Materia)
         assert is_valid is False
 
     def test_horario_time_boundary(self):
-        """Test HorarioCronograma with time boundary values."""
+        """Test Horario with time boundary values."""
         # Valid: start before end
         valid_data = {
             "id": "HOR-001",
-            "dia_semana": "Lunes",
+            "comision_id": "COM-001",
+            "codigo_materia": "MAT101",
+            "dia": "Lunes",
             "hora_inicio": datetime.time(8, 0),
             "hora_fin": datetime.time(10, 0),
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(valid_data, HorarioCronograma)
+        is_valid, errors = FormInputRenderer.validate_form_data(valid_data, Horario)
         assert is_valid is True
-        
+
         # Invalid: start equals end
         invalid_equal = {
             "id": "HOR-001",
-            "dia_semana": "Lunes",
+            "comision_id": "COM-001",
+            "codigo_materia": "MAT101",
+            "dia": "Lunes",
             "hora_inicio": datetime.time(10, 0),
             "hora_fin": datetime.time(10, 0),
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_equal, HorarioCronograma)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_equal, Horario)
         assert is_valid is False
-        
+
         # Invalid: start after end
         invalid_after = {
             "id": "HOR-001",
-            "dia_semana": "Lunes",
+            "comision_id": "COM-001",
+            "codigo_materia": "MAT101",
+            "dia": "Lunes",
             "hora_inicio": datetime.time(12, 0),
             "hora_fin": datetime.time(10, 0),
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_after, HorarioCronograma)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_after, Horario)
         assert is_valid is False
 
-    def test_clase_valid_days(self):
-        """Test Clase with valid and invalid day values."""
+    def test_horario_valid_days(self):
+        """Test Horario with valid and invalid day values."""
         valid_days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-        
+
         for day in valid_days:
             valid_data = {
-                "id": "CLS-001",
+                "id": "HOR-001",
                 "comision_id": "COM-001",
-                "horario_id": "HOR-001",
+                "codigo_materia": "MAT101",
                 "dia": day,
+                "hora_inicio": datetime.time(8, 0),
+                "hora_fin": datetime.time(10, 0),
             }
-            is_valid, errors = FormInputRenderer.validate_form_data(valid_data, Clase)
+            is_valid, errors = FormInputRenderer.validate_form_data(valid_data, Horario)
             assert is_valid is True, f"Day '{day}' should be valid"
-        
+
         # Invalid day
         invalid_data = {
-            "id": "CLS-001",
+            "id": "HOR-001",
             "comision_id": "COM-001",
-            "horario_id": "HOR-001",
+            "codigo_materia": "MAT101",
             "dia": "InvalidDay",
+            "hora_inicio": datetime.time(8, 0),
+            "hora_fin": datetime.time(10, 0),
         }
-        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Clase)
+        is_valid, errors = FormInputRenderer.validate_form_data(invalid_data, Horario)
         assert is_valid is False
 
     def test_aula_tipo_all_valid_values(self):
@@ -672,12 +656,12 @@ class TestSerializationEdgeCases:
     def test_deserialize_empty_string_raises_error(self):
         """Test that deserializing empty string raises error."""
         with pytest.raises(DeserializationError, match="Cannot deserialize empty string"):
-            SerializationUtils.deserialize_from_json("", Alumno)
+            SerializationUtils.deserialize_from_json("", Materia)
 
     def test_deserialize_non_string_raises_error(self):
         """Test that deserializing non-string raises error."""
         with pytest.raises(DeserializationError, match="Expected string"):
-            SerializationUtils.deserialize_from_json(123, Alumno)
+            SerializationUtils.deserialize_from_json(123, Materia)
 
     def test_pretty_print_empty_string_raises_error(self):
         """Test that pretty printing empty string raises error."""
@@ -691,42 +675,42 @@ class TestSerializationEdgeCases:
 
     def test_validate_empty_string(self):
         """Test validation of empty string."""
-        is_valid, error = SerializationUtils.validate_serialized_data("", Alumno)
+        is_valid, error = SerializationUtils.validate_serialized_data("", Materia)
         assert is_valid is False
         assert "Cannot validate empty string" in error
 
     def test_validate_invalid_json(self):
         """Test validation of invalid JSON."""
-        is_valid, error = SerializationUtils.validate_serialized_data("not json", Alumno)
+        is_valid, error = SerializationUtils.validate_serialized_data("not json", Materia)
         assert is_valid is False
         assert "Invalid JSON format" in error
 
     def test_unicode_characters_preserved(self):
         """Test that unicode characters are preserved in serialization."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
+        materia = Materia(
+            codigo="MAT101",
             nombre="José García Ñoño",
-            dni="12345678",
+            cupo=30,
+            horas_semanales=4,
         )
-        
-        json_str = SerializationUtils.serialize_to_json(alumno)
-        restored = SerializationUtils.deserialize_from_json(json_str, Alumno)
-        
+
+        json_str = SerializationUtils.serialize_to_json(materia)
+        restored = SerializationUtils.deserialize_from_json(json_str, Materia)
+
         assert restored.nombre == "José García Ñoño"
 
     def test_special_characters_in_strings(self):
         """Test handling of special characters in strings."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
+        materia = Materia(
+            codigo="MAT101",
             nombre='Test "Quoted" Name',
-            dni="12345678",
+            cupo=30,
+            horas_semanales=4,
         )
-        
-        json_str = SerializationUtils.serialize_to_json(alumno)
-        restored = SerializationUtils.deserialize_from_json(json_str, Alumno)
-        
+
+        json_str = SerializationUtils.serialize_to_json(materia)
+        restored = SerializationUtils.deserialize_from_json(json_str, Materia)
+
         assert restored.nombre == 'Test "Quoted" Name'
 
 
@@ -788,7 +772,7 @@ class TestSchemaIntrospectorEdgeCases:
         """Test getting type for nonexistent field."""
         # Should raise ValueError for nonexistent field
         with pytest.raises(ValueError, match="Field 'nonexistent_field' not found"):
-            SchemaIntrospector.get_field_type(Alumno, "nonexistent_field")
+            SchemaIntrospector.get_field_type(Materia, "nonexistent_field")
 
     def test_get_field_constraints_no_constraints(self):
         """Test getting constraints for field with no constraints."""
@@ -799,7 +783,7 @@ class TestSchemaIntrospectorEdgeCases:
 
     def test_get_default_value_no_default(self):
         """Test getting default value for field with no default."""
-        default = SchemaIntrospector.get_default_value(Alumno, "legajo")
+        default = SchemaIntrospector.get_default_value(Materia, "codigo")
         # Required fields have no default, should return None or PydanticUndefined
         # The important thing is it doesn't crash
 
@@ -814,7 +798,7 @@ class TestSchemaIntrospectorEdgeCases:
     def test_get_field_description_no_description(self):
         """Test getting description for field without description."""
         # All our domain models have descriptions, but test the method works
-        description = SchemaIntrospector.get_field_description(Alumno, "legajo")
+        description = SchemaIntrospector.get_field_description(Materia, "codigo")
         assert isinstance(description, str)
 
 
@@ -854,53 +838,53 @@ class TestFormOutputEdgeCases:
 
     def test_display_data_with_exclude_fields(self):
         """Test display data with excluded fields."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
+        materia = Materia(
+            codigo="MAT101",
             nombre="Test",
-            dni="12345678",
+            cupo=30,
+            horas_semanales=4,
         )
-        
+
         data = FormOutputRenderer.get_display_data(
-            alumno,
-            exclude_fields=["email", "dni"]
+            materia,
+            exclude_fields=["cupo", "horas_semanales"]
         )
-        
-        assert "Legajo" in data
+
+        assert "Codigo" in data
         assert "Nombre" in data
-        assert "Email" not in data
-        assert "Dni" not in data
+        assert "Cupo" not in data
+        assert "Horas Semanales" not in data
 
     def test_display_data_with_custom_labels(self):
         """Test display data with custom labels."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
+        materia = Materia(
+            codigo="MAT101",
             nombre="Test",
-            dni="12345678",
+            cupo=30,
+            horas_semanales=4,
         )
-        
+
         data = FormOutputRenderer.get_display_data(
-            alumno,
-            custom_labels={"legajo": "Student ID", "nombre": "Full Name"}
+            materia,
+            custom_labels={"codigo": "Subject Code", "nombre": "Full Name"}
         )
-        
-        assert "Student ID" in data
+
+        assert "Subject Code" in data
         assert "Full Name" in data
 
     def test_display_data_with_field_order(self):
         """Test display data with custom field order."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
+        materia = Materia(
+            codigo="MAT101",
             nombre="Test",
-            dni="12345678",
+            cupo=30,
+            horas_semanales=4,
         )
-        
+
         data = FormOutputRenderer.get_display_data(
-            alumno,
-            field_order=["nombre", "legajo", "email", "dni"]
+            materia,
+            field_order=["nombre", "codigo", "cupo", "horas_semanales", "periodo"]
         )
-        
+
         # All fields should still be present
-        assert len(data) == 4
+        assert len(data) == 5

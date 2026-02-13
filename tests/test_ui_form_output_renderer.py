@@ -7,7 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from src.ui.form_output_renderer import FormOutputRenderer
-from src.domain.problem import Alumno, Materia
+from src.domain.problem import Materia
 
 
 class SimpleModel(BaseModel):
@@ -205,23 +205,6 @@ class TestGetDisplayData:
         assert "Child Name" in data["Child"]
         assert data["Child"]["Child Name"] == "Child"
 
-    def test_get_display_data_with_domain_model_alumno(self):
-        """Test display data with Alumno domain model."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
-            nombre="Juan Pérez",
-            dni="12345678"
-        )
-        data = FormOutputRenderer.get_display_data(alumno)
-        
-        assert "Legajo" in data
-        assert "Email" in data
-        assert "Nombre" in data
-        assert "Dni" in data
-        assert data["Legajo"] == "A-12345"
-        assert data["Email"] == "test@example.com"
-
     def test_get_display_data_with_domain_model_materia(self):
         """Test display data with Materia domain model."""
         materia = Materia(
@@ -276,17 +259,17 @@ class TestCompleteOutputDisplay:
 
     def test_all_domain_model_fields_displayed(self):
         """Test all fields displayed for domain models."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
-            nombre="Juan Pérez",
-            dni="12345678"
+        materia = Materia(
+            codigo="MAT101",
+            nombre="Matemáticas",
+            cupo=30,
+            horas_semanales=4
         )
-        data = FormOutputRenderer.get_display_data(alumno)
-        
-        model_fields = set(Alumno.model_fields.keys())
+        data = FormOutputRenderer.get_display_data(materia)
+
+        model_fields = set(Materia.model_fields.keys())
         expected_labels = {f.replace("_", " ").title() for f in model_fields}
-        
+
         assert set(data.keys()) == expected_labels
 
 

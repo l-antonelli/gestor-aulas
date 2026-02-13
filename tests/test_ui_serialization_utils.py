@@ -8,7 +8,7 @@ from src.ui.serialization_utils import (
     SerializationError,
     DeserializationError,
 )
-from src.domain.problem import Alumno, Materia
+from src.domain.problem import Materia
 
 
 class TestSerializeToJson:
@@ -16,20 +16,20 @@ class TestSerializeToJson:
 
     def test_serialize_simple_model(self):
         """Test serializing a simple Pydantic model."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
-            nombre="Juan Pérez",
-            dni="12345678"
+        materia = Materia(
+            codigo="MAT101",
+            nombre="Matemáticas",
+            cupo=30,
+            horas_semanales=4
         )
-        result = SerializationUtils.serialize_to_json(alumno)
-        
+        result = SerializationUtils.serialize_to_json(materia)
+
         assert isinstance(result, str)
         parsed = json.loads(result)
-        assert parsed["legajo"] == "A-12345"
-        assert parsed["email"] == "test@example.com"
-        assert parsed["nombre"] == "Juan Pérez"
-        assert parsed["dni"] == "12345678"
+        assert parsed["codigo"] == "MAT101"
+        assert parsed["nombre"] == "Matemáticas"
+        assert parsed["cupo"] == 30
+        assert parsed["horas_semanales"] == 4
 
     def test_serialize_model_with_int_fields(self):
         """Test serializing a model with integer fields."""
@@ -61,14 +61,14 @@ class TestDeserializeFromJson:
 
     def test_deserialize_simple_model(self):
         """Test deserializing a simple JSON string to model."""
-        json_str = '{"legajo": "A-12345", "email": "test@example.com", "nombre": "Juan Pérez", "dni": "12345678"}'
-        result = SerializationUtils.deserialize_from_json(json_str, Alumno)
-        
-        assert isinstance(result, Alumno)
-        assert result.legajo == "A-12345"
-        assert result.email == "test@example.com"
-        assert result.nombre == "Juan Pérez"
-        assert result.dni == "12345678"
+        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas", "cupo": 30, "horas_semanales": 4}'
+        result = SerializationUtils.deserialize_from_json(json_str, Materia)
+
+        assert isinstance(result, Materia)
+        assert result.codigo == "MAT101"
+        assert result.nombre == "Matemáticas"
+        assert result.cupo == 30
+        assert result.horas_semanales == 4
 
     def test_deserialize_model_with_int_fields(self):
         """Test deserializing a model with integer fields."""
@@ -82,24 +82,24 @@ class TestDeserializeFromJson:
     def test_deserialize_empty_string_raises_error(self):
         """Test that deserializing empty string raises DeserializationError."""
         with pytest.raises(DeserializationError, match="Cannot deserialize empty string"):
-            SerializationUtils.deserialize_from_json("", Alumno)
+            SerializationUtils.deserialize_from_json("", Materia)
 
     def test_deserialize_invalid_json_raises_error(self):
         """Test that deserializing invalid JSON raises DeserializationError."""
         with pytest.raises(DeserializationError, match="Invalid JSON format"):
-            SerializationUtils.deserialize_from_json("not valid json", Alumno)
+            SerializationUtils.deserialize_from_json("not valid json", Materia)
 
     def test_deserialize_validation_error(self):
         """Test that validation errors are properly reported."""
         # Missing required field
-        json_str = '{"legajo": "A-12345", "email": "test@example.com"}'
+        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas"}'
         with pytest.raises(DeserializationError, match="Validation failed"):
-            SerializationUtils.deserialize_from_json(json_str, Alumno)
+            SerializationUtils.deserialize_from_json(json_str, Materia)
 
     def test_deserialize_non_string_raises_error(self):
         """Test that deserializing non-string raises DeserializationError."""
         with pytest.raises(DeserializationError, match="Expected string"):
-            SerializationUtils.deserialize_from_json(123, Alumno)
+            SerializationUtils.deserialize_from_json(123, Materia)
 
 
 class TestPrettyPrintJson:
@@ -150,40 +150,40 @@ class TestValidateSerializedData:
 
     def test_validate_valid_data(self):
         """Test validating valid serialized data."""
-        json_str = '{"legajo": "A-12345", "email": "test@example.com", "nombre": "Juan Pérez", "dni": "12345678"}'
-        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Alumno)
-        
+        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas", "cupo": 30, "horas_semanales": 4}'
+        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Materia)
+
         assert is_valid is True
         assert error == ""
 
     def test_validate_empty_string(self):
         """Test validating empty string returns error."""
-        is_valid, error = SerializationUtils.validate_serialized_data("", Alumno)
-        
+        is_valid, error = SerializationUtils.validate_serialized_data("", Materia)
+
         assert is_valid is False
         assert "Cannot validate empty string" in error
 
     def test_validate_invalid_json(self):
         """Test validating invalid JSON returns error."""
-        is_valid, error = SerializationUtils.validate_serialized_data("not json", Alumno)
-        
+        is_valid, error = SerializationUtils.validate_serialized_data("not json", Materia)
+
         assert is_valid is False
         assert "Invalid JSON format" in error
 
     def test_validate_missing_required_field(self):
         """Test validating data with missing required field."""
-        json_str = '{"legajo": "A-12345", "email": "test@example.com"}'
-        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Alumno)
-        
+        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas"}'
+        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Materia)
+
         assert is_valid is False
         assert "Validation failed" in error
 
     def test_validate_invalid_field_value(self):
         """Test validating data with invalid field value."""
-        # Invalid email (no @)
-        json_str = '{"legajo": "A-12345", "email": "invalid", "nombre": "Test", "dni": "12345678"}'
-        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Alumno)
-        
+        # Invalid cupo (must be > 0)
+        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas", "cupo": 0, "horas_semanales": 4}'
+        is_valid, error = SerializationUtils.validate_serialized_data(json_str, Materia)
+
         assert is_valid is False
         assert "Validation failed" in error
 
@@ -193,36 +193,22 @@ class TestSerializeInstancePretty:
 
     def test_serialize_pretty(self):
         """Test serializing to pretty-printed JSON."""
-        alumno = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
-            nombre="Juan Pérez",
-            dni="12345678"
+        materia = Materia(
+            codigo="MAT101",
+            nombre="Matemáticas",
+            cupo=30,
+            horas_semanales=4
         )
-        result = SerializationUtils.serialize_instance_pretty(alumno)
-        
+        result = SerializationUtils.serialize_instance_pretty(materia)
+
         assert "  " in result  # Has indentation
         assert "\n" in result  # Has newlines
         parsed = json.loads(result)
-        assert parsed["legajo"] == "A-12345"
+        assert parsed["codigo"] == "MAT101"
 
 
 class TestRoundTrip:
     """Tests for serialization/deserialization round-trip."""
-
-    def test_round_trip_alumno(self):
-        """Test round-trip serialization for Alumno model."""
-        original = Alumno(
-            legajo="A-12345",
-            email="test@example.com",
-            nombre="Juan Pérez",
-            dni="12345678"
-        )
-        
-        json_str = SerializationUtils.serialize_to_json(original)
-        restored = SerializationUtils.deserialize_from_json(json_str, Alumno)
-        
-        assert restored == original
 
     def test_round_trip_materia(self):
         """Test round-trip serialization for Materia model."""

@@ -573,7 +573,7 @@ from hypothesis import given, strategies as st, settings, assume
 def valid_breadcrumb_item_strategy(draw):
     """Generate valid BreadcrumbItem instances for property testing."""
     # Generate model_name from common entity types
-    model_name = draw(st.sampled_from(["Carrera", "Materia", "Comision", "Clase", "Alumno"]))
+    model_name = draw(st.sampled_from(["Carrera", "Materia", "Comision", "Horario"]))
     
     # Generate entity_id (alphanumeric, 1-20 chars)
     entity_id = draw(st.text(

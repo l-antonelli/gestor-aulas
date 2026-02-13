@@ -443,13 +443,13 @@ class TestEntityContextManager:
             entity_id="MAT101-C1"
         )
         
-        # Create a mock Clase model for testing
-        class MockClase:
-            __name__ = "Clase"
-        
+        # Create a mock Horario model for testing
+        class MockHorario:
+            __name__ = "Horario"
+
         EntityContextManager.set_selected_entity(
-            model=MockClase,
-            entity_id="CLS001"
+            model=MockHorario,
+            entity_id="HOR001"
         )
         
         depth = EntityContextManager.get_context_depth()
@@ -581,7 +581,7 @@ def valid_entity_context_strategy(draw, max_depth: int = 0):
         max_depth: Maximum depth of parent context chain (0 = no parent)
     """
     # Generate model_name from common entity types
-    model_name = draw(st.sampled_from(["Carrera", "Materia", "Comision", "Clase", "Alumno"]))
+    model_name = draw(st.sampled_from(["Carrera", "Materia", "Comision", "Horario"]))
     
     # Generate entity_id (alphanumeric, 1-20 chars)
     entity_id = draw(st.text(
@@ -624,7 +624,7 @@ def valid_navigation_sequence_strategy(draw):
     depth = draw(st.integers(min_value=1, max_value=4))
     
     # Define hierarchy order
-    hierarchy = ["Carrera", "Materia", "Comision", "Clase"]
+    hierarchy = ["Carrera", "Materia", "Comision", "Horario"]
     
     sequence = []
     for i in range(min(depth, len(hierarchy))):

@@ -20,7 +20,7 @@ from src.services.crud_services import (
     EntityNotFoundError,
     carrera_service,
 )
-from src.database.models import MateriaDB, CarreraDB, MateriaCarreraLink
+from src.database.models import MateriaDB, CarreraDB, PlanEstudioDB
 from src.services.relationship_registry import RelationshipRegistry
 
 # Import relationship definitions to register relationships
@@ -231,7 +231,7 @@ class TestCarreraMateriaRelationshipRegistration:
         relationship = RelationshipRegistry.get_relationship(Carrera, Materia)
         
         assert relationship.is_many_to_many is True
-        assert relationship.link_table == "materia_carrera"
+        assert relationship.link_table == "plan_estudio"
         assert relationship.parent_link_field == "carrera_codigo"
         assert relationship.child_link_field == "materia_codigo"
     
