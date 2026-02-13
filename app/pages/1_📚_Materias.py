@@ -9,7 +9,7 @@ from src.services.crud_services import materia_service
 from src.ui.materia_form_renderer import MateriaFormRenderer
 from src.ui.carrera_status_widget import CarreraStatusWidget
 from src.ui.materia_carrera_editor import MateriaCarreraEditor
-from src.ui.comision_manager import ComisionManager
+from src.services.crud_services import comision_service, horario_service
 
 # Import relationship definitions to register relationships
 import src.services.relationship_definitions  # noqa: F401
@@ -188,12 +188,22 @@ def render_custom_materia_page():
                                 )
                             
                             with edit_tab3:
-                                # Comisiones manager
-                                ComisionManager.render_comisiones_manager(
-                                    session=session,
-                                    materia_codigo=materia_codigo,
-                                    key=f"edit_{materia_codigo}_comisiones"
-                                )
+                                # Read-only comisiones view
+                                st.markdown("### 👥 Comisiones")
+                                st.caption("Las comisiones se crean automaticamente al cargar horarios.")
+                                comisiones = comision_service.get_by_materia(session, materia_codigo)
+                                if not comisiones:
+                                    st.info("No hay comisiones para esta materia.")
+                                else:
+                                    for com in comisiones:
+                                        with st.expander(f"{com.nombre} (#{com.numero})"):
+                                            st.write(f"**ID:** {com.id}")
+                                            st.write(f"**Cupo:** {com.cupo}")
+                                            horarios = horario_service.get_by_comision(session, com.id)
+                                            if horarios:
+                                                st.write("**Horarios:**")
+                                                for h in horarios:
+                                                    st.write(f"  - {h.dia} {h.hora_inicio.strftime('%H:%M')}-{h.hora_fin.strftime('%H:%M')}")
                             
                             # Close button at the bottom
                             st.divider()

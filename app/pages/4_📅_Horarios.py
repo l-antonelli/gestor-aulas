@@ -1,21 +1,20 @@
-"""Gestión de Horarios y Cronograma."""
+"""Gestion de Horarios - Carga por archivo y manual."""
 
 import streamlit as st
 from datetime import time, timedelta, datetime
-from src.database.connection import get_session
-from src.database.models import HorarioCronogramaDB, ClaseDB, ComisionDB, ConfiguracionHoraria
+from src.database.connection import get_session, init_db
+from src.database.models import ConfiguracionHoraria
 from src.database.crud import (
-    horario_crud, clase_crud, comision_crud, materia_crud,
+    horario_crud, comision_crud, materia_crud,
     get_or_create_config, update_config
 )
-from src.domain.problem.comision import Comision
-from src.domain.problem.clase import Clase
-from src.domain.problem.horario_cronograma import HorarioCronograma
-from src.ui.relationship_selector import RelationshipSelector
-import uuid
+from src.services.horario_loading_service import HorarioInput, load_horarios_from_data
+from src.services.horario_file_parser import parse_horarios_file
+
+init_db()
 
 st.set_page_config(page_title="Horarios", page_icon="📅", layout="wide")
-st.title("📅 Gestión de Horarios y Cronograma")
+st.title("📅 Gestion de Horarios")
 
 DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
@@ -26,7 +25,6 @@ def generate_time_slots(config: ConfiguracionHoraria) -> list[time]:
     current = datetime.combine(datetime.today(), config.hora_inicio_operativo)
     end = datetime.combine(datetime.today(), config.hora_fin_operativo)
     delta = timedelta(minutes=config.granularidad_minutos)
-    
     while current <= end:
         slots.append(current.time())
         current += delta
@@ -34,52 +32,50 @@ def generate_time_slots(config: ConfiguracionHoraria) -> list[time]:
 
 
 # Tabs
-tab_config, tab_horarios, tab_clases, tab_grilla = st.tabs([
-    "⚙️ Configuración", 
-    "🕐 Franjas Horarias", 
-    "📚 Asignar Clases",
+tab_config, tab_cargar, tab_horarios, tab_grilla = st.tabs([
+    "⚙️ Configuracion",
+    "📥 Cargar Horarios",
+    "📋 Horarios Cargados",
     "📊 Vista Grilla"
 ])
 
 # =============================================================================
-# Tab 1: Configuración Global
+# Tab 1: Configuracion Global
 # =============================================================================
 with tab_config:
-    st.subheader("Configuración de Parámetros Horarios")
-    
+    st.subheader("Configuracion de Parametros Horarios")
+
     with next(get_session()) as session:
         config = get_or_create_config(session)
-    
+
     with st.form("config_form"):
         col1, col2 = st.columns(2)
-        
+
         with col1:
             granularidad = st.selectbox(
                 "Granularidad (minutos)",
                 options=[15, 20, 30, 45, 60],
                 index=[15, 20, 30, 45, 60].index(config.granularidad_minutos),
-                help="Unidad mínima de tiempo para asignación"
+                help="Unidad minima de tiempo para asignacion"
             )
-            
             hora_inicio = st.time_input(
                 "Hora inicio operativo",
                 value=config.hora_inicio_operativo
             )
-        
+
         with col2:
             dias_actuales = config.dias_operativos.split(",")
             dias_seleccionados = st.multiselect(
-                "Días operativos",
+                "Dias operativos",
                 options=DIAS_SEMANA,
                 default=[d for d in dias_actuales if d in DIAS_SEMANA]
             )
-            
             hora_fin = st.time_input(
-                "Hora fin operativo", 
+                "Hora fin operativo",
                 value=config.hora_fin_operativo
             )
-        
-        if st.form_submit_button("💾 Guardar Configuración", type="primary"):
+
+        if st.form_submit_button("💾 Guardar Configuracion", type="primary"):
             new_config = ConfiguracionHoraria(
                 id=1,
                 granularidad_minutos=granularidad,
@@ -89,232 +85,200 @@ with tab_config:
             )
             with next(get_session()) as session:
                 update_config(session, new_config)
-            st.success("Configuración guardada")
+            st.success("Configuracion guardada")
             st.rerun()
-    
-    st.info(f"Los horarios válidos son: :00, :15, :30, :45 (cada {config.granularidad_minutos} min)")
+
+    st.info(f"Granularidad: cada {config.granularidad_minutos} min")
+
 
 # =============================================================================
-# Tab 2: Franjas Horarias
+# Tab 2: Cargar Horarios (archivo + manual)
+# =============================================================================
+with tab_cargar:
+    st.subheader("Cargar Horarios")
+    st.caption("Las comisiones se crean automaticamente al cargar horarios")
+
+    subtab_file, subtab_manual = st.tabs(["📄 Desde Archivo", "✏️ Entrada Manual"])
+
+    # --- File upload ---
+    with subtab_file:
+        st.markdown("Suba un archivo CSV o Excel con columnas: "
+                     "`codigo_materia`, `comision`, `dia`, `hora_inicio`, `hora_fin`")
+
+        uploaded_file = st.file_uploader(
+            "Seleccionar archivo",
+            type=["csv", "xlsx", "xls"],
+            key="horario_file_upload"
+        )
+
+        if uploaded_file is not None:
+            entries, parse_errors = parse_horarios_file(uploaded_file)
+
+            if parse_errors:
+                st.warning("Errores de parseo:")
+                for err in parse_errors:
+                    st.text(f"  - {err}")
+
+            if entries:
+                st.markdown(f"**{len(entries)} horarios detectados:**")
+                preview = [
+                    {
+                        "Materia": e.codigo_materia,
+                        "Comision": e.comision_nombre,
+                        "Dia": e.dia,
+                        "Inicio": e.hora_inicio.strftime("%H:%M"),
+                        "Fin": e.hora_fin.strftime("%H:%M"),
+                    }
+                    for e in entries
+                ]
+                st.dataframe(preview, use_container_width=True, hide_index=True)
+
+                if st.button("Confirmar Carga", type="primary", key="confirm_upload"):
+                    with next(get_session()) as session:
+                        result = load_horarios_from_data(session, entries)
+
+                    st.success(
+                        f"Carga completada: {result.horarios_created} horarios creados, "
+                        f"{result.comisiones_created} comisiones nuevas"
+                    )
+                    if result.errors:
+                        st.warning("Errores durante la carga:")
+                        for err in result.errors:
+                            st.text(f"  - {err}")
+                    st.rerun()
+
+    # --- Manual entry ---
+    with subtab_manual:
+        with next(get_session()) as session:
+            config = get_or_create_config(session)
+            all_materias = materia_crud.get_all(session)
+
+        if not all_materias:
+            st.warning("No hay materias. Cree materias primero.")
+        else:
+            with st.form("manual_horario_form"):
+                materia_sel = st.selectbox(
+                    "Materia",
+                    options=[m.codigo for m in all_materias],
+                    format_func=lambda x: f"{x} - {next((m.nombre for m in all_materias if m.codigo == x), '')}",
+                )
+                comision_nombre = st.text_input("Nombre de Comision", value="Comision Unica")
+
+                dias_config = config.dias_operativos.split(",")
+                dia = st.selectbox("Dia", options=[d for d in DIAS_SEMANA if d in dias_config])
+
+                time_slots = generate_time_slots(config)
+                hora_inicio_sel = st.selectbox(
+                    "Hora inicio",
+                    options=time_slots[:-1],
+                    format_func=lambda t: t.strftime("%H:%M")
+                )
+                hora_fin_sel = st.selectbox(
+                    "Hora fin",
+                    options=time_slots[1:],
+                    index=min(3, len(time_slots) - 2),
+                    format_func=lambda t: t.strftime("%H:%M")
+                )
+
+                if st.form_submit_button("Crear Horario"):
+                    if hora_fin_sel <= hora_inicio_sel:
+                        st.error("Hora fin debe ser posterior a hora inicio")
+                    else:
+                        entry = HorarioInput(
+                            codigo_materia=materia_sel,
+                            comision_nombre=comision_nombre.strip() or "Comision Unica",
+                            dia=dia,
+                            hora_inicio=hora_inicio_sel,
+                            hora_fin=hora_fin_sel,
+                        )
+                        with next(get_session()) as session:
+                            result = load_horarios_from_data(session, [entry])
+
+                        if result.errors:
+                            for err in result.errors:
+                                st.error(err)
+                        else:
+                            msg = f"Horario creado"
+                            if result.comisiones_created:
+                                msg += f" (comision '{comision_nombre}' creada automaticamente)"
+                            st.success(msg)
+                            st.rerun()
+
+
+# =============================================================================
+# Tab 3: Horarios Cargados
 # =============================================================================
 with tab_horarios:
-    st.subheader("Definir Franjas Horarias")
-    
+    st.subheader("Horarios Cargados")
+
     with next(get_session()) as session:
-        config = get_or_create_config(session)
         horarios = horario_crud.get_all(session)
-    
-    col_list, col_create = st.columns([2, 1])
-    
-    with col_list:
+
         if not horarios:
-            st.info("No hay franjas horarias definidas.")
+            st.info("No hay horarios cargados.")
         else:
-            data = [
-                {
+            horarios_data = []
+            for h in horarios:
+                materia = materia_crud.get(session, h.codigo_materia) if h.codigo_materia else None
+                horarios_data.append({
                     "ID": h.id,
-                    "Día": h.dia_semana,
-                    "Inicio": h.hora_inicio.strftime("%H:%M"),
-                    "Fin": h.hora_fin.strftime("%H:%M"),
-                }
-                for h in horarios
-            ]
+                    "Materia": materia.nombre if materia else h.codigo_materia,
+                    "Comision": h.comision_id,
+                    "Dia": h.dia,
+                    "Horario": f"{h.hora_inicio.strftime('%H:%M')}-{h.hora_fin.strftime('%H:%M')}",
+                })
+
             day_order = {d: i for i, d in enumerate(DIAS_SEMANA)}
-            data.sort(key=lambda x: (day_order.get(x["Día"], 99), x["Inicio"]))
-            st.dataframe(data, use_container_width=True, hide_index=True)
-    
-    with col_create:
-        st.markdown("**Nueva Franja**")
-        time_slots = generate_time_slots(config)
-        
-        with st.form("create_horario"):
-            dias_config = config.dias_operativos.split(",")
-            dia = st.selectbox("Día", options=[d for d in DIAS_SEMANA if d in dias_config])
-            
-            hora_inicio = st.selectbox(
-                "Hora inicio",
-                options=time_slots[:-1],
-                format_func=lambda t: t.strftime("%H:%M")
-            )
-            hora_fin = st.selectbox(
-                "Hora fin",
-                options=time_slots[1:],
-                index=min(3, len(time_slots)-2),  # Default ~1 hour later
-                format_func=lambda t: t.strftime("%H:%M")
-            )
-            
-            if st.form_submit_button("➕ Crear"):
-                if hora_fin <= hora_inicio:
-                    st.error("Hora fin debe ser posterior a hora inicio")
-                else:
-                    horario_id = f"{dia[:3].upper()}-{hora_inicio.strftime('%H%M')}"
-                    horario = HorarioCronogramaDB(
-                        id=horario_id,
-                        dia_semana=dia,
-                        hora_inicio=hora_inicio,
-                        hora_fin=hora_fin
-                    )
-                    try:
-                        with next(get_session()) as session:
-                            horario_crud.create(session, horario)
-                        st.success(f"Franja '{horario_id}' creada")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-    
-    # Delete section
-    if horarios:
-        st.divider()
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            id_delete = st.selectbox("Eliminar franja", options=[h.id for h in horarios])
-        with col2:
-            st.write("")  # Spacing
-            st.write("")
-            if st.button("🗑️ Eliminar"):
-                with next(get_session()) as session:
+            horarios_data.sort(key=lambda x: (day_order.get(x["Dia"], 99), x["Horario"]))
+            st.dataframe(horarios_data, use_container_width=True, hide_index=True)
+
+            # Delete section
+            st.divider()
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                id_delete = st.selectbox(
+                    "Eliminar horario",
+                    options=[h.id for h in horarios],
+                    key="del_horario"
+                )
+            with col2:
+                st.write("")
+                st.write("")
+                if st.button("🗑️ Eliminar", key="btn_del_horario"):
                     horario_crud.delete(session, id_delete)
-                st.rerun()
+                    st.rerun()
 
-
-# =============================================================================
-# Tab 3: Asignar Clases a Horarios
-# =============================================================================
-with tab_clases:
-    st.subheader("Asignar Comisiones a Franjas Horarias")
-    st.caption("Cada asignación crea una Clase (instancia de dictado)")
-    
-    with next(get_session()) as session:
-        comisiones = comision_crud.get_all(session)
-        horarios = horario_crud.get_all(session)
-        clases = clase_crud.get_all(session)
-        
-        # Build display data
-        clases_data = []
-        for c in clases:
-            comision = comision_crud.get(session, c.comision_id)
-            materia = materia_crud.get(session, comision.materia_codigo) if comision else None
-            horario = horario_crud.get(session, c.horario_id)
-            clases_data.append({
-                "ID": c.id,
-                "Materia": materia.nombre if materia else "N/A",
-                "Comisión": c.comision_id,
-                "Día": c.dia,
-                "Horario": f"{horario.hora_inicio.strftime('%H:%M')}-{horario.hora_fin.strftime('%H:%M')}" if horario else "N/A",
-            })
-    
-    col_list, col_create = st.columns([2, 1])
-    
-    with col_list:
-        if not clases_data:
-            st.info("No hay clases asignadas.")
-        else:
-            day_order = {d: i for i, d in enumerate(DIAS_SEMANA)}
-            clases_data.sort(key=lambda x: (day_order.get(x["Día"], 99), x["Horario"]))
-            st.dataframe(clases_data, use_container_width=True, hide_index=True)
-    
-    with col_create:
-        st.markdown("**Nueva Clase**")
-        
-        if not comisiones:
-            st.warning("Primero creá comisiones")
-        elif not horarios:
-            st.warning("Primero creá franjas horarias")
-        else:
-            with st.form("create_clase"):
-                # Use relationship selectors
-                with next(get_session()) as session:
-                    comision_id = RelationshipSelector.render_searchable_selector(
-                        field_name="comision_id",
-                        parent_model=Comision,
-                        child_model=Clase,
-                        crud_func=lambda s: comision_crud.get_all(s, limit=500),
-                        session=session,
-                        search_fields=["id", "nombre"],
-                        key="clase_comision_selector",
-                        label="Comisión",
-                    )
-                    
-                    horario_id = RelationshipSelector.render_relationship_selector(
-                        field_name="horario_id",
-                        parent_model=HorarioCronograma,
-                        child_model=Clase,
-                        crud_func=lambda s: horario_crud.get_all(s, limit=500),
-                        session=session,
-                        key="clase_horario_selector",
-                        label="Franja horaria",
-                    )
-                
-                # Get dia from horario
-                horario_sel = next((h for h in horarios if h.id == horario_id), None) if horario_id else None
-                dia = horario_sel.dia_semana if horario_sel else "Lunes"
-                
-                if st.form_submit_button("➕ Crear Clase"):
-                    if not comision_id or not horario_id:
-                        st.error("Debe seleccionar una comisión y una franja horaria")
-                    else:
-                        clase_id = f"CLS-{uuid.uuid4().hex[:8].upper()}"
-                        clase = ClaseDB(
-                            id=clase_id,
-                            comision_id=comision_id,
-                            horario_id=horario_id,
-                            dia=dia
-                        )
-                        try:
-                            with next(get_session()) as session:
-                                clase_crud.create(session, clase)
-                            st.success(f"✅ Clase '{clase_id}' creada")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error: {e}")
-    
-    # Delete section
-    if clases:
-        st.divider()
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            id_delete = st.selectbox("Eliminar clase", options=[c.id for c in clases], key="del_clase")
-        with col2:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Eliminar", key="btn_del_clase"):
-                with next(get_session()) as session:
-                    clase_crud.delete(session, id_delete)
-                st.rerun()
 
 # =============================================================================
 # Tab 4: Vista Grilla Semanal
 # =============================================================================
 with tab_grilla:
     st.subheader("Cronograma Semanal")
-    
+
     with next(get_session()) as session:
         config = get_or_create_config(session)
-        clases = clase_crud.get_all(session)
-        
-        if not clases:
-            st.info("No hay clases para mostrar. Asigná comisiones a horarios en la pestaña anterior.")
+        horarios = horario_crud.get_all(session)
+
+        if not horarios:
+            st.info("No hay horarios para mostrar.")
         else:
-            # Build grid data
             dias_config = config.dias_operativos.split(",")
             grid_data = {dia: [] for dia in dias_config}
-            
-            for c in clases:
-                horario = horario_crud.get(session, c.horario_id)
-                comision = comision_crud.get(session, c.comision_id)
-                materia = materia_crud.get(session, comision.materia_codigo) if comision else None
-                
-                if horario and c.dia in grid_data:
-                    grid_data[c.dia].append({
-                        "hora": horario.hora_inicio,
-                        "texto": f"{horario.hora_inicio.strftime('%H:%M')}-{horario.hora_fin.strftime('%H:%M')}\n{materia.nombre if materia else 'N/A'}\n({c.comision_id})"
+
+            for h in horarios:
+                materia = materia_crud.get(session, h.codigo_materia) if h.codigo_materia else None
+                if h.dia in grid_data:
+                    grid_data[h.dia].append({
+                        "hora": h.hora_inicio,
+                        "texto": (
+                            f"{h.hora_inicio.strftime('%H:%M')}-{h.hora_fin.strftime('%H:%M')}\n"
+                            f"{materia.nombre if materia else 'N/A'}\n({h.comision_id})"
+                        )
                     })
-            
-            # Sort by time
+
             for dia in grid_data:
                 grid_data[dia].sort(key=lambda x: x["hora"])
-            
-            # Display as columns
+
             cols = st.columns(len(dias_config))
             for i, dia in enumerate(dias_config):
                 with cols[i]:
@@ -323,4 +287,4 @@ with tab_grilla:
                         for item in grid_data[dia]:
                             st.code(item["texto"], language=None)
                     else:
-                        st.caption("Sin clases")
+                        st.caption("Sin horarios")
