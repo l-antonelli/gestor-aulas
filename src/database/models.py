@@ -29,14 +29,23 @@ class ConfiguracionHoraria(SQLModel, table=True):
 # Link Tables (for M:M relationships)
 # =============================================================================
 
-class MateriaCarreraLink(SQLModel, table=True):
-    """Relación M:M entre Materia y Carrera con ubicación curricular."""
-    __tablename__ = "materia_carrera"
-    
+class PlanEstudioDB(SQLModel, table=True):
+    """Relacion M:M entre Materia y Carrera con ubicacion curricular."""
+    __tablename__ = "plan_estudio"
+
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
-    anio_carrera: int = Field(default=1, ge=1, le=6)  # Año en el plan de estudios
-    cuatrimestre_carrera: int = Field(default=0, ge=0, le=2)  # 0=anual, 1=1C, 2=2C
+    anio_plan: int = Field(default=1, ge=1, le=6)
+    cuatrimestre_plan: str = Field(default="1C")  # "1C", "2C", "anual"
+
+
+class CorrelativaDB(SQLModel, table=True):
+    """Correlativas: materias que deben aprobarse antes de cursar otra."""
+    __tablename__ = "correlativas"
+
+    carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
+    materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
+    materia_correlativa_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
 
 
 # =============================================================================
@@ -97,7 +106,7 @@ class CarreraDB(SQLModel, table=True):
     # Relationships
     materias: list["MateriaDB"] = Relationship(
         back_populates="carreras",
-        link_model=MateriaCarreraLink
+        link_model=PlanEstudioDB
     )
 
 
@@ -115,7 +124,7 @@ class MateriaDB(SQLModel, table=True):
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")
     carreras: list[CarreraDB] = Relationship(
         back_populates="materias",
-        link_model=MateriaCarreraLink
+        link_model=PlanEstudioDB
     )
     dictados: list[DictadoDB] = Relationship(back_populates="materia")
 
@@ -123,7 +132,7 @@ class MateriaDB(SQLModel, table=True):
 class ComisionDB(SQLModel, table=True):
     """División de una materia para distribuir alumnos en un dictado específico."""
     __tablename__ = "comisiones"
-    
+
     id: str = Field(primary_key=True)
     materia_codigo: str = Field(foreign_key="materias.codigo", index=True)
     dictado_id: Optional[str] = Field(default=None, foreign_key="dictados.id", index=True)
@@ -131,54 +140,42 @@ class ComisionDB(SQLModel, table=True):
     numero: int = Field(ge=1, default=1)
     cupo: int = Field(gt=0)
     descripcion: str = Field(default="")
-    
+
     # Relationships
     materia: Optional[MateriaDB] = Relationship(back_populates="comisiones")
     dictado: Optional[DictadoDB] = Relationship(back_populates="comisiones")
-    clases: list["ClaseDB"] = Relationship(back_populates="comision")
-
-
-class HorarioCronogramaDB(SQLModel, table=True):
-    """Franja horaria del cronograma académico."""
-    __tablename__ = "horarios_cronograma"
-    
-    id: str = Field(primary_key=True)
-    dia_semana: str = Field(index=True)
-    hora_inicio: time
-    hora_fin: time
-    
-    # Relationships
-    clases: list["ClaseDB"] = Relationship(back_populates="horario")
+    horarios: list["HorarioDB"] = Relationship(back_populates="comision")
 
 
 class AulaDB(SQLModel, table=True):
     """Espacio físico donde se dictan las clases."""
     __tablename__ = "aulas"
-    
+
     id: str = Field(primary_key=True, min_length=1)
     sede: str = Field(index=True)
     nombre: str = Field(min_length=1)
     capacidad: int = Field(gt=0)
     tipo: str = Field(default="teorica")
     descripcion: str = Field(default="")
-    
+
     # Relationships
     asignaciones: list["AsignacionAulaDB"] = Relationship(back_populates="aula")
 
 
-class ClaseDB(SQLModel, table=True):
-    """Instancia de dictado de una comisión en un horario específico."""
-    __tablename__ = "clases"
-    
+class HorarioDB(SQLModel, table=True):
+    """Horario de dictado: asocia una comisión con un día y rango horario."""
+    __tablename__ = "horarios"
+
     id: str = Field(primary_key=True)
     comision_id: str = Field(foreign_key="comisiones.id", index=True)
-    horario_id: str = Field(foreign_key="horarios_cronograma.id", index=True)
-    dia: str
-    
+    codigo_materia: str = Field(foreign_key="materias.codigo", index=True)
+    dia: str = Field(index=True)
+    hora_inicio: time
+    hora_fin: time
+
     # Relationships
-    comision: Optional[ComisionDB] = Relationship(back_populates="clases")
-    horario: Optional[HorarioCronogramaDB] = Relationship(back_populates="clases")
-    asignacion: Optional["AsignacionAulaDB"] = Relationship(back_populates="clase")
+    comision: Optional[ComisionDB] = Relationship(back_populates="horarios")
+    asignacion: Optional["AsignacionAulaDB"] = Relationship(back_populates="horario")
 
 
 # =============================================================================
@@ -186,16 +183,16 @@ class ClaseDB(SQLModel, table=True):
 # =============================================================================
 
 class AsignacionAulaDB(SQLModel, table=True):
-    """Asignación de un aula a una clase en un ciclo (resuelve M:M Clase-Aula)."""
+    """Asignación de un aula a un horario en un ciclo (resuelve M:M Horario-Aula)."""
     __tablename__ = "asignaciones_aula"
-    
+
     id: str = Field(primary_key=True)
-    clase_id: str = Field(foreign_key="clases.id", index=True)
+    horario_id: str = Field(foreign_key="horarios.id", index=True)
     aula_id: str = Field(foreign_key="aulas.id", index=True)
     ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
     fecha_asignacion: date
     vigente: bool = Field(default=True)
-    
+
     # Relationships
-    clase: Optional[ClaseDB] = Relationship(back_populates="asignacion")
+    horario: Optional[HorarioDB] = Relationship(back_populates="asignacion")
     aula: Optional[AulaDB] = Relationship(back_populates="asignaciones")

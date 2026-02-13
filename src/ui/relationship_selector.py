@@ -391,20 +391,16 @@ RELATIONSHIP_REGISTRY: Dict[tuple, tuple] = {}
 def register_domain_relationships() -> None:
     """
     Register all domain relationships using the old API format.
-    
+
     This function provides backward compatibility by converting
     RelationshipRegistry entries to the old RELATIONSHIP_REGISTRY format.
     """
     from src.domain.problem.materia import Materia
     from src.domain.problem.comision import Comision
-    from src.domain.problem.clase import Clase
-    from src.domain.problem.alumno import Alumno
+    from src.domain.problem.horario import Horario
     from src.domain.problem.aula import Aula
-    from src.domain.problem.horario_cronograma import HorarioCronograma
-    from src.domain.solution.inscripcion import Inscripcion
-    from src.domain.solution.asistencia import Asistencia
     from src.domain.solution.asignacion_aula import AsignacionAula
-    
+
     # Register relationships using old API
     RelationshipSelector.register_relationship(
         source_model=Comision,
@@ -413,63 +409,23 @@ def register_domain_relationships() -> None:
         display_field="nombre",
         id_field="codigo",
     )
-    
+
     RelationshipSelector.register_relationship(
-        source_model=Clase,
+        source_model=Horario,
         field_name="comision_id",
         target_model=Comision,
         display_field="nombre",
         id_field="id",
     )
-    
-    RelationshipSelector.register_relationship(
-        source_model=Clase,
-        field_name="horario_id",
-        target_model=HorarioCronograma,
-        display_field="dia_semana",
-        id_field="id",
-    )
-    
-    RelationshipSelector.register_relationship(
-        source_model=Inscripcion,
-        field_name="alumno_legajo",
-        target_model=Alumno,
-        display_field="nombre",
-        id_field="legajo",
-    )
-    
-    RelationshipSelector.register_relationship(
-        source_model=Inscripcion,
-        field_name="comision_id",
-        target_model=Comision,
-        display_field="nombre",
-        id_field="id",
-    )
-    
-    RelationshipSelector.register_relationship(
-        source_model=Asistencia,
-        field_name="alumno_legajo",
-        target_model=Alumno,
-        display_field="nombre",
-        id_field="legajo",
-    )
-    
-    RelationshipSelector.register_relationship(
-        source_model=Asistencia,
-        field_name="clase_id",
-        target_model=Clase,
-        display_field="id",
-        id_field="id",
-    )
-    
+
     RelationshipSelector.register_relationship(
         source_model=AsignacionAula,
-        field_name="clase_id",
-        target_model=Clase,
+        field_name="horario_id",
+        target_model=Horario,
         display_field="id",
         id_field="id",
     )
-    
+
     RelationshipSelector.register_relationship(
         source_model=AsignacionAula,
         field_name="aula_id",

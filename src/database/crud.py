@@ -9,8 +9,8 @@ para todas las entidades de la base de datos.
 from sqlmodel import Session, select
 from typing import TypeVar, Generic, Type, Optional
 from src.database.models import (
-    MateriaDB, ComisionDB, HorarioCronogramaDB,
-    AulaDB, ClaseDB, AsignacionAulaDB,
+    MateriaDB, ComisionDB, HorarioDB,
+    AulaDB, AsignacionAulaDB,
     ConfiguracionHoraria, CarreraDB, CicloDB, DictadoDB
 )
 
@@ -73,13 +73,10 @@ materia_crud = CRUDBase[MateriaDB](MateriaDB)
 comision_crud = CRUDBase[ComisionDB](ComisionDB)
 
 # Instancia CRUD para Horarios
-horario_crud = CRUDBase[HorarioCronogramaDB](HorarioCronogramaDB)
+horario_crud = CRUDBase[HorarioDB](HorarioDB)
 
 # Instancia CRUD para Aulas
 aula_crud = CRUDBase[AulaDB](AulaDB)
-
-# Instancia CRUD para Clases
-clase_crud = CRUDBase[ClaseDB](ClaseDB)
 
 # Instancia CRUD para Asignaciones de Aulas
 asignacion_crud = CRUDBase[AsignacionAulaDB](AsignacionAulaDB)
@@ -97,30 +94,6 @@ dictado_crud = CRUDBase[DictadoDB](DictadoDB)
 # ============================================================================
 # FUNCIONES AUXILIARES ESPECIALIZADAS
 # ============================================================================
-
-def create_materia_with_comision(session: Session, materia: MateriaDB) -> tuple[MateriaDB, ComisionDB]:
-    """
-    Crea una materia con su comisión por defecto.
-    """
-    session.add(materia)
-    session.commit()
-    session.refresh(materia)
-    
-    # Create default comision
-    comision = ComisionDB(
-        id=f"{materia.codigo}-C1",
-        materia_codigo=materia.codigo,
-        nombre="Comisión Única",
-        numero=1,
-        cupo=materia.cupo,
-        descripcion="Comisión creada automáticamente"
-    )
-    session.add(comision)
-    session.commit()
-    session.refresh(comision)
-    
-    return materia, comision
-
 
 def get_or_create_config(session: Session) -> ConfiguracionHoraria:
     """

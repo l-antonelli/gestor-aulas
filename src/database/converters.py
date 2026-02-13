@@ -11,8 +11,7 @@ from typing import TypeVar, Union, overload
 from src.domain.problem.aula import Aula
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
-from src.domain.problem.horario_cronograma import HorarioCronograma
-from src.domain.problem.clase import Clase
+from src.domain.problem.horario import Horario
 from src.domain.problem.carrera import Carrera
 from src.domain.solution.asignacion_aula import AsignacionAula
 
@@ -21,19 +20,18 @@ from src.database.models import (
     AulaDB,
     MateriaDB,
     ComisionDB,
-    HorarioCronogramaDB,
-    ClaseDB,
+    HorarioDB,
     AsignacionAulaDB,
     CarreraDB,
 )
 
 # Type aliases for clarity
-DomainModel = Union[Aula, Materia, Comision, HorarioCronograma, Clase, AsignacionAula, Carrera]
-DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, AsignacionAulaDB, CarreraDB]
+DomainModel = Union[Aula, Materia, Comision, Horario, AsignacionAula, Carrera]
+DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, AsignacionAulaDB, CarreraDB]
 
 
 # =============================================================================
-# Domain → DB Converters
+# Domain -> DB Converters
 # =============================================================================
 
 @overload
@@ -43,9 +41,7 @@ def to_db(domain: Materia) -> MateriaDB: ...
 @overload
 def to_db(domain: Comision) -> ComisionDB: ...
 @overload
-def to_db(domain: HorarioCronograma) -> HorarioCronogramaDB: ...
-@overload
-def to_db(domain: Clase) -> ClaseDB: ...
+def to_db(domain: Horario) -> HorarioDB: ...
 @overload
 def to_db(domain: AsignacionAula) -> AsignacionAulaDB: ...
 @overload
@@ -53,7 +49,7 @@ def to_db(domain: Carrera) -> CarreraDB: ...
 
 def to_db(domain: DomainModel) -> DBModel:
     """Convert a domain model to its DB equivalent."""
-    
+
     if isinstance(domain, Aula):
         return AulaDB(
             id=domain.id,
@@ -63,7 +59,7 @@ def to_db(domain: DomainModel) -> DBModel:
             tipo=domain.tipo,
             descripcion=domain.descripcion,
         )
-    
+
     if isinstance(domain, Materia):
         return MateriaDB(
             codigo=domain.codigo,
@@ -72,7 +68,7 @@ def to_db(domain: DomainModel) -> DBModel:
             horas_semanales=domain.horas_semanales,
             periodo=domain.periodo,
         )
-    
+
     if isinstance(domain, Comision):
         return ComisionDB(
             id=domain.id,
@@ -81,33 +77,27 @@ def to_db(domain: DomainModel) -> DBModel:
             numero=domain.numero,
             cupo=domain.cupo,
         )
-    
-    if isinstance(domain, HorarioCronograma):
-        return HorarioCronogramaDB(
+
+    if isinstance(domain, Horario):
+        return HorarioDB(
             id=domain.id,
-            dia_semana=domain.dia_semana,
+            comision_id=domain.comision_id,
+            codigo_materia=domain.codigo_materia,
+            dia=domain.dia,
             hora_inicio=domain.hora_inicio,
             hora_fin=domain.hora_fin,
         )
-    
-    if isinstance(domain, Clase):
-        return ClaseDB(
-            id=domain.id,
-            comision_id=domain.comision_id,
-            horario_id=domain.horario_id,
-            dia=domain.dia,
-        )
-    
+
     if isinstance(domain, AsignacionAula):
         return AsignacionAulaDB(
             id=domain.id,
-            clase_id=domain.clase_id,
+            horario_id=domain.horario_id,
             aula_id=domain.aula_id,
             ciclo_id=domain.ciclo_id,
             fecha_asignacion=domain.fecha_asignacion,
             vigente=domain.vigente,
         )
-    
+
     if isinstance(domain, Carrera):
         return CarreraDB(
             codigo=domain.codigo,
@@ -116,12 +106,12 @@ def to_db(domain: DomainModel) -> DBModel:
             duracion_anios=domain.duracion_anios,
             cantidad_materias=domain.cantidad_materias,
         )
-    
+
     raise TypeError(f"Unknown domain model type: {type(domain)}")
 
 
 # =============================================================================
-# DB → Domain Converters
+# DB -> Domain Converters
 # =============================================================================
 
 @overload
@@ -131,9 +121,7 @@ def to_domain(db: MateriaDB) -> Materia: ...
 @overload
 def to_domain(db: ComisionDB) -> Comision: ...
 @overload
-def to_domain(db: HorarioCronogramaDB) -> HorarioCronograma: ...
-@overload
-def to_domain(db: ClaseDB) -> Clase: ...
+def to_domain(db: HorarioDB) -> Horario: ...
 @overload
 def to_domain(db: AsignacionAulaDB) -> AsignacionAula: ...
 @overload
@@ -141,7 +129,7 @@ def to_domain(db: CarreraDB) -> Carrera: ...
 
 def to_domain(db: DBModel) -> DomainModel:
     """Convert a DB model to its domain equivalent."""
-    
+
     if isinstance(db, AulaDB):
         return Aula(
             id=db.id,
@@ -151,7 +139,7 @@ def to_domain(db: DBModel) -> DomainModel:
             tipo=db.tipo,
             descripcion=db.descripcion,
         )
-    
+
     if isinstance(db, MateriaDB):
         return Materia(
             codigo=db.codigo,
@@ -160,7 +148,7 @@ def to_domain(db: DBModel) -> DomainModel:
             horas_semanales=db.horas_semanales,
             periodo=db.periodo,
         )
-    
+
     if isinstance(db, ComisionDB):
         return Comision(
             id=db.id,
@@ -169,33 +157,27 @@ def to_domain(db: DBModel) -> DomainModel:
             numero=db.numero,
             cupo=db.cupo,
         )
-    
-    if isinstance(db, HorarioCronogramaDB):
-        return HorarioCronograma(
+
+    if isinstance(db, HorarioDB):
+        return Horario(
             id=db.id,
-            dia_semana=db.dia_semana,
+            comision_id=db.comision_id,
+            codigo_materia=db.codigo_materia,
+            dia=db.dia,
             hora_inicio=db.hora_inicio,
             hora_fin=db.hora_fin,
         )
-    
-    if isinstance(db, ClaseDB):
-        return Clase(
-            id=db.id,
-            comision_id=db.comision_id,
-            horario_id=db.horario_id,
-            dia=db.dia,
-        )
-    
+
     if isinstance(db, AsignacionAulaDB):
         return AsignacionAula(
             id=db.id,
-            clase_id=db.clase_id,
+            horario_id=db.horario_id,
             aula_id=db.aula_id,
             ciclo_id=db.ciclo_id,
             fecha_asignacion=db.fecha_asignacion,
             vigente=db.vigente,
         )
-    
+
     if isinstance(db, CarreraDB):
         return Carrera(
             codigo=db.codigo,
@@ -204,7 +186,7 @@ def to_domain(db: DBModel) -> DomainModel:
             duracion_anios=db.duracion_anios,
             cantidad_materias=db.cantidad_materias,
         )
-    
+
     raise TypeError(f"Unknown DB model type: {type(db)}")
 
 

@@ -883,37 +883,31 @@ class CRUDFormRenderer:
             The database model class or None if not found
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
-            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
-            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB
+            MateriaDB, ComisionDB, HorarioDB, AulaDB,
+            AsignacionAulaDB,
+            CarreraDB, CicloDB, DictadoDB
         )
         from src.domain.problem.materia import Materia
         from src.domain.problem.comision import Comision
-        from src.domain.problem.alumno import Alumno
-        from src.domain.problem.clase import Clase
+        from src.domain.problem.horario import Horario
         from src.domain.problem.aula import Aula
-        from src.domain.solution.inscripcion import Inscripcion
-        from src.domain.solution.asistencia import Asistencia
         from src.domain.solution.asignacion_aula import AsignacionAula
-        
+
         # Mapping from domain models to DB models
         mapping = {
             Materia: MateriaDB,
             Comision: ComisionDB,
-            Alumno: AlumnoDB,
-            Clase: ClaseDB,
+            Horario: HorarioDB,
             Aula: AulaDB,
-            Inscripcion: InscripcionDB,
-            Asistencia: AsistenciaDB,
             AsignacionAula: AsignacionAulaDB,
         }
-        
+
         # Also check by name for models that might be passed directly as DB models
-        if domain_model in [MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
-                            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
-                            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB]:
+        if domain_model in [MateriaDB, ComisionDB, HorarioDB, AulaDB,
+                            AsignacionAulaDB,
+                            CarreraDB, CicloDB, DictadoDB]:
             return domain_model
-        
+
         return mapping.get(domain_model)
     
     @staticmethod
@@ -952,7 +946,7 @@ class CRUDFormRenderer:
             The entity ID or None
         """
         # Try common ID field names
-        for id_field in ["id", "codigo", "legajo"]:
+        for id_field in ["id", "codigo"]:
             if hasattr(entity, id_field):
                 return str(getattr(entity, id_field))
         

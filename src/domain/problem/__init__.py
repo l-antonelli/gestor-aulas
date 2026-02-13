@@ -1,21 +1,19 @@
 """Problem Domain Entities.
 
-Contains: Materia, Comision, Clase, Aula, HorarioCronograma, Carrera
+Contains: Materia, Comision, Horario, Aula, Carrera
 """
 
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
-from src.domain.problem.horario_cronograma import HorarioCronograma
+from src.domain.problem.horario import Horario
 from src.domain.problem.aula import Aula, TipoAula
-from src.domain.problem.clase import Clase
 from src.domain.problem.carrera import Carrera
 
 __all__ = [
     "Materia",
     "Comision",
-    "HorarioCronograma",
+    "Horario",
     "Aula",
     "TipoAula",
-    "Clase",
     "Carrera",
 ]

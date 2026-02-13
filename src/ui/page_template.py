@@ -745,17 +745,15 @@ class EntityPageTemplate:
         
         # Get parent service
         from src.services.crud_services import (
-            materia_service, comision_service, clase_service,
-            alumno_service, aula_service, horario_service, carrera_service
+            materia_service, comision_service,
+            aula_service, horario_service, carrera_service
         )
-        
+
         service_map = {
             'Materia': materia_service,
             'Comision': comision_service,
-            'Clase': clase_service,
-            'Alumno': alumno_service,
+            'Horario': horario_service,
             'Aula': aula_service,
-            'HorarioCronograma': horario_service,
             'Carrera': carrera_service,
         }
         
@@ -866,17 +864,15 @@ class EntityPageTemplate:
         if crud_func is None:
             # Try to get from service registry
             from src.services.crud_services import (
-                materia_service, comision_service, clase_service,
-                alumno_service, aula_service, horario_service
+                materia_service, comision_service,
+                aula_service, horario_service
             )
-            
+
             service_map = {
                 'Materia': lambda s: materia_service.get_all(s),
                 'Comision': lambda s: comision_service.get_all(s),
-                'Clase': lambda s: clase_service.get_all(s),
-                'Alumno': lambda s: alumno_service.get_all(s),
+                'Horario': lambda s: horario_service.get_all(s),
                 'Aula': lambda s: aula_service.get_all(s),
-                'HorarioCronograma': lambda s: horario_service.get_all(s),
             }
             
             crud_func = service_map.get(parent_model_name)

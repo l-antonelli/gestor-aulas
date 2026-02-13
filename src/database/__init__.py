@@ -3,15 +3,15 @@
 from src.database.connection import get_engine, get_session, init_db
 from src.database.models import (
     ConfiguracionHoraria,
-    MateriaCarreraLink,
+    PlanEstudioDB,
+    CorrelativaDB,
     CicloDB,
     DictadoDB,
     CarreraDB,
     MateriaDB,
     ComisionDB,
-    HorarioCronogramaDB,
+    HorarioDB,
     AulaDB,
-    ClaseDB,
     AsignacionAulaDB,
 )
 from src.database.converters import to_db, to_domain, to_db_list, to_domain_list
@@ -19,12 +19,13 @@ from src.database.converters import to_db, to_domain, to_db_list, to_domain_list
 __all__ = [
     # Connection
     "get_engine",
-    "get_session", 
+    "get_session",
     "init_db",
     # Config
     "ConfiguracionHoraria",
     # Link tables
-    "MateriaCarreraLink",
+    "PlanEstudioDB",
+    "CorrelativaDB",
     # Temporal models
     "CicloDB",
     "DictadoDB",
@@ -32,9 +33,8 @@ __all__ = [
     "CarreraDB",
     "MateriaDB",
     "ComisionDB",
-    "HorarioCronogramaDB",
+    "HorarioDB",
     "AulaDB",
-    "ClaseDB",
     # Solution domain
     "AsignacionAulaDB",
     # Converters

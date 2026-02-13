@@ -332,7 +332,7 @@ class CascadingOperations:
         crud_instance_map = {
             "Materia": crud.materia_crud,
             "Comision": crud.comision_crud,
-            "Clase": crud.clase_crud,
+            "Horario": crud.horario_crud,
             "AsignacionAula": crud.asignacion_crud,
         }
         
@@ -386,13 +386,13 @@ class CascadingOperations:
         This is a helper to convert between domain and database layers.
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, ClaseDB, AsignacionAulaDB
+            MateriaDB, ComisionDB, HorarioDB, AsignacionAulaDB
         )
-        
+
         db_model_map = {
             "Materia": MateriaDB,
             "Comision": ComisionDB,
-            "Clase": ClaseDB,
+            "Horario": HorarioDB,
             "AsignacionAula": AsignacionAulaDB,
         }
         
@@ -406,13 +406,14 @@ class CascadingOperations:
         
         This is the reverse of _get_db_model_for_domain_model.
         """
-        from src.domain.problem import Materia, Comision, Clase
+        from src.domain.problem import Materia, Comision
+        from src.domain.problem.horario import Horario
         from src.domain.solution import AsignacionAula
-        
+
         domain_model_map = {
             "MateriaDB": Materia,
             "ComisionDB": Comision,
-            "ClaseDB": Clase,
+            "HorarioDB": Horario,
             "AsignacionAulaDB": AsignacionAula,
         }
         
