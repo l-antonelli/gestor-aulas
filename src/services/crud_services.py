@@ -508,20 +508,19 @@ class BaseCRUDService(Generic[DomainModel, DBModel]):
 # Import domain models
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
-from src.domain.problem.clase import Clase
 from src.domain.problem.aula import Aula
-from src.domain.problem.horario_cronograma import HorarioCronograma
+from src.domain.problem.horario import Horario
 from src.domain.problem.carrera import Carrera
 
 # Import DB models
 from src.database.models import (
-    MateriaDB, ComisionDB, ClaseDB, AulaDB, 
-    HorarioCronogramaDB, CarreraDB
+    MateriaDB, ComisionDB, AulaDB,
+    HorarioDB, CarreraDB
 )
 
 # Import CRUD instances
 from src.database.crud import (
-    materia_crud, comision_crud, clase_crud,
+    materia_crud, comision_crud,
     aula_crud, horario_crud, carrera_crud
 )
 
@@ -551,7 +550,7 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         Get all carreras associated with a materia.
         
         This method queries the many-to-many relationship between
-        Materia and Carrera through the MateriaCarreraLink table.
+        Materia and Carrera through the PlanEstudioDB table.
         
         Args:
             session: Database session
@@ -561,13 +560,13 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             List of Carrera domain model instances associated with the materia
         """
         from sqlmodel import select
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         
         # Query carreras through the link table
         statement = (
             select(CarreraDB)
-            .join(MateriaCarreraLink, CarreraDB.codigo == MateriaCarreraLink.carrera_codigo)
-            .where(MateriaCarreraLink.materia_codigo == materia_codigo)
+            .join(PlanEstudioDB, CarreraDB.codigo == PlanEstudioDB.carrera_codigo)
+            .where(PlanEstudioDB.materia_codigo == materia_codigo)
         )
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
@@ -588,7 +587,7 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             EntityNotFoundError: If materia or any carrera doesn't exist
             ValidationError: If no carreras are provided (business rule)
         """
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         from src.database.crud import carrera_crud
         from sqlmodel import select
         
@@ -609,8 +608,8 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         
         # Remove existing associations
         existing_links = session.exec(
-            select(MateriaCarreraLink).where(
-                MateriaCarreraLink.materia_codigo == materia_codigo
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == materia_codigo
             )
         ).all()
         
@@ -619,24 +618,24 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         
         # Create new associations with default values
         for carrera_codigo in carrera_codigos:
-            link = MateriaCarreraLink(
+            link = PlanEstudioDB(
                 materia_codigo=materia_codigo,
                 carrera_codigo=carrera_codigo,
-                anio_carrera=1,
-                cuatrimestre_carrera=1
+                anio_plan=1,
+                cuatrimestre_plan="1C"
             )
             session.add(link)
-        
+
         session.commit()
         return True
-    
+
     def add_carrera(
-        self, 
-        session: Session, 
-        materia_codigo: str, 
+        self,
+        session: Session,
+        materia_codigo: str,
         carrera_codigo: str,
-        anio_carrera: int = 1,
-        cuatrimestre_carrera: int = 1
+        anio_plan: int = 1,
+        cuatrimestre_plan: str = "1C"
     ) -> bool:
         """
         Associate a carrera with a materia, specifying year and semester.
@@ -645,8 +644,8 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             session: Database session
             materia_codigo: The materia's codigo
             carrera_codigo: The carrera's codigo
-            anio_carrera: Year in the curriculum (1-6)
-            cuatrimestre_carrera: Semester (1 or 2)
+            anio_plan: Year in the curriculum (1-6)
+            cuatrimestre_plan: Semester (1 or 2)
             
         Returns:
             True if the association was created, False if it already exists
@@ -654,7 +653,7 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         Raises:
             EntityNotFoundError: If materia or carrera doesn't exist
         """
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         from src.database.crud import carrera_crud
         from sqlmodel import select
         
@@ -670,9 +669,9 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         
         # Check if link already exists
         existing = session.exec(
-            select(MateriaCarreraLink).where(
-                MateriaCarreraLink.materia_codigo == materia_codigo,
-                MateriaCarreraLink.carrera_codigo == carrera_codigo
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.carrera_codigo == carrera_codigo
             )
         ).first()
         
@@ -680,11 +679,11 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             return False
         
         # Create the link with year and semester
-        link = MateriaCarreraLink(
+        link = PlanEstudioDB(
             materia_codigo=materia_codigo,
             carrera_codigo=carrera_codigo,
-            anio_carrera=anio_carrera,
-            cuatrimestre_carrera=cuatrimestre_carrera
+            anio_plan=anio_plan,
+            cuatrimestre_plan=cuatrimestre_plan
         )
         session.add(link)
         session.commit()
@@ -702,14 +701,14 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         Returns:
             True if the association was removed, False if it didn't exist
         """
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         from sqlmodel import select
         
         # Find the link
         link = session.exec(
-            select(MateriaCarreraLink).where(
-                MateriaCarreraLink.materia_codigo == materia_codigo,
-                MateriaCarreraLink.carrera_codigo == carrera_codigo
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.carrera_codigo == carrera_codigo
             )
         ).first()
         
@@ -736,9 +735,9 @@ class ComisionService(BaseCRUDService[Comision, ComisionDB]):
             id_field="id"
         )
     
-    def get_clases(self, session: Session, comision_id: str) -> List[Clase]:
-        """Get all clases for a comision."""
-        return self.get_children(session, comision_id, Clase)
+    def get_horarios(self, session: Session, comision_id: str) -> List[Horario]:
+        """Get all horarios for a comision."""
+        return self.get_children(session, comision_id, Horario)
     
     def get_by_materia(self, session: Session, materia_codigo: str) -> List[Comision]:
         """Get all comisiones for a specific materia."""
@@ -746,32 +745,6 @@ class ComisionService(BaseCRUDService[Comision, ComisionDB]):
         
         statement = select(ComisionDB).where(
             ComisionDB.materia_codigo == materia_codigo
-        )
-        results = session.exec(statement).all()
-        return [to_domain(r) for r in results]
-
-
-class ClaseService(BaseCRUDService[Clase, ClaseDB]):
-    """
-    CRUD service for Clase entities.
-    
-    Provides domain-level operations for class instances.
-    """
-    
-    def __init__(self):
-        super().__init__(
-            domain_model=Clase,
-            db_model=ClaseDB,
-            crud=clase_crud,
-            id_field="id"
-        )
-    
-    def get_by_comision(self, session: Session, comision_id: str) -> List[Clase]:
-        """Get all clases for a specific comision."""
-        from sqlmodel import select
-        
-        statement = select(ClaseDB).where(
-            ClaseDB.comision_id == comision_id
         )
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
@@ -793,20 +766,41 @@ class AulaService(BaseCRUDService[Aula, AulaDB]):
         )
 
 
-class HorarioService(BaseCRUDService[HorarioCronograma, HorarioCronogramaDB]):
+class HorarioService(BaseCRUDService[Horario, HorarioDB]):
     """
-    CRUD service for HorarioCronograma entities.
-    
-    Provides domain-level operations for schedule time slots.
+    CRUD service for Horario entities.
+
+    Provides domain-level operations for schedule entries
+    (comision + day + time range).
     """
-    
+
     def __init__(self):
         super().__init__(
-            domain_model=HorarioCronograma,
-            db_model=HorarioCronogramaDB,
+            domain_model=Horario,
+            db_model=HorarioDB,
             crud=horario_crud,
             id_field="id"
         )
+
+    def get_by_comision(self, session: Session, comision_id: str) -> List[Horario]:
+        """Get all horarios for a specific comision."""
+        from sqlmodel import select
+
+        statement = select(HorarioDB).where(
+            HorarioDB.comision_id == comision_id
+        )
+        results = session.exec(statement).all()
+        return [to_domain(r) for r in results]
+
+    def get_by_materia(self, session: Session, codigo_materia: str) -> List[Horario]:
+        """Get all horarios for a specific materia."""
+        from sqlmodel import select
+
+        statement = select(HorarioDB).where(
+            HorarioDB.codigo_materia == codigo_materia
+        )
+        results = session.exec(statement).all()
+        return [to_domain(r) for r in results]
 
 
 class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
@@ -830,7 +824,7 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         Get all materias associated with a carrera.
         
         This method queries the many-to-many relationship between
-        Carrera and Materia through the MateriaCarreraLink table.
+        Carrera and Materia through the PlanEstudioDB table.
         
         Args:
             session: Database session
@@ -840,13 +834,13 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             List of Materia domain model instances associated with the carrera
         """
         from sqlmodel import select
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         
         # Query materias through the link table
         statement = (
             select(MateriaDB)
-            .join(MateriaCarreraLink, MateriaDB.codigo == MateriaCarreraLink.materia_codigo)
-            .where(MateriaCarreraLink.carrera_codigo == carrera_codigo)
+            .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
+            .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
         )
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
@@ -856,8 +850,8 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         session: Session, 
         carrera_codigo: str, 
         materia_codigo: str,
-        anio_carrera: int = 1,
-        cuatrimestre_carrera: int = 1
+        anio_plan: int = 1,
+        cuatrimestre_plan: str = "1C"
     ) -> bool:
         """
         Associate a materia with a carrera, specifying year and semester.
@@ -866,8 +860,8 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             session: Database session
             carrera_codigo: The carrera's codigo
             materia_codigo: The materia's codigo
-            anio_carrera: Year in the curriculum (1-6)
-            cuatrimestre_carrera: Semester (1 or 2)
+            anio_plan: Year in the curriculum (1-6)
+            cuatrimestre_plan: Semester (1 or 2)
             
         Returns:
             True if the association was created, False if it already exists
@@ -875,7 +869,7 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         Raises:
             EntityNotFoundError: If carrera or materia doesn't exist
         """
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         from src.database.crud import materia_crud
         
         # Verify carrera exists
@@ -891,9 +885,9 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         # Check if link already exists
         from sqlmodel import select
         existing = session.exec(
-            select(MateriaCarreraLink).where(
-                MateriaCarreraLink.carrera_codigo == carrera_codigo,
-                MateriaCarreraLink.materia_codigo == materia_codigo
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.carrera_codigo == carrera_codigo,
+                PlanEstudioDB.materia_codigo == materia_codigo
             )
         ).first()
         
@@ -901,11 +895,11 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             return False
         
         # Create the link with year and semester
-        link = MateriaCarreraLink(
+        link = PlanEstudioDB(
             carrera_codigo=carrera_codigo,
             materia_codigo=materia_codigo,
-            anio_carrera=anio_carrera,
-            cuatrimestre_carrera=cuatrimestre_carrera
+            anio_plan=anio_plan,
+            cuatrimestre_plan=cuatrimestre_plan
         )
         session.add(link)
         session.commit()
@@ -923,14 +917,14 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         Returns:
             True if the association was removed, False if it didn't exist
         """
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         from sqlmodel import select
         
         # Find the link
         link = session.exec(
-            select(MateriaCarreraLink).where(
-                MateriaCarreraLink.carrera_codigo == carrera_codigo,
-                MateriaCarreraLink.materia_codigo == materia_codigo
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.carrera_codigo == carrera_codigo,
+                PlanEstudioDB.materia_codigo == materia_codigo
             )
         ).first()
         
@@ -953,10 +947,10 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             Number of materias associated with the carrera
         """
         from sqlmodel import select, func
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         
         statement = select(func.count()).where(
-            MateriaCarreraLink.carrera_codigo == carrera_codigo
+            PlanEstudioDB.carrera_codigo == carrera_codigo
         )
         return session.exec(statement).one()
     
@@ -965,8 +959,8 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
         session: Session, 
         carrera_codigo: str, 
         anio: int,
-        cuatrimestre: Optional[int] = None
-    ) -> List[Tuple[Materia, int, int]]:
+        cuatrimestre: Optional[str] = None
+    ) -> List[Tuple[Materia, int, str]]:
         """
         Get materias for a carrera filtered by year and optionally semester.
         
@@ -977,24 +971,24 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             cuatrimestre: Optional semester filter (1 or 2)
             
         Returns:
-            List of tuples (Materia, anio_carrera, cuatrimestre_carrera)
+            List of tuples (Materia, anio_plan, cuatrimestre_plan)
         """
         from sqlmodel import select
-        from src.database.models import MateriaCarreraLink
+        from src.database.models import PlanEstudioDB
         
         # Build query
         statement = (
-            select(MateriaDB, MateriaCarreraLink.anio_carrera, MateriaCarreraLink.cuatrimestre_carrera)
-            .join(MateriaCarreraLink, MateriaDB.codigo == MateriaCarreraLink.materia_codigo)
+            select(MateriaDB, PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
+            .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
             .where(
-                MateriaCarreraLink.carrera_codigo == carrera_codigo,
-                MateriaCarreraLink.anio_carrera == anio
+                PlanEstudioDB.carrera_codigo == carrera_codigo,
+                PlanEstudioDB.anio_plan == anio
             )
         )
         
         # Add semester filter if provided
         if cuatrimestre is not None:
-            statement = statement.where(MateriaCarreraLink.cuatrimestre_carrera == cuatrimestre)
+            statement = statement.where(PlanEstudioDB.cuatrimestre_plan == cuatrimestre)
         
         results = session.exec(statement).all()
         return [(to_domain(materia_db), anio, cuatri) for materia_db, anio, cuatri in results]
@@ -1007,7 +1001,6 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
 # Pre-instantiated services for convenience
 materia_service = MateriaService()
 comision_service = ComisionService()
-clase_service = ClaseService()
 aula_service = AulaService()
 horario_service = HorarioService()
 carrera_service = CarreraService()

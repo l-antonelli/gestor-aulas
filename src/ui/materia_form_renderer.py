@@ -123,7 +123,7 @@ class MateriaFormRenderer:
                     ),
                     "Cuatrimestre": st.column_config.SelectboxColumn(
                         "Cuatrimestre",
-                        options=[1, 2],
+                        options=["1C", "2C"],
                         default=1,
                         required=True,
                         width="small"
@@ -159,14 +159,14 @@ class MateriaFormRenderer:
                             anio = int(row["Año"]) if pd.notna(row["Año"]) else 1
                             
                             if is_anual:
-                                cuatri = 0  # 0 for annual materias
+                                cuatri = "anual"
                             else:
-                                cuatri = int(row["Cuatrimestre"]) if pd.notna(row["Cuatrimestre"]) else 1
+                                cuatri = str(row["Cuatrimestre"]) if pd.notna(row["Cuatrimestre"]) else "1C"
                             
                             carrera_details.append({
                                 "carrera_codigo": carrera_codigo,
-                                "anio_carrera": anio,
-                                "cuatrimestre_carrera": cuatri
+                                "anio_plan": anio,
+                                "cuatrimestre_plan": cuatri
                             })
                 
                 # Validate carrera selection
@@ -327,8 +327,8 @@ class MateriaFormRenderer:
                     session,
                     created_materia.codigo,
                     detail["carrera_codigo"],
-                    anio_carrera=detail["anio_carrera"],
-                    cuatrimestre_carrera=detail["cuatrimestre_carrera"]
+                    anio_plan=detail["anio_plan"],
+                    cuatrimestre_plan=detail["cuatrimestre_plan"]
                 )
             
             return created_materia

@@ -274,9 +274,9 @@ def render_custom_carrera_page():
                     )
                     
                     # Filter by period type
-                    anuales = [(m, a, c) for m, a, c in materias_anuales if m.periodo == "anual"]
-                    primer_cuatri = [(m, a, c) for m, a, c in materias_anuales if m.periodo == "cuatrimestral" and c == 1]
-                    segundo_cuatri = [(m, a, c) for m, a, c in materias_anuales if m.periodo == "cuatrimestral" and c == 2]
+                    anuales = [(m, a, c) for m, a, c in materias_anuales if c == "anual"]
+                    primer_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "1C"]
+                    segundo_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "2C"]
                     
                     # 3-column layout
                     col1, col2, col3 = st.columns(3)
@@ -322,8 +322,8 @@ def render_custom_carrera_page():
                                     try:
                                         carrera_service.add_materia(
                                             session, selected_carrera, materia_to_add,
-                                            anio_carrera=selected_year,
-                                            cuatrimestre_carrera=0  # 0 for anuales
+                                            anio_plan=selected_year,
+                                            cuatrimestre_plan="anual"
                                         )
                                         st.success("Asociada")
                                         st.rerun()
@@ -373,8 +373,8 @@ def render_custom_carrera_page():
                                     try:
                                         carrera_service.add_materia(
                                             session, selected_carrera, materia_to_add,
-                                            anio_carrera=selected_year,
-                                            cuatrimestre_carrera=1
+                                            anio_plan=selected_year,
+                                            cuatrimestre_plan="1C"
                                         )
                                         st.success("Asociada")
                                         st.rerun()
@@ -424,8 +424,8 @@ def render_custom_carrera_page():
                                     try:
                                         carrera_service.add_materia(
                                             session, selected_carrera, materia_to_add,
-                                            anio_carrera=selected_year,
-                                            cuatrimestre_carrera=2
+                                            anio_plan=selected_year,
+                                            cuatrimestre_plan="2C"
                                         )
                                         st.success("Asociada")
                                         st.rerun()

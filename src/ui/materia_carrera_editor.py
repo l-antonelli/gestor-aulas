@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from typing import List, Dict, Any
 
 from src.services.crud_services import materia_service, carrera_service
-from src.database.models import MateriaCarreraLink
+from src.database.models import PlanEstudioDB
 
 
 class MateriaCarreraEditor:
@@ -53,7 +53,7 @@ class MateriaCarreraEditor:
             if is_anual:
                 df["cuatrimestre_display"] = "Anual"
             else:
-                df["cuatrimestre_display"] = df["cuatrimestre_carrera"]
+                df["cuatrimestre_display"] = df["cuatrimestre_plan"]
             
             # Configure column settings
             column_config = {
@@ -67,7 +67,7 @@ class MateriaCarreraEditor:
                     disabled=True,
                     width="medium"
                 ),
-                "anio_carrera": st.column_config.NumberColumn(
+                "anio_plan": st.column_config.NumberColumn(
                     "Año",
                     min_value=1,
                     max_value=6,
@@ -80,13 +80,13 @@ class MateriaCarreraEditor:
                     width="small"
                 ) if is_anual else st.column_config.SelectboxColumn(
                     "Cuatrimestre",
-                    options=[1, 2],
+                    options=["1C", "2C"],
                     width="small"
                 ),
             }
             
             # Select columns to display
-            display_cols = ["carrera_codigo", "carrera_nombre", "anio_carrera", "cuatrimestre_display"]
+            display_cols = ["carrera_codigo", "carrera_nombre", "anio_plan", "cuatrimestre_display"]
             
             # Render editable dataframe
             edited_df = st.data_editor(
@@ -106,9 +106,9 @@ class MateriaCarreraEditor:
                         try:
                             # Restore original cuatrimestre values for saving
                             if is_anual:
-                                edited_df["cuatrimestre_carrera"] = 0
+                                edited_df["cuatrimestre_plan"] = "anual"
                             else:
-                                edited_df["cuatrimestre_carrera"] = edited_df["cuatrimestre_display"]
+                                edited_df["cuatrimestre_plan"] = edited_df["cuatrimestre_display"]
                             
                             # Add carrera_codigo back for saving
                             edited_df["carrera_codigo"] = df["carrera_codigo"]
@@ -153,14 +153,14 @@ class MateriaCarreraEditor:
         
         statement = (
             select(
-                MateriaCarreraLink.carrera_codigo,
+                PlanEstudioDB.carrera_codigo,
                 CarreraDB.nombre,
-                MateriaCarreraLink.anio_carrera,
-                MateriaCarreraLink.cuatrimestre_carrera
+                PlanEstudioDB.anio_plan,
+                PlanEstudioDB.cuatrimestre_plan
             )
-            .join(CarreraDB, MateriaCarreraLink.carrera_codigo == CarreraDB.codigo)
-            .where(MateriaCarreraLink.materia_codigo == materia_codigo)
-            .order_by(MateriaCarreraLink.anio_carrera, MateriaCarreraLink.cuatrimestre_carrera)
+            .join(CarreraDB, PlanEstudioDB.carrera_codigo == CarreraDB.codigo)
+            .where(PlanEstudioDB.materia_codigo == materia_codigo)
+            .order_by(PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
         )
         
         results = session.exec(statement).all()
@@ -169,8 +169,8 @@ class MateriaCarreraEditor:
             {
                 "carrera_codigo": carrera_codigo,
                 "carrera_nombre": nombre,
-                "anio_carrera": anio,
-                "cuatrimestre_carrera": cuatri
+                "anio_plan": anio,
+                "cuatrimestre_plan": cuatri
             }
             for carrera_codigo, nombre, anio, cuatri in results
         ]
@@ -181,16 +181,16 @@ class MateriaCarreraEditor:
         # Update each association
         for _, row in edited_df.iterrows():
             # Delete old link
-            statement = select(MateriaCarreraLink).where(
-                MateriaCarreraLink.materia_codigo == materia_codigo,
-                MateriaCarreraLink.carrera_codigo == row["carrera_codigo"]
+            statement = select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.carrera_codigo == row["carrera_codigo"]
             )
             link = session.exec(statement).first()
             
             if link:
                 # Update year and semester
-                link.anio_carrera = int(row["anio_carrera"])
-                link.cuatrimestre_carrera = int(row["cuatrimestre_carrera"])
+                link.anio_plan = int(row["anio_plan"])
+                link.cuatrimestre_plan = str(row["cuatrimestre_plan"])
                 session.add(link)
         
         session.commit()
@@ -231,11 +231,11 @@ class MateriaCarreraEditor:
             
             # Only show cuatrimestre selector for non-annual materias
             if is_anual:
-                cuatrimestre = 0  # 0 for annual materias
+                cuatrimestre = "anual"
                 st.caption("Cuatrimestre: Anual (0)")
             else:
                 with col3:
-                    cuatrimestre = st.selectbox("Cuatrimestre", options=[1, 2])
+                    cuatrimestre = st.selectbox("Cuatrimestre", options=["1C", "2C"])
             
             submitted = st.form_submit_button("➕ Asociar")
             
@@ -243,8 +243,8 @@ class MateriaCarreraEditor:
                 try:
                     materia_service.add_carrera(
                         session, materia_codigo, selected_carrera,
-                        anio_carrera=anio,
-                        cuatrimestre_carrera=cuatrimestre
+                        anio_plan=anio,
+                        cuatrimestre_plan=cuatrimestre
                     )
                     st.success(f"✅ Carrera {selected_carrera} asociada")
                     st.rerun()
