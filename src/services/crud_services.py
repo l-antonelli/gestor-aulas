@@ -547,82 +547,62 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
     
     def get_carreras(self, session: Session, materia_codigo: str) -> List[Carrera]:
         """
-        Get all carreras associated with a materia.
-        
-        This method queries the many-to-many relationship between
-        Materia and Carrera through the PlanEstudioDB table.
-        
-        Args:
-            session: Database session
-            materia_codigo: The materia's codigo
-            
-        Returns:
-            List of Carrera domain model instances associated with the materia
+        Get all carreras associated with a materia (any version, deduplicated).
         """
         from sqlmodel import select
         from src.database.models import PlanEstudioDB
-        
-        # Query carreras through the link table
+
         statement = (
             select(CarreraDB)
             .join(PlanEstudioDB, CarreraDB.codigo == PlanEstudioDB.carrera_codigo)
             .where(PlanEstudioDB.materia_codigo == materia_codigo)
+            .distinct()
         )
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
-    
-    def set_carreras(self, session: Session, materia_codigo: str, carrera_codigos: List[str]) -> bool:
+
+    def set_carreras(
+        self, session: Session, materia_codigo: str, carrera_codigos: List[str],
+        plan_version_id: str,
+    ) -> bool:
         """
-        Set the carreras associated with a materia, replacing any existing associations.
-        
-        Args:
-            session: Database session
-            materia_codigo: The materia's codigo
-            carrera_codigos: List of carrera codigos to associate
-            
-        Returns:
-            True if successful
-            
-        Raises:
-            EntityNotFoundError: If materia or any carrera doesn't exist
-            ValidationError: If no carreras are provided (business rule)
+        Set the carreras associated with a materia in a specific plan version,
+        replacing any existing associations for that version.
         """
         from src.database.models import PlanEstudioDB
         from src.database.crud import carrera_crud
         from sqlmodel import select
-        
-        # Validate that at least one carrera is provided
+
         if not carrera_codigos:
             raise ValidationError("Materia", "Debe asignar al menos una carrera a la materia")
-        
-        # Verify materia exists
+
         materia = self.crud.get(session, materia_codigo)
         if materia is None:
             raise EntityNotFoundError("Materia", materia_codigo)
-        
-        # Verify all carreras exist
+
         for carrera_codigo in carrera_codigos:
             carrera = carrera_crud.get(session, carrera_codigo)
             if carrera is None:
                 raise EntityNotFoundError("Carrera", carrera_codigo)
-        
-        # Remove existing associations
+
+        # Remove existing associations for this version
         existing_links = session.exec(
             select(PlanEstudioDB).where(
-                PlanEstudioDB.materia_codigo == materia_codigo
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.plan_version_id == plan_version_id,
             )
         ).all()
-        
+
         for link in existing_links:
             session.delete(link)
-        
-        # Create new associations with default values
+
         for carrera_codigo in carrera_codigos:
             link = PlanEstudioDB(
+                plan_version_id=plan_version_id,
                 materia_codigo=materia_codigo,
                 carrera_codigo=carrera_codigo,
                 anio_plan=1,
-                cuatrimestre_plan="1C"
+                cuatrimestre_plan="1C",
             )
             session.add(link)
 
@@ -634,87 +614,68 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
         session: Session,
         materia_codigo: str,
         carrera_codigo: str,
+        plan_version_id: str,
         anio_plan: int = 1,
-        cuatrimestre_plan: str = "1C"
+        cuatrimestre_plan: str = "1C",
     ) -> bool:
         """
-        Associate a carrera with a materia, specifying year and semester.
-        
-        Args:
-            session: Database session
-            materia_codigo: The materia's codigo
-            carrera_codigo: The carrera's codigo
-            anio_plan: Year in the curriculum (1-6)
-            cuatrimestre_plan: Semester (1 or 2)
-            
-        Returns:
-            True if the association was created, False if it already exists
-            
-        Raises:
-            EntityNotFoundError: If materia or carrera doesn't exist
+        Associate a carrera with a materia in a specific plan version.
         """
         from src.database.models import PlanEstudioDB
         from src.database.crud import carrera_crud
         from sqlmodel import select
-        
-        # Verify materia exists
+
         materia = self.crud.get(session, materia_codigo)
         if materia is None:
             raise EntityNotFoundError("Materia", materia_codigo)
-        
-        # Verify carrera exists
+
         carrera = carrera_crud.get(session, carrera_codigo)
         if carrera is None:
             raise EntityNotFoundError("Carrera", carrera_codigo)
-        
-        # Check if link already exists
+
         existing = session.exec(
             select(PlanEstudioDB).where(
                 PlanEstudioDB.materia_codigo == materia_codigo,
-                PlanEstudioDB.carrera_codigo == carrera_codigo
+                PlanEstudioDB.carrera_codigo == carrera_codigo,
+                PlanEstudioDB.plan_version_id == plan_version_id,
             )
         ).first()
-        
+
         if existing:
             return False
-        
-        # Create the link with year and semester
+
         link = PlanEstudioDB(
+            plan_version_id=plan_version_id,
             materia_codigo=materia_codigo,
             carrera_codigo=carrera_codigo,
             anio_plan=anio_plan,
-            cuatrimestre_plan=cuatrimestre_plan
+            cuatrimestre_plan=cuatrimestre_plan,
         )
         session.add(link)
         session.commit()
         return True
-    
-    def remove_carrera(self, session: Session, materia_codigo: str, carrera_codigo: str) -> bool:
+
+    def remove_carrera(
+        self, session: Session, materia_codigo: str, carrera_codigo: str,
+        plan_version_id: str,
+    ) -> bool:
         """
-        Remove the association between a materia and a carrera.
-        
-        Args:
-            session: Database session
-            materia_codigo: The materia's codigo
-            carrera_codigo: The carrera's codigo
-            
-        Returns:
-            True if the association was removed, False if it didn't exist
+        Remove the association between a materia and a carrera in a specific plan version.
         """
         from src.database.models import PlanEstudioDB
         from sqlmodel import select
-        
-        # Find the link
+
         link = session.exec(
             select(PlanEstudioDB).where(
                 PlanEstudioDB.materia_codigo == materia_codigo,
-                PlanEstudioDB.carrera_codigo == carrera_codigo
+                PlanEstudioDB.carrera_codigo == carrera_codigo,
+                PlanEstudioDB.plan_version_id == plan_version_id,
             )
         ).first()
-        
+
         if link is None:
             return False
-        
+
         session.delete(link)
         session.commit()
         return True
@@ -806,11 +767,11 @@ class HorarioService(BaseCRUDService[Horario, HorarioDB]):
 class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
     """
     CRUD service for Carrera entities.
-    
+
     Provides domain-level operations for university degree programs,
-    including retrieval of associated Materias.
+    including retrieval of associated Materias with plan version support.
     """
-    
+
     def __init__(self):
         super().__init__(
             domain_model=Carrera,
@@ -818,178 +779,260 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             crud=carrera_crud,
             id_field="codigo"
         )
-    
-    def get_materias(self, session: Session, carrera_codigo: str) -> List[Materia]:
+
+    def get_plan_versions(self, session: Session, carrera_codigo: str) -> list:
+        """Get all plan versions for a carrera, ordered by fecha_creacion."""
+        from sqlmodel import select
+        from src.database.models import PlanCarreraVersionDB
+
+        statement = (
+            select(PlanCarreraVersionDB)
+            .where(PlanCarreraVersionDB.carrera_codigo == carrera_codigo)
+            .order_by(PlanCarreraVersionDB.fecha_creacion)
+        )
+        return list(session.exec(statement).all())
+
+    def get_latest_plan_version(self, session: Session, carrera_codigo: str):
+        """Get the most recent plan version for a carrera, or None."""
+        from sqlmodel import select
+        from src.database.models import PlanCarreraVersionDB
+
+        statement = (
+            select(PlanCarreraVersionDB)
+            .where(PlanCarreraVersionDB.carrera_codigo == carrera_codigo)
+            .order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+        )
+        return session.exec(statement).first()
+
+    def create_plan_version(
+        self,
+        session: Session,
+        carrera_codigo: str,
+        nombre: str,
+        descripcion: str = "",
+        copy_from_version_id: Optional[str] = None,
+    ):
+        """
+        Create a new plan version for a carrera.
+        Optionally copies entries from an existing version.
+
+        Returns:
+            The created PlanCarreraVersionDB instance.
+        """
+        import uuid as uuid_mod
+        from datetime import date as date_type
+        from src.database.models import PlanCarreraVersionDB, PlanEstudioDB
+        from sqlmodel import select
+
+        # Verify carrera exists
+        carrera = self.crud.get(session, carrera_codigo)
+        if carrera is None:
+            raise EntityNotFoundError("Carrera", carrera_codigo)
+
+        version_id = str(uuid_mod.uuid4())
+        version = PlanCarreraVersionDB(
+            id=version_id,
+            carrera_codigo=carrera_codigo,
+            nombre=nombre,
+            descripcion=descripcion,
+            fecha_creacion=date_type.today(),
+        )
+        session.add(version)
+        session.flush()
+
+        # Copy entries from source version if specified
+        if copy_from_version_id:
+            entries = session.exec(
+                select(PlanEstudioDB)
+                .where(PlanEstudioDB.plan_version_id == copy_from_version_id)
+            ).all()
+
+            for entry in entries:
+                new_entry = PlanEstudioDB(
+                    plan_version_id=version_id,
+                    materia_codigo=entry.materia_codigo,
+                    carrera_codigo=entry.carrera_codigo,
+                    anio_plan=entry.anio_plan,
+                    cuatrimestre_plan=entry.cuatrimestre_plan,
+                    correlativas=entry.correlativas,
+                )
+                session.add(new_entry)
+
+        session.commit()
+        session.refresh(version)
+        return version
+
+    def update_plan_version(
+        self,
+        session: Session,
+        plan_version_id: str,
+        nombre: Optional[str] = None,
+        descripcion: Optional[str] = None,
+    ):
+        """Update name/description of a plan version."""
+        from src.database.models import PlanCarreraVersionDB
+
+        version = session.get(PlanCarreraVersionDB, plan_version_id)
+        if version is None:
+            raise EntityNotFoundError("PlanCarreraVersion", plan_version_id)
+
+        if nombre is not None:
+            version.nombre = nombre
+        if descripcion is not None:
+            version.descripcion = descripcion
+
+        session.add(version)
+        session.commit()
+        session.refresh(version)
+        return version
+
+    def get_materias(
+        self, session: Session, carrera_codigo: str,
+        plan_version_id: Optional[str] = None,
+    ) -> List[Materia]:
         """
         Get all materias associated with a carrera.
-        
-        This method queries the many-to-many relationship between
-        Carrera and Materia through the PlanEstudioDB table.
-        
-        Args:
-            session: Database session
-            carrera_codigo: The carrera's codigo
-            
-        Returns:
-            List of Materia domain model instances associated with the carrera
+        If plan_version_id is provided, filters by that version.
+        Otherwise returns materias from any version (deduplicated).
         """
         from sqlmodel import select
         from src.database.models import PlanEstudioDB
-        
-        # Query materias through the link table
+
         statement = (
             select(MateriaDB)
             .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
             .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
         )
+
+        if plan_version_id:
+            statement = statement.where(PlanEstudioDB.plan_version_id == plan_version_id)
+        else:
+            statement = statement.distinct()
+
         results = session.exec(statement).all()
         return [to_domain(r) for r in results]
-    
+
     def add_materia(
-        self, 
-        session: Session, 
-        carrera_codigo: str, 
+        self,
+        session: Session,
+        carrera_codigo: str,
         materia_codigo: str,
+        plan_version_id: str,
         anio_plan: int = 1,
-        cuatrimestre_plan: str = "1C"
+        cuatrimestre_plan: str = "1C",
     ) -> bool:
         """
-        Associate a materia with a carrera, specifying year and semester.
-        
-        Args:
-            session: Database session
-            carrera_codigo: The carrera's codigo
-            materia_codigo: The materia's codigo
-            anio_plan: Year in the curriculum (1-6)
-            cuatrimestre_plan: Semester (1 or 2)
-            
+        Associate a materia with a carrera in a specific plan version.
+
         Returns:
             True if the association was created, False if it already exists
-            
-        Raises:
-            EntityNotFoundError: If carrera or materia doesn't exist
         """
         from src.database.models import PlanEstudioDB
         from src.database.crud import materia_crud
-        
+        from sqlmodel import select
+
         # Verify carrera exists
         carrera = self.crud.get(session, carrera_codigo)
         if carrera is None:
             raise EntityNotFoundError("Carrera", carrera_codigo)
-        
+
         # Verify materia exists
         materia = materia_crud.get(session, materia_codigo)
         if materia is None:
             raise EntityNotFoundError("Materia", materia_codigo)
-        
-        # Check if link already exists
-        from sqlmodel import select
+
+        # Check if link already exists for this version
         existing = session.exec(
             select(PlanEstudioDB).where(
                 PlanEstudioDB.carrera_codigo == carrera_codigo,
-                PlanEstudioDB.materia_codigo == materia_codigo
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.plan_version_id == plan_version_id,
             )
         ).first()
-        
+
         if existing:
             return False
-        
-        # Create the link with year and semester
+
         link = PlanEstudioDB(
+            plan_version_id=plan_version_id,
             carrera_codigo=carrera_codigo,
             materia_codigo=materia_codigo,
             anio_plan=anio_plan,
-            cuatrimestre_plan=cuatrimestre_plan
+            cuatrimestre_plan=cuatrimestre_plan,
         )
         session.add(link)
         session.commit()
         return True
-    
-    def remove_materia(self, session: Session, carrera_codigo: str, materia_codigo: str) -> bool:
+
+    def remove_materia(
+        self, session: Session, carrera_codigo: str, materia_codigo: str,
+        plan_version_id: str,
+    ) -> bool:
         """
-        Remove the association between a materia and a carrera.
-        
-        Args:
-            session: Database session
-            carrera_codigo: The carrera's codigo
-            materia_codigo: The materia's codigo
-            
-        Returns:
-            True if the association was removed, False if it didn't exist
+        Remove the association between a materia and a carrera in a specific plan version.
         """
         from src.database.models import PlanEstudioDB
         from sqlmodel import select
-        
-        # Find the link
+
         link = session.exec(
             select(PlanEstudioDB).where(
                 PlanEstudioDB.carrera_codigo == carrera_codigo,
-                PlanEstudioDB.materia_codigo == materia_codigo
+                PlanEstudioDB.materia_codigo == materia_codigo,
+                PlanEstudioDB.plan_version_id == plan_version_id,
             )
         ).first()
-        
+
         if link is None:
             return False
-        
+
         session.delete(link)
         session.commit()
         return True
-    
-    def get_children_count(self, session: Session, carrera_codigo: str) -> int:
-        """
-        Get the count of materias associated with a carrera.
-        
-        Args:
-            session: Database session
-            carrera_codigo: The carrera's codigo
-            
-        Returns:
-            Number of materias associated with the carrera
-        """
+
+    def get_children_count(
+        self, session: Session, carrera_codigo: str,
+        plan_version_id: Optional[str] = None,
+    ) -> int:
+        """Get the count of materias associated with a carrera (optionally filtered by version)."""
         from sqlmodel import select, func
         from src.database.models import PlanEstudioDB
-        
+
         statement = select(func.count()).where(
             PlanEstudioDB.carrera_codigo == carrera_codigo
         )
+        if plan_version_id:
+            statement = statement.where(PlanEstudioDB.plan_version_id == plan_version_id)
         return session.exec(statement).one()
-    
+
     def get_materias_by_year_and_semester(
-        self, 
-        session: Session, 
-        carrera_codigo: str, 
+        self,
+        session: Session,
+        carrera_codigo: str,
         anio: int,
-        cuatrimestre: Optional[str] = None
+        plan_version_id: Optional[str] = None,
+        cuatrimestre: Optional[str] = None,
     ) -> List[Tuple[Materia, int, str]]:
         """
-        Get materias for a carrera filtered by year and optionally semester.
-        
-        Args:
-            session: Database session
-            carrera_codigo: The carrera's codigo
-            anio: Year in the curriculum (1-6)
-            cuatrimestre: Optional semester filter (1 or 2)
-            
-        Returns:
-            List of tuples (Materia, anio_plan, cuatrimestre_plan)
+        Get materias for a carrera filtered by year and optionally semester/version.
         """
         from sqlmodel import select
         from src.database.models import PlanEstudioDB
-        
-        # Build query
+
         statement = (
             select(MateriaDB, PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
             .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
             .where(
                 PlanEstudioDB.carrera_codigo == carrera_codigo,
-                PlanEstudioDB.anio_plan == anio
+                PlanEstudioDB.anio_plan == anio,
             )
         )
-        
-        # Add semester filter if provided
+
+        if plan_version_id:
+            statement = statement.where(PlanEstudioDB.plan_version_id == plan_version_id)
+
         if cuatrimestre is not None:
             statement = statement.where(PlanEstudioDB.cuatrimestre_plan == cuatrimestre)
-        
+
         results = session.exec(statement).all()
         return [(to_domain(materia_db), anio, cuatri) for materia_db, anio, cuatri in results]
 

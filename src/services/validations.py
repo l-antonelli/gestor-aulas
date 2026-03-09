@@ -6,6 +6,7 @@ son correctos y factibles para el problema de asignacion.
 """
 
 from dataclasses import dataclass
+from typing import Optional
 from sqlmodel import Session, select
 from src.database.models import (
     MateriaDB, CarreraDB, HorarioDB,
@@ -73,20 +74,26 @@ def validar_factibilidad_horarios_carrera(
     session: Session,
     carrera_codigo: str,
     anio: int,
-    cuatrimestre: str
+    cuatrimestre: str,
+    plan_version_id: Optional[str] = None,
 ) -> ValidationResult:
     """
     Verifica que los horarios de las materias de una carrera/anio/cuatrimestre
     no se superpongan, permitiendo que un alumno asista a todas.
+    Opcionalmente filtra por version de plan.
     """
     # Get materias for this carrera/anio/cuatrimestre
-    materias = session.exec(
+    statement = (
         select(MateriaDB)
         .join(PlanEstudioDB)
         .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
         .where(PlanEstudioDB.anio_plan == anio)
         .where(PlanEstudioDB.cuatrimestre_plan == cuatrimestre)
-    ).all()
+    )
+    if plan_version_id:
+        statement = statement.where(PlanEstudioDB.plan_version_id == plan_version_id)
+
+    materias = session.exec(statement).all()
 
     if not materias:
         return ValidationResult(

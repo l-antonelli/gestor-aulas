@@ -181,11 +181,28 @@ def render_custom_materia_page():
                             
                             with edit_tab2:
                                 # Carrera associations editor
-                                MateriaCarreraEditor.render_associations_editor(
-                                    session=session,
-                                    materia_codigo=materia_codigo,
-                                    key=f"edit_{materia_codigo}_carreras"
-                                )
+                                # Get available plan versions for the version selector
+                                from src.services.crud_services import carrera_service as _cs
+                                all_carreras_for_ver = _cs.get_all(session)
+                                all_plan_versions = []
+                                for _c in all_carreras_for_ver:
+                                    all_plan_versions.extend(_cs.get_plan_versions(session, _c.codigo))
+                                if all_plan_versions:
+                                    ver_opts = {v.id: f"{v.carrera_codigo} - {v.nombre}" for v in all_plan_versions}
+                                    sel_ver = st.selectbox(
+                                        "Version del plan",
+                                        options=list(ver_opts.keys()),
+                                        format_func=lambda x: ver_opts[x],
+                                        key=f"ver_{materia_codigo}",
+                                    )
+                                    MateriaCarreraEditor.render_associations_editor(
+                                        session=session,
+                                        materia_codigo=materia_codigo,
+                                        plan_version_id=sel_ver,
+                                        key=f"edit_{materia_codigo}_carreras",
+                                    )
+                                else:
+                                    st.warning("No hay versiones de plan disponibles.")
                             
                             with edit_tab3:
                                 # Read-only comisiones view

@@ -2,13 +2,15 @@
 
 import streamlit as st
 from datetime import date
+from sqlmodel import select
 from src.database.connection import get_session, init_db
-from src.database.models import CicloDB
+from src.database.models import CicloDB, CicloPlanVersionDB, PlanCarreraVersionDB, CarreraDB
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
 )
+from src.services.crud_services import carrera_service
 from src.services.schedule_service import (
     create_schedule_from_file,
     get_schedules_for_ciclo,
@@ -80,6 +82,28 @@ with tab_ciclos:
     st.divider()
     st.subheader("Nuevo Ciclo")
 
+    # Get all plan versions for the multi-select (outside form for dynamic content)
+    with next(get_session()) as session:
+        all_carreras = carrera_service.get_all(session)
+        all_versions = []
+        for c in all_carreras:
+            versions = carrera_service.get_plan_versions(session, c.codigo)
+            for v in versions:
+                all_versions.append(v)
+
+    version_options = {v.id: f"{v.carrera_codigo} - {v.nombre}" for v in all_versions}
+    # Default: latest version per carrera
+    latest_by_carrera = {}
+    for v in all_versions:
+        if v.carrera_codigo not in latest_by_carrera:
+            latest_by_carrera[v.carrera_codigo] = v.id
+        else:
+            # Keep the one with later fecha_creacion
+            existing = next(vv for vv in all_versions if vv.id == latest_by_carrera[v.carrera_codigo])
+            if v.fecha_creacion >= existing.fecha_creacion:
+                latest_by_carrera[v.carrera_codigo] = v.id
+    default_version_ids = list(latest_by_carrera.values())
+
     with st.form("create_ciclo"):
         col1, col2 = st.columns(2)
 
@@ -93,6 +117,20 @@ with tab_ciclos:
 
         descripcion = st.text_input("Descripcion (opcional)", placeholder="Ej: Cursado regular")
 
+        # Plan version selection
+        if version_options:
+            selected_versions = st.multiselect(
+                "Versiones de plan a asignar",
+                options=list(version_options.keys()),
+                default=default_version_ids,
+                format_func=lambda x: version_options[x],
+                help="Seleccione las versiones de plan de estudio que aplican a este ciclo. "
+                     "Los dictados se crearan para las materias de estas versiones.",
+            )
+        else:
+            selected_versions = []
+            st.warning("No hay versiones de plan disponibles. Cree planes de estudio primero.")
+
         submitted = st.form_submit_button("Guardar", type="primary")
 
         if submitted:
@@ -100,6 +138,8 @@ with tab_ciclos:
 
             if fecha_fin <= fecha_inicio:
                 st.error("La fecha de fin debe ser posterior a la de inicio")
+            elif not selected_versions:
+                st.error("Debe seleccionar al menos una version de plan")
             else:
                 ciclo = CicloDB(
                     id=ciclo_id,
@@ -107,12 +147,17 @@ with tab_ciclos:
                     numero=numero,
                     fecha_inicio=fecha_inicio,
                     fecha_fin=fecha_fin,
-                    descripcion=descripcion or ""
+                    descripcion=descripcion or "",
                 )
                 try:
                     with next(get_session()) as session:
                         ciclo_crud.create(session, ciclo)
-                    st.success(f"Ciclo '{ciclo_id}' creado")
+                        # Create CicloPlanVersion links
+                        for vid in selected_versions:
+                            link = CicloPlanVersionDB(ciclo_id=ciclo_id, plan_version_id=vid)
+                            session.add(link)
+                        session.commit()
+                    st.success(f"Ciclo '{ciclo_id}' creado con {len(selected_versions)} version(es) de plan")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al crear ciclo: {e}")
@@ -132,6 +177,26 @@ with tab_dictados:
         )
 
         if sel_ciclo_dict:
+            # Show assigned plan versions
+            with next(get_session()) as session:
+                assigned_versions = session.exec(
+                    select(PlanCarreraVersionDB)
+                    .join(CicloPlanVersionDB, PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
+                    .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_dict)
+                ).all()
+
+            if assigned_versions:
+                st.markdown("**Versiones de plan asignadas:**")
+                for v in assigned_versions:
+                    st.caption(f"- {v.carrera_codigo}: {v.nombre}")
+            else:
+                st.warning(
+                    "Este ciclo no tiene versiones de plan asignadas. "
+                    "Los dictados no se pueden crear sin versiones asignadas."
+                )
+
+            st.divider()
+
             with next(get_session()) as session:
                 dictados = get_dictados_for_ciclo(session, sel_ciclo_dict)
 

@@ -3,6 +3,8 @@
 from src.database.connection import get_engine, get_session, init_db
 from src.database.models import (
     ConfiguracionHoraria,
+    PlanCarreraVersionDB,
+    CicloPlanVersionDB,
     PlanEstudioDB,
     CorrelativaDB,
     DictadoCicloDB,
@@ -27,6 +29,9 @@ __all__ = [
     "init_db",
     # Config
     "ConfiguracionHoraria",
+    # Plan versioning
+    "PlanCarreraVersionDB",
+    "CicloPlanVersionDB",
     # Link tables
     "PlanEstudioDB",
     "CorrelativaDB",

@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from src.database.models import (
     CicloDB, DictadoDB, DictadoCicloDB, MateriaDB,
+    CicloPlanVersionDB, PlanEstudioDB,
 )
 from src.database.crud import ciclo_crud, materia_crud, dictado_crud
 
@@ -38,9 +39,25 @@ def create_dictados_for_ciclo(session: Session, ciclo_id: str) -> DictadoCreatio
         result.errors.append(f"Ciclo '{ciclo_id}' no encontrado")
         return result
 
-    # Get all active materias
+    # Get plan versions assigned to this ciclo
+    plan_version_ids = session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all()
+
+    if not plan_version_ids:
+        result.errors.append(
+            f"Ciclo '{ciclo_id}' no tiene versiones de plan asignadas. "
+            "Asigne versiones de plan en la pestana de Ciclos antes de crear dictados."
+        )
+        return result
+
+    # Get unique materias from assigned plan versions
     materias = session.exec(
-        select(MateriaDB).where(MateriaDB.active == True)
+        select(MateriaDB)
+        .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))
+        .distinct()
     ).all()
 
     for materia in materias:

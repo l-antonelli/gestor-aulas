@@ -2,6 +2,7 @@
 Load initial data from Excel files into the database.
 
 Reads from data/input/:
+- aulas/aulas.xlsx              -> Aula records
 - Carreras/Maestro materias.xlsx -> Materia records
 - Carreras/Maestro planes.xlsx   -> Carrera + PlanEstudio records
 - cronogramas/horarios_2C_2025.xlsx -> Horario + Comision records (derived)
@@ -28,21 +29,64 @@ sys.path.insert(0, str(project_root))
 
 from src.database.connection import get_session, init_db
 from src.database.models import (
-    CarreraDB, ComisionDB, HorarioDB, MateriaDB, PlanEstudioDB,
+    AulaDB, CarreraDB, ComisionDB, HorarioDB, MateriaDB, PlanEstudioDB,
+    PlanCarreraVersionDB,
 )
-from src.database.crud import materia_crud, carrera_crud, horario_crud, comision_crud
+from src.database.crud import aula_crud, materia_crud, carrera_crud, horario_crud, comision_crud
 from src.services.horario_loading_service import (
     _resolve_materia_code, derive_comision_count,
 )
 
 DATA_DIR = project_root / "data" / "input"
+AULAS_FILE = DATA_DIR / "aulas" / "aulas.xlsx"
 MAESTRO_MATERIAS = DATA_DIR / "Carreras" / "Maestro materias.xlsx"
 MAESTRO_PLANES = DATA_DIR / "Carreras" / "Maestro planes.xlsx"
 HORARIOS_2C_2025 = DATA_DIR / "cronogramas" / "horarios_2C_2025.xlsx"
 
 
 # =============================================================================
-# Step 1: Load Materias
+# Step 1: Load Aulas
+# =============================================================================
+
+def load_aulas(session: Session) -> dict:
+    """Load aulas from aulas.xlsx."""
+    df = pd.read_excel(AULAS_FILE)
+    stats = {"created": 0, "skipped": 0, "warnings": []}
+
+    for _, row in df.iterrows():
+        nombre = str(row["Aula"]).strip()
+        capacidad_raw = row["Capacidad (Alumnos)"]
+
+        try:
+            capacidad = int(capacidad_raw)
+        except (ValueError, TypeError):
+            stats["warnings"].append(f"{nombre}: capacidad invalida '{capacidad_raw}'")
+            continue
+
+        # Derive ID from name: "AULA 01" -> "AULA-01"
+        aula_id = nombre.replace(" ", "-")
+
+        existing = aula_crud.get(session, aula_id)
+        if existing:
+            stats["skipped"] += 1
+            continue
+
+        aula = AulaDB(
+            id=aula_id,
+            sede="Principal",
+            nombre=nombre,
+            capacidad=capacidad,
+            tipo="teorica",
+        )
+        session.add(aula)
+        stats["created"] += 1
+
+    session.commit()
+    return stats
+
+
+# =============================================================================
+# Step 2: Load Materias
 # =============================================================================
 
 def load_materias(session: Session) -> dict:
@@ -95,19 +139,21 @@ def load_materias(session: Session) -> dict:
 
 
 # =============================================================================
-# Step 2: Load Carreras + Planes
+# Step 3: Load Carreras + Planes
 # =============================================================================
 
 def load_carreras_and_planes(session: Session) -> dict:
-    """Load carreras and plan_estudio from Maestro planes.xlsx."""
+    """Load carreras, plan versions, and plan_estudio from Maestro planes.xlsx."""
     df = pd.read_excel(MAESTRO_PLANES)
     stats = {
-        "carreras_created": 0, "planes_created": 0,
+        "carreras_created": 0, "versions_created": 0, "planes_created": 0,
         "skipped": 0, "warnings": [],
     }
 
-    # Extract unique carreras
+    # Extract unique carreras and create "Plan Original" version for each
     carreras_seen = set()
+    version_map: dict[str, str] = {}  # carrera_codigo -> plan_version_id
+
     for codigo_raw in df["codigo_carrera"].dropna().unique():
         codigo = str(codigo_raw).strip()
         if not codigo or codigo in carreras_seen:
@@ -115,18 +161,43 @@ def load_carreras_and_planes(session: Session) -> dict:
         carreras_seen.add(codigo)
 
         existing = carrera_crud.get(session, codigo)
-        if existing:
-            continue
+        if not existing:
+            carrera = CarreraDB(
+                codigo=codigo,
+                nombre=codigo,  # Placeholder — to be filled in UI later
+                titulo_otorgado="",
+                duracion_anios=5,
+                cantidad_materias=None,
+            )
+            session.add(carrera)
+            stats["carreras_created"] += 1
 
-        carrera = CarreraDB(
-            codigo=codigo,
-            nombre=codigo,  # Placeholder — to be filled in UI later
-            titulo_otorgado="",
-            duracion_anios=5,
-            cantidad_materias=None,
-        )
-        session.add(carrera)
-        stats["carreras_created"] += 1
+    session.commit()
+
+    # Create "Plan Original" version for each carrera
+    from datetime import date as date_type
+    for codigo in carreras_seen:
+        # Check if version already exists
+        existing_version = session.exec(
+            select(PlanCarreraVersionDB)
+            .where(PlanCarreraVersionDB.carrera_codigo == codigo)
+            .where(PlanCarreraVersionDB.nombre == "Plan Original")
+        ).first()
+
+        if existing_version:
+            version_map[codigo] = existing_version.id
+        else:
+            version_id = str(uuid.uuid4())
+            version = PlanCarreraVersionDB(
+                id=version_id,
+                carrera_codigo=codigo,
+                nombre="Plan Original",
+                descripcion="Version inicial cargada desde Excel",
+                fecha_creacion=date_type.today(),
+            )
+            session.add(version)
+            version_map[codigo] = version_id
+            stats["versions_created"] += 1
 
     session.commit()
 
@@ -171,17 +242,28 @@ def load_carreras_and_planes(session: Session) -> dict:
             stats["skipped"] += 1
             continue
 
-        # Check if already exists
+        # Get plan version id for this carrera
+        plan_version_id = version_map.get(carrera_codigo)
+        if not plan_version_id:
+            stats["warnings"].append(
+                f"{carrera_codigo}/{materia_codigo}: sin version de plan, omitido"
+            )
+            stats["skipped"] += 1
+            continue
+
+        # Check if already exists (same materia + carrera + version)
         existing = session.exec(
             select(PlanEstudioDB)
             .where(PlanEstudioDB.materia_codigo == materia_codigo)
             .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
+            .where(PlanEstudioDB.plan_version_id == plan_version_id)
         ).first()
         if existing:
             stats["skipped"] += 1
             continue
 
         plan = PlanEstudioDB(
+            plan_version_id=plan_version_id,
             materia_codigo=materia_codigo,
             carrera_codigo=carrera_codigo,
             anio_plan=anio,
@@ -196,7 +278,7 @@ def load_carreras_and_planes(session: Session) -> dict:
 
 
 # =============================================================================
-# Step 3: Load Horarios + Derive Comisiones
+# Step 4: Load Horarios + Derive Comisiones
 # =============================================================================
 
 def _parse_time_value(value) -> time:
@@ -387,7 +469,7 @@ def main():
     args = parser.parse_args()
 
     # Verify input files exist
-    for path in [MAESTRO_MATERIAS, MAESTRO_PLANES, HORARIOS_2C_2025]:
+    for path in [AULAS_FILE, MAESTRO_MATERIAS, MAESTRO_PLANES, HORARIOS_2C_2025]:
         if not path.exists():
             print(f"ERROR: File not found: {path}")
             sys.exit(1)
@@ -408,9 +490,21 @@ def main():
     print("Database initialized.\n")
 
     with next(get_session()) as session:
-        # Step 1: Materias
+        # Step 1: Aulas
         print("=" * 60)
-        print("STEP 1: Loading Materias")
+        print("STEP 1: Loading Aulas")
+        print("=" * 60)
+        a_stats = load_aulas(session)
+        print(f"  Created: {a_stats['created']}")
+        print(f"  Skipped (existing): {a_stats['skipped']}")
+        if a_stats["warnings"]:
+            print(f"  Warnings ({len(a_stats['warnings'])}):")
+            for w in a_stats["warnings"]:
+                print(f"    - {w}")
+
+        # Step 2: Materias
+        print(f"\n{'=' * 60}")
+        print("STEP 2: Loading Materias")
         print("=" * 60)
         m_stats = load_materias(session)
         print(f"  Created: {m_stats['created']}")
@@ -422,12 +516,13 @@ def main():
             if len(m_stats["warnings"]) > 10:
                 print(f"    ... and {len(m_stats['warnings']) - 10} more")
 
-        # Step 2: Carreras + Planes
+        # Step 3: Carreras + Planes
         print(f"\n{'=' * 60}")
-        print("STEP 2: Loading Carreras + Planes de Estudio")
+        print("STEP 3: Loading Carreras + Planes de Estudio")
         print("=" * 60)
         p_stats = load_carreras_and_planes(session)
         print(f"  Carreras created: {p_stats['carreras_created']}")
+        print(f"  Plan versions created: {p_stats['versions_created']}")
         print(f"  Planes created: {p_stats['planes_created']}")
         print(f"  Skipped: {p_stats['skipped']}")
         if p_stats["warnings"]:
@@ -435,9 +530,9 @@ def main():
             for w in p_stats["warnings"][:10]:
                 print(f"    - {w}")
 
-        # Step 3: Horarios
+        # Step 4: Horarios
         print(f"\n{'=' * 60}")
-        print("STEP 3: Loading Horarios + Deriving Comisiones")
+        print("STEP 4: Loading Horarios + Deriving Comisiones")
         print("=" * 60)
         h_stats = load_horarios(session)
         print(f"  Total rows in file: {h_stats['rows_total']}")
@@ -470,12 +565,15 @@ def main():
     print(f"\n{'=' * 60}")
     print("SUMMARY")
     print("=" * 60)
+    print(f"  Aulas:      {a_stats['created']} created, {a_stats['skipped']} skipped")
     print(f"  Materias:   {m_stats['created']} created, {m_stats['skipped']} skipped")
     print(f"  Carreras:   {p_stats['carreras_created']} created")
+    print(f"  Versions:   {p_stats['versions_created']} created")
     print(f"  Planes:     {p_stats['planes_created']} created")
     print(f"  Comisiones: {h_stats['comisiones_created']} created")
     print(f"  Horarios:   {h_stats['horarios_created']} created")
-    total_warnings = len(m_stats["warnings"]) + len(p_stats["warnings"]) + len(h_stats.get("warnings", []))
+    total_warnings = (len(a_stats["warnings"]) + len(m_stats["warnings"])
+                      + len(p_stats["warnings"]) + len(h_stats.get("warnings", [])))
     total_errors = len(h_stats["errors"])
     print(f"  Warnings:   {total_warnings}")
     print(f"  Errors:     {total_errors}")

@@ -8,6 +8,7 @@ They use SQLModel which combines Pydantic validation with SQLAlchemy ORM.
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional
 from datetime import date, time
+import uuid
 
 
 # =============================================================================
@@ -29,12 +30,33 @@ class ConfiguracionHoraria(SQLModel, table=True):
 # Link Tables (for M:M relationships)
 # =============================================================================
 
+class PlanCarreraVersionDB(SQLModel, table=True):
+    """Version de un plan de estudios para una carrera."""
+    __tablename__ = "plan_carrera_version"
+
+    id: str = Field(primary_key=True)  # UUID
+    carrera_codigo: str = Field(foreign_key="carreras.codigo", index=True)
+    nombre: str  # e.g., "Plan Original", "Plan 2025"
+    descripcion: str = Field(default="")
+    fecha_creacion: date
+
+
+class CicloPlanVersionDB(SQLModel, table=True):
+    """Bridge: que versiones de plan aplican a un ciclo."""
+    __tablename__ = "ciclo_plan_version"
+
+    ciclo_id: str = Field(foreign_key="ciclos.id", primary_key=True)
+    plan_version_id: str = Field(foreign_key="plan_carrera_version.id", primary_key=True)
+
+
 class PlanEstudioDB(SQLModel, table=True):
-    """Relacion M:M entre Materia y Carrera con ubicacion curricular."""
+    """Relacion M:M entre Materia y Carrera con ubicacion curricular, versionada."""
     __tablename__ = "plan_estudio"
 
-    materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
-    carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    plan_version_id: str = Field(foreign_key="plan_carrera_version.id", index=True)
+    materia_codigo: str = Field(foreign_key="materias.codigo", index=True)
+    carrera_codigo: str = Field(foreign_key="carreras.codigo", index=True)
     anio_plan: Optional[int] = Field(default=None, ge=1, le=6)
     cuatrimestre_plan: Optional[str] = Field(default=None)  # "1C", "2C", "Anual", or None
     correlativas: str = Field(default="")
@@ -79,6 +101,9 @@ class CicloDB(SQLModel, table=True):
     dictados: list["DictadoDB"] = Relationship(
         back_populates="ciclos",
         link_model=DictadoCicloDB
+    )
+    plan_versions: list["PlanCarreraVersionDB"] = Relationship(
+        link_model=CicloPlanVersionDB
     )
     schedules: list["ScheduleDB"] = Relationship(back_populates="ciclo")
     planificaciones: list["PlanificacionCursadaDB"] = Relationship(back_populates="ciclo")
@@ -125,6 +150,9 @@ class CarreraDB(SQLModel, table=True):
     materias: list["MateriaDB"] = Relationship(
         back_populates="carreras",
         link_model=PlanEstudioDB
+    )
+    plan_versions: list["PlanCarreraVersionDB"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[PlanCarreraVersionDB.carrera_codigo]"}
     )
 
 

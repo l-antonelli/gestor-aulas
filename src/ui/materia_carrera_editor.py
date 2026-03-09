@@ -15,80 +15,57 @@ from src.database.models import PlanEstudioDB
 
 
 class MateriaCarreraEditor:
-    """Editor component for Materia-Carrera associations."""
-    
+    """Editor component for Materia-Carrera associations (version-aware)."""
+
     @staticmethod
     def render_associations_editor(
         session: Session,
         materia_codigo: str,
-        key: str = "materia_carrera_editor"
+        plan_version_id: str,
+        key: str = "materia_carrera_editor",
     ) -> None:
         """
         Render an editable table for materia-carrera associations.
-        
+
         Args:
             session: Database session
             materia_codigo: The materia's codigo
+            plan_version_id: The plan version to filter by
             key: Unique key for the component
         """
-        st.markdown("### 🎓 Carreras Asociadas")
-        
-        # Get materia to check if it's annual
+        st.markdown("### Carreras Asociadas")
+
         materia = materia_service.get(session, materia_codigo)
         is_anual = materia and materia.periodo == "anual"
-        
+
         if is_anual:
-            st.info("ℹ️ Esta es una materia **anual**. El cuatrimestre se establece automáticamente en 0 (anual).")
-        
-        # Get current associations with year/semester info
-        associations = MateriaCarreraEditor._get_associations(session, materia_codigo)
-        
+            st.info("Esta es una materia **anual**. El cuatrimestre se establece automaticamente.")
+
+        associations = MateriaCarreraEditor._get_associations(session, materia_codigo, plan_version_id)
+
         if not associations:
-            st.info("Esta materia no está asociada a ninguna carrera.")
+            st.info("Esta materia no esta asociada a ninguna carrera en esta version del plan.")
         else:
-            # Create DataFrame for editing
             df = pd.DataFrame(associations)
-            
-            # For display, convert cuatrimestre 0 to "Anual"
+
             if is_anual:
                 df["cuatrimestre_display"] = "Anual"
             else:
                 df["cuatrimestre_display"] = df["cuatrimestre_plan"]
-            
-            # Configure column settings
+
             column_config = {
-                "carrera_codigo": st.column_config.TextColumn(
-                    "Código Carrera",
-                    disabled=True,
-                    width="small"
-                ),
-                "carrera_nombre": st.column_config.TextColumn(
-                    "Nombre Carrera",
-                    disabled=True,
-                    width="medium"
-                ),
-                "anio_plan": st.column_config.NumberColumn(
-                    "Año",
-                    min_value=1,
-                    max_value=6,
-                    step=1,
-                    width="small"
-                ),
-                "cuatrimestre_display": st.column_config.TextColumn(
-                    "Cuatrimestre",
-                    disabled=True,
-                    width="small"
-                ) if is_anual else st.column_config.SelectboxColumn(
-                    "Cuatrimestre",
-                    options=["1C", "2C"],
-                    width="small"
+                "carrera_codigo": st.column_config.TextColumn("Codigo Carrera", disabled=True, width="small"),
+                "carrera_nombre": st.column_config.TextColumn("Nombre Carrera", disabled=True, width="medium"),
+                "anio_plan": st.column_config.NumberColumn("Anio", min_value=1, max_value=6, step=1, width="small"),
+                "cuatrimestre_display": (
+                    st.column_config.TextColumn("Cuatrimestre", disabled=True, width="small")
+                    if is_anual else
+                    st.column_config.SelectboxColumn("Cuatrimestre", options=["1C", "2C"], width="small")
                 ),
             }
-            
-            # Select columns to display
+
             display_cols = ["carrera_codigo", "carrera_nombre", "anio_plan", "cuatrimestre_display"]
-            
-            # Render editable dataframe
+
             edited_df = st.data_editor(
                 df[display_cols],
                 column_config=column_config,
@@ -97,156 +74,149 @@ class MateriaCarreraEditor:
                 key=f"{key}_table",
                 hide_index=True,
             )
-            
-            # Check for changes (only in editable columns)
+
             if not df[display_cols].equals(edited_df):
                 col1, col2 = st.columns([1, 4])
                 with col1:
-                    if st.button("💾 Guardar Cambios", key=f"{key}_save"):
+                    if st.button("Guardar Cambios", key=f"{key}_save"):
                         try:
-                            # Restore original cuatrimestre values for saving
                             if is_anual:
                                 edited_df["cuatrimestre_plan"] = "anual"
                             else:
                                 edited_df["cuatrimestre_plan"] = edited_df["cuatrimestre_display"]
-                            
-                            # Add carrera_codigo back for saving
+
                             edited_df["carrera_codigo"] = df["carrera_codigo"]
-                            
-                            MateriaCarreraEditor._save_changes(
-                                session, materia_codigo, edited_df
-                            )
-                            st.success("✅ Cambios guardados")
+                            edited_df["plan_estudio_id"] = df["plan_estudio_id"]
+
+                            MateriaCarreraEditor._save_changes(session, edited_df)
+                            st.success("Cambios guardados")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al guardar: {str(e)}")
+                            st.error(f"Error al guardar: {str(e)}")
                 with col2:
-                    st.caption("Se detectaron cambios en año o cuatrimestre")
-            
-            # Delete associations
-            st.markdown("#### 🗑️ Desasociar Carrera")
+                    st.caption("Se detectaron cambios en anio o cuatrimestre")
+
+            st.markdown("#### Desasociar Carrera")
             carreras_to_remove = st.multiselect(
                 "Seleccione carreras para desasociar",
                 options=[row["carrera_codigo"] for _, row in df.iterrows()],
                 format_func=lambda x: f"{x} - {df[df['carrera_codigo']==x]['carrera_nombre'].iloc[0]}",
-                key=f"{key}_remove"
+                key=f"{key}_remove",
             )
-            
+
             if carreras_to_remove:
-                if st.button("🗑️ Desasociar Seleccionadas", key=f"{key}_remove_btn"):
+                if st.button("Desasociar Seleccionadas", key=f"{key}_remove_btn"):
                     try:
                         for carrera_codigo in carreras_to_remove:
-                            materia_service.remove_carrera(session, materia_codigo, carrera_codigo)
-                        st.success(f"✅ {len(carreras_to_remove)} carrera(s) desasociada(s)")
+                            materia_service.remove_carrera(
+                                session, materia_codigo, carrera_codigo,
+                                plan_version_id=plan_version_id,
+                            )
+                        st.success(f"{len(carreras_to_remove)} carrera(s) desasociada(s)")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-        
-        # Add new association
-        st.markdown("#### ➕ Asociar Nueva Carrera")
-        MateriaCarreraEditor._render_add_association(session, materia_codigo, key)
-    
+                        st.error(f"Error: {str(e)}")
+
+        st.markdown("#### Asociar Nueva Carrera")
+        MateriaCarreraEditor._render_add_association(session, materia_codigo, plan_version_id, key)
+
     @staticmethod
-    def _get_associations(session: Session, materia_codigo: str) -> List[Dict[str, Any]]:
-        """Get current associations with carrera details."""
+    def _get_associations(
+        session: Session, materia_codigo: str, plan_version_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Get current associations with carrera details for a specific plan version."""
         from src.database.models import CarreraDB
-        
+
         statement = (
             select(
+                PlanEstudioDB.id,
                 PlanEstudioDB.carrera_codigo,
                 CarreraDB.nombre,
                 PlanEstudioDB.anio_plan,
-                PlanEstudioDB.cuatrimestre_plan
+                PlanEstudioDB.cuatrimestre_plan,
             )
             .join(CarreraDB, PlanEstudioDB.carrera_codigo == CarreraDB.codigo)
             .where(PlanEstudioDB.materia_codigo == materia_codigo)
+            .where(PlanEstudioDB.plan_version_id == plan_version_id)
             .order_by(PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
         )
-        
+
         results = session.exec(statement).all()
-        
+
         return [
             {
+                "plan_estudio_id": pe_id,
                 "carrera_codigo": carrera_codigo,
                 "carrera_nombre": nombre,
                 "anio_plan": anio,
-                "cuatrimestre_plan": cuatri
+                "cuatrimestre_plan": cuatri,
             }
-            for carrera_codigo, nombre, anio, cuatri in results
+            for pe_id, carrera_codigo, nombre, anio, cuatri in results
         ]
-    
+
     @staticmethod
-    def _save_changes(session: Session, materia_codigo: str, edited_df: pd.DataFrame) -> None:
-        """Save changes to associations."""
-        # Update each association
+    def _save_changes(session: Session, edited_df: pd.DataFrame) -> None:
+        """Save changes to associations using the PlanEstudioDB surrogate id."""
         for _, row in edited_df.iterrows():
-            # Delete old link
-            statement = select(PlanEstudioDB).where(
-                PlanEstudioDB.materia_codigo == materia_codigo,
-                PlanEstudioDB.carrera_codigo == row["carrera_codigo"]
-            )
-            link = session.exec(statement).first()
-            
+            link = session.get(PlanEstudioDB, row["plan_estudio_id"])
             if link:
-                # Update year and semester
                 link.anio_plan = int(row["anio_plan"])
                 link.cuatrimestre_plan = str(row["cuatrimestre_plan"])
                 session.add(link)
-        
         session.commit()
-    
+
     @staticmethod
-    def _render_add_association(session: Session, materia_codigo: str, key: str) -> None:
+    def _render_add_association(
+        session: Session, materia_codigo: str, plan_version_id: str, key: str,
+    ) -> None:
         """Render form to add new association."""
-        # Get materia to check if it's annual
         materia = materia_service.get(session, materia_codigo)
         is_anual = materia and materia.periodo == "anual"
-        
-        # Get available carreras (not already associated)
+
         all_carreras = carrera_service.get_all(session)
         current_carreras = materia_service.get_carreras(session, materia_codigo)
         current_codigos = {c.codigo for c in current_carreras}
-        
+
         available_carreras = [c for c in all_carreras if c.codigo not in current_codigos]
-        
+
         if not available_carreras:
-            st.info("Todas las carreras ya están asociadas a esta materia.")
+            st.info("Todas las carreras ya estan asociadas a esta materia.")
             return
-        
+
         with st.form(key=f"{key}_add_form"):
             if is_anual:
                 col1, col2 = st.columns([3, 1])
             else:
                 col1, col2, col3 = st.columns([2, 1, 1])
-            
+
             with col1:
                 selected_carrera = st.selectbox(
                     "Carrera",
                     options=[c.codigo for c in available_carreras],
                     format_func=lambda x: f"{x} - {next((c.nombre for c in available_carreras if c.codigo == x), '')}",
                 )
-            
+
             with col2:
-                anio = st.number_input("Año", min_value=1, max_value=6, value=1, step=1)
-            
-            # Only show cuatrimestre selector for non-annual materias
+                anio = st.number_input("Anio", min_value=1, max_value=6, value=1, step=1)
+
             if is_anual:
                 cuatrimestre = "anual"
-                st.caption("Cuatrimestre: Anual (0)")
+                st.caption("Cuatrimestre: Anual")
             else:
                 with col3:
                     cuatrimestre = st.selectbox("Cuatrimestre", options=["1C", "2C"])
-            
-            submitted = st.form_submit_button("➕ Asociar")
-            
+
+            submitted = st.form_submit_button("Asociar")
+
             if submitted:
                 try:
                     materia_service.add_carrera(
                         session, materia_codigo, selected_carrera,
+                        plan_version_id=plan_version_id,
                         anio_plan=anio,
-                        cuatrimestre_plan=cuatrimestre
+                        cuatrimestre_plan=cuatrimestre,
                     )
-                    st.success(f"✅ Carrera {selected_carrera} asociada")
+                    st.success(f"Carrera {selected_carrera} asociada")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                    st.error(f"Error: {str(e)}")

@@ -234,205 +234,171 @@ def render_custom_carrera_page():
         
         with tab3:
             # Manage Carrera-Materia relationships with year-based curriculum view
-            st.subheader("📚 Planes de Estudio")
-            
+            st.subheader("Planes de Estudio")
+
             carreras = carrera_service.get_all(session)
-            
+
             if not carreras:
                 st.info("No hay carreras registradas. Cree una carrera primero.")
             else:
                 carrera_options = [(c.codigo, c.nombre) for c in carreras]
-                
+
                 selected_carrera = st.selectbox(
                     "Seleccionar Carrera",
                     options=[opt[0] for opt in carrera_options],
                     format_func=lambda x: f"{x} - {next((opt[1] for opt in carrera_options if opt[0] == x), '')}",
-                    key="carrera_materias_view"
+                    key="carrera_materias_view",
                 )
-                
+
                 if selected_carrera:
-                    # Show status widget
-                    st.markdown("### Estado de Completitud")
-                    CarreraStatusWidget.render_inline_status(session, selected_carrera)
-                    
-                    st.divider()
-                    
-                    # Year selector
-                    st.markdown("### Seleccionar Año del Plan de Estudios")
-                    selected_year = st.selectbox(
-                        "Año",
-                        options=[1, 2, 3, 4, 5, 6],
-                        format_func=lambda x: f"{x}° Año",
-                        key="selected_year"
-                    )
-                    
-                    st.divider()
-                    
-                    # Get all materias for this carrera and year
-                    materias_anuales = carrera_service.get_materias_by_year_and_semester(
-                        session, selected_carrera, selected_year
-                    )
-                    
-                    # Filter by period type
-                    anuales = [(m, a, c) for m, a, c in materias_anuales if c == "anual"]
-                    primer_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "1C"]
-                    segundo_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "2C"]
-                    
-                    # 3-column layout
-                    col1, col2, col3 = st.columns(3)
-                    
-                    # Column 1: Anuales
-                    with col1:
-                        with st.expander(f"📅 Anuales ({len(anuales)})", expanded=True):
-                            if anuales:
-                                for materia, anio, cuatri in anuales:
-                                    col_mat, col_del = st.columns([4, 1])
-                                    with col_mat:
-                                        st.markdown(f"**{materia.codigo}**")
-                                        st.caption(f"{materia.nombre}")
-                                    with col_del:
-                                        if st.button("🗑️", key=f"del_anual_{materia.codigo}", help="Desasociar"):
-                                            try:
-                                                carrera_service.remove_materia(session, selected_carrera, materia.codigo)
-                                                st.success("Desasociada")
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"Error: {e}")
-                            else:
-                                st.info("Sin materias anuales")
-                            
-                            # Add materia anual
-                            st.markdown("---")
-                            st.markdown("**➕ Asociar Materia Anual**")
-                            
-                            all_materias = materia_service.get_all(session)
-                            associated_codigos = {m.codigo for m, _, _ in materias_anuales}
-                            available_anuales = [m for m in all_materias if m.codigo not in associated_codigos and m.periodo == "anual"]
-                            
-                            if available_anuales:
-                                materia_to_add = st.selectbox(
-                                    "Materia",
-                                    options=[m.codigo for m in available_anuales],
-                                    format_func=lambda x: f"{x} - {next((m.nombre for m in available_anuales if m.codigo == x), '')}",
-                                    key=f"add_anual_{selected_year}",
-                                    label_visibility="collapsed"
-                                )
-                                
-                                if st.button("Asociar", key=f"btn_add_anual_{selected_year}"):
-                                    try:
-                                        carrera_service.add_materia(
-                                            session, selected_carrera, materia_to_add,
-                                            anio_plan=selected_year,
-                                            cuatrimestre_plan="anual"
+                    # --- Version selector ---
+                    plan_versions = carrera_service.get_plan_versions(session, selected_carrera)
+
+                    if not plan_versions:
+                        st.warning("Esta carrera no tiene versiones de plan de estudio.")
+                    else:
+                        version_options = {v.id: f"{v.nombre} ({v.fecha_creacion})" for v in plan_versions}
+
+                        col_ver, col_new = st.columns([3, 1])
+                        with col_ver:
+                            selected_version_id = st.selectbox(
+                                "Version del Plan",
+                                options=list(version_options.keys()),
+                                format_func=lambda x: version_options[x],
+                                key="plan_version_select",
+                            )
+                        with col_new:
+                            st.write("")
+                            st.write("")
+                            if st.button("Nueva Version", key="btn_new_version"):
+                                st.session_state["creating_version"] = True
+
+                        # Create new version form
+                        if st.session_state.get("creating_version"):
+                            with st.form("create_version_form"):
+                                new_name = st.text_input("Nombre de la nueva version")
+                                new_desc = st.text_input("Descripcion (opcional)")
+                                copy_from = st.checkbox("Copiar materias de la version actual", value=True)
+                                if st.form_submit_button("Crear"):
+                                    if new_name.strip():
+                                        carrera_service.create_plan_version(
+                                            session,
+                                            selected_carrera,
+                                            new_name.strip(),
+                                            descripcion=new_desc.strip(),
+                                            copy_from_version_id=selected_version_id if copy_from else None,
                                         )
-                                        st.success("Asociada")
+                                        st.session_state.pop("creating_version", None)
+                                        st.success(f"Version '{new_name}' creada")
                                         st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-                            else:
-                                st.caption("No hay materias anuales disponibles")
-                    
-                    # Column 2: 1er Cuatrimestre
-                    with col2:
-                        with st.expander(f"📘 1er Cuatrimestre ({len(primer_cuatri)})", expanded=True):
-                            if primer_cuatri:
-                                for materia, anio, cuatri in primer_cuatri:
-                                    col_mat, col_del = st.columns([4, 1])
-                                    with col_mat:
-                                        st.markdown(f"**{materia.codigo}**")
-                                        st.caption(f"{materia.nombre}")
-                                    with col_del:
-                                        if st.button("🗑️", key=f"del_1c_{materia.codigo}", help="Desasociar"):
-                                            try:
-                                                carrera_service.remove_materia(session, selected_carrera, materia.codigo)
-                                                st.success("Desasociada")
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"Error: {e}")
-                            else:
-                                st.info("Sin materias en 1C")
-                            
-                            # Add materia 1C
-                            st.markdown("---")
-                            st.markdown("**➕ Asociar Materia 1C**")
-                            
-                            all_materias = materia_service.get_all(session)
-                            associated_codigos = {m.codigo for m, _, _ in materias_anuales}
-                            available_1c = [m for m in all_materias if m.codigo not in associated_codigos and m.periodo == "cuatrimestral"]
-                            
-                            if available_1c:
-                                materia_to_add = st.selectbox(
-                                    "Materia",
-                                    options=[m.codigo for m in available_1c],
-                                    format_func=lambda x: f"{x} - {next((m.nombre for m in available_1c if m.codigo == x), '')}",
-                                    key=f"add_1c_{selected_year}",
-                                    label_visibility="collapsed"
-                                )
-                                
-                                if st.button("Asociar", key=f"btn_add_1c_{selected_year}"):
-                                    try:
-                                        carrera_service.add_materia(
-                                            session, selected_carrera, materia_to_add,
-                                            anio_plan=selected_year,
-                                            cuatrimestre_plan="1C"
-                                        )
-                                        st.success("Asociada")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-                            else:
-                                st.caption("No hay materias cuatrimestrales disponibles")
-                    
-                    # Column 3: 2do Cuatrimestre
-                    with col3:
-                        with st.expander(f"📗 2do Cuatrimestre ({len(segundo_cuatri)})", expanded=True):
-                            if segundo_cuatri:
-                                for materia, anio, cuatri in segundo_cuatri:
-                                    col_mat, col_del = st.columns([4, 1])
-                                    with col_mat:
-                                        st.markdown(f"**{materia.codigo}**")
-                                        st.caption(f"{materia.nombre}")
-                                    with col_del:
-                                        if st.button("🗑️", key=f"del_2c_{materia.codigo}", help="Desasociar"):
-                                            try:
-                                                carrera_service.remove_materia(session, selected_carrera, materia.codigo)
-                                                st.success("Desasociada")
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"Error: {e}")
-                            else:
-                                st.info("Sin materias en 2C")
-                            
-                            # Add materia 2C
-                            st.markdown("---")
-                            st.markdown("**➕ Asociar Materia 2C**")
-                            
-                            all_materias = materia_service.get_all(session)
-                            associated_codigos = {m.codigo for m, _, _ in materias_anuales}
-                            available_2c = [m for m in all_materias if m.codigo not in associated_codigos and m.periodo == "cuatrimestral"]
-                            
-                            if available_2c:
-                                materia_to_add = st.selectbox(
-                                    "Materia",
-                                    options=[m.codigo for m in available_2c],
-                                    format_func=lambda x: f"{x} - {next((m.nombre for m in available_2c if m.codigo == x), '')}",
-                                    key=f"add_2c_{selected_year}",
-                                    label_visibility="collapsed"
-                                )
-                                
-                                if st.button("Asociar", key=f"btn_add_2c_{selected_year}"):
-                                    try:
-                                        carrera_service.add_materia(
-                                            session, selected_carrera, materia_to_add,
-                                            anio_plan=selected_year,
-                                            cuatrimestre_plan="2C"
-                                        )
-                                        st.success("Asociada")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-                            else:
-                                st.caption("No hay materias cuatrimestrales disponibles")
+                                    else:
+                                        st.error("El nombre no puede estar vacio")
+
+                        # Edit version name/description
+                        selected_version = next((v for v in plan_versions if v.id == selected_version_id), None)
+                        if selected_version:
+                            with st.expander("Editar version"):
+                                edit_name = st.text_input("Nombre", value=selected_version.nombre, key="edit_ver_name")
+                                edit_desc = st.text_input("Descripcion", value=selected_version.descripcion, key="edit_ver_desc")
+                                if st.button("Guardar", key="btn_save_version"):
+                                    carrera_service.update_plan_version(
+                                        session, selected_version_id,
+                                        nombre=edit_name.strip() or None,
+                                        descripcion=edit_desc.strip(),
+                                    )
+                                    st.success("Version actualizada")
+                                    st.rerun()
+
+                        st.divider()
+
+                        # Show status widget
+                        st.markdown("### Estado de Completitud")
+                        CarreraStatusWidget.render_inline_status(session, selected_carrera)
+
+                        st.divider()
+
+                        # Year selector
+                        st.markdown("### Seleccionar Anio del Plan de Estudios")
+                        selected_year = st.selectbox(
+                            "Anio",
+                            options=[1, 2, 3, 4, 5, 6],
+                            format_func=lambda x: f"{x} Anio",
+                            key="selected_year",
+                        )
+
+                        st.divider()
+
+                        # Get all materias for this carrera, year, and version
+                        materias_anuales = carrera_service.get_materias_by_year_and_semester(
+                            session, selected_carrera, selected_year,
+                            plan_version_id=selected_version_id,
+                        )
+
+                        anuales = [(m, a, c) for m, a, c in materias_anuales if c == "anual"]
+                        primer_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "1C"]
+                        segundo_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "2C"]
+
+                        col1, col2, col3 = st.columns(3)
+
+                        # Helper to render a column
+                        def _render_period_column(title, materias_list, period_key, cuatrimestre_plan_value, periodo_filter):
+                            with st.expander(f"{title} ({len(materias_list)})", expanded=True):
+                                if materias_list:
+                                    for materia, anio, cuatri in materias_list:
+                                        col_mat, col_del = st.columns([4, 1])
+                                        with col_mat:
+                                            st.markdown(f"**{materia.codigo}**")
+                                            st.caption(f"{materia.nombre}")
+                                        with col_del:
+                                            if st.button("X", key=f"del_{period_key}_{materia.codigo}", help="Desasociar"):
+                                                try:
+                                                    carrera_service.remove_materia(
+                                                        session, selected_carrera, materia.codigo,
+                                                        plan_version_id=selected_version_id,
+                                                    )
+                                                    st.success("Desasociada")
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"Error: {e}")
+                                else:
+                                    st.info(f"Sin materias {period_key}")
+
+                                st.markdown("---")
+                                st.markdown(f"**Asociar Materia {period_key}**")
+
+                                all_materias = materia_service.get_all(session)
+                                associated_codigos = {m.codigo for m, _, _ in materias_anuales}
+                                available = [m for m in all_materias if m.codigo not in associated_codigos and m.periodo == periodo_filter]
+
+                                if available:
+                                    materia_to_add = st.selectbox(
+                                        "Materia",
+                                        options=[m.codigo for m in available],
+                                        format_func=lambda x: f"{x} - {next((m.nombre for m in available if m.codigo == x), '')}",
+                                        key=f"add_{period_key}_{selected_year}",
+                                        label_visibility="collapsed",
+                                    )
+                                    if st.button("Asociar", key=f"btn_add_{period_key}_{selected_year}"):
+                                        try:
+                                            carrera_service.add_materia(
+                                                session, selected_carrera, materia_to_add,
+                                                plan_version_id=selected_version_id,
+                                                anio_plan=selected_year,
+                                                cuatrimestre_plan=cuatrimestre_plan_value,
+                                            )
+                                            st.success("Asociada")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
+                                else:
+                                    st.caption(f"No hay materias disponibles")
+
+                        with col1:
+                            _render_period_column("Anuales", anuales, "anual", "anual", "anual")
+                        with col2:
+                            _render_period_column("1er Cuatrimestre", primer_cuatri, "1C", "1C", "cuatrimestral")
+                        with col3:
+                            _render_period_column("2do Cuatrimestre", segundo_cuatri, "2C", "2C", "cuatrimestral")
 
 
 # Render the custom page

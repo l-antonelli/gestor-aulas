@@ -14,6 +14,7 @@ from src.database.models import (
     ConfiguracionHoraria, CarreraDB, CicloDB, DictadoDB,
     DictadoCicloDB, ScheduleDB, ScheduleEntryDB,
     PlanificacionCursadaDB, ClaseDB,
+    PlanCarreraVersionDB, CicloPlanVersionDB,
 )
 
 T = TypeVar("T")
@@ -103,6 +104,12 @@ planificacion_crud = CRUDBase[PlanificacionCursadaDB](PlanificacionCursadaDB)
 
 # Instancia CRUD para Clases
 clase_crud = CRUDBase[ClaseDB](ClaseDB)
+
+# Instancia CRUD para PlanCarreraVersion
+plan_carrera_version_crud = CRUDBase[PlanCarreraVersionDB](PlanCarreraVersionDB)
+
+# Instancia CRUD para CicloPlanVersion (bridge table)
+ciclo_plan_version_crud = CRUDBase[CicloPlanVersionDB](CicloPlanVersionDB)
 
 
 # ============================================================================
