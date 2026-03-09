@@ -2,9 +2,10 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas).
+> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes).
 > **Fecha diseño**: 2026-03-09
 > **Fecha implementacion**: 2026-03-09
+> **Ultima actualizacion**: 2026-03-09 (versionado de planes de estudio)
 
 ---
 
@@ -20,6 +21,8 @@ El modelo original (v1) incluia entidades que quedaron fuera de alcance y usaba 
 | Horarios | HorarioCronograma (catalogo) + Clase (link) | Horario (patron semanal bajo Comision) + Clase (instancia con fecha) |
 | Comisiones | Creadas manualmente o auto-generadas | Derivadas de la carga de horarios, pertenecen a un plan |
 | Materia-Carrera | MateriaCarreraLink simple | PlanEstudio con anio_plan, cuatrimestre_plan, correlativas |
+| **Plan de estudio** | **PlanEstudio sin versionar (composite PK)** | **PlanCarreraVersion + PlanEstudio versionado (UUID PK + plan_version_id FK)** |
+| **Dictados** | **Derivados de Materia.active** | **Derivados de versiones de plan asignadas al ciclo (CicloPlanVersion)** |
 | Ciclos y ofertas | Ciclo y Dictado definidos pero sin uso | Ciclo + Dictado + PlanificacionCursada: gestion completa del ciclo de vida |
 
 ### 1.2 Objetivo del modelo
@@ -40,9 +43,19 @@ Permitir:
 ### 2.1 Diagrama de entidades
 
 ```
+Carrera (programa academico)
+  |
+  +-- PlanCarreraVersion (version de un plan de estudios)
+       |-- nombre: "Plan Original", "Plan 2025"
+       |-- fecha_creacion
+       |
+       +-- PlanEstudio (materia en la version del plan)
+            |-- materia_codigo, carrera_codigo (denormalizado)
+            |-- anio_plan, cuatrimestre_plan, correlativas
+
 Materia (catalogo estatico, persiste entre ciclos)
   |
-  |-- active: bool (parte del plan de carrera vigente?)
+  |-- active: bool (informativo, NO controla creacion de dictados)
   |
   +-- Dictado (oferta de la materia en un periodo)
   |    |-- DictadoCiclo (bridge) --> Ciclo
@@ -50,10 +63,12 @@ Materia (catalogo estatico, persiste entre ciclos)
   |    |
   |    +-- inicio_dictado, fin_dictado (fechas reales)
   |
-  +-- PlanEstudio --> Carrera
-       (anio_plan, cuatrimestre_plan, correlativas)
+  +-- PlanEstudio --> PlanCarreraVersion --> Carrera
 
 Ciclo (periodo academico: "2025-2C")
+  |
+  +-- CicloPlanVersion (bridge) --> PlanCarreraVersion
+  |    (que versiones de plan aplican a este ciclo)
   |
   +-- Schedule (carga validada de horarios)
   |    +-- ScheduleEntry (filas individuales normalizadas)
@@ -88,10 +103,11 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 | cupo | int nullable | Capacidad maxima (nullable para actividades sin cupo) |
 | horas_semanales | int nullable | Horas semanales de catedra (nullable para actividades asincronas) |
 | periodo | str | "anual" o "cuatrimestral" |
-| **active** | **bool** | **NUEVO. Indica si la materia es parte del plan de carrera vigente** |
+| **active** | **bool** | **Campo informativo. NO controla creacion de dictados (ver PlanCarreraVersion)** |
 
-> `active = True` indica que la materia deberia tener un Dictado cuando se crea un nuevo ciclo.
-> Materias sin horarios (actividades asincronas, no presenciales) igual obtienen Dictado.
+> `active` es ahora un campo puramente informativo. La creacion de dictados se controla
+> mediante las versiones de plan asignadas al ciclo (CicloPlanVersion -> PlanCarreraVersion -> PlanEstudio).
+> Solo las materias presentes en las versiones de plan asignadas al ciclo obtienen Dictado.
 
 #### Aula
 
@@ -118,17 +134,44 @@ Sin cambios. Programa academico.
 | duracion_anios | int | |
 | cantidad_materias | int nullable | |
 
-#### PlanEstudio (tabla de enlace Materia <-> Carrera)
+#### PlanCarreraVersion (nuevo)
 
-Reemplazo de MateriaCarreraLink con atributos adicionales.
+Version de un plan de estudios para una carrera. Permite mantener multiples versiones
+(ej: "Plan Original", "Plan 2025") y asignar versiones especificas a ciclos.
 
 | Campo | Tipo | Notas |
 |-------|------|-------|
-| materia_codigo | str FK+PK | -> materias |
-| carrera_codigo | str FK+PK | -> carreras |
+| id | str PK | UUID auto-generado |
+| carrera_codigo | str FK | -> carreras |
+| nombre | str | e.g. "Plan Original", "Plan 2025" |
+| descripcion | str | |
+| fecha_creacion | date | |
+
+#### CicloPlanVersion (nuevo, bridge)
+
+Vincula versiones de plan con ciclos. Define que materias se ofrecen en cada ciclo.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| ciclo_id | str FK+PK | -> ciclos |
+| plan_version_id | str FK+PK | -> plan_carrera_version |
+
+#### PlanEstudio (tabla de enlace Materia <-> Carrera, versionada)
+
+Reemplazo de MateriaCarreraLink con atributos adicionales y versionado.
+Cada entrada pertenece a una version de plan especifica.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| id | str PK | UUID auto-generado (reemplaza composite PK) |
+| plan_version_id | str FK | -> plan_carrera_version |
+| materia_codigo | str FK | -> materias (index) |
+| carrera_codigo | str FK | -> carreras (index, denormalizado desde version) |
 | anio_plan | int nullable | Anio sugerido (1-6) |
 | cuatrimestre_plan | str nullable | "1C", "2C", "Anual", o null |
 | correlativas | str | Texto crudo con correlativas |
+
+> `carrera_codigo` se mantiene denormalizado para facilitar queries directas sin join a la version.
 
 #### Ciclo
 
@@ -343,11 +386,15 @@ WHERE c.dictado_id = ? AND p.ciclo_id = ?
 
 ```
 1. Crear Ciclo "2026-1C" (fecha_inicio, fecha_fin)
+   |   - Seleccionar versiones de plan a asignar (CicloPlanVersion)
+   |   - Default: ultima version de cada carrera
        |
-2. Crear Dictados para materias activas (materia.active = True)
+2. Crear Dictados para materias de las versiones de plan asignadas
+   |   - Se obtienen materias unicas de CicloPlanVersion -> PlanEstudio
    |   - Cuatrimestrales: 1 Dictado -> DictadoCiclo con "2026-1C"
    |   - Anuales: 1 Dictado -> DictadoCiclo con "2026-1C"
    |     (inicio_dictado = ciclo.fecha_inicio, fin_dictado = null)
+   |   - Error si el ciclo no tiene versiones de plan asignadas
        |
 3. Cargar horarios (archivo Excel/CSV)
    |   - Se crea un Schedule con ScheduleEntries validados
@@ -446,12 +493,25 @@ erDiagram
         str titulo_otorgado
         int duracion_anios
     }
+    PLAN_CARRERA_VERSION {
+        str id PK
+        str carrera_codigo FK
+        str nombre
+        str descripcion
+        date fecha_creacion
+    }
     PLAN_ESTUDIO {
-        str materia_codigo PK_FK
-        str carrera_codigo PK_FK
+        str id PK
+        str plan_version_id FK
+        str materia_codigo FK
+        str carrera_codigo FK
         int anio_plan
         str cuatrimestre_plan
         str correlativas
+    }
+    CICLO_PLAN_VERSION {
+        str ciclo_id PK_FK
+        str plan_version_id PK_FK
     }
     CICLO {
         str id PK
@@ -530,12 +590,15 @@ erDiagram
         str tipo
     }
 
-    %% Catalogo
+    %% Catalogo y versionado de planes
+    CARRERA ||--o{ PLAN_CARRERA_VERSION : "versiones"
+    PLAN_CARRERA_VERSION ||--o{ PLAN_ESTUDIO : "materias"
     MATERIA ||--o{ PLAN_ESTUDIO : "plan"
-    CARRERA ||--o{ PLAN_ESTUDIO : "plan"
     MATERIA ||--o{ DICTADO : "ofertas"
 
-    %% Ciclo y ofertas
+    %% Ciclo, versiones de plan y ofertas
+    CICLO ||--o{ CICLO_PLAN_VERSION : "versiones"
+    PLAN_CARRERA_VERSION ||--o{ CICLO_PLAN_VERSION : "ciclos"
     DICTADO ||--o{ DICTADO_CICLO : "ciclos"
     CICLO ||--o{ DICTADO_CICLO : "dictados"
 
@@ -565,6 +628,7 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 
 | Entidad | Campo denormalizado | Derivable de | Justificacion |
 |---------|--------------------|--------------|----|
+| PlanEstudio | carrera_codigo | plan_version -> carrera | Query directa por carrera sin join a version |
 | Comision | materia_codigo | plan -> dictado -> materia | Query "comisiones de MAT101" sin joins |
 | Horario | codigo_materia | comision -> materia | Herencia del modelo actual |
 | Clase | comision_id | horario -> comision | Query directa por comision |
@@ -578,13 +642,15 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 
 | # | Regla | Descripcion |
 |---|-------|-------------|
-| RN1 | Dictados automaticos | Al crear un ciclo, se crean Dictados para toda materia con `active = True` |
+| RN1 | Dictados desde versiones de plan | Al crear dictados para un ciclo, se obtienen las materias de las versiones de plan asignadas al ciclo (CicloPlanVersion -> PlanEstudio). Error si el ciclo no tiene versiones asignadas. `Materia.active` NO controla la creacion de dictados |
 | RN2 | Dictados anuales | Materias anuales crean Dictado solo en ciclos 1C. El ciclo 2C se vincula al mismo Dictado |
 | RN3 | Un plan activo por ciclo | Maximo 1 PlanificacionCursada con `activo = True` por ciclo |
 | RN4 | Executed es permanente | Una vez `clase.executed = True`, no se revierte |
 | RN5 | Schedule validado | ScheduleEntries solo contienen codigos de materia resueltos (codigo_plan). Codigos guarani se resuelven al momento de la carga |
 | RN6 | Comision key | `comision_key = "{dictado_codigo}-{numero:03d}"`, plan-agnostica, para comparacion entre planes |
 | RN7 | Herencia de fechas | Dictado hereda inicio_dictado del primer ciclo. fin_dictado se actualiza cuando se vincula un ciclo posterior (anual) |
+| RN8 | Versionado de planes | Cada carrera puede tener multiples versiones de plan de estudio. Se pueden crear nuevas versiones copiando las materias de una version existente |
+| RN9 | Asignacion de versiones a ciclos | Al crear un ciclo, se seleccionan las versiones de plan que aplican. Default: ultima version de cada carrera |
 
 ---
 
@@ -596,7 +662,9 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | Profesor | Docentes | Cuando se implemente asignacion de docentes |
 | Inscripcion | Alumno <-> Comision | Para estimar demanda de capacidad |
 | Asistencia | Alumno <-> Clase | Variable estocastica para optimizacion |
-| Versionado de entidades | Tracking de cambios en materias, planes, etc. | Cuando se necesite historial de cambios |
+
+> **Nota**: El versionado de planes de estudio (PlanCarreraVersion) ya fue implementado.
+> El versionado de otras entidades (materias, aulas) queda fuera de alcance.
 
 ---
 
@@ -605,18 +673,20 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 ### 8.1 Entidades que se mantienen sin cambios
 
 - `AulaDB` (src/database/models.py)
-- `CarreraDB` (src/database/models.py)
-- `PlanEstudioDB` (src/database/models.py)
 - `CicloDB` (src/database/models.py)
 
 ### 8.2 Entidades que se modifican
 
-- `MateriaDB`: agregar campo `active: bool`
+- `MateriaDB`: campo `active: bool` (ahora informativo, no controla dictados)
+- `CarreraDB`: agregar relationship `plan_versions`
+- `CicloDB`: agregar relationship `plan_versions` via `CicloPlanVersionDB`
+- `PlanEstudioDB`: quitar composite PK, agregar `id` UUID PK y `plan_version_id` FK
 - `ComisionDB`: cambiar a id auto-generado, agregar `comision_key` y `plan_cursada_id`, eliminar `dictado_id`
 - `HorarioDB`: sin cambios de schema, pero ahora pertenece a una Comision plan-especifica
 
 ### 8.3 Entidades nuevas a crear
 
+- `PlanCarreraVersionDB` + `CicloPlanVersionDB` (versionado de planes)
 - `DictadoDB` + `DictadoCicloDB`
 - `ScheduleDB` + `ScheduleEntryDB`
 - `PlanificacionCursadaDB`

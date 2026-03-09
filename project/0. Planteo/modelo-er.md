@@ -372,8 +372,13 @@ Para las relaciones M:M que no requieren atributos adicionales significativos, s
 
 | Tabla de Enlace | Atributos | Relación que Resuelve |
 |-----------------|-----------|----------------------|
-| **MateriaCarreraLink** | materia_codigo, carrera_codigo | Materia ↔ Carrera |
+| **PlanEstudio** | id (UUID PK), plan_version_id FK, materia_codigo FK, carrera_codigo FK, anio_plan, cuatrimestre_plan, correlativas | Materia ↔ Carrera (versionada via PlanCarreraVersion) |
+| **CicloPlanVersion** | ciclo_id FK+PK, plan_version_id FK+PK | Ciclo ↔ PlanCarreraVersion |
 | **ComisionProfesorLink** | comision_id, profesor_id, es_titular | Comisión ↔ Profesor |
+
+> **Nota**: La relacion Materia-Carrera se resuelve mediante `PlanEstudio`, que pertenece
+> a una `PlanCarreraVersion` especifica. Esto permite versionar los planes de estudio
+> por carrera y asignar versiones a ciclos para determinar que materias se ofrecen.
 
 ### 4.4 Justificación de las Entidades de Solución
 
@@ -496,9 +501,19 @@ erDiagram
     }
 
     %% Tablas de Enlace (amarillo)
-    MATERIA_CARRERA {
+    PLAN_CARRERA_VERSION {
+        string id PK
+        string carrera_codigo FK
+        string nombre
+        date fecha_creacion
+    }
+    PLAN_ESTUDIO {
+        string id PK
+        string plan_version_id FK
         string materia_codigo FK
         string carrera_codigo FK
+        int anio_plan
+        string cuatrimestre_plan
     }
     COMISION_PROFESOR {
         string comision_id FK
@@ -524,9 +539,10 @@ erDiagram
     ASIGNACION_AULA }o--|| AULA : "aula_id"
     ASIGNACION_AULA }o--|| CICLO : "ciclo_id"
 
-    %% Relaciones de Tablas de Enlace
-    MATERIA_CARRERA }o--|| MATERIA : "materia_codigo"
-    MATERIA_CARRERA }o--|| CARRERA : "carrera_codigo"
+    %% Relaciones de Tablas de Enlace (versionado de planes)
+    CARRERA ||--o{ PLAN_CARRERA_VERSION : "versiones"
+    PLAN_CARRERA_VERSION ||--o{ PLAN_ESTUDIO : "materias"
+    PLAN_ESTUDIO }o--|| MATERIA : "materia_codigo"
     COMISION_PROFESOR }o--|| COMISION : "comision_id"
     COMISION_PROFESOR }o--|| PROFESOR : "profesor_id"
 ```
@@ -785,9 +801,22 @@ classDiagram
         +bool vigente
     }
 
-    class MateriaCarreraLink {
+    class PlanCarreraVersionDB {
+        +str id
+        +str carrera_codigo
+        +str nombre
+        +str descripcion
+        +date fecha_creacion
+    }
+
+    class PlanEstudioDB {
+        +str id
+        +str plan_version_id
         +str materia_codigo
         +str carrera_codigo
+        +int anio_plan
+        +str cuatrimestre_plan
+        +str correlativas
     }
 
     class ComisionProfesorLink {
@@ -812,9 +841,10 @@ classDiagram
     ProfesorDB "1" --o "*" ClaseDB
     CicloDB "1" --o "*" AsignacionAulaDB
     
-    %% Relaciones via tablas de enlace
-    MateriaDB "1" --o "*" MateriaCarreraLink
-    CarreraDB "1" --o "*" MateriaCarreraLink
+    %% Relaciones via tablas de enlace (versionado de planes)
+    CarreraDB "1" --o "*" PlanCarreraVersionDB
+    PlanCarreraVersionDB "1" --o "*" PlanEstudioDB
+    MateriaDB "1" --o "*" PlanEstudioDB
     ComisionDB "1" --o "*" ComisionProfesorLink
     ProfesorDB "1" --o "*" ComisionProfesorLink
 ```

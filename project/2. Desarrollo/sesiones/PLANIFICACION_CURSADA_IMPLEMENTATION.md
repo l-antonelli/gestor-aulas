@@ -117,3 +117,7 @@ Se implemento el modelo completo de planificacion de cursada segun el diseño en
 - El flujo legacy (pagina Horarios, load_initial_data.py) sigue funcionando, crea comisiones sin plan_cursada_id
 - El flujo nuevo (Ciclos -> Schedule -> Plan) crea comisiones con plan_cursada_id y comision_key
 - La tabla `asignaciones_aula` puede quedar en la DB existente pero no se usa mas en el codigo
+
+## Sesion siguiente
+
+Ver `PLAN_VERSIONING_IMPLEMENTATION.md`: se implemento versionado de planes de estudio por carrera, reemplazando `Materia.active` como mecanismo para determinar dictados.
