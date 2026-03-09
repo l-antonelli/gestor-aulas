@@ -651,6 +651,8 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | RN7 | Herencia de fechas | Dictado hereda inicio_dictado del primer ciclo. fin_dictado se actualiza cuando se vincula un ciclo posterior (anual) |
 | RN8 | Versionado de planes | Cada carrera puede tener multiples versiones de plan de estudio. Se pueden crear nuevas versiones copiando las materias de una version existente |
 | RN9 | Asignacion de versiones a ciclos | Al crear un ciclo, se seleccionan las versiones de plan que aplican. Default: ultima version de cada carrera |
+| RN10 | Proteccion de borrado Carrera | No se puede eliminar una Carrera si tiene PlanCarreraVersion asociadas. Se deben eliminar las versiones de plan primero |
+| RN11 | Proteccion de borrado M:N | No se puede eliminar una Carrera si existen entradas en PlanEstudio vinculadas a ella (restrict via link table). Aplica tanto a `delete()` como a `delete_with_cascading()` |
 
 ---
 

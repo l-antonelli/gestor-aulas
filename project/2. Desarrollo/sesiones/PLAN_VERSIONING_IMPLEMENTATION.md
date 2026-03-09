@@ -134,6 +134,40 @@ Crear Ciclo (con versiones de plan asignadas)
 | `tests/test_dictado_service.py` | Fixtures con versiones |
 | `tests/test_carrera_materia_relationship.py` | Fixtures y tests con versiones |
 
+## Follow-up: Fix M:M delete checks + proteccion de borrado en CarreraService
+
+**Commit**: `804859b`
+
+### Problema
+
+La verificacion de `delete_behavior="restrict"` en `BaseCRUDService.delete_with_cascading()` no funcionaba para relaciones M:N. Para la relacion Carrera->Materia (M:M via `plan_estudio`), el codigo hacia:
+
+```python
+select(MateriaDB).where(MateriaDB.codigo == carrera_id)
+```
+
+Esto nunca encontraba resultados porque `MateriaDB.codigo` es la PK de la materia, no un FK a carrera. El restrict era un no-op.
+
+Ademas, `CarreraService.delete()` no verificaba la existencia de `PlanCarreraVersionDB` records (que no estan en el relationship registry por ser DB-only).
+
+### Solucion
+
+**`cascading_operations.py`**:
+- `_get_children()` ahora distingue 1:N vs M:N. Para M:N, consulta la link table (`PlanEstudioDB`) usando `parent_link_field` en vez de la child table.
+- Nuevo helper `_get_db_model_for_link_table()` mapea nombres de link tables a DB model classes.
+
+**`crud_services.py`**:
+- `delete_with_cascading()` delega a `CascadingOperations._get_children()` en vez de inlinear la query. Usa `self.delete()` al final (en vez de `self.crud.delete()`) para que los overrides de subclases apliquen.
+- `CarreraService.delete()` override: bloquea borrado si existen `PlanCarreraVersionDB` asociadas.
+
+**Tests nuevos** (4):
+- `test_delete_with_cascading_restricts_when_plan_entries_exist`
+- `test_delete_with_cascading_succeeds_when_no_plan_entries`
+- `test_delete_blocked_by_plan_versions`
+- `test_delete_succeeds_after_removing_plan_versions`
+
+Total: 698 tests pasan.
+
 ## Consideraciones de migracion
 
 - Ciclos existentes (creados antes de este cambio) no tendran `CicloPlanVersionDB` records. `create_dictados_for_ciclo` retornara error. Deben recrearse o asignarseles versiones manualmente.
