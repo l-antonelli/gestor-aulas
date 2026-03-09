@@ -415,48 +415,45 @@ class BaseCRUDService(Generic[DomainModel, DBModel]):
         """
         from src.services.relationship_registry import RelationshipRegistry
         from src.services.cascading_operations import CascadingOperations
-        from sqlmodel import select
-        
+
         # Check entity exists
         existing = self.crud.get(session, entity_id)
         if existing is None:
             raise EntityNotFoundError(self._get_model_name(), entity_id)
-        
+
         # Get all relationships for this model
         relationships = RelationshipRegistry.get_relationships_for_model(self.domain_model)
-        
+
         # Process each relationship
         for relationship in relationships:
-            # Get DB model for child
-            child_db_model = CascadingOperations._get_db_model_for_domain_model(
-                relationship.child_model
+            # Query for related records (handles both 1:N and M:N)
+            children = CascadingOperations._get_children(
+                parent_id=entity_id,
+                relationship=relationship,
+                session=session,
             )
-            if not child_db_model:
-                continue
-            
-            # Query for children
-            statement = select(child_db_model).where(
-                getattr(child_db_model, relationship.foreign_key_field) == entity_id
-            )
-            children = list(session.exec(statement).all())
-            
+
             if relationship.delete_behavior == "restrict":
                 if children:
+                    child_label = (
+                        f"{relationship.link_table} entries"
+                        if relationship.is_many_to_many
+                        else f"{relationship.child_model.__name__} entities"
+                    )
                     raise ValueError(
                         f"Cannot delete {self._get_model_name()} with ID '{entity_id}': "
-                        f"{len(children)} related {relationship.child_model.__name__} entities exist. "
+                        f"{len(children)} related {child_label} exist. "
                         f"Delete behavior is set to 'restrict'."
                     )
-            
+
             elif relationship.delete_behavior == "cascade":
-                # Delete all children first
                 for child in children:
                     session.delete(child)
                 session.commit()
-        
-        # Delete the parent
-        return self.crud.delete(session, entity_id)
-    
+
+        # Delete the parent (uses self.delete() so subclass overrides apply)
+        return self.delete(session, entity_id)
+
     def get_children(
         self, 
         session: Session, 
@@ -779,6 +776,26 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
             crud=carrera_crud,
             id_field="codigo"
         )
+
+    def delete(self, session: Session, entity_id: str) -> bool:
+        """Delete a carrera, blocking if plan versions exist."""
+        from sqlmodel import select
+        from src.database.models import PlanCarreraVersionDB
+
+        versions = list(session.exec(
+            select(PlanCarreraVersionDB).where(
+                PlanCarreraVersionDB.carrera_codigo == entity_id
+            )
+        ).all())
+
+        if versions:
+            raise ValueError(
+                f"Cannot delete Carrera '{entity_id}': "
+                f"{len(versions)} plan version(s) exist. "
+                f"Delete plan versions first."
+            )
+
+        return super().delete(session, entity_id)
 
     def get_plan_versions(self, session: Session, carrera_codigo: str) -> list:
         """Get all plan versions for a carrera, ordered by fecha_creacion."""

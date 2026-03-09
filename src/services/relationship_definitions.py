@@ -22,7 +22,7 @@ def register_all_relationships() -> None:
     carrera_materia = RelationshipMetadata(
         parent_model=Carrera,
         child_model=Materia,
-        foreign_key_field="codigo",  # Not used for M:N, but required by dataclass
+        foreign_key_field="codigo",  # Child PK; not used for M:N queries (link table fields are used instead)
         display_fields=["codigo", "nombre", "cupo", "horas_semanales"],
         search_fields=["codigo", "nombre"],
         cascading_create=False,

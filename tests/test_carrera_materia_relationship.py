@@ -469,7 +469,11 @@ class TestCascadingDeleteWarningPropertyBased:
             count_after = carrera_svc.get_children_count(session, carrera.codigo, plan_version_id=v.id)
             assert count_after == 0
 
-            # Must delete the plan version before deleting the carrera
+            # delete() blocks when plan versions exist
+            with pytest.raises(ValueError, match="plan version"):
+                carrera_svc.delete(session, carrera.codigo)
+
+            # After removing the plan version, delete succeeds
             session.delete(v)
             session.commit()
 
@@ -538,6 +542,49 @@ class TestCarreraMateriaIntegration:
             materias = carrera_svc.get_materias(session, c.codigo, plan_version_id=v.id)
             assert len(materias) == 1
             assert materias[0].codigo == sample_materia.codigo
+
+    def test_delete_with_cascading_restricts_when_plan_entries_exist(
+        self, session, plan_version, sample_materia
+    ):
+        """Test that delete_with_cascading raises ValueError when M:M entries exist."""
+        carrera_svc = CarreraService()
+        materia_svc = MateriaService()
+
+        materia_svc.create(session, sample_materia)
+        carrera_svc.add_materia(
+            session, "ING-ELECT", "MAT101", plan_version_id=plan_version.id
+        )
+
+        with pytest.raises(ValueError, match="plan_estudio entries"):
+            carrera_svc.delete_with_cascading(session, "ING-ELECT")
+
+    def test_delete_with_cascading_succeeds_when_no_plan_entries(
+        self, session, plan_version
+    ):
+        """Test that delete_with_cascading succeeds when no M:M entries exist."""
+        carrera_svc = CarreraService()
+
+        # plan version exists but has no plan entries — still blocked by delete() override
+        with pytest.raises(ValueError, match="plan version"):
+            carrera_svc.delete_with_cascading(session, "ING-ELECT")
+
+    def test_delete_blocked_by_plan_versions(self, session, plan_version):
+        """Test that CarreraService.delete() blocks when plan versions exist."""
+        carrera_svc = CarreraService()
+
+        with pytest.raises(ValueError, match="plan version"):
+            carrera_svc.delete(session, "ING-ELECT")
+
+    def test_delete_succeeds_after_removing_plan_versions(self, session, plan_version):
+        """Test that CarreraService.delete() succeeds after removing plan versions."""
+        carrera_svc = CarreraService()
+
+        session.delete(plan_version)
+        session.commit()
+
+        result = carrera_svc.delete(session, "ING-ELECT")
+        assert result is True
+        assert carrera_svc.get(session, "ING-ELECT") is None
 
     def test_carrera_service_singleton(self):
         """Test that carrera_service singleton is properly instantiated."""

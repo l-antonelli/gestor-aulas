@@ -356,24 +356,33 @@ class CascadingOperations:
     ) -> List[BaseModel]:
         """
         Get all child entities for a parent.
-        
-        This queries the database for all children that reference the parent.
+
+        For 1:N relationships, queries the child table using foreign_key_field.
+        For M:N relationships, queries the link table using parent_link_field.
         """
         from sqlmodel import select
-        
-        # Get the database model for the child
-        child_db_model = CascadingOperations._get_db_model_for_domain_model(
-            relationship.child_model
-        )
-        
-        if not child_db_model:
-            return []
-        
-        # Query for children
-        statement = select(child_db_model).where(
-            getattr(child_db_model, relationship.foreign_key_field) == parent_id
-        )
-        
+
+        if relationship.is_many_to_many:
+            if not relationship.link_table or not relationship.parent_link_field:
+                return []
+            link_db_model = CascadingOperations._get_db_model_for_link_table(
+                relationship.link_table
+            )
+            if not link_db_model:
+                return []
+            statement = select(link_db_model).where(
+                getattr(link_db_model, relationship.parent_link_field) == parent_id
+            )
+        else:
+            child_db_model = CascadingOperations._get_db_model_for_domain_model(
+                relationship.child_model
+            )
+            if not child_db_model:
+                return []
+            statement = select(child_db_model).where(
+                getattr(child_db_model, relationship.foreign_key_field) == parent_id
+            )
+
         results = session.exec(statement).all()
         return list(results)
     
@@ -397,6 +406,16 @@ class CascadingOperations:
         model_name = domain_model.__name__
         return db_model_map.get(model_name)
     
+    @staticmethod
+    def _get_db_model_for_link_table(table_name: str) -> Optional[Type]:
+        """Map a link table name to its DB model class."""
+        from src.database.models import PlanEstudioDB
+
+        link_table_map = {
+            "plan_estudio": PlanEstudioDB,
+        }
+        return link_table_map.get(table_name)
+
     @staticmethod
     def _get_domain_model_for_db_model(db_model: Type) -> Optional[Type[BaseModel]]:
         """
