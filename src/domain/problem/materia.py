@@ -29,6 +29,7 @@ class Materia(Entity):
         default="cuatrimestral",
         description="Course period type"
     )
+    active: bool = Field(default=True, description="Whether the materia is part of the current study plan")
 
     @field_validator("codigo")
     @classmethod

@@ -884,14 +884,12 @@ class CRUDFormRenderer:
         """
         from src.database.models import (
             MateriaDB, ComisionDB, HorarioDB, AulaDB,
-            AsignacionAulaDB,
             CarreraDB, CicloDB, DictadoDB
         )
         from src.domain.problem.materia import Materia
         from src.domain.problem.comision import Comision
         from src.domain.problem.horario import Horario
         from src.domain.problem.aula import Aula
-        from src.domain.solution.asignacion_aula import AsignacionAula
 
         # Mapping from domain models to DB models
         mapping = {
@@ -899,12 +897,10 @@ class CRUDFormRenderer:
             Comision: ComisionDB,
             Horario: HorarioDB,
             Aula: AulaDB,
-            AsignacionAula: AsignacionAulaDB,
         }
 
         # Also check by name for models that might be passed directly as DB models
         if domain_model in [MateriaDB, ComisionDB, HorarioDB, AulaDB,
-                            AsignacionAulaDB,
                             CarreraDB, CicloDB, DictadoDB]:
             return domain_model
 

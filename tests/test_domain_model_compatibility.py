@@ -25,11 +25,6 @@ from src.domain.problem import (
     Aula,
 )
 
-# Domain models - Solution domain
-from src.domain.solution import (
-    AsignacionAula,
-)
-
 # UI Components
 from src.ui.form_input_renderer import FormInputRenderer
 from src.ui.form_output_renderer import FormOutputRenderer
@@ -85,25 +80,12 @@ def create_valid_aula() -> Aula:
     )
 
 
-def create_valid_asignacion() -> AsignacionAula:
-    """Create a valid AsignacionAula instance for testing."""
-    return AsignacionAula(
-        id="ASG-001",
-        horario_id="HOR-001",
-        aula_id="AULA-001",
-        ciclo_id="2024-1C",
-        fecha_asignacion=datetime.date(2024, 3, 1),
-        vigente=True,
-    )
-
-
 # All domain models with their factory functions
 DOMAIN_MODELS = [
     (Materia, create_valid_materia),
     (Comision, create_valid_comision),
     (Horario, create_valid_horario),
     (Aula, create_valid_aula),
-    (AsignacionAula, create_valid_asignacion),
 ]
 
 
@@ -318,15 +300,6 @@ class TestRelationshipEntitySelection:
         fields = SchemaIntrospector.get_fields(Horario)
         assert "codigo_materia" in fields
 
-    def test_asignacion_has_horario_reference(self):
-        """Test that AsignacionAula has horario_id field for relationship."""
-        fields = SchemaIntrospector.get_fields(AsignacionAula)
-        assert "horario_id" in fields
-
-    def test_asignacion_has_aula_reference(self):
-        """Test that AsignacionAula has aula_id field for relationship."""
-        fields = SchemaIntrospector.get_fields(AsignacionAula)
-        assert "aula_id" in fields
 
 
 # =============================================================================
@@ -374,29 +347,6 @@ class TestDateTimeFieldHandling:
         assert WidgetMapper.get_widget_type(hora_inicio_type) == "time_input"
         assert WidgetMapper.get_widget_type(hora_fin_type) == "time_input"
 
-    def test_asignacion_date_field(self):
-        """Test that AsignacionAula fecha_asignacion field is handled correctly."""
-        from src.ui.widget_mapper import WidgetMapper
-
-        field_type = SchemaIntrospector.get_field_type(AsignacionAula, "fecha_asignacion")
-
-        assert WidgetMapper.get_widget_type(field_type) == "date_input"
-
-
-# =============================================================================
-# Tests for Boolean Field Handling
-# =============================================================================
-
-class TestBooleanFieldHandling:
-    """Tests for handling boolean fields in domain models."""
-
-    def test_asignacion_vigente_field(self):
-        """Test that AsignacionAula vigente field is handled correctly."""
-        from src.ui.widget_mapper import WidgetMapper
-
-        field_type = SchemaIntrospector.get_field_type(AsignacionAula, "vigente")
-
-        assert WidgetMapper.get_widget_type(field_type) == "checkbox"
 
 
 # =============================================================================
@@ -474,16 +424,10 @@ class TestOptionalFieldHandling:
         default = SchemaIntrospector.get_default_value(Aula, "descripcion")
         assert default == ""
 
-    def test_asignacion_vigente_has_default(self):
-        """Test that AsignacionAula vigente has default value."""
-        default = SchemaIntrospector.get_default_value(AsignacionAula, "vigente")
-        assert default is True
-
     def test_optional_fields_not_required(self):
         """Test that fields with defaults are not required."""
         assert not SchemaIntrospector.is_field_required(Aula, "tipo")
         assert not SchemaIntrospector.is_field_required(Aula, "descripcion")
-        assert not SchemaIntrospector.is_field_required(AsignacionAula, "vigente")
 
 
 # =============================================================================

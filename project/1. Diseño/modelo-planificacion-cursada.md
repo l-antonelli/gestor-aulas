@@ -2,8 +2,9 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Diseño aprobado. Implementacion pendiente.
-> **Fecha**: 2026-03-09
+> **Estado**: Implementado (Tareas 1-11 completadas).
+> **Fecha diseño**: 2026-03-09
+> **Fecha implementacion**: 2026-03-09
 
 ---
 

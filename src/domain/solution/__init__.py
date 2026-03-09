@@ -1,8 +1,4 @@
-# Solution Domain Entities
-# Contains: AsignacionAula
+# Solution domain entities
+# AsignacionAula has been replaced by ClaseDB.aula_id
 
-from src.domain.solution.asignacion_aula import AsignacionAula
-
-__all__ = [
-    "AsignacionAula",
-]
+__all__: list[str] = []

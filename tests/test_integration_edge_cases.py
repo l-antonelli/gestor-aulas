@@ -25,10 +25,6 @@ from src.domain.problem import (
     Horario,
     Aula,
 )
-from src.domain.solution import (
-    AsignacionAula,
-)
-
 # UI Components
 from src.ui.form_input_renderer import FormInputRenderer
 from src.ui.form_output_renderer import FormOutputRenderer
@@ -883,8 +879,8 @@ class TestFormOutputEdgeCases:
 
         data = FormOutputRenderer.get_display_data(
             materia,
-            field_order=["nombre", "codigo", "codigo_guarani", "cupo", "horas_semanales", "periodo"]
+            field_order=["nombre", "codigo", "codigo_guarani", "cupo", "horas_semanales", "periodo", "active"]
         )
 
         # All fields should still be present
-        assert len(data) == 6
+        assert len(data) == 7

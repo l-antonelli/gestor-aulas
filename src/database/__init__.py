@@ -5,6 +5,7 @@ from src.database.models import (
     ConfiguracionHoraria,
     PlanEstudioDB,
     CorrelativaDB,
+    DictadoCicloDB,
     CicloDB,
     DictadoDB,
     CarreraDB,
@@ -12,7 +13,10 @@ from src.database.models import (
     ComisionDB,
     HorarioDB,
     AulaDB,
-    AsignacionAulaDB,
+    ScheduleDB,
+    ScheduleEntryDB,
+    PlanificacionCursadaDB,
+    ClaseDB,
 )
 from src.database.converters import to_db, to_domain, to_db_list, to_domain_list
 
@@ -26,6 +30,7 @@ __all__ = [
     # Link tables
     "PlanEstudioDB",
     "CorrelativaDB",
+    "DictadoCicloDB",
     # Temporal models
     "CicloDB",
     "DictadoDB",
@@ -35,8 +40,11 @@ __all__ = [
     "ComisionDB",
     "HorarioDB",
     "AulaDB",
-    # Solution domain
-    "AsignacionAulaDB",
+    # Schedule & Planning
+    "ScheduleDB",
+    "ScheduleEntryDB",
+    "PlanificacionCursadaDB",
+    "ClaseDB",
     # Converters
     "to_db",
     "to_domain",

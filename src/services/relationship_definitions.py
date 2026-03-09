@@ -4,7 +4,6 @@ from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.horario import Horario
 from src.domain.problem.carrera import Carrera
-from src.domain.solution.asignacion_aula import AsignacionAula
 
 from src.services.relationship_metadata import RelationshipMetadata
 from src.services.relationship_registry import RelationshipRegistry
@@ -64,20 +63,6 @@ def register_all_relationships() -> None:
         validation_rules=[],
     )
     RelationshipRegistry.register_relationship(comision_horario)
-
-    # Horario -> AsignacionAula relationship
-    horario_asignacion = RelationshipMetadata(
-        parent_model=Horario,
-        child_model=AsignacionAula,
-        foreign_key_field="horario_id",
-        display_fields=["id", "aula_id", "fecha_asignacion", "vigente"],
-        search_fields=["aula_id"],
-        cascading_create=False,
-        cascading_create_defaults={},
-        delete_behavior="cascade",
-        validation_rules=[],
-    )
-    RelationshipRegistry.register_relationship(horario_asignacion)
 
 
 # Auto-register relationships when module is imported

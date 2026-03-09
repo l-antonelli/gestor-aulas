@@ -333,7 +333,6 @@ class CascadingOperations:
             "Materia": crud.materia_crud,
             "Comision": crud.comision_crud,
             "Horario": crud.horario_crud,
-            "AsignacionAula": crud.asignacion_crud,
         }
         
         model_name = model.__name__
@@ -386,14 +385,13 @@ class CascadingOperations:
         This is a helper to convert between domain and database layers.
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, HorarioDB, AsignacionAulaDB
+            MateriaDB, ComisionDB, HorarioDB,
         )
 
         db_model_map = {
             "Materia": MateriaDB,
             "Comision": ComisionDB,
             "Horario": HorarioDB,
-            "AsignacionAula": AsignacionAulaDB,
         }
         
         model_name = domain_model.__name__
@@ -408,13 +406,11 @@ class CascadingOperations:
         """
         from src.domain.problem import Materia, Comision
         from src.domain.problem.horario import Horario
-        from src.domain.solution import AsignacionAula
 
         domain_model_map = {
             "MateriaDB": Materia,
             "ComisionDB": Comision,
             "HorarioDB": Horario,
-            "AsignacionAulaDB": AsignacionAula,
         }
         
         model_name = db_model.__name__

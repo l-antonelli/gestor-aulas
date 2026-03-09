@@ -398,8 +398,6 @@ def register_domain_relationships() -> None:
     from src.domain.problem.materia import Materia
     from src.domain.problem.comision import Comision
     from src.domain.problem.horario import Horario
-    from src.domain.problem.aula import Aula
-    from src.domain.solution.asignacion_aula import AsignacionAula
 
     # Register relationships using old API
     RelationshipSelector.register_relationship(
@@ -414,22 +412,6 @@ def register_domain_relationships() -> None:
         source_model=Horario,
         field_name="comision_id",
         target_model=Comision,
-        display_field="nombre",
-        id_field="id",
-    )
-
-    RelationshipSelector.register_relationship(
-        source_model=AsignacionAula,
-        field_name="horario_id",
-        target_model=Horario,
-        display_field="id",
-        id_field="id",
-    )
-
-    RelationshipSelector.register_relationship(
-        source_model=AsignacionAula,
-        field_name="aula_id",
-        target_model=Aula,
         display_field="nombre",
         id_field="id",
     )

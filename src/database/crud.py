@@ -10,8 +10,10 @@ from sqlmodel import Session, select
 from typing import TypeVar, Generic, Type, Optional
 from src.database.models import (
     MateriaDB, ComisionDB, HorarioDB,
-    AulaDB, AsignacionAulaDB,
-    ConfiguracionHoraria, CarreraDB, CicloDB, DictadoDB
+    AulaDB,
+    ConfiguracionHoraria, CarreraDB, CicloDB, DictadoDB,
+    DictadoCicloDB, ScheduleDB, ScheduleEntryDB,
+    PlanificacionCursadaDB, ClaseDB,
 )
 
 T = TypeVar("T")
@@ -78,9 +80,6 @@ horario_crud = CRUDBase[HorarioDB](HorarioDB)
 # Instancia CRUD para Aulas
 aula_crud = CRUDBase[AulaDB](AulaDB)
 
-# Instancia CRUD para Asignaciones de Aulas
-asignacion_crud = CRUDBase[AsignacionAulaDB](AsignacionAulaDB)
-
 # Instancia CRUD para Carreras
 carrera_crud = CRUDBase[CarreraDB](CarreraDB)
 
@@ -89,6 +88,21 @@ ciclo_crud = CRUDBase[CicloDB](CicloDB)
 
 # Instancia CRUD para Dictados
 dictado_crud = CRUDBase[DictadoDB](DictadoDB)
+
+# Instancia CRUD para DictadoCiclo (bridge table)
+dictado_ciclo_crud = CRUDBase[DictadoCicloDB](DictadoCicloDB)
+
+# Instancia CRUD para Schedules
+schedule_crud = CRUDBase[ScheduleDB](ScheduleDB)
+
+# Instancia CRUD para ScheduleEntries
+schedule_entry_crud = CRUDBase[ScheduleEntryDB](ScheduleEntryDB)
+
+# Instancia CRUD para PlanificacionCursada
+planificacion_crud = CRUDBase[PlanificacionCursadaDB](PlanificacionCursadaDB)
+
+# Instancia CRUD para Clases
+clase_crud = CRUDBase[ClaseDB](ClaseDB)
 
 
 # ============================================================================

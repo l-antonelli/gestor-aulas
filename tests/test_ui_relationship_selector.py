@@ -20,9 +20,6 @@ from src.ui.relationship_selector import (
 from src.domain.problem import (
     Materia, Comision, Horario, Aula,
 )
-from src.domain.solution import (
-    AsignacionAula,
-)
 
 
 class TestRelationshipRegistry:
@@ -128,23 +125,6 @@ class TestDomainRelationshipRegistration:
         assert info[1] == "nombre"
         assert info[2] == "id"
 
-    def test_asignacion_horario_relationship_registered(self):
-        """Test that AsignacionAula -> Horario relationship is registered."""
-        info = RelationshipSelector.get_relationship_info(AsignacionAula, "horario_id")
-
-        assert info is not None
-        assert info[0] == Horario
-        assert info[1] == "id"
-        assert info[2] == "id"
-
-    def test_asignacion_aula_relationship_registered(self):
-        """Test that AsignacionAula -> Aula relationship is registered."""
-        info = RelationshipSelector.get_relationship_info(AsignacionAula, "aula_id")
-        
-        assert info is not None
-        assert info[0] == Aula
-        assert info[1] == "nombre"
-        assert info[2] == "id"
 
 
 class TestRelationshipFieldIdentification:
@@ -162,12 +142,6 @@ class TestRelationshipFieldIdentification:
         assert RelationshipSelector.is_relationship_field(Horario, "id") is False
         assert RelationshipSelector.is_relationship_field(Horario, "dia") is False
 
-    def test_asignacion_relationship_fields(self):
-        """Test identifying relationship fields in AsignacionAula."""
-        assert RelationshipSelector.is_relationship_field(AsignacionAula, "horario_id") is True
-        assert RelationshipSelector.is_relationship_field(AsignacionAula, "aula_id") is True
-        assert RelationshipSelector.is_relationship_field(AsignacionAula, "id") is False
-        assert RelationshipSelector.is_relationship_field(AsignacionAula, "fecha_asignacion") is False
 
 
 class TestNonRelationshipModels:
@@ -197,10 +171,6 @@ class TestRelationshipTargetModels:
         info = RelationshipSelector.get_relationship_info(Horario, "comision_id")
         assert info[0] == Comision
 
-    def test_aula_is_target_for_asignacion(self):
-        """Test that Aula is the target model for AsignacionAula.aula_id."""
-        info = RelationshipSelector.get_relationship_info(AsignacionAula, "aula_id")
-        assert info[0] == Aula
 
 
 class TestRelationshipDisplayFields:
@@ -216,10 +186,6 @@ class TestRelationshipDisplayFields:
         info = RelationshipSelector.get_relationship_info(Horario, "comision_id")
         assert info[1] == "nombre"
 
-    def test_aula_display_field_is_nombre(self):
-        """Test that Aula display field is 'nombre'."""
-        info = RelationshipSelector.get_relationship_info(AsignacionAula, "aula_id")
-        assert info[1] == "nombre"
 
 
 class TestRelationshipIdFields:
@@ -235,7 +201,3 @@ class TestRelationshipIdFields:
         info = RelationshipSelector.get_relationship_info(Horario, "comision_id")
         assert info[2] == "id"
 
-    def test_aula_id_field_is_id(self):
-        """Test that Aula ID field is 'id'."""
-        info = RelationshipSelector.get_relationship_info(AsignacionAula, "aula_id")
-        assert info[2] == "id"

@@ -15,6 +15,8 @@ init_db()
 
 st.set_page_config(page_title="Horarios", page_icon="📅", layout="wide")
 st.title("📅 Gestion de Horarios")
+st.caption("Nota: el flujo recomendado es cargar horarios como Schedules desde la pagina de Ciclos, "
+           "donde se generan planes de cursada con comisiones automaticas.")
 
 DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 

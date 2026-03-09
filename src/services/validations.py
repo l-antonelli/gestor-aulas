@@ -8,8 +8,8 @@ son correctos y factibles para el problema de asignacion.
 from dataclasses import dataclass
 from sqlmodel import Session, select
 from src.database.models import (
-    MateriaDB, CarreraDB, HorarioDB, AsignacionAulaDB,
-    PlanEstudioDB, ComisionDB
+    MateriaDB, CarreraDB, HorarioDB,
+    PlanEstudioDB, ComisionDB, ClaseDB,
 )
 
 
@@ -161,60 +161,62 @@ def validar_factibilidad_horarios_todas_carreras(session: Session) -> list[Valid
 # Validacion 3: Un aula no puede estar asignada a dos horarios en el mismo tiempo/ciclo
 # =============================================================================
 
-def validar_conflictos_aula_ciclo(session: Session, ciclo_id: str) -> ValidationResult:
+def validar_conflictos_aula_plan(session: Session, plan_cursada_id: str) -> ValidationResult:
     """
-    Verifica que no haya dos horarios asignados a la misma aula con tiempos
-    superpuestos dentro de un ciclo.
+    Verifica que no haya dos clases asignadas a la misma aula con tiempos
+    superpuestos en la misma fecha dentro de un plan de cursada.
     """
-    # Get all active assignments for this ciclo
-    asignaciones = session.exec(
-        select(AsignacionAulaDB)
-        .where(AsignacionAulaDB.ciclo_id == ciclo_id)
-        .where(AsignacionAulaDB.vigente)
-    ).all()
+    from src.database.models import PlanificacionCursadaDB
 
-    if not asignaciones:
+    plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
+    if plan is None:
         return ValidationResult(
             valid=True,
-            message=f"No hay asignaciones en el ciclo {ciclo_id}"
+            message=f"Plan '{plan_cursada_id}' no encontrado"
         )
 
-    # Group by aula
-    asignaciones_por_aula: dict[str, list[AsignacionAulaDB]] = {}
-    for asig in asignaciones:
-        if asig.aula_id not in asignaciones_por_aula:
-            asignaciones_por_aula[asig.aula_id] = []
-        asignaciones_por_aula[asig.aula_id].append(asig)
+    # Get all clases with aula assigned
+    clases = session.exec(
+        select(ClaseDB)
+        .where(ClaseDB.plan_cursada_id == plan_cursada_id)
+        .where(ClaseDB.aula_id != None)
+    ).all()
+
+    if not clases:
+        return ValidationResult(
+            valid=True,
+            message="No hay clases con aula asignada en este plan"
+        )
+
+    # Group by (aula_id, fecha)
+    by_aula_fecha: dict[tuple[str, str], list[ClaseDB]] = {}
+    for clase in clases:
+        key = (clase.aula_id, str(clase.fecha))
+        by_aula_fecha.setdefault(key, []).append(clase)
 
     conflictos = []
-
-    for aula_id, asigs in asignaciones_por_aula.items():
-        # Get horarios for each assignment
-        horarios_asig = []
-        for asig in asigs:
-            horario = session.get(HorarioDB, asig.horario_id)
-            if horario:
-                horarios_asig.append((horario, asig))
-
-        # Check for overlaps within same aula
-        for i, (h1, _) in enumerate(horarios_asig):
-            for h2, _ in horarios_asig[i+1:]:
-                if horarios_se_superponen(h1, h2):
+    for (aula_id, fecha), clases_grupo in by_aula_fecha.items():
+        for i, c1 in enumerate(clases_grupo):
+            for c2 in clases_grupo[i+1:]:
+                # Check time overlap
+                overlap = not (c1.hora_fin <= c2.hora_inicio or c2.hora_fin <= c1.hora_inicio)
+                if overlap:
                     conflictos.append(
-                        f"Aula {aula_id}: {h1.comision_id} vs {h2.comision_id} "
-                        f"en {h1.dia} {h1.hora_inicio.strftime('%H:%M')}"
+                        f"Aula {aula_id} el {fecha}: "
+                        f"{c1.comision_id} ({c1.hora_inicio.strftime('%H:%M')}-{c1.hora_fin.strftime('%H:%M')}) vs "
+                        f"{c2.comision_id} ({c2.hora_inicio.strftime('%H:%M')}-{c2.hora_fin.strftime('%H:%M')})"
                     )
 
     if conflictos:
         return ValidationResult(
             valid=False,
-            message=f"{len(conflictos)} conflicto(s) de aula en ciclo {ciclo_id}",
+            message=f"{len(conflictos)} conflicto(s) de aula en plan",
             details=conflictos
         )
 
     return ValidationResult(
         valid=True,
-        message=f"Sin conflictos de aula en ciclo {ciclo_id}"
+        message="Sin conflictos de aula en el plan"
     )
 
 
@@ -222,7 +224,7 @@ def validar_conflictos_aula_ciclo(session: Session, ciclo_id: str) -> Validation
 # Ejecutar todas las validaciones
 # =============================================================================
 
-def ejecutar_todas_validaciones(session: Session, ciclo_id: str = None) -> dict[str, ValidationResult]:
+def ejecutar_todas_validaciones(session: Session) -> dict[str, ValidationResult]:
     """
     Ejecuta todas las validaciones y retorna un diccionario con los resultados.
     """
@@ -249,8 +251,7 @@ def ejecutar_todas_validaciones(session: Session, ciclo_id: str = None) -> dict[
             message="Sin conflictos de horario en ninguna carrera"
         )
 
-    # Validacion 3: Conflictos de aula (si se especifica ciclo)
-    if ciclo_id:
-        results["conflictos_aula"] = validar_conflictos_aula_ciclo(session, ciclo_id)
+    # Validacion 3: Conflictos de aula (placeholder - requires plan_cursada_id)
+    # Use validar_conflictos_aula_plan(session, plan_cursada_id) directly when needed
 
     return results

@@ -21,7 +21,8 @@ class TestSchemaIntrospector:
         assert "horas_semanales" in fields
         assert "periodo" in fields
         assert "codigo_guarani" in fields
-        assert len(fields) == 6
+        assert "active" in fields
+        assert len(fields) == 7
 
     def test_get_field_type_string(self):
         """Test get_field_type for string fields."""

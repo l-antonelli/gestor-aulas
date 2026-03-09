@@ -26,18 +26,14 @@ from src.domain.problem import (
     Horario,
     Aula,
 )
-from src.domain.solution import (
-    AsignacionAula,
-)
-
 # Database models and CRUD
 from src.database.models import (
     MateriaDB, ComisionDB, HorarioDB,
-    AulaDB, AsignacionAulaDB,
+    AulaDB,
 )
 from src.database.crud import (
     materia_crud, comision_crud, horario_crud,
-    aula_crud, asignacion_crud,
+    aula_crud,
 )
 from src.database.converters import to_db, to_domain
 
@@ -398,21 +394,6 @@ class TestSerializationRoundTrip:
         assert restored.hora_inicio == sample_horario.hora_inicio
         assert restored.hora_fin == sample_horario.hora_fin
 
-    def test_asignacion_serialization_round_trip(self):
-        """Test AsignacionAula serialization round-trip."""
-        asignacion = AsignacionAula(
-            id="ASG-001",
-            horario_id="HOR-001",
-            aula_id="AULA-001",
-            ciclo_id="2024-1C",
-            fecha_asignacion=datetime.date(2024, 3, 1),
-            vigente=True,
-        )
-
-        json_str = SerializationUtils.serialize_to_json(asignacion)
-        restored = SerializationUtils.deserialize_from_json(json_str, AsignacionAula)
-
-        assert restored == asignacion
 
 
 # =============================================================================

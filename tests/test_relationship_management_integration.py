@@ -2,7 +2,7 @@
 Comprehensive Integration Tests for Relationship Management & Cascading Operations.
 
 This module tests complete end-to-end workflows for relationship management:
-- Create Materia → Auto-create Comisión → Create Horario → Create Asignación
+- Create Materia → Auto-create Comisión → Create Horario
 - Edit Materia → Check Comisión constraints
 - Delete Materia → Check cascading deletion
 - Test cascading creation failure
@@ -27,18 +27,14 @@ from src.domain.problem import (
     Horario,
     Aula,
 )
-from src.domain.solution import (
-    AsignacionAula,
-)
-
 # Database models and CRUD
 from src.database.models import (
     MateriaDB, ComisionDB, HorarioDB,
-    AulaDB, AsignacionAulaDB,
+    AulaDB,
 )
 from src.database.crud import (
     materia_crud, comision_crud, horario_crud,
-    aula_crud, asignacion_crud,
+    aula_crud,
 )
 from src.database.converters import to_db, to_domain
 
@@ -132,101 +128,6 @@ class TestEndToEndWorkflows:
         # Verify no comisiones in database
         all_comisiones = comision_crud.get_all(test_db_session)
         assert len(all_comisiones) == 0
-
-    def test_full_workflow_materia_to_asignacion(self, test_db_session: Session):
-        """
-        Test: Create Materia → Auto-create Comisión → Create Horario → Create Asignación
-
-        This tests the complete workflow from creating a Materia all the way
-        to assigning a classroom to a horario.
-        """
-        # Step 1: Create Materia
-        materia = Materia(
-            codigo="MAT101",
-            nombre="Cálculo I",
-            cupo=30,
-            horas_semanales=4,
-        )
-
-        db_materia = to_db(materia)
-        materia_crud.create(test_db_session, db_materia)
-
-        # Step 1.5: Create Comision manually
-        comision = Comision(
-            id="MAT101-C1",
-            materia_codigo="MAT101",
-            nombre="Comision Unica",
-            numero=1,
-            cupo=30,
-        )
-        db_comision = to_db(comision)
-        created_comision = comision_crud.create(test_db_session, db_comision)
-
-        # Step 2: Create Horario
-        horario = Horario(
-            id="HOR-001",
-            comision_id=created_comision.id,
-            codigo_materia="MAT101",
-            dia="Lunes",
-            hora_inicio=time(8, 0),
-            hora_fin=time(10, 0),
-        )
-        db_horario = to_db(horario)
-        created_horario = horario_crud.create(test_db_session, db_horario)
-
-        assert created_horario is not None
-        assert created_horario.comision_id == created_comision.id
-
-        # Step 3: Create Aula (needed for AsignacionAula)
-        aula = Aula(
-            id="AULA-001",
-            sede="Campus Central",
-            nombre="Aula 101",
-            capacidad=40,
-            tipo="teorica",
-        )
-        db_aula = to_db(aula)
-        created_aula = aula_crud.create(test_db_session, db_aula)
-
-        # Step 3.5: Create Ciclo (needed for AsignacionAula)
-        from src.database.models import CicloDB
-        ciclo = CicloDB(
-            id="2024-1C",
-            anio=2024,
-            numero=1,
-            fecha_inicio=datetime.date(2024, 3, 1),
-            fecha_fin=datetime.date(2024, 7, 31),
-            descripcion="Primer cuatrimestre 2024",
-        )
-        test_db_session.add(ciclo)
-        test_db_session.commit()
-
-        # Step 4: Create AsignacionAula
-        asignacion = AsignacionAula(
-            id="ASG-001",
-            horario_id=created_horario.id,
-            aula_id=created_aula.id,
-            ciclo_id="2024-1C",
-            fecha_asignacion=datetime.date(2024, 3, 1),
-            vigente=True,
-        )
-        db_asignacion = to_db(asignacion)
-        created_asignacion = asignacion_crud.create(test_db_session, db_asignacion)
-
-        assert created_asignacion is not None
-        assert created_asignacion.horario_id == created_horario.id
-        assert created_asignacion.aula_id == created_aula.id
-
-        # Verify complete chain exists in database
-        verify_materia = materia_crud.get(test_db_session, "MAT101")
-        verify_comision = comision_crud.get(test_db_session, created_comision.id)
-        verify_horario = horario_crud.get(test_db_session, created_horario.id)
-        verify_asignacion = asignacion_crud.get(test_db_session, created_asignacion.id)
-
-        assert verify_materia is not None
-        assert verify_comision is not None
-        assert verify_horario is not None
-        assert verify_asignacion is not None
 
     def test_edit_materia_check_comision_constraints(self, test_db_session: Session):
         """
@@ -661,106 +562,3 @@ class TestComplexRelationshipScenarios:
         assert len(mat101_comisiones) == 1
         assert len(mat102_comisiones) == 1
 
-    def test_horario_with_multiple_asignaciones_over_time(self, test_db_session: Session):
-        """
-        Test creating a Horario with multiple AsignacionAula over time
-        (e.g., changing classrooms).
-        """
-        # Create Materia and Comision
-        materia = Materia(
-            codigo="MAT101",
-            nombre="Cálculo I",
-            cupo=30,
-            horas_semanales=4,
-        )
-        materia_crud.create(test_db_session, to_db(materia))
-
-        comision = Comision(
-            id="MAT101-C1",
-            materia_codigo="MAT101",
-            nombre="Comision Unica",
-            numero=1,
-            cupo=30,
-        )
-        created_comision = comision_crud.create(test_db_session, to_db(comision))
-
-        # Create Horario
-        horario = Horario(
-            id="HOR-001",
-            comision_id=created_comision.id,
-            codigo_materia="MAT101",
-            dia="Lunes",
-            hora_inicio=time(8, 0),
-            hora_fin=time(10, 0),
-        )
-        db_horario = to_db(horario)
-        horario_crud.create(test_db_session, db_horario)
-
-        # Create Aulas
-        aula1 = Aula(
-            id="AULA-001",
-            sede="Campus Central",
-            nombre="Aula 101",
-            capacidad=40,
-            tipo="teorica",
-        )
-        db_aula1 = to_db(aula1)
-        aula_crud.create(test_db_session, db_aula1)
-
-        aula2 = Aula(
-            id="AULA-002",
-            sede="Campus Central",
-            nombre="Aula 102",
-            capacidad=50,
-            tipo="teorica",
-        )
-        db_aula2 = to_db(aula2)
-        aula_crud.create(test_db_session, db_aula2)
-
-        # Create Ciclo (needed for AsignacionAula)
-        from src.database.models import CicloDB
-        ciclo = CicloDB(
-            id="2024-1C",
-            anio=2024,
-            numero=1,
-            fecha_inicio=datetime.date(2024, 3, 1),
-            fecha_fin=datetime.date(2024, 7, 31),
-            descripcion="Primer cuatrimestre 2024",
-        )
-        test_db_session.add(ciclo)
-        test_db_session.commit()
-
-        # Create first AsignacionAula (old, not vigente)
-        asignacion1 = AsignacionAula(
-            id="ASG-001",
-            horario_id="HOR-001",
-            aula_id="AULA-001",
-            ciclo_id="2024-1C",
-            fecha_asignacion=datetime.date(2024, 1, 1),
-            vigente=False,
-        )
-        db_asignacion1 = to_db(asignacion1)
-        asignacion_crud.create(test_db_session, db_asignacion1)
-
-        # Create second AsignacionAula (current, vigente)
-        asignacion2 = AsignacionAula(
-            id="ASG-002",
-            horario_id="HOR-001",
-            aula_id="AULA-002",
-            ciclo_id="2024-1C",
-            fecha_asignacion=datetime.date(2024, 3, 1),
-            vigente=True,
-        )
-        db_asignacion2 = to_db(asignacion2)
-        asignacion_crud.create(test_db_session, db_asignacion2)
-
-        # Verify Horario has multiple AsignacionAula
-        all_asignaciones = asignacion_crud.get_all(test_db_session)
-        horario_asignaciones = [a for a in all_asignaciones if a.horario_id == "HOR-001"]
-
-        assert len(horario_asignaciones) == 2
-
-        # Verify only one is vigente
-        vigentes = [a for a in horario_asignaciones if a.vigente]
-        assert len(vigentes) == 1
-        assert vigentes[0].aula_id == "AULA-002"

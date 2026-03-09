@@ -5,7 +5,7 @@ This module provides bidirectional conversion functions to maintain
 separation between persistence layer and domain logic.
 """
 
-from typing import TypeVar, Union, overload
+from typing import Union, overload
 
 # Domain models
 from src.domain.problem.aula import Aula
@@ -13,7 +13,6 @@ from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.horario import Horario
 from src.domain.problem.carrera import Carrera
-from src.domain.solution.asignacion_aula import AsignacionAula
 
 # DB models
 from src.database.models import (
@@ -21,13 +20,12 @@ from src.database.models import (
     MateriaDB,
     ComisionDB,
     HorarioDB,
-    AsignacionAulaDB,
     CarreraDB,
 )
 
 # Type aliases for clarity
-DomainModel = Union[Aula, Materia, Comision, Horario, AsignacionAula, Carrera]
-DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, AsignacionAulaDB, CarreraDB]
+DomainModel = Union[Aula, Materia, Comision, Horario, Carrera]
+DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, CarreraDB]
 
 
 # =============================================================================
@@ -42,8 +40,6 @@ def to_db(domain: Materia) -> MateriaDB: ...
 def to_db(domain: Comision) -> ComisionDB: ...
 @overload
 def to_db(domain: Horario) -> HorarioDB: ...
-@overload
-def to_db(domain: AsignacionAula) -> AsignacionAulaDB: ...
 @overload
 def to_db(domain: Carrera) -> CarreraDB: ...
 
@@ -68,12 +64,15 @@ def to_db(domain: DomainModel) -> DBModel:
             cupo=domain.cupo,
             horas_semanales=domain.horas_semanales,
             periodo=domain.periodo,
+            active=domain.active,
         )
 
     if isinstance(domain, Comision):
         return ComisionDB(
             id=domain.id,
             materia_codigo=domain.materia_codigo,
+            plan_cursada_id=domain.plan_cursada_id,
+            comision_key=domain.comision_key,
             nombre=domain.nombre,
             numero=domain.numero,
             cupo=domain.cupo,
@@ -87,16 +86,6 @@ def to_db(domain: DomainModel) -> DBModel:
             dia=domain.dia,
             hora_inicio=domain.hora_inicio,
             hora_fin=domain.hora_fin,
-        )
-
-    if isinstance(domain, AsignacionAula):
-        return AsignacionAulaDB(
-            id=domain.id,
-            horario_id=domain.horario_id,
-            aula_id=domain.aula_id,
-            ciclo_id=domain.ciclo_id,
-            fecha_asignacion=domain.fecha_asignacion,
-            vigente=domain.vigente,
         )
 
     if isinstance(domain, Carrera):
@@ -124,8 +113,6 @@ def to_domain(db: ComisionDB) -> Comision: ...
 @overload
 def to_domain(db: HorarioDB) -> Horario: ...
 @overload
-def to_domain(db: AsignacionAulaDB) -> AsignacionAula: ...
-@overload
 def to_domain(db: CarreraDB) -> Carrera: ...
 
 def to_domain(db: DBModel) -> DomainModel:
@@ -149,12 +136,15 @@ def to_domain(db: DBModel) -> DomainModel:
             cupo=db.cupo,
             horas_semanales=db.horas_semanales,
             periodo=db.periodo,
+            active=db.active,
         )
 
     if isinstance(db, ComisionDB):
         return Comision(
             id=db.id,
             materia_codigo=db.materia_codigo,
+            plan_cursada_id=db.plan_cursada_id,
+            comision_key=db.comision_key or "",
             nombre=db.nombre,
             numero=db.numero,
             cupo=db.cupo,
@@ -168,16 +158,6 @@ def to_domain(db: DBModel) -> DomainModel:
             dia=db.dia,
             hora_inicio=db.hora_inicio,
             hora_fin=db.hora_fin,
-        )
-
-    if isinstance(db, AsignacionAulaDB):
-        return AsignacionAula(
-            id=db.id,
-            horario_id=db.horario_id,
-            aula_id=db.aula_id,
-            ciclo_id=db.ciclo_id,
-            fecha_asignacion=db.fecha_asignacion,
-            vigente=db.vigente,
         )
 
     if isinstance(db, CarreraDB):
