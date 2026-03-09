@@ -66,8 +66,8 @@ def render_custom_materia_page():
                                 st.write(f"**Período:** {materia.periodo}")
                             
                             with col2:
-                                st.write(f"**Cupo:** {materia.cupo}")
-                                st.write(f"**Horas/Semana:** {materia.horas_semanales}")
+                                st.write(f"**Cupo:** {materia.cupo or '-'}")
+                                st.write(f"**Horas/Semana:** {materia.horas_semanales or '-'}")
                                 
                                 # Show associated carreras (read-only)
                                 try:
