@@ -497,8 +497,9 @@ class TestRequiredFieldHandling:
         """Test that Materia required fields are identified correctly."""
         assert SchemaIntrospector.is_field_required(Materia, "codigo")
         assert SchemaIntrospector.is_field_required(Materia, "nombre")
-        assert SchemaIntrospector.is_field_required(Materia, "cupo")
-        assert SchemaIntrospector.is_field_required(Materia, "horas_semanales")
+        assert not SchemaIntrospector.is_field_required(Materia, "cupo")
+        assert not SchemaIntrospector.is_field_required(Materia, "horas_semanales")
+        assert not SchemaIntrospector.is_field_required(Materia, "codigo_guarani")
 
     def test_comision_required_fields(self):
         """Test that Comision required fields are identified correctly."""

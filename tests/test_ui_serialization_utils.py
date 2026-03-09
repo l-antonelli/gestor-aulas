@@ -91,8 +91,8 @@ class TestDeserializeFromJson:
 
     def test_deserialize_validation_error(self):
         """Test that validation errors are properly reported."""
-        # Missing required field
-        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas"}'
+        # Missing required field (nombre) and invalid cupo
+        json_str = '{"codigo": "MAT101", "cupo": -5}'
         with pytest.raises(DeserializationError, match="Validation failed"):
             SerializationUtils.deserialize_from_json(json_str, Materia)
 
@@ -171,8 +171,8 @@ class TestValidateSerializedData:
         assert "Invalid JSON format" in error
 
     def test_validate_missing_required_field(self):
-        """Test validating data with missing required field."""
-        json_str = '{"codigo": "MAT101", "nombre": "Matemáticas"}'
+        """Test validating data with missing required field (nombre is required)."""
+        json_str = '{"codigo": "MAT101"}'
         is_valid, error = SerializationUtils.validate_serialized_data(json_str, Materia)
 
         assert is_valid is False

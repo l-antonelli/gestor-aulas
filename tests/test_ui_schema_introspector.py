@@ -20,7 +20,8 @@ class TestSchemaIntrospector:
         assert "cupo" in fields
         assert "horas_semanales" in fields
         assert "periodo" in fields
-        assert len(fields) == 5
+        assert "codigo_guarani" in fields
+        assert len(fields) == 6
 
     def test_get_field_type_string(self):
         """Test get_field_type for string fields."""
@@ -52,7 +53,7 @@ class TestSchemaIntrospector:
     def test_get_field_description(self):
         """Test get_field_description returns description."""
         desc = SchemaIntrospector.get_field_description(Materia, "codigo")
-        assert desc == "Unique subject code"
+        assert desc == "Unique subject code (codigo_plan)"
 
     def test_get_field_description_empty(self):
         """Test get_field_description returns empty string when no description."""

@@ -2,9 +2,11 @@
 
 import streamlit as st
 from datetime import date
-from src.database.connection import get_session
+from src.database.connection import get_session, init_db
 from src.database.models import CicloDB
 from src.database.crud import ciclo_crud
+
+init_db()
 
 st.set_page_config(page_title="Ciclos", page_icon="📆", layout="wide")
 st.title("📆 Gestión de Ciclos Lectivos")

@@ -64,6 +64,7 @@ def to_db(domain: DomainModel) -> DBModel:
         return MateriaDB(
             codigo=domain.codigo,
             nombre=domain.nombre,
+            codigo_guarani=domain.codigo_guarani,
             cupo=domain.cupo,
             horas_semanales=domain.horas_semanales,
             periodo=domain.periodo,
@@ -144,6 +145,7 @@ def to_domain(db: DBModel) -> DomainModel:
         return Materia(
             codigo=db.codigo,
             nombre=db.nombre,
+            codigo_guarani=db.codigo_guarani,
             cupo=db.cupo,
             horas_semanales=db.horas_semanales,
             periodo=db.periodo,

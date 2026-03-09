@@ -35,8 +35,9 @@ class PlanEstudioDB(SQLModel, table=True):
 
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
-    anio_plan: int = Field(default=1, ge=1, le=6)
-    cuatrimestre_plan: str = Field(default="1C")  # "1C", "2C", "anual"
+    anio_plan: Optional[int] = Field(default=None, ge=1, le=6)
+    cuatrimestre_plan: Optional[str] = Field(default=None)  # "1C", "2C", "Anual", or None
+    correlativas: str = Field(default="")
 
 
 class CorrelativaDB(SQLModel, table=True):
@@ -113,11 +114,12 @@ class CarreraDB(SQLModel, table=True):
 class MateriaDB(SQLModel, table=True):
     """Asignatura académica."""
     __tablename__ = "materias"
-    
+
     codigo: str = Field(primary_key=True, min_length=1)
     nombre: str = Field(min_length=1)
-    cupo: int = Field(gt=0)
-    horas_semanales: int = Field(gt=0)
+    codigo_guarani: Optional[str] = Field(default=None)
+    cupo: Optional[int] = Field(default=None, gt=0)
+    horas_semanales: Optional[int] = Field(default=None, gt=0)
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
     
     # Relationships
