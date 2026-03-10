@@ -134,7 +134,7 @@ def update_config(session: Session, config: ConfiguracionHoraria) -> Configuraci
     Actualiza la configuración del sistema.
     """
     config.id = 1  # Ensure singleton
-    session.add(config)
+    config = session.merge(config)
     session.commit()
     session.refresh(config)
     return config
