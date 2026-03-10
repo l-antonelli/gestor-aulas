@@ -1,21 +1,23 @@
-"""Service for loading horarios and auto-creating comisiones."""
+"""Utilidades para resolucion de codigos de materia y derivacion de comisiones.
+
+Funciones auxiliares usadas por schedule_service y plan_generation_service.
+"""
 
 import math
-import uuid
 from dataclasses import dataclass, field
 from datetime import time
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field as PydanticField, field_validator
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
-from src.database.models import ComisionDB, HorarioDB, MateriaDB
-from src.database.crud import comision_crud, horario_crud, materia_crud
+from src.database.models import MateriaDB
+from src.database.crud import materia_crud
 from src.domain.types import DIAS_SEMANA
 
 
 class HorarioInput(BaseModel):
-    """Input data for a single horario entry."""
+    """Input data for a single horario entry (used by horario_file_parser)."""
     codigo_materia: str = PydanticField(min_length=1)
     comision_nombre: str = PydanticField(default="Comision Unica", min_length=1)
     dia: str
@@ -46,18 +48,6 @@ class CodeResolution:
     resolved_code: Optional[str] = None
     resolution_type: str = "direct"  # "direct", "guarani", "unresolved"
     materia: Optional[MateriaDB] = field(default=None, repr=False)
-
-
-@dataclass
-class LoadResult:
-    """Result of a horario loading operation."""
-    comisiones_created: int = 0
-    horarios_created: int = 0
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    guarani_remaps: list[CodeResolution] = field(default_factory=list)
-    unresolved_codes: list[str] = field(default_factory=list)
-    comision_flags: list[str] = field(default_factory=list)
 
 
 def _resolve_materia_code(session: Session, codigo: str) -> CodeResolution:
@@ -101,46 +91,6 @@ def _resolve_materia_code(session: Session, codigo: str) -> CodeResolution:
     )
 
 
-def _next_comision_numero(session: Session, materia_codigo: str) -> int:
-    """Get the next autoincrement comision numero for a materia."""
-    existing = session.exec(
-        select(ComisionDB)
-        .where(ComisionDB.materia_codigo == materia_codigo)
-        .order_by(col(ComisionDB.numero).desc())
-    ).first()
-    return (existing.numero + 1) if existing else 1
-
-
-def _get_or_create_comision(
-    session: Session,
-    materia_codigo: str,
-    comision_nombre: str,
-    materia_cupo: Optional[int],
-) -> tuple[ComisionDB, bool]:
-    """Get existing comision or create a new one. Returns (comision, was_created)."""
-    existing = session.exec(
-        select(ComisionDB)
-        .where(ComisionDB.materia_codigo == materia_codigo)
-        .where(ComisionDB.nombre == comision_nombre)
-    ).first()
-
-    if existing:
-        return existing, False
-
-    numero = _next_comision_numero(session, materia_codigo)
-    comision_id = f"{materia_codigo}-C{numero}"
-
-    comision = ComisionDB(
-        id=comision_id,
-        materia_codigo=materia_codigo,
-        nombre=comision_nombre,
-        numero=numero,
-        cupo=materia_cupo or 0,
-    )
-    created = comision_crud.create(session, comision)
-    return created, True
-
-
 def derive_comision_count(
     total_weekly_hours_from_schedule: float,
     horas_semanales: Optional[int],
@@ -151,7 +101,6 @@ def derive_comision_count(
     Returns (count, flag) where flag describes the derivation quality:
     - "exact": total_horas / horas_semanales is an exact integer
     - "ceil": used ceil(), rows can be evenly split among comisiones
-    - "indivisible": ceil() gives a count that can't evenly split the schedule rows
     - "no_data": horas_semanales is missing, defaulting to 1
     """
     if not horas_semanales or horas_semanales <= 0:
@@ -169,79 +118,3 @@ def derive_comision_count(
     # Use ceil
     n = max(1, math.ceil(ratio))
     return n, "ceil"
-
-
-def load_horarios_from_data(
-    session: Session,
-    data: List[HorarioInput],
-) -> LoadResult:
-    """
-    Load horarios from structured data, auto-creating comisiones as needed.
-
-    For each entry:
-    1. Resolves the materia code (trying codigo_plan, then codigo_guarani)
-    2. Gets or creates the comision for that (materia, comision_nombre) pair
-    3. Creates the Horario record
-
-    Code resolution:
-    - If codigo matches a materia.codigo directly -> use it
-    - If not, check codigo_guarani: if exactly 1 match -> remap and flag
-    - If 0 or 2+ guarani matches -> skip row and report as unresolved
-    """
-    result = LoadResult()
-
-    for i, entry in enumerate(data):
-        resolution = _resolve_materia_code(session, entry.codigo_materia)
-
-        if resolution.resolution_type == "unresolved":
-            result.unresolved_codes.append(entry.codigo_materia)
-            result.errors.append(
-                f"Fila {i+1}: Materia '{entry.codigo_materia}' no existe "
-                f"(ni como codigo_plan ni como codigo_guarani)"
-            )
-            continue
-
-        if resolution.resolution_type == "guarani":
-            result.guarani_remaps.append(resolution)
-            result.warnings.append(
-                f"Fila {i+1}: Codigo '{resolution.original_code}' resuelto via "
-                f"codigo_guarani -> '{resolution.resolved_code}'"
-            )
-
-        # At this point resolution_type is "direct" or "guarani",
-        # so materia and resolved_code are guaranteed non-None.
-        assert resolution.materia is not None
-        assert resolution.resolved_code is not None
-        materia = resolution.materia
-        materia_codigo = resolution.resolved_code
-
-        try:
-            comision, was_created = _get_or_create_comision(
-                session,
-                materia_codigo,
-                entry.comision_nombre,
-                materia.cupo,
-            )
-            if was_created:
-                result.comisiones_created += 1
-        except Exception as e:
-            result.errors.append(f"Fila {i+1}: Error creando comision: {e}")
-            continue
-
-        try:
-            horario_id = f"HOR-{uuid.uuid4().hex[:8].upper()}"
-            horario = HorarioDB(
-                id=horario_id,
-                comision_id=comision.id,
-                codigo_materia=materia_codigo,
-                dia=entry.dia,
-                hora_inicio=entry.hora_inicio,
-                hora_fin=entry.hora_fin,
-            )
-            horario_crud.create(session, horario)
-            result.horarios_created += 1
-        except Exception as e:
-            result.errors.append(f"Fila {i+1}: Error creando horario: {e}")
-            continue
-
-    return result
