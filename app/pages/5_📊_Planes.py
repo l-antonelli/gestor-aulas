@@ -140,14 +140,36 @@ with tab_cronogramas:
                                     nombre = mat_map.get(cod, "?")
                                     st.write(f"- **{nombre}** ({cod})")
 
-                    # --- Generate plan from this schedule ---
+                    # --- Actions ---
                     st.divider()
-                    st.markdown("**Generar plan desde este cronograma**")
-                    plan_nombre = st.text_input(
-                        "Nombre del plan",
-                        value=f"Plan {sel_ciclo_crono}",
-                        key=f"plan_nombre_{s.id}"
-                    )
+                    col_gen, col_del = st.columns([3, 1])
+
+                    with col_gen:
+                        st.markdown("**Generar plan desde este cronograma**")
+                        plan_nombre = st.text_input(
+                            "Nombre del plan",
+                            value=f"Plan {sel_ciclo_crono}",
+                            key=f"plan_nombre_{s.id}"
+                        )
+
+                    with col_del:
+                        st.markdown("&nbsp;")  # spacing
+                        if st.button("Eliminar cronograma", key=f"btn_del_crono_{s.id}", type="secondary"):
+                            with next(get_session()) as session:
+                                # Delete entries first, then schedule
+                                entries_to_del = session.exec(
+                                    select(ScheduleEntryDB)
+                                    .where(ScheduleEntryDB.schedule_id == s.id)
+                                ).all()
+                                for e in entries_to_del:
+                                    session.delete(e)
+                                db_sched = session.get(ScheduleDB, s.id)
+                                if db_sched:
+                                    session.delete(db_sched)
+                                session.commit()
+                            st.success(f"Cronograma '{s.nombre}' eliminado")
+                            st.rerun()
+
                     if st.button("Generar Plan", type="primary", key=f"btn_gen_plan_{s.id}"):
                         with next(get_session()) as session:
                             result = generate_plan_from_schedule(
