@@ -10,10 +10,13 @@ from sqlalchemy.pool import StaticPool
 from src.database.models import (
     CicloDB, MateriaDB, ScheduleDB, ScheduleEntryDB,
     PlanificacionCursadaDB, ComisionDB, HorarioDB,
+    ConfiguracionHoraria,
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
     activate_plan,
+    generate_time_slots,
+    build_timetable_grid,
 )
 
 
@@ -166,3 +169,104 @@ class TestActivatePlan:
 
     def test_activate_nonexistent_returns_false(self, session):
         assert activate_plan(session, "NONEXISTENT") is False
+
+
+class TestGenerateTimeSlots:
+    """Tests for generate_time_slots."""
+
+    def test_basic_slots(self):
+        config = ConfiguracionHoraria(
+            id=1,
+            granularidad_minutos=60,
+            hora_inicio_operativo=time(8, 0),
+            hora_fin_operativo=time(12, 0),
+        )
+        slots = generate_time_slots(config)
+        assert len(slots) == 4
+        assert slots[0] == (time(8, 0), time(9, 0))
+        assert slots[-1] == (time(11, 0), time(12, 0))
+
+    def test_30_min_granularity(self):
+        config = ConfiguracionHoraria(
+            id=1,
+            granularidad_minutos=30,
+            hora_inicio_operativo=time(8, 0),
+            hora_fin_operativo=time(10, 0),
+        )
+        slots = generate_time_slots(config)
+        assert len(slots) == 4
+        assert slots[0] == (time(8, 0), time(8, 30))
+        assert slots[1] == (time(8, 30), time(9, 0))
+
+    def test_incomplete_slot_excluded(self):
+        """If remaining time is less than granularity, no extra slot is created."""
+        config = ConfiguracionHoraria(
+            id=1,
+            granularidad_minutos=60,
+            hora_inicio_operativo=time(8, 0),
+            hora_fin_operativo=time(9, 30),
+        )
+        slots = generate_time_slots(config)
+        assert len(slots) == 1
+        assert slots[0] == (time(8, 0), time(9, 0))
+
+    def test_empty_when_range_too_small(self):
+        config = ConfiguracionHoraria(
+            id=1,
+            granularidad_minutos=60,
+            hora_inicio_operativo=time(8, 0),
+            hora_fin_operativo=time(8, 30),
+        )
+        slots = generate_time_slots(config)
+        assert len(slots) == 0
+
+
+class TestBuildTimetableGrid:
+    """Tests for build_timetable_grid."""
+
+    def test_builds_grid_from_plan(self, session, ciclo, materias, schedule):
+        """build_timetable_grid returns blocks grouped by day."""
+        result = generate_plan_from_schedule(session, schedule.id, "Test Plan", ciclo.id)
+        assert result.plan is not None
+
+        config = ConfiguracionHoraria(
+            id=1, granularidad_minutos=60,
+            hora_inicio_operativo=time(8, 0),
+            hora_fin_operativo=time(22, 0),
+        )
+        grid = build_timetable_grid(session, result.plan.id, config)
+
+        assert len(grid) > 0
+        # Should have "Lunes" since our fixtures create a Lunes entry
+        assert "Lunes" in grid
+        blocks = grid["Lunes"]
+        assert len(blocks) >= 1
+        assert blocks[0].materia_codigo == "MAT101"
+
+    def test_empty_grid_for_plan_without_comisiones(self, session):
+        """A plan with no comisiones returns an empty grid."""
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="Empty", ciclo_id="fake", activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        config = ConfiguracionHoraria(id=1)
+        grid = build_timetable_grid(session, plan.id, config)
+        assert grid == {}
+
+    def test_filter_by_materia(self, session, ciclo, materias, schedule):
+        """Filtering by materia codes limits the grid output."""
+        result = generate_plan_from_schedule(session, schedule.id, "Test Plan", ciclo.id)
+        config = ConfiguracionHoraria(id=1)
+
+        # Filter to only MAT101
+        grid = build_timetable_grid(
+            session, result.plan.id, config,
+            filtered_materia_codigos={"MAT101"},
+        )
+
+        all_codes = {b.materia_codigo for blocks in grid.values() for b in blocks}
+        assert "MAT101" in all_codes
+        # FIS101 should not appear
+        assert "FIS101" not in all_codes

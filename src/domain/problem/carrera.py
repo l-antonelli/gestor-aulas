@@ -27,7 +27,11 @@ class Carrera(Entity):
         ge=1,
         description="Expected total number of materias in the curriculum"
     )
-    
+    dicta_recursado: bool = Field(
+        default=True,
+        description="Si FALSE, materias exclusivas del cuatrimestre opuesto no generan dictado"
+    )
+
     @field_validator("codigo")
     @classmethod
     def validate_codigo(cls, v: str) -> str:

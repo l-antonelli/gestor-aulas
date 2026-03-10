@@ -23,6 +23,7 @@ classDiagram
         +str titulo_otorgado
         +int duracion_anios
         +int cantidad_materias
+        +bool dicta_recursado
     }
 
     class MateriaDB {
@@ -33,6 +34,7 @@ classDiagram
         +int horas_semanales
         +str periodo
         +bool active
+        +bool virtual
     }
 
     class AulaDB {
@@ -97,6 +99,7 @@ classDiagram
         +date inicio_dictado
         +date fin_dictado
         +bool activo
+        +bool virtual
     }
 
     class DictadoCicloDB {

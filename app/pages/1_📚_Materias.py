@@ -30,6 +30,7 @@ def render_custom_materia_page():
         "periodo": "Período",
         "cupo": "Cupo",
         "horas_semanales": "Hs/Sem",
+        "virtual": "Virtual",
     }
     
     st.title("📚 Gestión de Materias")
@@ -68,6 +69,8 @@ def render_custom_materia_page():
                             with col2:
                                 st.write(f"**Cupo:** {materia.cupo or '-'}")
                                 st.write(f"**Horas/Semana:** {materia.horas_semanales or '-'}")
+                                if materia.virtual:
+                                    st.write("**Virtual:** Si")
                                 
                                 # Show associated carreras (read-only)
                                 try:

@@ -2,12 +2,17 @@
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import time, timedelta, datetime
 
 from sqlmodel import Session, select
 
+from typing import Optional
+from sqlmodel import col
+
 from src.database.models import (
     ScheduleEntryDB, PlanificacionCursadaDB, ComisionDB, HorarioDB,
-    MateriaDB, ScheduleDB,
+    MateriaDB, ScheduleDB, ConfiguracionHoraria,
+    PlanEstudioDB, CicloPlanVersionDB,
 )
 from src.database.crud import schedule_crud, planificacion_crud, materia_crud
 from src.services.horario_loading_service import derive_comision_count
@@ -191,3 +196,111 @@ def activate_plan(session: Session, plan_cursada_id: str) -> bool:
     session.add(plan)
     session.commit()
     return True
+
+
+def generate_time_slots(config: ConfiguracionHoraria) -> list[tuple[time, time]]:
+    """Generate time slot ranges based on scheduling configuration.
+
+    Each slot covers `config.granularidad_minutos` minutes, starting from
+    `config.hora_inicio_operativo` up to `config.hora_fin_operativo`.
+
+    Returns:
+        List of (start_time, end_time) tuples for each slot.
+    """
+    slots: list[tuple[time, time]] = []
+    granularidad = timedelta(minutes=config.granularidad_minutos)
+
+    # Use datetime for arithmetic, then extract time
+    base_date = datetime(2000, 1, 1)
+    current = datetime.combine(base_date, config.hora_inicio_operativo)
+    end = datetime.combine(base_date, config.hora_fin_operativo)
+
+    while current + granularidad <= end:
+        slot_start = current.time()
+        slot_end = (current + granularidad).time()
+        slots.append((slot_start, slot_end))
+        current += granularidad
+
+    return slots
+
+
+@dataclass
+class TimetableBlock:
+    """A block in the timetable grid representing a horario entry."""
+    materia_codigo: str
+    materia_nombre: str
+    comision_nombre: str
+    hora_inicio: time
+    hora_fin: time
+    virtual: bool
+
+
+def build_timetable_grid(
+    session: Session,
+    plan_id: str,
+    config: ConfiguracionHoraria,
+    filtered_materia_codigos: Optional[set[str]] = None,
+) -> dict[str, list[TimetableBlock]]:
+    """Build a timetable grid data structure for visualization.
+
+    Args:
+        session: Database session.
+        plan_id: Plan to build the grid for.
+        config: Scheduling configuration (for days).
+        filtered_materia_codigos: If provided, only include these materias.
+
+    Returns:
+        Dict mapping day name -> list of TimetableBlock sorted by hora_inicio.
+    """
+    # Get comisiones for this plan
+    comisiones = session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
+    ).all()
+
+    if not comisiones:
+        return {}
+
+    # Filter by materia if needed
+    if filtered_materia_codigos is not None:
+        comisiones = [c for c in comisiones if c.materia_codigo in filtered_materia_codigos]
+
+    comision_ids = [c.id for c in comisiones]
+    comision_map = {c.id: c for c in comisiones}
+
+    # Materia info
+    mat_codigos = list({c.materia_codigo for c in comisiones})
+    materias_db = session.exec(
+        select(MateriaDB).where(col(MateriaDB.codigo).in_(mat_codigos))
+    ).all()
+    mat_info = {m.codigo: m for m in materias_db}
+
+    # Get horarios
+    horarios = session.exec(
+        select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
+    ).all()
+
+    # Build blocks grouped by day
+    grid: dict[str, list[TimetableBlock]] = {}
+    for h in horarios:
+        com = comision_map.get(h.comision_id)
+        if com is None:
+            continue
+        materia = mat_info.get(com.materia_codigo)
+        mat_nombre = materia.nombre if materia else com.materia_codigo
+        is_virtual = materia.virtual if materia else False
+
+        block = TimetableBlock(
+            materia_codigo=com.materia_codigo,
+            materia_nombre=mat_nombre,
+            comision_nombre=com.nombre,
+            hora_inicio=h.hora_inicio,
+            hora_fin=h.hora_fin,
+            virtual=is_virtual,
+        )
+        grid.setdefault(h.dia, []).append(block)
+
+    # Sort blocks within each day
+    for day in grid:
+        grid[day].sort(key=lambda b: b.hora_inicio)
+
+    return grid

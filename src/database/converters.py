@@ -65,6 +65,7 @@ def to_db(domain: DomainModel) -> DBModel:
             horas_semanales=domain.horas_semanales,
             periodo=domain.periodo,
             active=domain.active,
+            virtual=domain.virtual,
         )
 
     if isinstance(domain, Comision):
@@ -95,6 +96,7 @@ def to_db(domain: DomainModel) -> DBModel:
             titulo_otorgado=domain.titulo_otorgado,
             duracion_anios=domain.duracion_anios,
             cantidad_materias=domain.cantidad_materias,
+            dicta_recursado=domain.dicta_recursado,
         )
 
     raise TypeError(f"Unknown domain model type: {type(domain)}")
@@ -137,6 +139,7 @@ def to_domain(db: DBModel) -> DomainModel:
             horas_semanales=db.horas_semanales,
             periodo=db.periodo,
             active=db.active,
+            virtual=db.virtual,
         )
 
     if isinstance(db, ComisionDB):
@@ -167,6 +170,7 @@ def to_domain(db: DBModel) -> DomainModel:
             titulo_otorgado=db.titulo_otorgado,
             duracion_anios=db.duracion_anios,
             cantidad_materias=db.cantidad_materias,
+            dicta_recursado=db.dicta_recursado,
         )
 
     raise TypeError(f"Unknown DB model type: {type(db)}")

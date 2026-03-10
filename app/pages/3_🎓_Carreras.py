@@ -29,6 +29,7 @@ def render_custom_carrera_page():
         "titulo_otorgado": "Título Otorgado",
         "duracion_anios": "Duración (años)",
         "cantidad_materias": "Cantidad de Materias",
+        "dicta_recursado": "Dicta recursado",
     }
     
     st.title("🎓 Gestión de Carreras")
@@ -62,6 +63,8 @@ def render_custom_carrera_page():
                                 st.write(f"**Duración:** {carrera.duracion_anios} años")
                                 cantidad_text = str(carrera.cantidad_materias) if carrera.cantidad_materias else "No definida"
                                 st.write(f"**Cantidad de Materias:** {cantidad_text}")
+                                dicta_text = "Si" if carrera.dicta_recursado else "No"
+                                st.write(f"**Dicta recursado:** {dicta_text}")
                                 
                                 # Show completeness status
                                 try:

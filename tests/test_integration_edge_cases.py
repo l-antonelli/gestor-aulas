@@ -879,8 +879,8 @@ class TestFormOutputEdgeCases:
 
         data = FormOutputRenderer.get_display_data(
             materia,
-            field_order=["nombre", "codigo", "codigo_guarani", "cupo", "horas_semanales", "periodo", "active"]
+            field_order=["nombre", "codigo", "codigo_guarani", "cupo", "horas_semanales", "periodo", "active", "virtual"]
         )
 
         # All fields should still be present
-        assert len(data) == 7
+        assert len(data) == 8

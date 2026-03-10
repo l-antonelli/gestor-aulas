@@ -30,6 +30,7 @@ class Materia(Entity):
         description="Course period type"
     )
     active: bool = Field(default=True, description="Whether the materia is part of the current study plan")
+    virtual: bool = Field(default=False, description="Default para el flag virtual del dictado")
 
     @field_validator("codigo")
     @classmethod

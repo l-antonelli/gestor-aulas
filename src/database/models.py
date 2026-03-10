@@ -123,6 +123,7 @@ class DictadoDB(SQLModel, table=True):
     inicio_dictado: Optional[date] = Field(default=None)
     fin_dictado: Optional[date] = Field(default=None)
     activo: bool = Field(default=True)
+    virtual: bool = Field(default=False)
 
     # Relationships
     materia: Optional["MateriaDB"] = Relationship(back_populates="dictados")
@@ -145,6 +146,7 @@ class CarreraDB(SQLModel, table=True):
     titulo_otorgado: str = Field(default="")
     duracion_anios: int = Field(default=5, ge=1)
     cantidad_materias: Optional[int] = Field(default=None, ge=1)
+    dicta_recursado: bool = Field(default=True)
 
     # Relationships
     materias: list["MateriaDB"] = Relationship(
@@ -167,6 +169,7 @@ class MateriaDB(SQLModel, table=True):
     horas_semanales: Optional[int] = Field(default=None, gt=0)
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
     active: bool = Field(default=True)
+    virtual: bool = Field(default=False)
 
     # Relationships
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")
