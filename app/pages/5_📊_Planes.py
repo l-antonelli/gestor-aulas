@@ -5,7 +5,7 @@ Flujo: Cronograma (schedule) → Validar cobertura → Generar Plan → Clases
 
 import uuid
 import streamlit as st
-from datetime import time
+from datetime import time, timedelta
 from sqlmodel import select, func, col
 from src.database.connection import get_session, init_db
 from src.database.models import (
@@ -1086,15 +1086,19 @@ with tab_config:
                 step=5,
                 help="Duración de cada franja horaria en minutos",
             )
+            step_td = timedelta(minutes=config.granularidad_minutos)
             hora_inicio = st.time_input(
                 "Hora inicio operativo",
                 value=config.hora_inicio_operativo,
+                step=step_td,
             )
 
         with col2:
             hora_fin = st.time_input(
-                "Hora fin operativo",
+                "Inicio última franja",
                 value=config.hora_fin_operativo,
+                step=step_td,
+                help="Hora de inicio de la última franja horaria (ej: 23:00 para cubrir 23:00-00:00)",
             )
             # Parse dias_operativos
             dias_actuales = [d.strip() for d in config.dias_operativos.split(",") if d.strip()]
@@ -1108,8 +1112,8 @@ with tab_config:
         save_config = st.form_submit_button("Guardar configuración", type="primary")
 
         if save_config:
-            if hora_fin <= hora_inicio:
-                st.error("La hora de fin debe ser posterior a la de inicio")
+            if hora_fin < hora_inicio:
+                st.error("La última franja no puede ser anterior a la hora de inicio")
             elif not dias_seleccionados:
                 st.error("Debe seleccionar al menos un dia operativo")
             else:

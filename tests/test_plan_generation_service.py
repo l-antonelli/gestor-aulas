@@ -172,14 +172,19 @@ class TestActivatePlan:
 
 
 class TestGenerateTimeSlots:
-    """Tests for generate_time_slots."""
+    """Tests for generate_time_slots.
+
+    hora_fin_operativo represents the START of the last time slot,
+    not the end of operations. A slot starting at that time is always included.
+    """
 
     def test_basic_slots(self):
+        """hora_fin_operativo=11:00 means last slot starts at 11:00."""
         config = ConfiguracionHoraria(
             id=1,
             granularidad_minutos=60,
             hora_inicio_operativo=time(8, 0),
-            hora_fin_operativo=time(12, 0),
+            hora_fin_operativo=time(11, 0),
         )
         slots = generate_time_slots(config)
         assert len(slots) == 4
@@ -191,34 +196,37 @@ class TestGenerateTimeSlots:
             id=1,
             granularidad_minutos=30,
             hora_inicio_operativo=time(8, 0),
-            hora_fin_operativo=time(10, 0),
+            hora_fin_operativo=time(9, 30),
         )
         slots = generate_time_slots(config)
         assert len(slots) == 4
         assert slots[0] == (time(8, 0), time(8, 30))
         assert slots[1] == (time(8, 30), time(9, 0))
 
-    def test_incomplete_slot_excluded(self):
-        """If remaining time is less than granularity, no extra slot is created."""
+    def test_single_slot_when_start_equals_fin(self):
+        """When start == fin, exactly one slot is generated."""
         config = ConfiguracionHoraria(
             id=1,
             granularidad_minutos=60,
             hora_inicio_operativo=time(8, 0),
-            hora_fin_operativo=time(9, 30),
+            hora_fin_operativo=time(8, 0),
         )
         slots = generate_time_slots(config)
         assert len(slots) == 1
         assert slots[0] == (time(8, 0), time(9, 0))
 
-    def test_empty_when_range_too_small(self):
+    def test_midnight_wrap(self):
+        """Last slot 23:00-00:00 wraps around midnight correctly."""
         config = ConfiguracionHoraria(
             id=1,
             granularidad_minutos=60,
-            hora_inicio_operativo=time(8, 0),
-            hora_fin_operativo=time(8, 30),
+            hora_inicio_operativo=time(22, 0),
+            hora_fin_operativo=time(23, 0),
         )
         slots = generate_time_slots(config)
-        assert len(slots) == 0
+        assert len(slots) == 2
+        assert slots[0] == (time(22, 0), time(23, 0))
+        assert slots[1] == (time(23, 0), time(0, 0))
 
 
 class TestBuildTimetableGrid:

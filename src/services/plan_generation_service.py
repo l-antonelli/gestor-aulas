@@ -202,7 +202,10 @@ def generate_time_slots(config: ConfiguracionHoraria) -> list[tuple[time, time]]
     """Generate time slot ranges based on scheduling configuration.
 
     Each slot covers `config.granularidad_minutos` minutes, starting from
-    `config.hora_inicio_operativo` up to `config.hora_fin_operativo`.
+    `config.hora_inicio_operativo`. The field `hora_fin_operativo` represents
+    the start of the last time slot (not the end of operations), so a slot
+    starting at that time is always included. This allows covering the
+    23:00-00:00 range.
 
     Returns:
         List of (start_time, end_time) tuples for each slot.
@@ -213,9 +216,9 @@ def generate_time_slots(config: ConfiguracionHoraria) -> list[tuple[time, time]]
     # Use datetime for arithmetic, then extract time
     base_date = datetime(2000, 1, 1)
     current = datetime.combine(base_date, config.hora_inicio_operativo)
-    end = datetime.combine(base_date, config.hora_fin_operativo)
+    ultima_franja = datetime.combine(base_date, config.hora_fin_operativo)
 
-    while current + granularidad <= end:
+    while current <= ultima_franja:
         slot_start = current.time()
         slot_end = (current + granularidad).time()
         slots.append((slot_start, slot_end))
