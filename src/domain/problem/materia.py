@@ -31,6 +31,7 @@ class Materia(Entity):
     )
     active: bool = Field(default=True, description="Whether the materia is part of the current study plan")
     virtual: bool = Field(default=False, description="Default para el flag virtual del dictado")
+    optativa: bool = Field(default=False, description="Si la materia es optativa/electiva")
 
     @field_validator("codigo")
     @classmethod

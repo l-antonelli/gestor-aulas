@@ -66,6 +66,7 @@ def to_db(domain: DomainModel) -> DBModel:
             periodo=domain.periodo,
             active=domain.active,
             virtual=domain.virtual,
+            optativa=domain.optativa,
         )
 
     if isinstance(domain, Comision):
@@ -140,6 +141,7 @@ def to_domain(db: DBModel) -> DomainModel:
             periodo=db.periodo,
             active=db.active,
             virtual=db.virtual,
+            optativa=db.optativa,
         )
 
     if isinstance(db, ComisionDB):
