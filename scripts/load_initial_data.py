@@ -5,7 +5,9 @@ Reads from data/input/:
 - aulas/aulas.xlsx              -> Aula records
 - Carreras/Maestro materias.xlsx -> Materia records
 - Carreras/Maestro planes.xlsx   -> Carrera + PlanEstudio records
-- cronogramas/horarios_2C_2025.xlsx -> Horario + Comision records (derived)
+
+Los cronogramas de horarios se cargan desde la pagina de Planes en la UI,
+donde se asocian a un plan de cursada (evitando datos huerfanos).
 
 Usage:
     python -m scripts.load_initial_data [--reset]
@@ -14,10 +16,8 @@ Usage:
 """
 
 import argparse
-import math
 import sys
 import uuid
-from datetime import time
 from pathlib import Path
 
 import pandas as pd
@@ -29,19 +29,15 @@ sys.path.insert(0, str(project_root))
 
 from src.database.connection import get_session, init_db
 from src.database.models import (
-    AulaDB, CarreraDB, ComisionDB, HorarioDB, MateriaDB, PlanEstudioDB,
+    AulaDB, CarreraDB, MateriaDB, PlanEstudioDB,
     PlanCarreraVersionDB,
 )
-from src.database.crud import aula_crud, materia_crud, carrera_crud, horario_crud, comision_crud
-from src.services.horario_loading_service import (
-    _resolve_materia_code, derive_comision_count,
-)
+from src.database.crud import aula_crud, materia_crud, carrera_crud
 
 DATA_DIR = project_root / "data" / "input"
 AULAS_FILE = DATA_DIR / "aulas" / "aulas.xlsx"
 MAESTRO_MATERIAS = DATA_DIR / "Carreras" / "Maestro materias.xlsx"
 MAESTRO_PLANES = DATA_DIR / "Carreras" / "Maestro planes.xlsx"
-HORARIOS_2C_2025 = DATA_DIR / "cronogramas" / "horarios_2C_2025.xlsx"
 
 
 # =============================================================================
@@ -278,187 +274,6 @@ def load_carreras_and_planes(session: Session) -> dict:
 
 
 # =============================================================================
-# Step 4: Load Horarios + Derive Comisiones
-# =============================================================================
-
-def _parse_time_value(value) -> time:
-    """Parse a time value from Excel (may be datetime.time or string)."""
-    if isinstance(value, time):
-        return value
-    s = str(value).strip()
-    parts = s.split(":")
-    if len(parts) >= 2:
-        return time(int(parts[0]), int(parts[1]))
-    raise ValueError(f"Cannot parse time: '{value}'")
-
-
-def load_horarios(session: Session) -> dict:
-    """
-    Load horarios from horarios_2C_2025.xlsx with comision derivation.
-
-    Strategy:
-    1. Parse all rows, resolving materia codes (codigo_plan -> codigo_guarani fallback)
-    2. Group rows by materia
-    3. For each materia, derive comision count:
-       - n = ceil(total_weekly_hours / horas_semanales)
-       - If rows can be evenly split among n comisiones, do so (sorted by dia+hora)
-       - Otherwise, fall back to 1 comision with all rows
-    4. Create Comision and Horario records
-    """
-    df = pd.read_excel(HORARIOS_2C_2025)
-    stats = {
-        "horarios_created": 0, "comisiones_created": 0,
-        "rows_total": len(df),
-        "rows_null_codigo": 0, "rows_unresolved": 0, "rows_guarani_remap": 0,
-        "errors": [], "warnings": [], "comision_flags": [],
-        "guarani_remaps": [],
-    }
-
-    # Parse rows, resolve codes, group by materia
-    materia_rows: dict[str, list[dict]] = {}  # materia_codigo -> list of row dicts
-
-    for idx, row in df.iterrows():
-        row_num = idx + 2  # Excel row (header + 0-based)
-
-        # Handle null codigo_plan
-        codigo_raw = row["codigo_plan"]
-        if pd.isna(codigo_raw):
-            stats["rows_null_codigo"] += 1
-            stats["warnings"].append(
-                f"Fila {row_num}: codigo_plan es null "
-                f"(dia={row['dia']}, {row['hora_ingreso']}-{row['hora_egreso']})"
-            )
-            continue
-
-        codigo = str(codigo_raw).strip()
-
-        # Resolve materia code
-        resolution = _resolve_materia_code(session, codigo)
-
-        if resolution.resolution_type == "unresolved":
-            stats["rows_unresolved"] += 1
-            stats["errors"].append(
-                f"Fila {row_num}: '{codigo}' no encontrado como codigo_plan ni codigo_guarani"
-            )
-            continue
-
-        if resolution.resolution_type == "guarani":
-            stats["rows_guarani_remap"] += 1
-            stats["guarani_remaps"].append(
-                f"'{resolution.original_code}' -> '{resolution.resolved_code}' "
-                f"({resolution.materia.nombre})"
-            )
-
-        materia_codigo = resolution.resolved_code
-
-        # Parse times
-        try:
-            hora_inicio = _parse_time_value(row["hora_ingreso"])
-            hora_fin = _parse_time_value(row["hora_egreso"])
-        except ValueError as e:
-            stats["errors"].append(f"Fila {row_num}: {e}")
-            continue
-
-        materia_rows.setdefault(materia_codigo, []).append({
-            "dia": str(row["dia"]).strip(),
-            "hora_inicio": hora_inicio,
-            "hora_fin": hora_fin,
-            "row_num": row_num,
-        })
-
-    # Deduplicate guarani_remaps
-    stats["guarani_remaps"] = sorted(set(stats["guarani_remaps"]))
-
-    # For each materia, derive comisiones and create records
-    for materia_codigo, rows in materia_rows.items():
-        materia = materia_crud.get(session, materia_codigo)
-        if materia is None:
-            stats["errors"].append(f"Materia '{materia_codigo}' desaparecio de la BD")
-            continue
-
-        # Calculate total weekly hours from schedule
-        total_hours = sum(
-            (r["hora_fin"].hour * 60 + r["hora_fin"].minute -
-             r["hora_inicio"].hour * 60 - r["hora_inicio"].minute) / 60
-            for r in rows
-        )
-
-        n_comisiones, flag = derive_comision_count(total_hours, materia.horas_semanales)
-
-        # Check if rows can be evenly split
-        n_rows = len(rows)
-        if n_comisiones > 1 and n_rows % n_comisiones != 0:
-            stats["comision_flags"].append(
-                f"{materia_codigo}: ceil() dio {n_comisiones} comisiones pero "
-                f"{n_rows} filas no se dividen equitativamente. Usando 1 comision."
-            )
-            n_comisiones = 1
-            flag = "indivisible"
-
-        if flag in ("ceil", "no_data"):
-            stats["comision_flags"].append(
-                f"{materia_codigo}: {n_comisiones} comision(es) "
-                f"(total_h={total_hours:.1f}, h_sem={materia.horas_semanales}, flag={flag})"
-            )
-
-        # Sort rows by dia (weekday order) then hora_inicio
-        dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
-                     "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
-        rows_sorted = sorted(rows, key=lambda r: (dia_order.get(r["dia"], 9), r["hora_inicio"]))
-
-        # Split rows into comisiones
-        if n_comisiones == 1:
-            groups = [rows_sorted]
-        else:
-            chunk_size = n_rows // n_comisiones
-            groups = [
-                rows_sorted[i * chunk_size:(i + 1) * chunk_size]
-                for i in range(n_comisiones)
-            ]
-
-        # Create comisiones and horarios
-        for com_idx, group in enumerate(groups):
-            com_numero = com_idx + 1
-            comision_id = f"{materia_codigo}-C{com_numero}"
-            comision_nombre = f"Comision {com_numero}"
-
-            # Check if comision already exists
-            existing_com = session.exec(
-                select(ComisionDB).where(ComisionDB.id == comision_id)
-            ).first()
-
-            if not existing_com:
-                comision = ComisionDB(
-                    id=comision_id,
-                    materia_codigo=materia_codigo,
-                    nombre=comision_nombre,
-                    numero=com_numero,
-                    cupo=materia.cupo or 0,
-                )
-                session.add(comision)
-                session.flush()
-                stats["comisiones_created"] += 1
-            else:
-                comision = existing_com
-
-            for r in group:
-                horario_id = f"HOR-{uuid.uuid4().hex[:8].upper()}"
-                horario = HorarioDB(
-                    id=horario_id,
-                    comision_id=comision.id,
-                    codigo_materia=materia_codigo,
-                    dia=r["dia"],
-                    hora_inicio=r["hora_inicio"],
-                    hora_fin=r["hora_fin"],
-                )
-                session.add(horario)
-                stats["horarios_created"] += 1
-
-    session.commit()
-    return stats
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
@@ -469,7 +284,7 @@ def main():
     args = parser.parse_args()
 
     # Verify input files exist
-    for path in [AULAS_FILE, MAESTRO_MATERIAS, MAESTRO_PLANES, HORARIOS_2C_2025]:
+    for path in [AULAS_FILE, MAESTRO_MATERIAS, MAESTRO_PLANES]:
         if not path.exists():
             print(f"ERROR: File not found: {path}")
             sys.exit(1)
@@ -530,37 +345,6 @@ def main():
             for w in p_stats["warnings"][:10]:
                 print(f"    - {w}")
 
-        # Step 4: Horarios
-        print(f"\n{'=' * 60}")
-        print("STEP 4: Loading Horarios + Deriving Comisiones")
-        print("=" * 60)
-        h_stats = load_horarios(session)
-        print(f"  Total rows in file: {h_stats['rows_total']}")
-        print(f"  Rows with null codigo: {h_stats['rows_null_codigo']}")
-        print(f"  Rows unresolved: {h_stats['rows_unresolved']}")
-        print(f"  Rows remapped via guarani: {h_stats['rows_guarani_remap']}")
-        print(f"  Comisiones created: {h_stats['comisiones_created']}")
-        print(f"  Horarios created: {h_stats['horarios_created']}")
-
-        if h_stats["guarani_remaps"]:
-            print(f"\n  Guarani remaps ({len(h_stats['guarani_remaps'])}):")
-            for r in h_stats["guarani_remaps"]:
-                print(f"    - {r}")
-
-        if h_stats["comision_flags"]:
-            print(f"\n  Comision derivation flags ({len(h_stats['comision_flags'])}):")
-            for f in h_stats["comision_flags"][:20]:
-                print(f"    - {f}")
-            if len(h_stats["comision_flags"]) > 20:
-                print(f"    ... and {len(h_stats['comision_flags']) - 20} more")
-
-        if h_stats["errors"]:
-            print(f"\n  Errors ({len(h_stats['errors'])}):")
-            for e in h_stats["errors"][:10]:
-                print(f"    - {e}")
-            if len(h_stats["errors"]) > 10:
-                print(f"    ... and {len(h_stats['errors']) - 10} more")
-
     # Summary
     print(f"\n{'=' * 60}")
     print("SUMMARY")
@@ -570,13 +354,11 @@ def main():
     print(f"  Carreras:   {p_stats['carreras_created']} created")
     print(f"  Versions:   {p_stats['versions_created']} created")
     print(f"  Planes:     {p_stats['planes_created']} created")
-    print(f"  Comisiones: {h_stats['comisiones_created']} created")
-    print(f"  Horarios:   {h_stats['horarios_created']} created")
     total_warnings = (len(a_stats["warnings"]) + len(m_stats["warnings"])
-                      + len(p_stats["warnings"]) + len(h_stats.get("warnings", [])))
-    total_errors = len(h_stats["errors"])
+                      + len(p_stats["warnings"]))
     print(f"  Warnings:   {total_warnings}")
-    print(f"  Errors:     {total_errors}")
+    print()
+    print("NOTA: Los cronogramas de horarios se cargan desde la pagina de Planes en la UI.")
 
 
 if __name__ == "__main__":
