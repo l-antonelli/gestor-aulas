@@ -256,6 +256,12 @@ with tab_dictados:
                         carrera_db = session.get(CarreraDB, cc)
                         carrera_nombres[cc] = carrera_db.nombre if carrera_db else cc
 
+                    # Identify shared dictados (appear in multiple carreras)
+                    dictado_carreras: dict[str, list[str]] = {}
+                    for cc, dicts in dictado_by_carrera.items():
+                        for d in dicts:
+                            dictado_carreras.setdefault(d.id, []).append(cc)
+
                     # Track changes for batch save
                     changes: dict[str, dict] = {}  # dictado_id -> {activo, virtual}
 
@@ -273,16 +279,24 @@ with tab_dictados:
                                 with col_info:
                                     virtual_tag = " [V]" if d.virtual else ""
                                     activo_tag = "" if d.activo else " (inactivo)"
+                                    otras = [
+                                        c for c in dictado_carreras.get(d.id, [])
+                                        if c != carrera_cod
+                                    ]
+                                    compartida_tag = (
+                                        f" (compartida con {', '.join(otras)})"
+                                        if otras else ""
+                                    )
                                     st.markdown(
                                         f"**{d.dictado_codigo}**{virtual_tag}{activo_tag}"
                                     )
-                                    st.caption(f"{d.materia_codigo}")
+                                    st.caption(f"{d.materia_codigo}{compartida_tag}")
 
                                 with col_activo:
                                     new_activo = st.checkbox(
                                         "Activo",
                                         value=d.activo,
-                                        key=f"activo_{d.id}",
+                                        key=f"activo_{carrera_cod}_{d.id}",
                                     )
                                     if new_activo != d.activo:
                                         changes.setdefault(d.id, {})["activo"] = new_activo
@@ -291,7 +305,7 @@ with tab_dictados:
                                     new_virtual = st.checkbox(
                                         "Virtual",
                                         value=d.virtual,
-                                        key=f"virtual_{d.id}",
+                                        key=f"virtual_{carrera_cod}_{d.id}",
                                     )
                                     if new_virtual != d.virtual:
                                         changes.setdefault(d.id, {})["virtual"] = new_virtual

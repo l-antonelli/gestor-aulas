@@ -100,6 +100,8 @@ def load_materias(session: Session) -> dict:
         if pd.notna(horas_raw) and str(horas_raw).strip() != "-":
             try:
                 horas = int(float(horas_raw))
+                if horas <= 0:
+                    horas = None
             except (ValueError, TypeError):
                 stats["warnings"].append(f"{codigo}: horas invalidas '{horas_raw}'")
 
@@ -112,6 +114,10 @@ def load_materias(session: Session) -> dict:
         if periodo not in ("anual", "cuatrimestral"):
             stats["warnings"].append(f"{codigo}: periodo invalido '{periodo}', usando 'cuatrimestral'")
             periodo = "cuatrimestral"
+
+        # Parse electiva/optativa
+        electiva_raw = row.get("electiva", False)
+        optativa = bool(electiva_raw) if pd.notna(electiva_raw) else False
 
         # Skip if already exists
         existing = materia_crud.get(session, codigo)
@@ -126,6 +132,7 @@ def load_materias(session: Session) -> dict:
             cupo=None,
             horas_semanales=horas,
             periodo=periodo,
+            optativa=optativa,
         )
         session.add(materia)
         stats["created"] += 1
@@ -229,6 +236,10 @@ def load_carreras_and_planes(session: Session) -> dict:
         corr_raw = str(row["correlativas"]).strip()
         correlativas = "" if corr_raw in ("-", "", "nan") else corr_raw
 
+        # Parse electiva/optativa
+        electiva_raw = row.get("electiva", False)
+        pe_optativa = bool(electiva_raw) if pd.notna(electiva_raw) else False
+
         # Check if materia exists
         materia = materia_crud.get(session, materia_codigo)
         if materia is None:
@@ -265,6 +276,7 @@ def load_carreras_and_planes(session: Session) -> dict:
             anio_plan=anio,
             cuatrimestre_plan=cuatrimestre,
             correlativas=correlativas,
+            optativa=pe_optativa,
         )
         session.add(plan)
         stats["planes_created"] += 1

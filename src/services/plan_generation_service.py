@@ -1,10 +1,12 @@
 """Service for generating a PlanificacionCursada from a Schedule."""
 
+import math
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import time, timedelta, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from typing import Optional
 from sqlmodel import col
@@ -26,6 +28,314 @@ class PlanGenerationResult:
     horarios_created: int = 0
     errors: list[str] = field(default_factory=list)
     comision_flags: list[str] = field(default_factory=list)
+
+
+# =============================================================================
+# Preview: analyze schedule entries before generating a plan
+# =============================================================================
+
+@dataclass
+class EntryPreview:
+    """A single schedule entry in the preview."""
+    entry_id: str
+    dia: str
+    hora_inicio: time
+    hora_fin: time
+    comision_asignada: int  # 1-based comision number
+
+
+@dataclass
+class MateriaPreview:
+    """Preview of how a materia would be split into comisiones."""
+    materia_codigo: str
+    materia_nombre: str
+    horas_semanales: Optional[int]
+    total_horas_schedule: float
+    n_comisiones: int
+    max_duplicados: int  # max entries in the same time slot
+    flag: str  # "exact", "duplicates", "uncertain", "no_data"
+    flag_detail: str  # human-readable explanation
+    entries: list[EntryPreview] = field(default_factory=list)
+
+
+@dataclass
+class SchedulePreviewResult:
+    """Full preview of plan generation from a schedule."""
+    materias: list[MateriaPreview] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def _calc_entry_hours(hora_inicio: time, hora_fin: time) -> float:
+    """Calculate hours between two times, handling midnight crossover."""
+    start_min = hora_inicio.hour * 60 + hora_inicio.minute
+    end_min = hora_fin.hour * 60 + hora_fin.minute
+    if end_min <= start_min:
+        # Midnight crossover: e.g., 21:00 - 00:00
+        end_min += 24 * 60
+    return (end_min - start_min) / 60
+
+
+def _count_carreras_for_materia(session: Session, materia_codigo: str) -> int:
+    """Count how many distinct carreras a materia belongs to."""
+    from src.database.models import PlanEstudioDB as PE
+    result = session.exec(
+        select(func.count(func.distinct(PE.carrera_codigo)))
+        .where(PE.materia_codigo == materia_codigo)
+    ).one()
+    return result or 0
+
+
+def _derive_comisiones(
+    entries: list[ScheduleEntryDB],
+    horas_semanales: Optional[int],
+    optativa: bool,
+    n_carreras: int,
+) -> tuple[int, int, str, str]:
+    """Derive comision count using simplified rules.
+
+    Rules:
+    1. Optativa -> always 1
+    2. Exclusive to 1 carrera -> always 1
+    3. Shared (>1 carrera) -> total_hours / horas_semanales ONLY if exact integer >= 1.
+       Otherwise flag for correction.
+
+    Returns: (n_comisiones, max_duplicados, flag, flag_detail)
+    """
+    slot_counts = Counter(
+        (e.dia, e.hora_inicio, e.hora_fin) for e in entries
+    )
+    max_dupes = max(slot_counts.values()) if slot_counts else 1
+    total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in entries)
+
+    # Rule 1: optativa
+    if optativa:
+        return 1, max_dupes, "exact", (
+            f"Materia optativa: 1 comision por defecto."
+        )
+
+    # Rule 2: exclusive to 1 carrera
+    if n_carreras <= 1:
+        return 1, max_dupes, "exact", (
+            f"Materia exclusiva de 1 carrera: 1 comision por defecto."
+        )
+
+    # Rule 3: shared across multiple carreras
+    if not horas_semanales or horas_semanales <= 0:
+        return 1, max_dupes, "no_data", (
+            f"Materia compartida ({n_carreras} carreras) sin horas_semanales. "
+            f"Asumiendo 1 comision. Corregir horas_semanales para derivar correctamente."
+        )
+
+    ratio = total_hours / horas_semanales
+
+    # Only accept if exact integer
+    if ratio >= 1 and abs(ratio - round(ratio)) < 0.01:
+        n = round(ratio)
+        return n, max_dupes, "exact", (
+            f"Materia compartida ({n_carreras} carreras): "
+            f"{total_hours:.0f}h / {horas_semanales}h = {n} comisiones."
+        )
+    else:
+        return 1, max_dupes, "uncertain", (
+            f"Materia compartida ({n_carreras} carreras): "
+            f"{total_hours:.0f}h / {horas_semanales}h = {ratio:.2f} (no es entero). "
+            f"Asumiendo 1 comision. Verificar horas_semanales."
+        )
+
+
+def _assign_entries_to_comisiones(
+    entries: list[ScheduleEntryDB],
+    n_comisiones: int,
+) -> list[EntryPreview]:
+    """Distribute entries among comisiones using duplicate-aware round-robin.
+
+    For entries sharing the same time slot, each goes to a different comision.
+    Remaining unique entries are distributed round-robin.
+    """
+    # Sort entries
+    dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
+                 "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
+    sorted_entries = sorted(
+        entries,
+        key=lambda e: (dia_order.get(e.dia, 9), e.hora_inicio, e.hora_fin)
+    )
+
+    # Group by time slot
+    slot_groups: dict[tuple, list[ScheduleEntryDB]] = {}
+    for e in sorted_entries:
+        key = (e.dia, e.hora_inicio, e.hora_fin)
+        slot_groups.setdefault(key, []).append(e)
+
+    # Assign: for each time slot group, distribute entries round-robin
+    # Track how many entries each comision has for balancing
+    comision_counts = Counter()
+    assignments: dict[str, int] = {}  # entry_id -> comision number (1-based)
+
+    for slot_key in sorted(slot_groups.keys(), key=lambda k: (dia_order.get(k[0], 9), k[1], k[2])):
+        group = slot_groups[slot_key]
+        if len(group) > 1:
+            # Parallel entries — each to a different comision
+            # Sort comisiones by current count to balance
+            available = sorted(range(1, n_comisiones + 1), key=lambda c: comision_counts[c])
+            for i, entry in enumerate(group):
+                com_num = available[i % len(available)]
+                assignments[entry.id] = com_num
+                comision_counts[com_num] += 1
+        else:
+            # Single entry — assign to least loaded comision
+            com_num = min(range(1, n_comisiones + 1), key=lambda c: comision_counts[c])
+            assignments[group[0].id] = com_num
+            comision_counts[com_num] += 1
+
+    return [
+        EntryPreview(
+            entry_id=e.id,
+            dia=e.dia,
+            hora_inicio=e.hora_inicio,
+            hora_fin=e.hora_fin,
+            comision_asignada=assignments.get(e.id, 1),
+        )
+        for e in sorted_entries
+    ]
+
+
+def preview_plan_from_schedule(
+    session: Session,
+    schedule_id: str,
+) -> SchedulePreviewResult:
+    """Preview how a plan would be generated from a schedule, without creating anything.
+
+    Returns analysis per materia: proposed comision count, flags, entry assignments.
+    """
+    result = SchedulePreviewResult()
+
+    schedule = schedule_crud.get(session, schedule_id)
+    if schedule is None:
+        result.errors.append(f"Schedule '{schedule_id}' no encontrado")
+        return result
+
+    entries = session.exec(
+        select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == schedule_id)
+    ).all()
+
+    if not entries:
+        result.errors.append("El schedule no tiene entries")
+        return result
+
+    # Group by materia
+    materia_entries: dict[str, list[ScheduleEntryDB]] = {}
+    for entry in entries:
+        materia_entries.setdefault(entry.codigo_materia, []).append(entry)
+
+    for materia_codigo, mat_entries in materia_entries.items():
+        materia = materia_crud.get(session, materia_codigo)
+        mat_nombre = materia.nombre if materia else materia_codigo
+        h_sem = materia.horas_semanales if materia else None
+        optativa = materia.optativa if materia else False
+        n_carreras = _count_carreras_for_materia(session, materia_codigo)
+
+        total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in mat_entries)
+
+        n_comisiones, max_dupes, flag, flag_detail = _derive_comisiones(
+            mat_entries, h_sem, optativa, n_carreras
+        )
+
+        entry_previews = _assign_entries_to_comisiones(mat_entries, n_comisiones)
+
+        preview = MateriaPreview(
+            materia_codigo=materia_codigo,
+            materia_nombre=mat_nombre,
+            horas_semanales=h_sem,
+            total_horas_schedule=total_hours,
+            n_comisiones=n_comisiones,
+            max_duplicados=max_dupes,
+            flag=flag,
+            flag_detail=flag_detail,
+            entries=entry_previews,
+        )
+        result.materias.append(preview)
+
+    # Sort: flagged first (uncertain > no_data > duplicates > exact)
+    flag_order = {"uncertain": 0, "no_data": 1, "duplicates": 2, "exact": 3}
+    result.materias.sort(key=lambda m: (flag_order.get(m.flag, 9), m.materia_codigo))
+
+    return result
+
+
+def generate_plan_from_preview(
+    session: Session,
+    schedule_id: str,
+    nombre: str,
+    ciclo_id: str,
+    materia_previews: list[MateriaPreview],
+) -> PlanGenerationResult:
+    """Generate a plan using the (possibly user-corrected) preview data.
+
+    Args:
+        session: Database session.
+        schedule_id: Source schedule ID.
+        nombre: Name for the plan.
+        ciclo_id: Ciclo this plan belongs to.
+        materia_previews: List of MateriaPreview with comision assignments.
+    """
+    result = PlanGenerationResult()
+
+    plan_id = str(uuid.uuid4())
+    plan = PlanificacionCursadaDB(
+        id=plan_id,
+        nombre=nombre,
+        ciclo_id=ciclo_id,
+        activo=False,
+        schedule_id=schedule_id,
+    )
+    session.add(plan)
+    session.flush()
+
+    for mp in materia_previews:
+        materia = materia_crud.get(session, mp.materia_codigo)
+        cupo = (materia.cupo or 0) if materia else 0
+
+        # Group entries by comision number
+        com_entries: dict[int, list[EntryPreview]] = {}
+        for ep in mp.entries:
+            com_entries.setdefault(ep.comision_asignada, []).append(ep)
+
+        for com_num in sorted(com_entries.keys()):
+            comision_id = str(uuid.uuid4())
+            comision_key = f"{mp.materia_codigo}-{com_num:03d}"
+
+            comision = ComisionDB(
+                id=comision_id,
+                materia_codigo=mp.materia_codigo,
+                plan_cursada_id=plan_id,
+                comision_key=comision_key,
+                nombre=f"Comision {com_num}",
+                numero=com_num,
+                cupo=cupo,
+            )
+            session.add(comision)
+            session.flush()
+            result.comisiones_created += 1
+
+            for ep in com_entries[com_num]:
+                horario = HorarioDB(
+                    id=str(uuid.uuid4()),
+                    comision_id=comision_id,
+                    codigo_materia=mp.materia_codigo,
+                    dia=ep.dia,
+                    hora_inicio=ep.hora_inicio,
+                    hora_fin=ep.hora_fin,
+                )
+                session.add(horario)
+                result.horarios_created += 1
+
+        if mp.flag in ("uncertain", "no_data"):
+            result.comision_flags.append(f"{mp.materia_codigo}: {mp.flag_detail}")
+
+    session.commit()
+    session.refresh(plan)
+    result.plan = plan
+    return result
 
 
 def generate_plan_from_schedule(
@@ -236,6 +546,60 @@ class TimetableBlock:
     hora_inicio: time
     hora_fin: time
     virtual: bool
+    en_periodo: Optional[bool] = None  # True=en su cuatrimestre planificado, False=fuera, None=indeterminado
+
+
+def _build_periodo_map(
+    session: Session, ciclo_id: str, mat_codigos: list[str],
+) -> dict[str, Optional[bool]]:
+    """Determine if each materia is in its planned cuatrimestre for a ciclo.
+
+    Returns dict materia_codigo -> True (en periodo), False (fuera), None (indeterminado).
+    """
+    from src.database.models import CicloDB
+
+    ciclo = session.get(CicloDB, ciclo_id)
+    if not ciclo:
+        return {c: None for c in mat_codigos}
+
+    # "1C" or "2C"
+    ciclo_cuatri = f"{ciclo.numero}C"
+
+    # Get plan version ids for this ciclo
+    pv_ids = session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all()
+
+    if not pv_ids:
+        return {c: None for c in mat_codigos}
+
+    # Get cuatrimestre_plan for each materia in the plan versions
+    rows = session.exec(
+        select(PlanEstudioDB.materia_codigo, PlanEstudioDB.cuatrimestre_plan)
+        .where(PlanEstudioDB.plan_version_id.in_(pv_ids))
+        .where(col(PlanEstudioDB.materia_codigo).in_(mat_codigos))
+    ).all()
+
+    # Group cuatrimestres by materia (may appear in multiple carreras)
+    mat_cuatris: dict[str, set[str]] = {}
+    for mat_cod, cuatri in rows:
+        if cuatri:
+            mat_cuatris.setdefault(mat_cod, set()).add(cuatri)
+
+    result: dict[str, Optional[bool]] = {}
+    for cod in mat_codigos:
+        cuatris = mat_cuatris.get(cod)
+        if not cuatris:
+            result[cod] = None  # No info de cuatrimestre en el plan
+        elif "Anual" in cuatris or "anual" in cuatris:
+            result[cod] = True  # Anuales siempre estan en periodo
+        elif ciclo_cuatri in cuatris:
+            result[cod] = True
+        else:
+            result[cod] = False
+
+    return result
 
 
 def build_timetable_grid(
@@ -243,6 +607,7 @@ def build_timetable_grid(
     plan_id: str,
     config: ConfiguracionHoraria,
     filtered_materia_codigos: Optional[set[str]] = None,
+    ciclo_id: Optional[str] = None,
 ) -> dict[str, list[TimetableBlock]]:
     """Build a timetable grid data structure for visualization.
 
@@ -251,6 +616,7 @@ def build_timetable_grid(
         plan_id: Plan to build the grid for.
         config: Scheduling configuration (for days).
         filtered_materia_codigos: If provided, only include these materias.
+        ciclo_id: If provided, calculates en_periodo for each block.
 
     Returns:
         Dict mapping day name -> list of TimetableBlock sorted by hora_inicio.
@@ -277,6 +643,11 @@ def build_timetable_grid(
     ).all()
     mat_info = {m.codigo: m for m in materias_db}
 
+    # Build periodo map if ciclo provided
+    periodo_map: dict[str, Optional[bool]] = {}
+    if ciclo_id:
+        periodo_map = _build_periodo_map(session, ciclo_id, mat_codigos)
+
     # Get horarios
     horarios = session.exec(
         select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
@@ -299,6 +670,7 @@ def build_timetable_grid(
             hora_inicio=h.hora_inicio,
             hora_fin=h.hora_fin,
             virtual=is_virtual,
+            en_periodo=periodo_map.get(com.materia_codigo),
         )
         grid.setdefault(h.dia, []).append(block)
 

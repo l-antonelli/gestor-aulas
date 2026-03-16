@@ -60,6 +60,7 @@ class PlanEstudioDB(SQLModel, table=True):
     anio_plan: Optional[int] = Field(default=None, ge=1, le=6)
     cuatrimestre_plan: Optional[str] = Field(default=None)  # "1C", "2C", "Anual", or None
     correlativas: str = Field(default="")
+    optativa: bool = Field(default=False)
 
 
 class CorrelativaDB(SQLModel, table=True):
@@ -170,6 +171,7 @@ class MateriaDB(SQLModel, table=True):
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
     active: bool = Field(default=True)
     virtual: bool = Field(default=False)
+    optativa: bool = Field(default=False)
 
     # Relationships
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")

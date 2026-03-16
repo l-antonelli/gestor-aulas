@@ -22,9 +22,14 @@ from src.services.schedule_service import (
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
+    generate_plan_from_preview,
+    preview_plan_from_schedule,
     activate_plan,
     generate_time_slots,
     build_timetable_grid,
+    MateriaPreview,
+    EntryPreview,
+    SchedulePreviewResult,
 )
 from src.services.clase_generation_service import generate_clases_for_plan
 from src.services.validations import (
@@ -182,25 +187,218 @@ with tab_cronogramas:
                             st.success(f"Cronograma '{s.nombre}' eliminado")
                             st.rerun()
 
-                    if st.button("Generar Plan", type="primary", key=f"btn_gen_plan_{s.id}"):
+                    # --- Preview / Generate flow ---
+                    preview_key = f"preview_{s.id}"
+
+                    if st.button("Previsualizar comisiones", type="primary", key=f"btn_preview_{s.id}"):
                         with next(get_session()) as session:
-                            result = generate_plan_from_schedule(
-                                session, s.id, plan_nombre, sel_ciclo_crono
-                            )
-                        if result.errors:
-                            for err in result.errors:
+                            preview_result = preview_plan_from_schedule(session, s.id)
+                        if preview_result.errors:
+                            for err in preview_result.errors:
                                 st.error(err)
-                        if result.comision_flags:
-                            st.info("Notas sobre derivacion de comisiones:")
-                            for flag in result.comision_flags:
-                                st.text(f"  - {flag}")
-                        if result.plan:
-                            st.success(
-                                f"Plan '{plan_nombre}' generado: "
-                                f"{result.comisiones_created} comisiones, "
-                                f"{result.horarios_created} horarios"
-                            )
+                        else:
+                            # Store in session state as dicts for serialization
+                            st.session_state[preview_key] = {
+                                "materias": [
+                                    {
+                                        "materia_codigo": mp.materia_codigo,
+                                        "materia_nombre": mp.materia_nombre,
+                                        "horas_semanales": mp.horas_semanales,
+                                        "total_horas_schedule": mp.total_horas_schedule,
+                                        "n_comisiones": mp.n_comisiones,
+                                        "max_duplicados": mp.max_duplicados,
+                                        "flag": mp.flag,
+                                        "flag_detail": mp.flag_detail,
+                                        "entries": [
+                                            {
+                                                "entry_id": ep.entry_id,
+                                                "dia": ep.dia,
+                                                "hora_inicio": ep.hora_inicio,
+                                                "hora_fin": ep.hora_fin,
+                                                "comision_asignada": ep.comision_asignada,
+                                            }
+                                            for ep in mp.entries
+                                        ],
+                                    }
+                                    for mp in preview_result.materias
+                                ]
+                            }
                             st.rerun()
+
+                    # --- Show preview if available ---
+                    if preview_key in st.session_state:
+                        preview_data = st.session_state[preview_key]
+                        materias_preview = preview_data["materias"]
+
+                        st.divider()
+                        st.markdown("### Previsualizacion de comisiones")
+
+                        n_flagged = sum(
+                            1 for mp in materias_preview
+                            if mp["flag"] in ("uncertain", "no_data")
+                        )
+                        n_total = len(materias_preview)
+                        total_comisiones = sum(mp["n_comisiones"] for mp in materias_preview)
+
+                        mc1, mc2, mc3 = st.columns(3)
+                        mc1.metric("Materias", n_total)
+                        mc2.metric("Comisiones totales", total_comisiones)
+                        mc3.metric("Requieren revision", n_flagged)
+
+                        if n_flagged > 0:
+                            st.warning(
+                                f"{n_flagged} materia(s) tienen derivacion incierta. "
+                                f"Revisa y corregí antes de generar el plan."
+                            )
+
+                        # Render each materia
+                        for mp_idx, mp in enumerate(materias_preview):
+                            flag = mp["flag"]
+                            flag_icons = {
+                                "exact": "✅",
+                                "duplicates": "🔄",
+                                "uncertain": "⚠️",
+                                "no_data": "❓",
+                            }
+                            icon = flag_icons.get(flag, "")
+
+                            header = (
+                                f"{icon} {mp['materia_codigo']} — {mp['materia_nombre']} "
+                                f"| {mp['n_comisiones']} comision(es)"
+                            )
+                            expanded = flag in ("uncertain", "no_data")
+
+                            with st.expander(header, expanded=expanded):
+                                # Info row
+                                ic1, ic2, ic3, ic4 = st.columns(4)
+                                ic1.markdown(f"**Horas semanales:**")
+                                new_h_sem = ic2.number_input(
+                                    "h/sem",
+                                    value=mp["horas_semanales"] or 0,
+                                    min_value=0,
+                                    key=f"prev_hsem_{s.id}_{mp_idx}",
+                                    label_visibility="collapsed",
+                                )
+                                ic3.markdown(f"**Comisiones:**")
+                                new_n_com = ic4.number_input(
+                                    "n_com",
+                                    value=mp["n_comisiones"],
+                                    min_value=1,
+                                    key=f"prev_ncom_{s.id}_{mp_idx}",
+                                    label_visibility="collapsed",
+                                )
+
+                                # Update stored values if user changed them
+                                if new_h_sem != (mp["horas_semanales"] or 0):
+                                    mp["horas_semanales"] = new_h_sem if new_h_sem > 0 else None
+                                if new_n_com != mp["n_comisiones"]:
+                                    mp["n_comisiones"] = new_n_com
+
+                                st.caption(
+                                    f"Total horas en cronograma: {mp['total_horas_schedule']:.1f}h · "
+                                    f"Max duplicados: {mp['max_duplicados']} · "
+                                    f"Flag: {mp['flag_detail']}"
+                                )
+
+                                # Show entries grouped by comision
+                                entry_list = mp["entries"]
+                                dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
+                                             "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
+
+                                for com_num in range(1, mp["n_comisiones"] + 1):
+                                    com_entries = [
+                                        e for e in entry_list
+                                        if e["comision_asignada"] == com_num
+                                    ]
+                                    com_entries.sort(
+                                        key=lambda e: (dia_order.get(e["dia"], 9), e["hora_inicio"])
+                                    )
+
+                                    st.markdown(f"**Comision {com_num}** ({len(com_entries)} clases)")
+                                    for e_idx, e in enumerate(com_entries):
+                                        ec1, ec2 = st.columns([4, 1])
+                                        hi = e["hora_inicio"]
+                                        hf = e["hora_fin"]
+                                        hi_str = hi.strftime("%H:%M") if hasattr(hi, "strftime") else str(hi)
+                                        hf_str = hf.strftime("%H:%M") if hasattr(hf, "strftime") else str(hf)
+                                        with ec1:
+                                            st.text(f"  {e['dia']:12s} {hi_str} - {hf_str}")
+                                        with ec2:
+                                            new_com = st.number_input(
+                                                "Com",
+                                                value=e["comision_asignada"],
+                                                min_value=1,
+                                                max_value=mp["n_comisiones"],
+                                                key=f"prev_ecom_{s.id}_{mp_idx}_{com_num}_{e_idx}",
+                                                label_visibility="collapsed",
+                                            )
+                                            if new_com != e["comision_asignada"]:
+                                                e["comision_asignada"] = new_com
+
+                        # --- Generate button ---
+                        st.divider()
+                        if st.button(
+                            "Confirmar y generar plan",
+                            type="primary",
+                            key=f"btn_confirm_gen_{s.id}",
+                        ):
+                            # Reconstruct MateriaPreview objects from session state
+                            final_previews = []
+                            for mp in materias_preview:
+                                entry_previews = [
+                                    EntryPreview(
+                                        entry_id=e["entry_id"],
+                                        dia=e["dia"],
+                                        hora_inicio=e["hora_inicio"],
+                                        hora_fin=e["hora_fin"],
+                                        comision_asignada=e["comision_asignada"],
+                                    )
+                                    for e in mp["entries"]
+                                ]
+                                final_previews.append(MateriaPreview(
+                                    materia_codigo=mp["materia_codigo"],
+                                    materia_nombre=mp["materia_nombre"],
+                                    horas_semanales=mp["horas_semanales"],
+                                    total_horas_schedule=mp["total_horas_schedule"],
+                                    n_comisiones=mp["n_comisiones"],
+                                    max_duplicados=mp["max_duplicados"],
+                                    flag=mp["flag"],
+                                    flag_detail=mp["flag_detail"],
+                                    entries=entry_previews,
+                                ))
+
+                            # Also update horas_semanales in DB if user corrected
+                            with next(get_session()) as session:
+                                for mp in materias_preview:
+                                    if mp["horas_semanales"]:
+                                        mat_db = session.get(MateriaDB, mp["materia_codigo"])
+                                        if mat_db and mat_db.horas_semanales != mp["horas_semanales"]:
+                                            mat_db.horas_semanales = mp["horas_semanales"]
+                                            session.add(mat_db)
+                                session.commit()
+
+                            with next(get_session()) as session:
+                                gen_result = generate_plan_from_preview(
+                                    session, s.id, plan_nombre,
+                                    sel_ciclo_crono, final_previews
+                                )
+
+                            if gen_result.errors:
+                                for err in gen_result.errors:
+                                    st.error(err)
+                            if gen_result.comision_flags:
+                                st.info("Notas:")
+                                for flag_msg in gen_result.comision_flags:
+                                    st.text(f"  - {flag_msg}")
+                            if gen_result.plan:
+                                # Clean up preview state
+                                del st.session_state[preview_key]
+                                st.success(
+                                    f"Plan '{plan_nombre}' generado: "
+                                    f"{gen_result.comisiones_created} comisiones, "
+                                    f"{gen_result.horarios_created} horarios"
+                                )
+                                st.rerun()
 
         else:
             st.info("No hay cronogramas para este ciclo.")
@@ -622,7 +820,7 @@ with tab_detalle:
                                     )
                                 with col_cupo:
                                     new_cupo = st.number_input(
-                                        "Cupo", value=com.cupo, min_value=1,
+                                        "Cupo", value=max(com.cupo, 1), min_value=1,
                                         key=f"com_cupo_{com.id}",
                                     )
                                 with col_del:
@@ -837,14 +1035,27 @@ with tab_grilla:
                                 g_query = g_query.where(PlanEstudioDB.cuatrimestre_plan == g_filtro_cuatri)
                         g_filtered_mats = set(session.exec(g_query.distinct()).all())
 
+                # --- Filter: solo materias del cuatrimestre ---
+                solo_cuatri = st.checkbox(
+                    "Solo materias del cuatrimestre del ciclo",
+                    value=False,
+                    key="grilla_solo_cuatri",
+                )
+
                 st.divider()
 
                 # --- Build grid data ---
                 with next(get_session()) as session:
                     config = get_or_create_config(session)
                     grid_data = build_timetable_grid(
-                        session, sel_plan_grilla_id, config, g_filtered_mats
+                        session, sel_plan_grilla_id, config, g_filtered_mats,
+                        ciclo_id=sel_ciclo_grilla,
                     )
+
+                # Apply cuatrimestre filter if checkbox is checked
+                if solo_cuatri and grid_data:
+                    for dia in grid_data:
+                        grid_data[dia] = [b for b in grid_data[dia] if b.en_periodo is not False]
 
                 time_slots = generate_time_slots(config)
 
@@ -906,31 +1117,64 @@ with tab_grilla:
                                     for b in overlapping:
                                         color = mat_colors.get(b.materia_codigo, "#E0E0E0")
                                         v_tag = " [V]" if b.virtual else ""
-                                        label = f"{b.materia_codigo}{v_tag}"
+                                        # Indicador de periodo
+                                        if b.en_periodo is False:
+                                            periodo_icon = " ⚠"
+                                            border_style = "border:2px dashed #FF9800;"
+                                        elif b.en_periodo is True:
+                                            periodo_icon = ""
+                                            border_style = ""
+                                        else:
+                                            periodo_icon = " ?"
+                                            border_style = "border:1px dotted #9E9E9E;"
+                                        label = f"{b.materia_codigo}{v_tag}{periodo_icon}"
                                         st.markdown(
                                             f'<div style="background-color:{color};'
                                             f'padding:2px 6px;border-radius:4px;'
-                                            f'margin-bottom:2px;font-size:0.8em;">'
+                                            f'margin-bottom:2px;font-size:0.8em;{border_style}">'
                                             f'<b>{label}</b><br>'
-                                            f'<span style="font-size:0.85em;">{b.comision_nombre}</span>'
+                                            f'<span style="font-size:0.75em;">{b.materia_nombre}</span><br>'
+                                            f'<span style="font-size:0.7em;color:#666;">{b.comision_nombre}</span>'
                                             f'</div>',
                                             unsafe_allow_html=True,
                                         )
 
                     # Color legend
                     st.divider()
-                    st.markdown("**Leyenda:**")
-                    legend_cols = st.columns(min(len(all_mat_codes), 6) or 1)
+
+                    # Build materia name lookup from grid data
+                    mat_nombres_grid = {}
+                    for blocks in grid_data.values():
+                        for b in blocks:
+                            if b.materia_codigo not in mat_nombres_grid:
+                                mat_nombres_grid[b.materia_codigo] = b.materia_nombre
+
+                    st.markdown("**Materias:**")
+                    n_legend_cols = min(len(all_mat_codes), 4) or 1
+                    legend_cols = st.columns(n_legend_cols)
                     for i, code in enumerate(all_mat_codes):
-                        col_idx = i % len(legend_cols)
+                        col_idx = i % n_legend_cols
+                        nombre = mat_nombres_grid.get(code, code)
                         with legend_cols[col_idx]:
                             color = mat_colors[code]
                             st.markdown(
-                                f'<span style="background-color:{color};'
-                                f'padding:2px 8px;border-radius:3px;">'
-                                f'{code}</span>',
+                                f'<div style="background-color:{color};'
+                                f'padding:2px 8px;border-radius:3px;margin-bottom:4px;'
+                                f'font-size:0.85em;">'
+                                f'<b>{code}</b> — {nombre}</div>',
                                 unsafe_allow_html=True,
                             )
+
+                    st.markdown(
+                        '<div style="font-size:0.85em;margin-top:8px;">'
+                        '⚠ <span style="border:2px dashed #FF9800;padding:1px 6px;border-radius:3px;">'
+                        'Fuera del cuatrimestre planificado</span> · '
+                        '? <span style="border:1px dotted #9E9E9E;padding:1px 6px;border-radius:3px;">'
+                        'Sin datos de cuatrimestre</span> · '
+                        '[V] Virtual'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
 
 
 # =============================================================================
