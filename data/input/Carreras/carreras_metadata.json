@@ -1,0 +1,86 @@
+{
+  "A": {
+    "nombre": "Ingenieria Electronica",
+    "titulo_otorgado": "Ingeniero/a electronico/a",
+    "duracion_anios": 5,
+    "cantidad_materias": 43,
+    "dicta_recursado": true
+  },
+  "C": {
+    "nombre": "Ingenieria Civil",
+    "titulo_otorgado": "Ingeniero/a civil",
+    "duracion_anios": 5,
+    "cantidad_materias": 48,
+    "dicta_recursado": true
+  },
+  "E": {
+    "nombre": "Ingenieria Electrica",
+    "titulo_otorgado": "Ingeniero/a electrico/a",
+    "duracion_anios": 5,
+    "cantidad_materias": 47,
+    "dicta_recursado": true
+  },
+  "G": {
+    "nombre": "Agrimensura",
+    "titulo_otorgado": "Ingeniero/a agrimensor",
+    "duracion_anios": 5,
+    "cantidad_materias": 45,
+    "dicta_recursado": true
+  },
+  "I": {
+    "nombre": "Ingenieria Industrial",
+    "titulo_otorgado": "Ingeniero/a industrial",
+    "duracion_anios": 5,
+    "cantidad_materias": 48,
+    "dicta_recursado": true
+  },
+  "IA": {
+    "nombre": "Tecnicatura Universitaria en Inteligencia Artificial",
+    "titulo_otorgado": "Tecnico/a universitario/a en Inteligencia Artificial",
+    "duracion_anios": 3,
+    "cantidad_materias": 26,
+    "dicta_recursado": false
+  },
+  "LF": {
+    "nombre": "Licenciatura en Fisica",
+    "titulo_otorgado": "Licenciado/a en Fisica",
+    "duracion_anios": 5,
+    "cantidad_materias": 31,
+    "dicta_recursado": false
+  },
+  "LM": {
+    "nombre": "Licenciatura en Matematica",
+    "titulo_otorgado": "Licenciado/a en Matematica",
+    "duracion_anios": 5,
+    "cantidad_materias": 26,
+    "dicta_recursado": false
+  },
+  "M": {
+    "nombre": "Ingenieria Mecanica",
+    "titulo_otorgado": "Ingeniero/a mecanico/a",
+    "duracion_anios": 5,
+    "cantidad_materias": 49,
+    "dicta_recursado": true
+  },
+  "PF": {
+    "nombre": "Profesorado en Fisica",
+    "titulo_otorgado": "Profesor/a en Fisica",
+    "duracion_anios": 4,
+    "cantidad_materias": 31,
+    "dicta_recursado": false
+  },
+  "PM": {
+    "nombre": "Profesorado en Matematica",
+    "titulo_otorgado": "Profesor/a en Matematica",
+    "duracion_anios": 4,
+    "cantidad_materias": 28,
+    "dicta_recursado": false
+  },
+  "R": {
+    "nombre": "Licenciatura en Ciencias de la Computacion",
+    "titulo_otorgado": "Licenciado/a en Ciencias de la Computacion",
+    "duracion_anios": 5,
+    "cantidad_materias": 30,
+    "dicta_recursado": false
+  }
+}

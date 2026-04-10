@@ -2,9 +2,10 @@
 Load initial data from Excel files into the database.
 
 Reads from data/input/:
-- aulas/aulas.xlsx              -> Aula records
-- Carreras/Maestro materias.xlsx -> Materia records
-- Carreras/Maestro planes.xlsx   -> Carrera + PlanEstudio records
+- aulas/aulas.xlsx                    -> Aula records
+- Carreras/Maestro materias.xlsx      -> Materia records
+- Carreras/Maestro planes.xlsx        -> Carrera + PlanEstudio records
+- Carreras/carreras_metadata.json     -> Carrera names, titles, etc.
 
 Los cronogramas de horarios se cargan desde la pagina de Planes en la UI,
 donde se asocian a un plan de cursada (evitando datos huerfanos).
@@ -16,6 +17,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -38,6 +40,7 @@ DATA_DIR = project_root / "data" / "input"
 AULAS_FILE = DATA_DIR / "aulas" / "aulas.xlsx"
 MAESTRO_MATERIAS = DATA_DIR / "Carreras" / "Maestro materias.xlsx"
 MAESTRO_PLANES = DATA_DIR / "Carreras" / "Maestro planes.xlsx"
+CARRERAS_METADATA = DATA_DIR / "Carreras" / "carreras_metadata.json"
 
 
 # =============================================================================
@@ -286,6 +289,41 @@ def load_carreras_and_planes(session: Session) -> dict:
 
 
 # =============================================================================
+# Step 4: Apply Carreras Metadata
+# =============================================================================
+
+def apply_carreras_metadata(session: Session) -> dict:
+    """Update carreras with metadata from carreras_metadata.json."""
+    stats = {"updated": 0, "skipped": 0, "warnings": []}
+
+    if not CARRERAS_METADATA.exists():
+        stats["warnings"].append(f"Archivo no encontrado: {CARRERAS_METADATA}")
+        return stats
+
+    with open(CARRERAS_METADATA, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    for codigo, data in metadata.items():
+        carrera = carrera_crud.get(session, codigo)
+        if carrera is None:
+            stats["warnings"].append(f"{codigo}: carrera no existe en DB, omitido")
+            stats["skipped"] += 1
+            continue
+
+        carrera.nombre = data.get("nombre", carrera.nombre)
+        carrera.titulo_otorgado = data.get("titulo_otorgado", carrera.titulo_otorgado)
+        carrera.duracion_anios = data.get("duracion_anios", carrera.duracion_anios)
+        carrera.cantidad_materias = data.get("cantidad_materias", carrera.cantidad_materias)
+        carrera.dicta_recursado = data.get("dicta_recursado", carrera.dicta_recursado)
+
+        session.add(carrera)
+        stats["updated"] += 1
+
+    session.commit()
+    return stats
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -357,6 +395,18 @@ def main():
             for w in p_stats["warnings"][:10]:
                 print(f"    - {w}")
 
+        # Step 4: Carreras Metadata
+        print(f"\n{'=' * 60}")
+        print("STEP 4: Applying Carreras Metadata")
+        print("=" * 60)
+        c_stats = apply_carreras_metadata(session)
+        print(f"  Updated: {c_stats['updated']}")
+        print(f"  Skipped: {c_stats['skipped']}")
+        if c_stats["warnings"]:
+            print(f"  Warnings ({len(c_stats['warnings'])}):")
+            for w in c_stats["warnings"]:
+                print(f"    - {w}")
+
     # Summary
     print(f"\n{'=' * 60}")
     print("SUMMARY")
@@ -366,8 +416,9 @@ def main():
     print(f"  Carreras:   {p_stats['carreras_created']} created")
     print(f"  Versions:   {p_stats['versions_created']} created")
     print(f"  Planes:     {p_stats['planes_created']} created")
+    print(f"  Carreras:   {c_stats['updated']} updated with metadata")
     total_warnings = (len(a_stats["warnings"]) + len(m_stats["warnings"])
-                      + len(p_stats["warnings"]))
+                      + len(p_stats["warnings"]) + len(c_stats["warnings"]))
     print(f"  Warnings:   {total_warnings}")
     print()
     print("NOTA: Los cronogramas de horarios se cargan desde la pagina de Planes en la UI.")
