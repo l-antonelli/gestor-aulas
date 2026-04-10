@@ -369,7 +369,7 @@ def render_custom_carrera_page():
                                 st.markdown("---")
                                 st.markdown(f"**Asociar Materia {period_key}**")
 
-                                all_materias = materia_service.get_all(session)
+                                all_materias = materia_service.get_all(session, limit=10000)
                                 associated_codigos = {m.codigo for m, _, _ in materias_anuales}
                                 available = [m for m in all_materias if m.codigo not in associated_codigos and m.periodo == periodo_filter]
 

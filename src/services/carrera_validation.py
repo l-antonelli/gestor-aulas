@@ -6,9 +6,10 @@ including materia count validation and progress tracking.
 """
 
 from typing import Dict, List
-from sqlmodel import Session
+from sqlmodel import Session, select, func
 
 from src.services.crud_services import carrera_service
+from src.database.models import PlanEstudioDB
 from src.domain.problem.carrera import Carrera
 
 
@@ -102,9 +103,23 @@ def get_carrera_status(session: Session, carrera_codigo: str) -> CarreraValidati
     if carrera is None:
         raise ValueError(f"Carrera {carrera_codigo} not found")
     
-    # Get assigned materias count
-    materias = carrera_service.get_materias(session, carrera_codigo)
-    materias_asignadas = len(materias)
+    # Use the latest plan version for counting
+    from src.database.models import PlanCarreraVersionDB
+    latest_version = session.exec(
+        select(PlanCarreraVersionDB)
+        .where(PlanCarreraVersionDB.carrera_codigo == carrera_codigo)
+        .order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+    ).first()
+
+    # Count distinct obligatory materias (cantidad_materias refers to obligatorias only)
+    stmt = (
+        select(func.count(func.distinct(PlanEstudioDB.materia_codigo)))
+        .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
+        .where(PlanEstudioDB.optativa == False)
+    )
+    if latest_version:
+        stmt = stmt.where(PlanEstudioDB.plan_version_id == latest_version.id)
+    materias_asignadas = session.exec(stmt).one()
     
     # Safely get cantidad_materias (handle cases where attribute might not exist)
     cantidad_esperada = getattr(carrera, 'cantidad_materias', None)

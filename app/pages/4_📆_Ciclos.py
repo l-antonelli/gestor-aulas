@@ -4,9 +4,12 @@ import streamlit as st
 from datetime import date
 from sqlmodel import select
 from src.database.connection import get_session, init_db
+from sqlmodel import Session
 from src.database.models import (
     CicloDB, CicloPlanVersionDB, PlanCarreraVersionDB,
     PlanEstudioDB, CarreraDB, DictadoDB, DictadoCicloDB,
+    ScheduleDB, ScheduleEntryDB, PlanificacionCursadaDB,
+    ComisionDB, HorarioDB, ClaseDB,
 )
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
@@ -18,6 +21,53 @@ from src.services.dictado_service import (
 from src.services.crud_services import carrera_service
 
 init_db()
+
+
+def _delete_ciclo_cascade(session: Session, ciclo_id: str) -> None:
+    """Elimina un ciclo y todas sus entidades dependientes en orden."""
+    # 1. Planificaciones: clases -> horarios -> comisiones -> planificacion
+    plans = session.exec(
+        select(PlanificacionCursadaDB).where(PlanificacionCursadaDB.ciclo_id == ciclo_id)
+    ).all()
+    for plan in plans:
+        # Clases
+        clases = session.exec(select(ClaseDB).where(ClaseDB.plan_cursada_id == plan.id)).all()
+        for c in clases:
+            session.delete(c)
+        # Comisiones y sus horarios
+        comisiones = session.exec(select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)).all()
+        for com in comisiones:
+            horarios = session.exec(select(HorarioDB).where(HorarioDB.comision_id == com.id)).all()
+            for h in horarios:
+                session.delete(h)
+            session.delete(com)
+        session.delete(plan)
+
+    # 2. Schedules: entries -> schedule
+    schedules = session.exec(select(ScheduleDB).where(ScheduleDB.ciclo_id == ciclo_id)).all()
+    for sched in schedules:
+        entries = session.exec(select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sched.id)).all()
+        for e in entries:
+            session.delete(e)
+        session.delete(sched)
+
+    # 3. Dictado-ciclo links (no borra los dictados, solo el link)
+    dc_links = session.exec(select(DictadoCicloDB).where(DictadoCicloDB.ciclo_id == ciclo_id)).all()
+    for link in dc_links:
+        session.delete(link)
+
+    # 4. Ciclo-plan version links
+    cpv_links = session.exec(select(CicloPlanVersionDB).where(CicloPlanVersionDB.ciclo_id == ciclo_id)).all()
+    for link in cpv_links:
+        session.delete(link)
+
+    # 5. El ciclo
+    ciclo = session.get(CicloDB, ciclo_id)
+    if ciclo:
+        session.delete(ciclo)
+
+    session.commit()
+
 
 st.set_page_config(page_title="Ciclos", page_icon="📆", layout="wide")
 st.title("📆 Gestion de Ciclos Lectivos")
@@ -71,9 +121,12 @@ with tab_ciclos:
             st.write("")
             if st.button("Eliminar", type="secondary", key="btn_delete_ciclo"):
                 with next(get_session()) as session:
-                    if ciclo_crud.delete(session, ciclo_delete):
+                    try:
+                        _delete_ciclo_cascade(session, ciclo_delete)
                         st.success(f"Ciclo {ciclo_delete} eliminado")
                         st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al eliminar: {e}")
 
     st.divider()
     st.subheader("Nuevo Ciclo")

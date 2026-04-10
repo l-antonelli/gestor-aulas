@@ -872,6 +872,7 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
                     anio_plan=entry.anio_plan,
                     cuatrimestre_plan=entry.cuatrimestre_plan,
                     correlativas=entry.correlativas,
+                    optativa=entry.optativa,
                 )
                 session.add(new_entry)
 
