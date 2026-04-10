@@ -44,6 +44,55 @@ def _run_migrations(eng):
                 # Column already exists — safe to ignore
                 conn.rollback()
 
+    # Migration: make schedules.ciclo_id nullable (SQLite requires table recreation)
+    _migrate_schedules_nullable_ciclo(eng)
+
+
+def _migrate_schedules_nullable_ciclo(eng):
+    """Recreate schedules table so ciclo_id allows NULL.
+
+    SQLite no soporta ALTER COLUMN.  Verificamos con PRAGMA table_info si
+    ciclo_id ya es nullable (notnull == 0).  Si ya lo es, no hacemos nada.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(schedules)").fetchall()
+        if not rows:
+            # Table doesn't exist yet — create_all will handle it
+            return
+
+        # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk)
+        for row in rows:
+            if row[1] == "ciclo_id":
+                if row[3] == 0:
+                    # Already nullable — nothing to do
+                    return
+                break
+        else:
+            # ciclo_id column not found — schema mismatch, skip
+            return
+
+        # Recreate table with nullable ciclo_id
+        logger.info("Migrating schedules table: making ciclo_id nullable")
+        conn.exec_driver_sql("""
+            CREATE TABLE schedules_tmp (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                ciclo_id VARCHAR,
+                nombre VARCHAR NOT NULL,
+                fecha_upload DATE NOT NULL,
+                source_filename VARCHAR NOT NULL DEFAULT '',
+                FOREIGN KEY (ciclo_id) REFERENCES ciclos (id)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO schedules_tmp (id, ciclo_id, nombre, fecha_upload, source_filename)
+            SELECT id, ciclo_id, nombre, fecha_upload, source_filename FROM schedules
+        """)
+        conn.exec_driver_sql("DROP TABLE schedules")
+        conn.exec_driver_sql("ALTER TABLE schedules_tmp RENAME TO schedules")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_schedules_ciclo_id ON schedules (ciclo_id)")
+        conn.commit()
+        logger.info("Migration complete: schedules.ciclo_id is now nullable")
+
 
 def init_db():
     """Initialize database tables. Call once at app startup."""

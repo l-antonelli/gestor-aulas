@@ -2,11 +2,12 @@
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time
+from typing import Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, col
 
-from src.database.models import ScheduleDB, ScheduleEntryDB
+from src.database.models import ScheduleDB, ScheduleEntryDB, MateriaDB
 from src.database.crud import ciclo_crud
 from src.services.horario_loading_service import _resolve_materia_code
 from src.services.horario_file_parser import parse_horarios_file
@@ -20,6 +21,20 @@ class ScheduleCreationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+
+@dataclass
+class ScheduleBlock:
+    """Un bloque en la grilla de un cronograma (entry directo, sin comisiones)."""
+    entry_id: str
+    materia_codigo: str
+    materia_nombre: str
+    hora_inicio: time
+    hora_fin: time
+
+
+# =============================================================================
+# Creation
+# =============================================================================
 
 def create_schedule_from_file(
     session: Session,
@@ -109,6 +124,90 @@ def create_schedule_from_file(
     return result
 
 
+def create_schedule_standalone(
+    session: Session,
+    nombre: str,
+    file,
+    ciclo_id: Optional[str] = None,
+) -> ScheduleCreationResult:
+    """Crear un cronograma sin requerir ciclo.
+
+    Si ciclo_id se provee, valida que exista.  Si no, crea el schedule sin
+    asociacion a ciclo.
+    """
+    result = ScheduleCreationResult()
+
+    if ciclo_id:
+        ciclo = ciclo_crud.get(session, ciclo_id)
+        if ciclo is None:
+            result.errors.append(f"Ciclo '{ciclo_id}' no encontrado")
+            return result
+
+    # Parse the file
+    entries, parse_errors = parse_horarios_file(file)
+    result.errors.extend(parse_errors)
+
+    if not entries:
+        if not parse_errors:
+            result.errors.append("No se encontraron horarios validos en el archivo")
+        return result
+
+    schedule_id = str(uuid.uuid4())
+    source_filename = getattr(file, "name", "unknown")
+
+    schedule = ScheduleDB(
+        id=schedule_id,
+        ciclo_id=ciclo_id,
+        nombre=nombre,
+        fecha_upload=date.today(),
+        source_filename=source_filename,
+    )
+    session.add(schedule)
+    session.flush()
+
+    for i, entry in enumerate(entries):
+        resolution = _resolve_materia_code(session, entry.codigo_materia)
+
+        if resolution.resolution_type == "unresolved":
+            result.errors.append(
+                f"Fila {i+1}: Materia '{entry.codigo_materia}' no existe"
+            )
+            continue
+
+        if resolution.resolution_type == "guarani":
+            result.warnings.append(
+                f"Fila {i+1}: Codigo '{resolution.original_code}' resuelto via "
+                f"codigo_guarani -> '{resolution.resolved_code}'"
+            )
+
+        entry_id = str(uuid.uuid4())
+        schedule_entry = ScheduleEntryDB(
+            id=entry_id,
+            schedule_id=schedule_id,
+            codigo_materia=resolution.resolved_code,
+            dia=entry.dia,
+            hora_inicio=entry.hora_inicio,
+            hora_fin=entry.hora_fin,
+        )
+        session.add(schedule_entry)
+        result.entries_created += 1
+
+    session.commit()
+    session.refresh(schedule)
+    result.schedule = schedule
+    return result
+
+
+# =============================================================================
+# Queries
+# =============================================================================
+
+def get_all_schedules(session: Session) -> list[ScheduleDB]:
+    """Listar todos los cronogramas."""
+    statement = select(ScheduleDB).order_by(ScheduleDB.fecha_upload.desc())  # type: ignore[attr-defined]
+    return list(session.exec(statement).all())
+
+
 def get_schedules_for_ciclo(session: Session, ciclo_id: str) -> list[ScheduleDB]:
     """Get all schedules for a ciclo."""
     statement = select(ScheduleDB).where(ScheduleDB.ciclo_id == ciclo_id)
@@ -121,3 +220,151 @@ def get_schedule_entries(session: Session, schedule_id: str) -> list[ScheduleEnt
         ScheduleEntryDB.schedule_id == schedule_id
     )
     return list(session.exec(statement).all())
+
+
+# =============================================================================
+# Mutations
+# =============================================================================
+
+def duplicate_schedule(
+    session: Session,
+    schedule_id: str,
+    new_name: str,
+) -> ScheduleDB:
+    """Clonar un schedule y todas sus entries con un nuevo nombre."""
+    original = session.get(ScheduleDB, schedule_id)
+    if original is None:
+        raise ValueError(f"Schedule '{schedule_id}' no encontrado")
+
+    new_id = str(uuid.uuid4())
+    clone = ScheduleDB(
+        id=new_id,
+        ciclo_id=original.ciclo_id,
+        nombre=new_name,
+        fecha_upload=date.today(),
+        source_filename=original.source_filename,
+    )
+    session.add(clone)
+    session.flush()
+
+    entries = get_schedule_entries(session, schedule_id)
+    for e in entries:
+        new_entry = ScheduleEntryDB(
+            id=str(uuid.uuid4()),
+            schedule_id=new_id,
+            codigo_materia=e.codigo_materia,
+            dia=e.dia,
+            hora_inicio=e.hora_inicio,
+            hora_fin=e.hora_fin,
+        )
+        session.add(new_entry)
+
+    session.commit()
+    session.refresh(clone)
+    return clone
+
+
+def delete_schedule(session: Session, schedule_id: str) -> None:
+    """Borrar un schedule y todas sus entries."""
+    entries = get_schedule_entries(session, schedule_id)
+    for e in entries:
+        session.delete(e)
+
+    schedule = session.get(ScheduleDB, schedule_id)
+    if schedule:
+        session.delete(schedule)
+
+    session.commit()
+
+
+def add_schedule_entry(
+    session: Session,
+    schedule_id: str,
+    codigo_materia: str,
+    dia: str,
+    hora_inicio: time,
+    hora_fin: time,
+) -> ScheduleEntryDB:
+    """Agregar una entrada a un cronograma existente."""
+    entry = ScheduleEntryDB(
+        id=str(uuid.uuid4()),
+        schedule_id=schedule_id,
+        codigo_materia=codigo_materia,
+        dia=dia,
+        hora_inicio=hora_inicio,
+        hora_fin=hora_fin,
+    )
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return entry
+
+
+def update_schedule_entry(session: Session, entry_id: str, **campos) -> ScheduleEntryDB:
+    """Actualizar campos individuales de una entrada de cronograma."""
+    entry = session.get(ScheduleEntryDB, entry_id)
+    if entry is None:
+        raise ValueError(f"Entry '{entry_id}' no encontrada")
+
+    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia"}
+    for key, value in campos.items():
+        if key not in allowed:
+            raise ValueError(f"Campo '{key}' no permitido")
+        setattr(entry, key, value)
+
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return entry
+
+
+def delete_schedule_entry(session: Session, entry_id: str) -> None:
+    """Eliminar una entrada de cronograma."""
+    entry = session.get(ScheduleEntryDB, entry_id)
+    if entry:
+        session.delete(entry)
+        session.commit()
+
+
+# =============================================================================
+# Grid builder
+# =============================================================================
+
+def build_schedule_grid(
+    session: Session,
+    schedule_id: str,
+) -> dict[str, list[ScheduleBlock]]:
+    """Construir grilla semanal directamente desde las entries de un schedule.
+
+    Analogo a build_timetable_grid pero sin pasar por comisiones/horarios.
+
+    Returns:
+        Dict dia -> lista de ScheduleBlock ordenados por hora_inicio.
+    """
+    entries = get_schedule_entries(session, schedule_id)
+    if not entries:
+        return {}
+
+    # Resolver nombres de materias
+    mat_codigos = list({e.codigo_materia for e in entries})
+    materias = session.exec(
+        select(MateriaDB).where(col(MateriaDB.codigo).in_(mat_codigos))
+    ).all()
+    mat_names = {m.codigo: m.nombre for m in materias}
+
+    grid: dict[str, list[ScheduleBlock]] = {}
+    for e in entries:
+        block = ScheduleBlock(
+            entry_id=e.id,
+            materia_codigo=e.codigo_materia,
+            materia_nombre=mat_names.get(e.codigo_materia, e.codigo_materia),
+            hora_inicio=e.hora_inicio,
+            hora_fin=e.hora_fin,
+        )
+        grid.setdefault(e.dia, []).append(block)
+
+    # Ordenar cada dia por hora_inicio
+    for dia in grid:
+        grid[dia].sort(key=lambda b: b.hora_inicio)
+
+    return grid

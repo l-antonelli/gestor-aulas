@@ -248,7 +248,7 @@ class ScheduleDB(SQLModel, table=True):
     __tablename__ = "schedules"
 
     id: str = Field(primary_key=True)  # UUID
-    ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
+    ciclo_id: Optional[str] = Field(default=None, foreign_key="ciclos.id", index=True)
     nombre: str
     fecha_upload: date
     source_filename: str = Field(default="")

@@ -19,6 +19,7 @@ from src.services.schedule_service import (
     create_schedule_from_file,
     get_schedules_for_ciclo,
     get_schedule_entries,
+    get_all_schedules,
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
@@ -403,9 +404,48 @@ with tab_cronogramas:
         else:
             st.info("No hay cronogramas para este ciclo.")
 
+        # --- Select existing standalone schedule ---
+        st.divider()
+        st.markdown("**Seleccionar cronograma existente**")
+        st.caption("Usa un cronograma cargado desde la pagina Cronogramas.")
+        with next(get_session()) as session:
+            all_scheds = get_all_schedules(session)
+        # Filter out schedules already associated with this ciclo
+        available_scheds = [
+            s for s in all_scheds
+            if s.ciclo_id is None or s.ciclo_id != sel_ciclo_crono
+        ]
+        if available_scheds:
+            sched_options = {
+                s.id: f"{s.nombre} ({s.fecha_upload})"
+                + (f" — ciclo: {s.ciclo_id}" if s.ciclo_id else " — sin ciclo")
+                for s in available_scheds
+            }
+            sel_existing = st.selectbox(
+                "Cronograma",
+                options=["(ninguno)"] + list(sched_options.keys()),
+                format_func=lambda x: sched_options[x] if x != "(ninguno)" else "(ninguno)",
+                key="planes_sel_existing_sched",
+            )
+            if sel_existing and sel_existing != "(ninguno)":
+                if st.button("Asociar al ciclo y usar", key="btn_associate_sched"):
+                    with next(get_session()) as session:
+                        sched_db = session.get(ScheduleDB, sel_existing)
+                        if sched_db:
+                            sched_db.ciclo_id = sel_ciclo_crono
+                            session.add(sched_db)
+                            session.commit()
+                            st.success(
+                                f"Cronograma '{sched_db.nombre}' asociado al ciclo "
+                                f"{sel_ciclo_crono}. Ya aparece arriba."
+                            )
+                            st.rerun()
+        else:
+            st.caption("No hay cronogramas disponibles. Carga uno desde la pagina Cronogramas.")
+
         # --- Upload new schedule ---
         st.divider()
-        st.markdown("**Cargar nuevo cronograma**")
+        st.markdown("**O cargar nuevo cronograma**")
         nombre_sched = st.text_input(
             "Nombre del cronograma",
             value=f"Horarios {sel_ciclo_crono}",
