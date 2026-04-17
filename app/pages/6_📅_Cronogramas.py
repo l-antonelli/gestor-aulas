@@ -542,42 +542,6 @@ with tab_editar:
                             eq = eq.where(PlanEstudioDB.cuatrimestre_plan == edit_filtro_cuatri)
                     edit_filtered_mats = set(session.exec(eq.distinct()).all())
 
-            # --- Selector de materia para agregar (con buscador) ---
-            # Filtrar lista segun filtros de carrera/año/cuatrimestre
-            if edit_filtered_mats is not None:
-                mat_options_base = sorted(c for c in materias_map if c in edit_filtered_mats)
-            else:
-                mat_options_base = sorted(materias_map.keys())
-
-            busqueda_mat = st.text_input(
-                "🔍 Buscar materia por nombre o código",
-                key="edit_buscar_materia",
-                placeholder="Ej: algebra, F0301, programacion...",
-            )
-
-            if busqueda_mat.strip():
-                termino = busqueda_mat.strip().lower()
-                mat_options = [
-                    c for c in mat_options_base
-                    if termino in c.lower() or termino in materias_map[c].lower()
-                ]
-            else:
-                mat_options = mat_options_base
-
-            if mat_options:
-                sel_mat_add = st.selectbox(
-                    "Materia (para agregar al seleccionar un rango)",
-                    options=mat_options,
-                    format_func=lambda x: f"{materias_map[x]} — {x}",
-                    key="edit_add_materia",
-                )
-            else:
-                sel_mat_add = None
-                if busqueda_mat.strip():
-                    st.warning(f"No se encontraron materias para '{busqueda_mat}'")
-                else:
-                    st.info("No hay materias disponibles con los filtros actuales.")
-
             # --- Multiselect de materias ---
             with next(get_session()) as session:
                 grid_data_full = build_schedule_grid(session, sel_edit_id)
@@ -622,6 +586,44 @@ with tab_editar:
             action = render_editable_schedule_calendar(
                 grid_data, config, key="edit_cal",
             )
+
+            # --- Selector de materia para agregar (con buscador) ---
+            st.divider()
+            if edit_filtered_mats is not None:
+                mat_options_base = sorted(c for c in materias_map if c in edit_filtered_mats)
+            else:
+                mat_options_base = sorted(materias_map.keys())
+
+            busqueda_mat = st.text_input(
+                "🔍 Buscar materia por nombre o código",
+                key="edit_buscar_materia",
+                placeholder="Ej: algebra, F0301, programacion...",
+            )
+
+            if busqueda_mat.strip():
+                termino = busqueda_mat.strip().lower()
+                mat_options = [
+                    c for c in mat_options_base
+                    if termino in c.lower() or termino in materias_map[c].lower()
+                ]
+            else:
+                mat_options = mat_options_base
+
+            if mat_options:
+                sel_mat_add = st.selectbox(
+                    "Materia (para agregar al seleccionar un rango)",
+                    options=mat_options,
+                    index=None,
+                    format_func=lambda x: f"{materias_map[x]} — {x}",
+                    placeholder="Seleccioná una materia...",
+                    key="edit_add_materia",
+                )
+            else:
+                sel_mat_add = None
+                if busqueda_mat.strip():
+                    st.warning(f"No se encontraron materias para '{busqueda_mat}'")
+                else:
+                    st.info("No hay materias disponibles con los filtros actuales.")
 
             # --- Procesar acciones ---
             if action is not None:

@@ -5,6 +5,8 @@ Flujo: Cronograma (schedule) → Validar cobertura → Generar Plan → Clases
 
 import uuid
 import streamlit as st
+import pandas as pd
+from collections import Counter
 from datetime import time, timedelta
 from sqlmodel import select, func, col
 from src.database.connection import get_session, init_db
@@ -199,6 +201,17 @@ with tab_cronogramas:
                             for err in preview_result.errors:
                                 st.error(err)
                         else:
+                            # Clear cached widget values from previous preview
+                            # so number_inputs pick up fresh DB values
+                            stale_prefixes = (
+                                f"prev_hsem_{s.id}_",
+                                f"prev_ncom_{s.id}_",
+                                f"prev_ecom_{s.id}_",
+                            )
+                            for sk in list(st.session_state.keys()):
+                                if any(sk.startswith(p) for p in stale_prefixes):
+                                    del st.session_state[sk]
+
                             # Store in session state as dicts for serialization
                             st.session_state[preview_key] = {
                                 "materias": [
@@ -302,40 +315,247 @@ with tab_cronogramas:
                                     f"Flag: {mp['flag_detail']}"
                                 )
 
-                                # Show entries grouped by comision
+                                # --- Editable entry table ---
                                 entry_list = mp["entries"]
-                                dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
-                                             "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
+                                _dia_ord = {
+                                    "Lunes": 0, "Martes": 1, "Miércoles": 2,
+                                    "Jueves": 3, "Viernes": 4, "Sábado": 5,
+                                }
 
-                                for com_num in range(1, mp["n_comisiones"] + 1):
-                                    com_entries = [
-                                        e for e in entry_list
-                                        if e["comision_asignada"] == com_num
-                                    ]
-                                    com_entries.sort(
-                                        key=lambda e: (dia_order.get(e["dia"], 9), e["hora_inicio"])
+                                _rows = []
+                                for _e in entry_list:
+                                    _hi = _e["hora_inicio"]
+                                    _hf = _e["hora_fin"]
+                                    if isinstance(_hi, str):
+                                        _hi = time.fromisoformat(_hi)
+                                    if isinstance(_hf, str):
+                                        _hf = time.fromisoformat(_hf)
+                                    _rows.append({
+                                        "_eid": _e["entry_id"],
+                                        "Día": _e["dia"],
+                                        "Inicio": _hi,
+                                        "Fin": _hf,
+                                        "Comisión": _e["comision_asignada"],
+                                    })
+
+                                _df = (
+                                    pd.DataFrame(_rows)
+                                    if _rows
+                                    else pd.DataFrame(
+                                        columns=["_eid", "Día", "Inicio", "Fin", "Comisión"]
+                                    )
+                                )
+                                if not _df.empty:
+                                    _df["_sk"] = _df["Día"].map(_dia_ord).fillna(9)
+                                    _df = (
+                                        _df.sort_values(["Comisión", "_sk", "Inicio"])
+                                        .drop(columns="_sk")
+                                        .reset_index(drop=True)
                                     )
 
-                                    st.markdown(f"**Comision {com_num}** ({len(com_entries)} clases)")
-                                    for e_idx, e in enumerate(com_entries):
-                                        ec1, ec2 = st.columns([4, 1])
-                                        hi = e["hora_inicio"]
-                                        hf = e["hora_fin"]
-                                        hi_str = hi.strftime("%H:%M") if hasattr(hi, "strftime") else str(hi)
-                                        hf_str = hf.strftime("%H:%M") if hasattr(hf, "strftime") else str(hf)
-                                        with ec1:
-                                            st.text(f"  {e['dia']:12s} {hi_str} - {hf_str}")
-                                        with ec2:
-                                            new_com = st.number_input(
-                                                "Com",
-                                                value=e["comision_asignada"],
-                                                min_value=1,
-                                                max_value=mp["n_comisiones"],
-                                                key=f"prev_ecom_{s.id}_{mp_idx}_{com_num}_{e_idx}",
-                                                label_visibility="collapsed",
+                                _edited = st.data_editor(
+                                    _df,
+                                    column_config={
+                                        "_eid": None,
+                                        "Día": st.column_config.SelectboxColumn(
+                                            "Día",
+                                            options=list(_dia_ord.keys()),
+                                            required=True,
+                                            width="medium",
+                                        ),
+                                        "Inicio": st.column_config.TimeColumn(
+                                            "Inicio", format="HH:mm",
+                                            required=True, width="small",
+                                        ),
+                                        "Fin": st.column_config.TimeColumn(
+                                            "Fin", format="HH:mm",
+                                            required=True, width="small",
+                                        ),
+                                        "Comisión": st.column_config.NumberColumn(
+                                            "Comisión", min_value=1, step=1,
+                                            default=1, required=True, width="small",
+                                        ),
+                                    },
+                                    num_rows="dynamic",
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    key=f"prev_entries_{s.id}_{mp_idx}",
+                                )
+
+                                # --- Detect changes ---
+                                _orig_cmp = _df[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
+                                _edit_cmp = _edited[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
+                                _has_changes = (
+                                    len(_orig_cmp) != len(_edit_cmp)
+                                    or not _orig_cmp.equals(_edit_cmp)
+                                )
+
+                                if _has_changes:
+                                    _valid = _edited.dropna(subset=["Día", "Inicio", "Fin"])
+                                    _new_total = 0.0
+                                    for _, _r in _valid.iterrows():
+                                        _thi = _r["Inicio"]
+                                        _thf = _r["Fin"]
+                                        if hasattr(_thi, "hour") and hasattr(_thf, "hour"):
+                                            _mins = (
+                                                _thf.hour * 60 + _thf.minute
+                                                - _thi.hour * 60 - _thi.minute
                                             )
-                                            if new_com != e["comision_asignada"]:
-                                                e["comision_asignada"] = new_com
+                                            _new_total += max(0, _mins) / 60
+
+                                    _h_sem = mp["horas_semanales"] or 0
+                                    _sug_n = mp["n_comisiones"]
+                                    if _h_sem > 0 and _new_total > 0:
+                                        _ratio = _new_total / _h_sem
+                                        if _ratio >= 1 and abs(_ratio - round(_ratio)) < 0.01:
+                                            _sug_n = round(_ratio)
+
+                                    st.info(
+                                        f"Cambios: {len(_valid)} entradas, "
+                                        f"{_new_total:.1f}h total"
+                                        + (f" → {_sug_n} comisiones" if _h_sem > 0 else "")
+                                    )
+
+                                    # --- Build reassigned entries for preview ---
+                                    _preview_entries = []
+                                    for _i, (_, _r) in enumerate(_valid.iterrows()):
+                                        _eid_v = (
+                                            _r["_eid"]
+                                            if pd.notna(_r.get("_eid"))
+                                            else f"new_{mp_idx}_{_i}"
+                                        )
+                                        _com_v = (
+                                            int(_r["Comisión"])
+                                            if pd.notna(_r.get("Comisión"))
+                                            else 1
+                                        )
+                                        _preview_entries.append({
+                                            "entry_id": _eid_v,
+                                            "dia": _r["Día"],
+                                            "hora_inicio": _r["Inicio"],
+                                            "hora_fin": _r["Fin"],
+                                            "comision_asignada": _com_v,
+                                        })
+
+                                    # Compute reassignment
+                                    _reassigned = [dict(e) for e in _preview_entries]
+                                    if _reassigned:
+                                        _slot_groups: dict[tuple, list[dict]] = {}
+                                        for _ne in _reassigned:
+                                            _sk = (_ne["dia"], _ne["hora_inicio"], _ne["hora_fin"])
+                                            _slot_groups.setdefault(_sk, []).append(_ne)
+
+                                        _com_counts: Counter = Counter()
+                                        for _sk in sorted(
+                                            _slot_groups,
+                                            key=lambda k: (_dia_ord.get(k[0], 9), k[1], k[2]),
+                                        ):
+                                            _grp = _slot_groups[_sk]
+                                            if len(_grp) > 1:
+                                                _avail = sorted(
+                                                    range(1, _sug_n + 1),
+                                                    key=lambda c: _com_counts[c],
+                                                )
+                                                for _gi, _ge in enumerate(_grp):
+                                                    _cn = _avail[_gi % len(_avail)]
+                                                    _ge["comision_asignada"] = _cn
+                                                    _com_counts[_cn] += 1
+                                            else:
+                                                _cn = min(
+                                                    range(1, _sug_n + 1),
+                                                    key=lambda c: _com_counts[c],
+                                                )
+                                                _grp[0]["comision_asignada"] = _cn
+                                                _com_counts[_cn] += 1
+
+                                    # --- Show reassignment preview ---
+                                    st.markdown("**Preview de reasignación:**")
+                                    for _cn in range(1, _sug_n + 1):
+                                        _ce = [
+                                            e for e in _reassigned
+                                            if e["comision_asignada"] == _cn
+                                        ]
+                                        _ce.sort(
+                                            key=lambda e: (
+                                                _dia_ord.get(e["dia"], 9),
+                                                e["hora_inicio"],
+                                            )
+                                        )
+                                        st.markdown(
+                                            f"**Comisión {_cn}** "
+                                            f"({len(_ce)} clases)"
+                                        )
+                                        for _pe in _ce:
+                                            _phi = _pe["hora_inicio"]
+                                            _phf = _pe["hora_fin"]
+                                            _phi_s = (
+                                                _phi.strftime("%H:%M")
+                                                if hasattr(_phi, "strftime")
+                                                else str(_phi)[:5]
+                                            )
+                                            _phf_s = (
+                                                _phf.strftime("%H:%M")
+                                                if hasattr(_phf, "strftime")
+                                                else str(_phf)[:5]
+                                            )
+                                            st.text(
+                                                f"  {_pe['dia']:12s} "
+                                                f"{_phi_s} - {_phf_s}"
+                                            )
+
+                                    # --- Action buttons ---
+                                    _col_accept, _col_recalc = st.columns(2)
+                                    with _col_accept:
+                                        _do_accept = st.button(
+                                            "Aceptar (sin reasignar)",
+                                            key=f"prev_accept_{s.id}_{mp_idx}",
+                                        )
+                                    with _col_recalc:
+                                        _do_recalc = st.button(
+                                            "Aceptar con Reasignación",
+                                            key=f"prev_recalc_{s.id}_{mp_idx}",
+                                            type="primary",
+                                        )
+
+                                    if _do_accept or _do_recalc:
+                                        _final = (
+                                            _reassigned if _do_recalc
+                                            else _preview_entries
+                                        )
+                                        mp["entries"] = _final
+                                        mp["total_horas_schedule"] = _new_total
+                                        mp["n_comisiones"] = _sug_n
+
+                                        # Recalculate flag
+                                        if _h_sem > 0 and _new_total > 0:
+                                            _ratio = _new_total / _h_sem
+                                            if _ratio >= 1 and abs(_ratio - round(_ratio)) < 0.01:
+                                                mp["flag"] = "exact"
+                                                mp["flag_detail"] = (
+                                                    f"Ajustado: {_new_total:.0f}h / "
+                                                    f"{_h_sem}h = {_sug_n} comisiones."
+                                                )
+                                            else:
+                                                mp["flag"] = "uncertain"
+                                                mp["flag_detail"] = (
+                                                    f"Ajustado: {_new_total:.0f}h / "
+                                                    f"{_h_sem}h = {_ratio:.2f} (no entero)."
+                                                )
+                                        else:
+                                            mp["flag_detail"] = (
+                                                f"Ajustado: {_new_total:.0f}h, "
+                                                f"{len(_final)} entradas."
+                                            )
+
+                                        # Clear widget caches
+                                        for _ck in list(st.session_state.keys()):
+                                            if _ck.startswith((
+                                                f"prev_entries_{s.id}_{mp_idx}",
+                                                f"prev_ncom_{s.id}_{mp_idx}",
+                                                f"prev_hsem_{s.id}_{mp_idx}",
+                                            )):
+                                                del st.session_state[_ck]
+                                        st.rerun()
 
                         # --- Generate button ---
                         st.divider()
