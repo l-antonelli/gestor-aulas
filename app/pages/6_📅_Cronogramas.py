@@ -6,7 +6,6 @@ un cronograma existente para generar un plan de cursada.
 """
 
 import streamlit as st
-from datetime import time
 from sqlmodel import select, col, func
 
 from src.database.connection import get_session, init_db
@@ -17,8 +16,8 @@ from src.database.models import (
 from src.database.crud import ciclo_crud, get_or_create_config
 from src.services.schedule_service import (
     create_schedule_standalone,
+    create_empty_schedule,
     get_all_schedules,
-    get_schedule_entries,
     duplicate_schedule,
     delete_schedule,
     add_schedule_entry,
@@ -26,8 +25,7 @@ from src.services.schedule_service import (
     delete_schedule_entry,
     build_schedule_grid,
 )
-from src.services.plan_generation_service import generate_time_slots
-from src.domain.types import DIAS_SEMANA
+from src.ui.calendar_render import render_schedule_calendar, render_editable_schedule_calendar
 
 init_db()
 
@@ -44,100 +42,194 @@ with next(get_session()) as session:
     all_materias = list(session.exec(select(MateriaDB).where(MateriaDB.active == True)).all())
     all_carreras = list(session.exec(select(CarreraDB)).all())
 
+    # Materias comunes: aparecen en 2+ carreras via PlanEstudioDB
+    _shared_q = (
+        select(PlanEstudioDB.materia_codigo)
+        .group_by(PlanEstudioDB.materia_codigo)
+        .having(func.count(PlanEstudioDB.carrera_codigo.distinct()) > 1)
+    )
+    materias_comunes: set[str] = set(session.exec(_shared_q).all())
+
 ciclo_ids = [c.id for c in ciclos]
 ciclos_map = {c.id: c for c in ciclos}
 materias_map = {m.codigo: m.nombre for m in all_materias}
 carreras_map = {c.codigo: c.nombre for c in all_carreras}
 
-PALETTE = [
-    "#E3F2FD", "#FFF3E0", "#E8F5E9", "#FCE4EC",
-    "#F3E5F5", "#E0F7FA", "#FFF9C4", "#F1F8E9",
-    "#FFEBEE", "#E8EAF6", "#E0F2F1", "#FBE9E7",
-]
 
 
-# =============================================================================
-# Helper: render schedule grid
-# =============================================================================
-def _render_schedule_grid(grid_data, config):
-    """Renderizar grilla semanal a partir de build_schedule_grid output."""
+def _es_ciclo_basico(codigo: str) -> bool:
+    """Determina si un codigo de materia pertenece al ciclo basico (F/FB/FI)."""
+    return codigo.startswith(("F", "FB", "FI"))
+
+
+def _aplicar_filtro_tipo(grid_data: dict, filtro_tipo: str, excluir_comunes: bool) -> dict:
+    """Aplica filtros de tipo de materia y exclusion de comunes sobre grid_data."""
     if not grid_data:
-        st.info("El cronograma no tiene entradas.")
+        return grid_data
+
+    if filtro_tipo == "Ciclo Básico (F/FB)":
+        grid_data = {
+            dia: [b for b in blocks if _es_ciclo_basico(b.materia_codigo)]
+            for dia, blocks in grid_data.items()
+        }
+    elif filtro_tipo == "Específicas de carrera":
+        grid_data = {
+            dia: [b for b in blocks if not _es_ciclo_basico(b.materia_codigo)]
+            for dia, blocks in grid_data.items()
+        }
+
+    if excluir_comunes:
+        grid_data = {
+            dia: [b for b in blocks if b.materia_codigo not in materias_comunes]
+            for dia, blocks in grid_data.items()
+        }
+
+    # Quitar dias vacios
+    return {d: bs for d, bs in grid_data.items() if bs}
+
+
+# =============================================================================
+# Dialog: confirmar agregar entrada desde el calendario
+# =============================================================================
+@st.dialog("Agregar entrada")
+def _dialog_confirm_add():
+    pending = st.session_state.get("edit_pending_add")
+    if not pending:
+        st.rerun()
         return
 
-    time_slots = generate_time_slots(config)
-    if not time_slots:
-        st.warning("No hay franjas horarias configuradas.")
+    mat_nombre = materias_map.get(pending["materia"], pending["materia"])
+    st.markdown(f"**{mat_nombre}** ({pending['materia']})")
+    st.markdown(
+        f"**{pending['dia']}** · "
+        f"{pending['hora_inicio'].strftime('%H:%M')} - "
+        f"{pending['hora_fin'].strftime('%H:%M')}"
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Confirmar", type="primary", use_container_width=True):
+            with next(get_session()) as session:
+                add_schedule_entry(
+                    session,
+                    pending["schedule_id"],
+                    pending["materia"],
+                    pending["dia"],
+                    pending["hora_inicio"],
+                    pending["hora_fin"],
+                )
+            st.session_state["_edit_processed_select"] = pending["_key"]
+            st.session_state["_edit_toast"] = (
+                f"{mat_nombre} agregada: {pending['dia']} "
+                f"{pending['hora_inicio'].strftime('%H:%M')}-"
+                f"{pending['hora_fin'].strftime('%H:%M')}"
+            )
+            del st.session_state["edit_pending_add"]
+            st.rerun()
+    with col2:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_edit_processed_select"] = pending["_key"]
+            del st.session_state["edit_pending_add"]
+            st.rerun()
+
+
+@st.dialog("Editar entrada", width="large")
+def _dialog_edit_entry():
+    pending = st.session_state.get("edit_pending_click")
+    if not pending:
+        st.rerun()
         return
 
-    dias_config = [d.strip() for d in config.dias_operativos.split(",") if d.strip()]
-    dias_order = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-    active_dias = [d for d in dias_order if d in dias_config]
-    if not active_dias:
-        active_dias = [d for d in dias_order if d in grid_data]
+    all_mat_codes = sorted(materias_map.keys())
+    dias_list = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-    # Asignar colores por materia
-    all_mat_codes = sorted({
-        b.materia_codigo for blocks in grid_data.values() for b in blocks
-    })
-    mat_colors = {
-        code: PALETTE[i % len(PALETTE)]
-        for i, code in enumerate(all_mat_codes)
-    }
+    # --- Campos editables ---
+    dlg_busqueda = st.text_input(
+        "🔍 Buscar materia",
+        key="dlg_buscar_mat",
+        placeholder="Nombre o código...",
+    )
+    if dlg_busqueda.strip():
+        _term = dlg_busqueda.strip().lower()
+        dlg_mat_opts = [c for c in all_mat_codes if _term in c.lower() or _term in materias_map[c].lower()]
+    else:
+        dlg_mat_opts = all_mat_codes
 
-    # Header
-    header_cols = st.columns([1] + [2] * len(active_dias))
-    with header_cols[0]:
-        st.markdown("**Hora**")
-    for idx, dia in enumerate(active_dias):
-        with header_cols[idx + 1]:
-            st.markdown(f"**{dia}**")
+    if not dlg_mat_opts:
+        dlg_mat_opts = all_mat_codes  # fallback si no hay match
 
-    # Filas por franja horaria
-    for slot_start, slot_end in time_slots:
-        row_cols = st.columns([1] + [2] * len(active_dias))
-        with row_cols[0]:
-            st.caption(slot_start.strftime("%H:%M"))
+    # Mantener materia actual seleccionada si esta en la lista filtrada
+    dlg_idx = dlg_mat_opts.index(pending["materia"]) if pending["materia"] in dlg_mat_opts else 0
 
-        for idx, dia in enumerate(active_dias):
-            with row_cols[idx + 1]:
-                day_blocks = grid_data.get(dia, [])
-                overlapping = [
-                    b for b in day_blocks
-                    if b.hora_inicio < slot_end and b.hora_fin > slot_start
-                ]
-                for b in overlapping:
-                    color = mat_colors.get(b.materia_codigo, "#E0E0E0")
-                    st.markdown(
-                        f'<div style="background-color:{color};'
-                        f'padding:2px 6px;border-radius:4px;'
-                        f'margin-bottom:2px;font-size:0.8em;">'
-                        f'<b>{b.materia_codigo}</b><br>'
-                        f'<span style="font-size:0.75em;">{b.materia_nombre}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+    new_mat = st.selectbox(
+        "Materia",
+        options=dlg_mat_opts,
+        index=dlg_idx,
+        format_func=lambda x: f"{materias_map[x]} — {x}",
+        key="dlg_edit_mat",
+    )
+    col_dia, col_ini, col_fin = st.columns(3)
+    with col_dia:
+        new_dia = st.selectbox(
+            "Dia",
+            options=dias_list,
+            index=dias_list.index(pending["dia"]) if pending["dia"] in dias_list else 0,
+            key="dlg_edit_dia",
+        )
+    with col_ini:
+        new_inicio = st.time_input(
+            "Inicio", value=pending["hora_inicio"], key="dlg_edit_ini",
+        )
+    with col_fin:
+        new_fin = st.time_input(
+            "Fin", value=pending["hora_fin"], key="dlg_edit_fin",
+        )
 
-    # Leyenda
     st.divider()
-    st.markdown("**Materias:**")
-    n_cols = min(len(all_mat_codes), 4) or 1
-    legend_cols = st.columns(n_cols)
-    for i, code in enumerate(all_mat_codes):
-        with legend_cols[i % n_cols]:
-            nombre = next(
-                (b.materia_nombre for blocks in grid_data.values()
-                 for b in blocks if b.materia_codigo == code),
-                code,
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Guardar", type="primary", use_container_width=True):
+            cambios = {}
+            if new_mat != pending["materia"]:
+                cambios["codigo_materia"] = new_mat
+            if new_dia != pending["dia"]:
+                cambios["dia"] = new_dia
+            if new_inicio != pending["hora_inicio"]:
+                cambios["hora_inicio"] = new_inicio
+            if new_fin != pending["hora_fin"]:
+                cambios["hora_fin"] = new_fin
+            mat_label = materias_map.get(new_mat, new_mat)
+            if cambios:
+                with next(get_session()) as session:
+                    update_schedule_entry(session, pending["entry_id"], **cambios)
+                st.session_state["_edit_toast"] = (
+                    f"{mat_label} actualizada: {new_dia} "
+                    f"{new_inicio.strftime('%H:%M')}-{new_fin.strftime('%H:%M')}"
+                )
+            else:
+                st.session_state["_edit_toast"] = "Sin cambios"
+            st.session_state["_edit_processed_click"] = pending["_key"]
+            del st.session_state["edit_pending_click"]
+            st.rerun()
+    with col2:
+        if st.button("Eliminar", use_container_width=True):
+            mat_label = materias_map.get(pending["materia"], pending["materia"])
+            with next(get_session()) as session:
+                delete_schedule_entry(session, pending["entry_id"])
+            st.session_state["_edit_processed_click"] = pending["_key"]
+            st.session_state["_edit_toast"] = (
+                f"{mat_label} eliminada ({pending['dia']} "
+                f"{pending['hora_inicio'].strftime('%H:%M')}-"
+                f"{pending['hora_fin'].strftime('%H:%M')})"
             )
-            color = mat_colors[code]
-            st.markdown(
-                f'<div style="background-color:{color};'
-                f'padding:2px 8px;border-radius:3px;margin-bottom:4px;'
-                f'font-size:0.85em;">'
-                f'<b>{code}</b> — {nombre}</div>',
-                unsafe_allow_html=True,
-            )
+            del st.session_state["edit_pending_click"]
+            st.rerun()
+    with col3:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_edit_processed_click"] = pending["_key"]
+            del st.session_state["edit_pending_click"]
+            st.rerun()
 
 
 # =============================================================================
@@ -195,7 +287,14 @@ with tab_lista:
 # Tab 2: Cargar
 # =============================================================================
 with tab_cargar:
-    st.subheader("Cargar nuevo cronograma")
+    st.subheader("Crear nuevo cronograma")
+
+    modo_carga = st.radio(
+        "Modo de creación",
+        options=["Crear vacío", "Cargar desde archivo"],
+        horizontal=True,
+        key="crono_modo",
+    )
 
     nombre = st.text_input("Nombre del cronograma", key="crono_nombre")
 
@@ -206,29 +305,42 @@ with tab_cargar:
     )
     ciclo_id_val = ciclo_sel if ciclo_sel != "(ninguno)" else None
 
-    uploaded = st.file_uploader(
-        "Archivo CSV o Excel con horarios",
-        type=["csv", "xlsx", "xls"],
-        key="crono_upload",
-    )
+    if modo_carga == "Cargar desde archivo":
+        uploaded = st.file_uploader(
+            "Archivo CSV o Excel con horarios",
+            type=["csv", "xlsx", "xls"],
+            key="crono_upload",
+        )
 
-    if st.button("Crear cronograma", disabled=not nombre or not uploaded):
-        with next(get_session()) as session:
-            result = create_schedule_standalone(
-                session, nombre, uploaded, ciclo_id=ciclo_id_val
-            )
-        if result.errors:
-            for e in result.errors:
-                st.error(e)
-        if result.warnings:
-            for w in result.warnings:
-                st.warning(w)
-        if result.schedule:
-            st.success(
-                f"Cronograma '{result.schedule.nombre}' creado con "
-                f"{result.entries_created} entradas."
-            )
-            st.rerun()
+        if st.button("Crear cronograma", disabled=not nombre or not uploaded):
+            with next(get_session()) as session:
+                result = create_schedule_standalone(
+                    session, nombre, uploaded, ciclo_id=ciclo_id_val
+                )
+            if result.errors:
+                for e in result.errors:
+                    st.error(e)
+            if result.warnings:
+                for w in result.warnings:
+                    st.warning(w)
+            if result.schedule:
+                st.success(
+                    f"Cronograma '{result.schedule.nombre}' creado con "
+                    f"{result.entries_created} entradas."
+                )
+                st.rerun()
+    else:
+        st.info("Se creará un cronograma sin entradas. Podés agregar horarios desde la pestaña Editar.")
+        if st.button("Crear cronograma vacío", disabled=not nombre):
+            with next(get_session()) as session:
+                try:
+                    schedule = create_empty_schedule(
+                        session, nombre, ciclo_id=ciclo_id_val
+                    )
+                    st.success(f"Cronograma '{schedule.nombre}' creado. Usá la pestaña Editar para agregar entradas.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
 
 
 # =============================================================================
@@ -249,7 +361,7 @@ with tab_visualizar:
         )
 
         if sel_id:
-            # --- Filtros ---
+            # --- Filtros fila 1: carrera, año, cuatrimestre ---
             col_f1, col_f2, col_f3 = st.columns(3)
             with col_f1:
                 carrera_opts = ["Todas"] + [
@@ -271,6 +383,20 @@ with tab_visualizar:
                     key="viz_filtro_cuatri",
                 )
 
+            # --- Filtros fila 2: tipo de materia, excluir comunes ---
+            col_f4, col_f5 = st.columns(2)
+            with col_f4:
+                viz_filtro_tipo = st.selectbox(
+                    "Tipo de materia",
+                    options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
+                    key="viz_filtro_tipo",
+                )
+            with col_f5:
+                viz_excluir_comunes = st.checkbox(
+                    "Excluir materias comunes (multi-carrera)",
+                    key="viz_excluir_comunes",
+                )
+
             # Determinar materias filtradas via PlanEstudioDB
             viz_filtered_mats = None
             if (viz_filtro_carrera != "Todas"
@@ -290,28 +416,62 @@ with tab_visualizar:
                             q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
                     viz_filtered_mats = set(session.exec(q.distinct()).all())
 
-            st.divider()
-
+            # --- Multiselect de materias ---
             with next(get_session()) as session:
                 grid_data = build_schedule_grid(session, sel_id)
 
-            # Aplicar filtro de materias a la grilla
-            if viz_filtered_mats is not None and grid_data:
+            # Materias presentes en el cronograma
+            _viz_mats_en_schedule = set()
+            for _blocks in grid_data.values():
+                for _b in _blocks:
+                    _viz_mats_en_schedule.add(_b.materia_codigo)
+
+            # Intersectar con filtros de plan si aplican
+            _viz_mats_disponibles = _viz_mats_en_schedule
+            if viz_filtered_mats is not None:
+                _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
+
+            _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
+            viz_materias_sel = st.multiselect(
+                "Materias a mostrar",
+                options=_viz_mat_list,
+                default=_viz_mat_list,
+                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                key="viz_filtro_materias",
+            )
+            _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
+
+            st.divider()
+
+            # Aplicar filtro de materias seleccionadas
+            if grid_data:
                 grid_data = {
-                    dia: [b for b in blocks if b.materia_codigo in viz_filtered_mats]
+                    dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
                     for dia, blocks in grid_data.items()
                 }
-                # Quitar dias vacios
                 grid_data = {d: bs for d, bs in grid_data.items() if bs}
 
-            _render_schedule_grid(grid_data, config)
+            # Aplicar filtros de tipo y comunes
+            grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
+
+            render_schedule_calendar(grid_data, config, key="viz_cal")
 
 
 # =============================================================================
 # Tab 4: Editar
 # =============================================================================
 with tab_editar:
+    # Mostrar toast pendiente de accion anterior
+    if "_edit_toast" in st.session_state:
+        st.toast(st.session_state.pop("_edit_toast"))
+
     st.subheader("Editar entradas de cronograma")
+    st.caption(
+        "Arrastra bloques para cambiar dia/hora. "
+        "Redimensiona para ajustar duracion. "
+        "Hace click en un bloque para eliminarlo. "
+        "Selecciona un rango vacio para agregar una entrada."
+    )
 
     if not all_schedules:
         st.info("No hay cronogramas para editar.")
@@ -327,91 +487,189 @@ with tab_editar:
         )
 
         if sel_edit_id:
-            with next(get_session()) as session:
-                entries = get_schedule_entries(session, sel_edit_id)
-
-            if not entries:
-                st.info("Este cronograma no tiene entradas.")
-            else:
-                # Agrupar por materia
-                by_materia: dict[str, list] = {}
-                for e in entries:
-                    by_materia.setdefault(e.codigo_materia, []).append(e)
-
-                dias_list = sorted(DIAS_SEMANA)
-
-                for mat_code in sorted(by_materia.keys()):
-                    mat_entries = by_materia[mat_code]
-                    mat_nombre = materias_map.get(mat_code, mat_code)
-                    with st.expander(f"**{mat_nombre}** ({mat_code}) — {len(mat_entries)} entrada(s)"):
-                        for e in mat_entries:
-                            c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 1, 1])
-
-                            with c1:
-                                new_dia = st.selectbox(
-                                    "Dia",
-                                    options=dias_list,
-                                    index=dias_list.index(e.dia) if e.dia in dias_list else 0,
-                                    key=f"dia_{e.id}",
-                                )
-                            with c2:
-                                new_inicio = st.time_input(
-                                    "Inicio",
-                                    value=e.hora_inicio,
-                                    key=f"ini_{e.id}",
-                                )
-                            with c3:
-                                new_fin = st.time_input(
-                                    "Fin",
-                                    value=e.hora_fin,
-                                    key=f"fin_{e.id}",
-                                )
-                            with c4:
-                                if st.button("Guardar", key=f"save_{e.id}"):
-                                    cambios = {}
-                                    if new_dia != e.dia:
-                                        cambios["dia"] = new_dia
-                                    if new_inicio != e.hora_inicio:
-                                        cambios["hora_inicio"] = new_inicio
-                                    if new_fin != e.hora_fin:
-                                        cambios["hora_fin"] = new_fin
-                                    if cambios:
-                                        with next(get_session()) as session:
-                                            update_schedule_entry(session, e.id, **cambios)
-                                        st.success("Actualizado")
-                                        st.rerun()
-                                    else:
-                                        st.info("Sin cambios")
-                            with c5:
-                                if st.button("X", key=f"del_entry_{e.id}"):
-                                    with next(get_session()) as session:
-                                        delete_schedule_entry(session, e.id)
-                                    st.rerun()
-
-            # Agregar nueva entrada
-            st.divider()
-            st.markdown("**Agregar entrada**")
-            ac1, ac2, ac3, ac4, ac5 = st.columns([3, 2, 2, 2, 1])
-            with ac1:
-                mat_options = sorted(materias_map.keys())
-                new_mat = st.selectbox(
-                    "Materia",
-                    options=mat_options,
-                    format_func=lambda x: f"{x} — {materias_map[x]}",
-                    key="add_materia",
+            # --- Filtros fila 1: carrera, año, cuatrimestre ---
+            col_ef1, col_ef2, col_ef3 = st.columns(3)
+            with col_ef1:
+                edit_carrera_opts = ["Todas"] + [
+                    f"{c.codigo} - {c.nombre}" for c in all_carreras
+                ]
+                edit_filtro_carrera = st.selectbox(
+                    "Carrera", options=edit_carrera_opts, key="edit_filtro_carrera"
                 )
-            with ac2:
-                add_dia = st.selectbox("Dia", options=sorted(DIAS_SEMANA), key="add_dia")
-            with ac3:
-                add_inicio = st.time_input("Inicio", value=time(8, 0), key="add_inicio")
-            with ac4:
-                add_fin = st.time_input("Fin", value=time(10, 0), key="add_fin")
-            with ac5:
-                st.write("")  # spacer
-                if st.button("Agregar", key="add_entry_btn"):
-                    with next(get_session()) as session:
-                        add_schedule_entry(
-                            session, sel_edit_id, new_mat, add_dia, add_inicio, add_fin
+            with col_ef2:
+                edit_filtro_anio = st.selectbox(
+                    "Año de cursada",
+                    options=["Todos", 1, 2, 3, 4, 5, 6],
+                    key="edit_filtro_anio",
+                )
+            with col_ef3:
+                edit_filtro_cuatri = st.selectbox(
+                    "Cuatrimestre",
+                    options=["Todos", "1C", "2C", "Anual"],
+                    key="edit_filtro_cuatri",
+                )
+
+            # --- Filtros fila 2: tipo de materia, excluir comunes ---
+            col_ef4, col_ef5 = st.columns(2)
+            with col_ef4:
+                edit_filtro_tipo = st.selectbox(
+                    "Tipo de materia",
+                    options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
+                    key="edit_filtro_tipo",
+                )
+            with col_ef5:
+                edit_excluir_comunes = st.checkbox(
+                    "Excluir materias comunes (multi-carrera)",
+                    key="edit_excluir_comunes",
+                )
+
+            # Determinar materias filtradas via PlanEstudioDB
+            edit_filtered_mats = None
+            if (edit_filtro_carrera != "Todas"
+                    or edit_filtro_anio != "Todos"
+                    or edit_filtro_cuatri != "Todos"):
+                with next(get_session()) as session:
+                    eq = select(PlanEstudioDB.materia_codigo)
+                    if edit_filtro_carrera != "Todas":
+                        e_carrera_cod = edit_filtro_carrera.split(" - ")[0]
+                        eq = eq.where(PlanEstudioDB.carrera_codigo == e_carrera_cod)
+                    if edit_filtro_anio != "Todos":
+                        eq = eq.where(PlanEstudioDB.anio_plan == int(edit_filtro_anio))
+                    if edit_filtro_cuatri != "Todos":
+                        if edit_filtro_cuatri == "Anual":
+                            eq = eq.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
+                        else:
+                            eq = eq.where(PlanEstudioDB.cuatrimestre_plan == edit_filtro_cuatri)
+                    edit_filtered_mats = set(session.exec(eq.distinct()).all())
+
+            # --- Selector de materia para agregar (con buscador) ---
+            # Filtrar lista segun filtros de carrera/año/cuatrimestre
+            if edit_filtered_mats is not None:
+                mat_options_base = sorted(c for c in materias_map if c in edit_filtered_mats)
+            else:
+                mat_options_base = sorted(materias_map.keys())
+
+            busqueda_mat = st.text_input(
+                "🔍 Buscar materia por nombre o código",
+                key="edit_buscar_materia",
+                placeholder="Ej: algebra, F0301, programacion...",
+            )
+
+            if busqueda_mat.strip():
+                termino = busqueda_mat.strip().lower()
+                mat_options = [
+                    c for c in mat_options_base
+                    if termino in c.lower() or termino in materias_map[c].lower()
+                ]
+            else:
+                mat_options = mat_options_base
+
+            if mat_options:
+                sel_mat_add = st.selectbox(
+                    "Materia (para agregar al seleccionar un rango)",
+                    options=mat_options,
+                    format_func=lambda x: f"{materias_map[x]} — {x}",
+                    key="edit_add_materia",
+                )
+            else:
+                sel_mat_add = None
+                if busqueda_mat.strip():
+                    st.warning(f"No se encontraron materias para '{busqueda_mat}'")
+                else:
+                    st.info("No hay materias disponibles con los filtros actuales.")
+
+            # --- Multiselect de materias ---
+            with next(get_session()) as session:
+                grid_data_full = build_schedule_grid(session, sel_edit_id)
+
+            # Materias presentes en el cronograma
+            _edit_mats_en_schedule = set()
+            for _blocks in grid_data_full.values():
+                for _b in _blocks:
+                    _edit_mats_en_schedule.add(_b.materia_codigo)
+
+            # Intersectar con filtros de plan si aplican
+            _edit_mats_disponibles = _edit_mats_en_schedule
+            if edit_filtered_mats is not None:
+                _edit_mats_disponibles = _edit_mats_en_schedule & edit_filtered_mats
+
+            _edit_mat_list = sorted(_edit_mats_disponibles, key=lambda c: materias_map.get(c, c))
+            edit_materias_sel = st.multiselect(
+                "Materias a mostrar",
+                options=_edit_mat_list,
+                default=_edit_mat_list,
+                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                key="edit_filtro_materias",
+            )
+            _edit_selected_set = set(edit_materias_sel) if edit_materias_sel else _edit_mats_disponibles
+
+            st.divider()
+
+            # --- Calendario editable ---
+            grid_data = grid_data_full
+
+            # Aplicar filtro de materias seleccionadas
+            if grid_data:
+                grid_data = {
+                    dia: [b for b in blocks if b.materia_codigo in _edit_selected_set]
+                    for dia, blocks in grid_data.items()
+                }
+                grid_data = {d: bs for d, bs in grid_data.items() if bs}
+
+            # Aplicar filtros de tipo y comunes
+            grid_data = _aplicar_filtro_tipo(grid_data, edit_filtro_tipo, edit_excluir_comunes)
+
+            action = render_editable_schedule_calendar(
+                grid_data, config, key="edit_cal",
+            )
+
+            # --- Procesar acciones ---
+            if action is not None:
+                if action.action == "move":
+                    # Deduplicar: no re-procesar el mismo move tras rerun
+                    move_key = f"{action.entry_id}|{action.dia}|{action.hora_inicio}|{action.hora_fin}"
+                    if st.session_state.get("_edit_processed_move") != move_key:
+                        with next(get_session()) as session:
+                            update_schedule_entry(
+                                session,
+                                action.entry_id,
+                                dia=action.dia,
+                                hora_inicio=action.hora_inicio,
+                                hora_fin=action.hora_fin,
+                            )
+                        mat_nombre = materias_map.get(action.materia_codigo, action.materia_codigo or "")
+                        st.session_state["_edit_toast"] = (
+                            f"{mat_nombre} movida a {action.dia} "
+                            f"{action.hora_inicio.strftime('%H:%M')}-"
+                            f"{action.hora_fin.strftime('%H:%M')}"
                         )
-                    st.success("Entrada agregada")
-                    st.rerun()
+                        st.session_state["_edit_processed_move"] = move_key
+                        st.rerun()
+
+                elif action.action == "click":
+                    # Deduplicar: no re-procesar el mismo click tras rerun
+                    click_key = f"{action.entry_id}|{action.dia}|{action.hora_inicio}"
+                    if st.session_state.get("_edit_processed_click") != click_key:
+                        st.session_state["edit_pending_click"] = {
+                            "entry_id": action.entry_id,
+                            "materia": action.materia_codigo,
+                            "dia": action.dia,
+                            "hora_inicio": action.hora_inicio,
+                            "hora_fin": action.hora_fin,
+                            "_key": click_key,
+                        }
+                        _dialog_edit_entry()
+
+                elif action.action == "select" and sel_mat_add:
+                    # Deduplicar: no re-procesar el mismo select tras rerun
+                    select_key = f"{action.dia}|{action.hora_inicio}|{action.hora_fin}"
+                    if st.session_state.get("_edit_processed_select") != select_key:
+                        st.session_state["edit_pending_add"] = {
+                            "schedule_id": sel_edit_id,
+                            "materia": sel_mat_add,
+                            "dia": action.dia,
+                            "hora_inicio": action.hora_inicio,
+                            "hora_fin": action.hora_fin,
+                            "_key": select_key,
+                        }
+                        _dialog_confirm_add()

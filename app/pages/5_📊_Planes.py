@@ -38,6 +38,7 @@ from src.services.validations import (
     validar_cobertura_plan,
     identificar_virtuales_plan,
 )
+from src.ui.calendar_render import render_timetable_calendar
 from src.domain.types import DIAS_SEMANA
 
 init_db()
@@ -1097,124 +1098,7 @@ with tab_grilla:
                     for dia in grid_data:
                         grid_data[dia] = [b for b in grid_data[dia] if b.en_periodo is not False]
 
-                time_slots = generate_time_slots(config)
-
-                if not grid_data:
-                    st.info("No hay horarios para mostrar con los filtros seleccionados.")
-                elif not time_slots:
-                    st.warning("No hay franjas horarias configuradas. Configure en la pestana Configuración.")
-                else:
-                    # Determine active days from config
-                    dias_config = [d.strip() for d in config.dias_operativos.split(",") if d.strip()]
-                    dias_order = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-                    active_dias = [d for d in dias_order if d in dias_config]
-
-                    if not active_dias:
-                        active_dias = [d for d in dias_order if d in grid_data]
-
-                    # Assign colors to materias
-                    all_mat_codes = sorted({
-                        b.materia_codigo
-                        for blocks in grid_data.values()
-                        for b in blocks
-                    })
-                    palette = [
-                        "#E3F2FD", "#FFF3E0", "#E8F5E9", "#FCE4EC",
-                        "#F3E5F5", "#E0F7FA", "#FFF9C4", "#F1F8E9",
-                        "#FFEBEE", "#E8EAF6", "#E0F2F1", "#FBE9E7",
-                    ]
-                    mat_colors = {
-                        code: palette[i % len(palette)]
-                        for i, code in enumerate(all_mat_codes)
-                    }
-
-                    # Render the grid: columns = days, rows = time slots
-                    # Header row
-                    header_cols = st.columns([1] + [2] * len(active_dias))
-                    with header_cols[0]:
-                        st.markdown("**Hora**")
-                    for idx, dia in enumerate(active_dias):
-                        with header_cols[idx + 1]:
-                            st.markdown(f"**{dia}**")
-
-                    # For each time slot, render a row
-                    for slot_start, slot_end in time_slots:
-                        row_cols = st.columns([1] + [2] * len(active_dias))
-
-                        with row_cols[0]:
-                            st.caption(f"{slot_start.strftime('%H:%M')}")
-
-                        for idx, dia in enumerate(active_dias):
-                            with row_cols[idx + 1]:
-                                # Find blocks that overlap with this slot
-                                day_blocks = grid_data.get(dia, [])
-                                overlapping = [
-                                    b for b in day_blocks
-                                    if b.hora_inicio < slot_end and b.hora_fin > slot_start
-                                ]
-
-                                if overlapping:
-                                    for b in overlapping:
-                                        color = mat_colors.get(b.materia_codigo, "#E0E0E0")
-                                        v_tag = " [V]" if b.virtual else ""
-                                        # Indicador de periodo
-                                        if b.en_periodo is False:
-                                            periodo_icon = " ⚠"
-                                            border_style = "border:2px dashed #FF9800;"
-                                        elif b.en_periodo is True:
-                                            periodo_icon = ""
-                                            border_style = ""
-                                        else:
-                                            periodo_icon = " ?"
-                                            border_style = "border:1px dotted #9E9E9E;"
-                                        label = f"{b.materia_codigo}{v_tag}{periodo_icon}"
-                                        st.markdown(
-                                            f'<div style="background-color:{color};'
-                                            f'padding:2px 6px;border-radius:4px;'
-                                            f'margin-bottom:2px;font-size:0.8em;{border_style}">'
-                                            f'<b>{label}</b><br>'
-                                            f'<span style="font-size:0.75em;">{b.materia_nombre}</span><br>'
-                                            f'<span style="font-size:0.7em;color:#666;">{b.comision_nombre}</span>'
-                                            f'</div>',
-                                            unsafe_allow_html=True,
-                                        )
-
-                    # Color legend
-                    st.divider()
-
-                    # Build materia name lookup from grid data
-                    mat_nombres_grid = {}
-                    for blocks in grid_data.values():
-                        for b in blocks:
-                            if b.materia_codigo not in mat_nombres_grid:
-                                mat_nombres_grid[b.materia_codigo] = b.materia_nombre
-
-                    st.markdown("**Materias:**")
-                    n_legend_cols = min(len(all_mat_codes), 4) or 1
-                    legend_cols = st.columns(n_legend_cols)
-                    for i, code in enumerate(all_mat_codes):
-                        col_idx = i % n_legend_cols
-                        nombre = mat_nombres_grid.get(code, code)
-                        with legend_cols[col_idx]:
-                            color = mat_colors[code]
-                            st.markdown(
-                                f'<div style="background-color:{color};'
-                                f'padding:2px 8px;border-radius:3px;margin-bottom:4px;'
-                                f'font-size:0.85em;">'
-                                f'<b>{code}</b> — {nombre}</div>',
-                                unsafe_allow_html=True,
-                            )
-
-                    st.markdown(
-                        '<div style="font-size:0.85em;margin-top:8px;">'
-                        '⚠ <span style="border:2px dashed #FF9800;padding:1px 6px;border-radius:3px;">'
-                        'Fuera del cuatrimestre planificado</span> · '
-                        '? <span style="border:1px dotted #9E9E9E;padding:1px 6px;border-radius:3px;">'
-                        'Sin datos de cuatrimestre</span> · '
-                        '[V] Virtual'
-                        '</div>',
-                        unsafe_allow_html=True,
-                    )
+                render_timetable_calendar(grid_data, config, key="grilla_cal")
 
 
 # =============================================================================

@@ -124,6 +124,30 @@ def create_schedule_from_file(
     return result
 
 
+def create_empty_schedule(
+    session: Session,
+    nombre: str,
+    ciclo_id: Optional[str] = None,
+) -> ScheduleDB:
+    """Crear un cronograma vacio (sin entries) para luego agregar entradas manualmente."""
+    if ciclo_id:
+        ciclo = ciclo_crud.get(session, ciclo_id)
+        if ciclo is None:
+            raise ValueError(f"Ciclo '{ciclo_id}' no encontrado")
+
+    schedule = ScheduleDB(
+        id=str(uuid.uuid4()),
+        ciclo_id=ciclo_id,
+        nombre=nombre,
+        fecha_upload=date.today(),
+        source_filename="",
+    )
+    session.add(schedule)
+    session.commit()
+    session.refresh(schedule)
+    return schedule
+
+
 def create_schedule_standalone(
     session: Session,
     nombre: str,
