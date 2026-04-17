@@ -20,11 +20,6 @@ from src.ui.relationship_selector import (
     RelationshipSelector,
     register_domain_relationships,
 )
-from src.ui.unified_entity_manager import (
-    UnifiedEntityManager,
-    EntityConfig,
-    ENTITY_REGISTRY,
-)
 
 __all__ = [
     "SchemaIntrospector",
@@ -37,7 +32,4 @@ __all__ = [
     "DeserializationError",
     "RelationshipSelector",
     "register_domain_relationships",
-    "UnifiedEntityManager",
-    "EntityConfig",
-    "ENTITY_REGISTRY",
 ]

@@ -151,47 +151,47 @@ class TestSearchContextPersistence:
         class Materia(BaseModel):
             codigo: str = Field(..., description="Código")
             nombre: str = Field(..., description="Nombre")
-        
-        class Alumno(BaseModel):
-            legajo: str = Field(..., description="Legajo")
+
+        class Comision(BaseModel):
+            id: str = Field(..., description="ID")
             nombre: str = Field(..., description="Nombre")
-        
-        class Inscripcion(BaseModel):
+
+        class HorarioModel(BaseModel):
             materia_codigo: str = Field(..., description="Materia")
-            alumno_legajo: str = Field(..., description="Alumno")
-        
+            comision_id: str = Field(..., description="Comision")
+
         # Set up search contexts for both relationships
-        materia_key = "search_context_Materia_Inscripcion_materia_codigo"
-        alumno_key = "search_context_Alumno_Inscripcion_alumno_legajo"
-        
+        materia_key = "search_context_Materia_HorarioModel_materia_codigo"
+        comision_key = "search_context_Comision_HorarioModel_comision_id"
+
         st.session_state[materia_key] = "matematica"
-        st.session_state[alumno_key] = "juan"
-        
+        st.session_state[comision_key] = "comision1"
+
         # Get contexts
         materia_context = RelationshipSelector.get_search_context(
-            Materia, Inscripcion, "materia_codigo"
+            Materia, HorarioModel, "materia_codigo"
         )
-        alumno_context = RelationshipSelector.get_search_context(
-            Alumno, Inscripcion, "alumno_legajo"
+        comision_context = RelationshipSelector.get_search_context(
+            Comision, HorarioModel, "comision_id"
         )
-        
+
         # Each should have its own context
         assert materia_context == "matematica"
-        assert alumno_context == "juan"
-        
+        assert comision_context == "comision1"
+
         # Clear one context
-        RelationshipSelector.clear_search_context(Materia, Inscripcion, "materia_codigo")
-        
+        RelationshipSelector.clear_search_context(Materia, HorarioModel, "materia_codigo")
+
         # Only the cleared one should be empty
         materia_context = RelationshipSelector.get_search_context(
-            Materia, Inscripcion, "materia_codigo"
+            Materia, HorarioModel, "materia_codigo"
         )
-        alumno_context = RelationshipSelector.get_search_context(
-            Alumno, Inscripcion, "alumno_legajo"
+        comision_context = RelationshipSelector.get_search_context(
+            Comision, HorarioModel, "comision_id"
         )
-        
+
         assert materia_context == ""
-        assert alumno_context == "juan"
+        assert comision_context == "comision1"
 
     def test_search_context_survives_page_navigation(self):
         """Test that search context persists across simulated page navigation."""

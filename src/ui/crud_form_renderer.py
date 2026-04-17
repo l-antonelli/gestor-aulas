@@ -834,21 +834,24 @@ class CRUDFormRenderer:
             # Check sum constraints (e.g., sum of comision cupos <= materia cupo)
             # This is a common pattern, so we check if both parent and child have a "cupo" field
             if hasattr(parent_instance, "cupo") and hasattr(instance_db, "cupo"):
-                is_valid, error_msg = CrossEntityValidator.validate_sum_constraint(
-                    parent_instance=parent_instance,
-                    child_instances=all_children,
-                    parent_field="cupo",
-                    child_field="cupo",
-                )
-                if not is_valid:
-                    errors.append(error_msg)
-                    # Add suggestions
-                    suggestions = CrossEntityValidator.get_constraint_suggestions(
+                # Skip validation if parent cupo is None (no limit)
+                parent_cupo = getattr(parent_instance, "cupo", None)
+                if parent_cupo is not None:
+                    is_valid, error_msg = CrossEntityValidator.validate_sum_constraint(
                         parent_instance=parent_instance,
                         child_instances=all_children,
-                        validation_error=error_msg,
+                        parent_field="cupo",
+                        child_field="cupo",
                     )
-                    errors.extend([f"💡 Sugerencia: {s}" for s in suggestions])
+                    if not is_valid:
+                        errors.append(error_msg)
+                        # Add suggestions
+                        suggestions = CrossEntityValidator.get_constraint_suggestions(
+                            parent_instance=parent_instance,
+                            child_instances=all_children,
+                            validation_error=error_msg,
+                        )
+                        errors.extend([f"💡 Sugerencia: {s}" for s in suggestions])
         
         return errors
     
@@ -880,37 +883,27 @@ class CRUDFormRenderer:
             The database model class or None if not found
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
-            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
-            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB
+            MateriaDB, ComisionDB, HorarioDB, AulaDB,
+            CarreraDB, CicloDB, DictadoDB
         )
         from src.domain.problem.materia import Materia
         from src.domain.problem.comision import Comision
-        from src.domain.problem.alumno import Alumno
-        from src.domain.problem.clase import Clase
+        from src.domain.problem.horario import Horario
         from src.domain.problem.aula import Aula
-        from src.domain.solution.inscripcion import Inscripcion
-        from src.domain.solution.asistencia import Asistencia
-        from src.domain.solution.asignacion_aula import AsignacionAula
-        
+
         # Mapping from domain models to DB models
         mapping = {
             Materia: MateriaDB,
             Comision: ComisionDB,
-            Alumno: AlumnoDB,
-            Clase: ClaseDB,
+            Horario: HorarioDB,
             Aula: AulaDB,
-            Inscripcion: InscripcionDB,
-            Asistencia: AsistenciaDB,
-            AsignacionAula: AsignacionAulaDB,
         }
-        
+
         # Also check by name for models that might be passed directly as DB models
-        if domain_model in [MateriaDB, ComisionDB, AlumnoDB, ClaseDB, AulaDB,
-                            InscripcionDB, AsistenciaDB, AsignacionAulaDB,
-                            HorarioCronogramaDB, CarreraDB, ProfesorDB, CicloDB, DictadoDB]:
+        if domain_model in [MateriaDB, ComisionDB, HorarioDB, AulaDB,
+                            CarreraDB, CicloDB, DictadoDB]:
             return domain_model
-        
+
         return mapping.get(domain_model)
     
     @staticmethod
@@ -949,7 +942,7 @@ class CRUDFormRenderer:
             The entity ID or None
         """
         # Try common ID field names
-        for id_field in ["id", "codigo", "legajo"]:
+        for id_field in ["id", "codigo"]:
             if hasattr(entity, id_field):
                 return str(getattr(entity, id_field))
         

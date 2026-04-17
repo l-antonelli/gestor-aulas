@@ -6,7 +6,7 @@ from datetime import date, time
 from pydantic import BaseModel, Field
 
 from src.ui.schema_introspector import SchemaIntrospector
-from src.domain.problem import Alumno, Materia, Comision, Aula
+from src.domain.problem import Materia, Comision, Aula
 
 
 class TestSchemaIntrospector:
@@ -14,26 +14,21 @@ class TestSchemaIntrospector:
 
     def test_get_fields_returns_all_fields(self):
         """Test that get_fields returns all model fields."""
-        fields = SchemaIntrospector.get_fields(Alumno)
-        assert "legajo" in fields
-        assert "email" in fields
-        assert "nombre" in fields
-        assert "dni" in fields
-        assert len(fields) == 4
-
-    def test_get_fields_materia(self):
-        """Test get_fields with Materia model."""
         fields = SchemaIntrospector.get_fields(Materia)
         assert "codigo" in fields
         assert "nombre" in fields
         assert "cupo" in fields
         assert "horas_semanales" in fields
-        assert len(fields) == 4
+        assert "periodo" in fields
+        assert "codigo_guarani" in fields
+        assert "active" in fields
+        assert "virtual" in fields
+        assert len(fields) == 8
 
     def test_get_field_type_string(self):
         """Test get_field_type for string fields."""
-        field_type = SchemaIntrospector.get_field_type(Alumno, "legajo")
-        # Legajo is a NewType of str
+        field_type = SchemaIntrospector.get_field_type(Materia, "codigo")
+        # Codigo is a NewType of str
         assert field_type.__supertype__ == str or field_type == str
 
     def test_get_field_type_int(self):
@@ -44,12 +39,12 @@ class TestSchemaIntrospector:
     def test_get_field_type_invalid_field(self):
         """Test get_field_type raises error for invalid field."""
         with pytest.raises(ValueError, match="Field 'invalid' not found"):
-            SchemaIntrospector.get_field_type(Alumno, "invalid")
+            SchemaIntrospector.get_field_type(Materia, "invalid")
 
     def test_is_field_required_true(self):
         """Test is_field_required for required fields."""
-        assert SchemaIntrospector.is_field_required(Alumno, "legajo") is True
         assert SchemaIntrospector.is_field_required(Materia, "codigo") is True
+        assert SchemaIntrospector.is_field_required(Materia, "nombre") is True
 
     def test_is_field_required_false(self):
         """Test is_field_required for optional fields."""
@@ -59,8 +54,8 @@ class TestSchemaIntrospector:
 
     def test_get_field_description(self):
         """Test get_field_description returns description."""
-        desc = SchemaIntrospector.get_field_description(Alumno, "legajo")
-        assert desc == "Unique student identifier"
+        desc = SchemaIntrospector.get_field_description(Materia, "codigo")
+        assert desc == "Unique subject code (codigo_plan)"
 
     def test_get_field_description_empty(self):
         """Test get_field_description returns empty string when no description."""
@@ -72,7 +67,7 @@ class TestSchemaIntrospector:
 
     def test_get_default_value_none_for_required(self):
         """Test get_default_value returns None for required fields."""
-        default = SchemaIntrospector.get_default_value(Alumno, "legajo")
+        default = SchemaIntrospector.get_default_value(Materia, "codigo")
         assert default is None
 
     def test_get_default_value_returns_default(self):
@@ -100,13 +95,13 @@ class TestSchemaIntrospector:
 
     def test_is_nested_model_true(self):
         """Test is_nested_model returns True for Pydantic models."""
-        assert SchemaIntrospector.is_nested_model(Alumno) is True
         assert SchemaIntrospector.is_nested_model(Materia) is True
+        assert SchemaIntrospector.is_nested_model(Comision) is True
 
     def test_get_nested_model(self):
         """Test get_nested_model returns the model class."""
-        model = SchemaIntrospector.get_nested_model(Alumno)
-        assert model is Alumno
+        model = SchemaIntrospector.get_nested_model(Materia)
+        assert model is Materia
 
     def test_get_nested_model_raises_for_non_model(self):
         """Test get_nested_model raises error for non-model types."""
@@ -120,16 +115,16 @@ class TestSchemaIntrospectorWithNestedModels:
     def test_is_nested_model_with_optional(self):
         """Test is_nested_model handles Optional types."""
         class Parent(BaseModel):
-            child: Optional[Alumno] = None
-        
+            child: Optional[Materia] = None
+
         field_type = SchemaIntrospector.get_field_type(Parent, "child")
         assert SchemaIntrospector.is_nested_model(field_type) is True
 
     def test_get_nested_model_with_optional(self):
         """Test get_nested_model handles Optional types."""
         class Parent(BaseModel):
-            child: Optional[Alumno] = None
-        
+            child: Optional[Materia] = None
+
         field_type = SchemaIntrospector.get_field_type(Parent, "child")
         model = SchemaIntrospector.get_nested_model(field_type)
-        assert model is Alumno
+        assert model is Materia

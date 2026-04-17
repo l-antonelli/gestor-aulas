@@ -3,56 +3,35 @@ Converters between SQLModel (DB) and Pydantic (Domain) models.
 
 This module provides bidirectional conversion functions to maintain
 separation between persistence layer and domain logic.
-
-Usage:
-    # Load from DB, convert to domain for processing
-    with get_session() as session:
-        aulas_db = aula_crud.get_all(session)
-    aulas = [to_domain(a) for a in aulas_db]
-    
-    # Process with optimization algorithm...
-    
-    # Convert result back to DB model for persistence
-    asignacion_db = to_db(asignacion_domain)
 """
 
-from typing import TypeVar, Union, overload
+from typing import Union, overload
 
 # Domain models
-from src.domain.problem.alumno import Alumno
 from src.domain.problem.aula import Aula
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
-from src.domain.problem.horario_cronograma import HorarioCronograma
-from src.domain.problem.clase import Clase
-from src.domain.solution.inscripcion import Inscripcion
-from src.domain.solution.asistencia import Asistencia
-from src.domain.solution.asignacion_aula import AsignacionAula
+from src.domain.problem.horario import Horario
+from src.domain.problem.carrera import Carrera
 
 # DB models
 from src.database.models import (
-    AlumnoDB,
     AulaDB,
     MateriaDB,
     ComisionDB,
-    HorarioCronogramaDB,
-    ClaseDB,
-    InscripcionDB,
-    AsistenciaDB,
-    AsignacionAulaDB,
+    HorarioDB,
+    CarreraDB,
 )
 
 # Type aliases for clarity
-DomainModel = Union[Alumno, Aula, Materia, Comision, HorarioCronograma, Clase, Inscripcion, Asistencia, AsignacionAula]
-DBModel = Union[AlumnoDB, AulaDB, MateriaDB, ComisionDB, HorarioCronogramaDB, ClaseDB, InscripcionDB, AsistenciaDB, AsignacionAulaDB]
+DomainModel = Union[Aula, Materia, Comision, Horario, Carrera]
+DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, CarreraDB]
 
 
 # =============================================================================
-# Domain → DB Converters
+# Domain -> DB Converters
 # =============================================================================
 
-@overload
-def to_db(domain: Alumno) -> AlumnoDB: ...
 @overload
 def to_db(domain: Aula) -> AulaDB: ...
 @overload
@@ -60,27 +39,13 @@ def to_db(domain: Materia) -> MateriaDB: ...
 @overload
 def to_db(domain: Comision) -> ComisionDB: ...
 @overload
-def to_db(domain: HorarioCronograma) -> HorarioCronogramaDB: ...
+def to_db(domain: Horario) -> HorarioDB: ...
 @overload
-def to_db(domain: Clase) -> ClaseDB: ...
-@overload
-def to_db(domain: Inscripcion) -> InscripcionDB: ...
-@overload
-def to_db(domain: Asistencia) -> AsistenciaDB: ...
-@overload
-def to_db(domain: AsignacionAula) -> AsignacionAulaDB: ...
+def to_db(domain: Carrera) -> CarreraDB: ...
 
 def to_db(domain: DomainModel) -> DBModel:
     """Convert a domain model to its DB equivalent."""
-    
-    if isinstance(domain, Alumno):
-        return AlumnoDB(
-            legajo=domain.legajo,
-            email=domain.email,
-            nombre=domain.nombre,
-            dni=domain.dni,
-        )
-    
+
     if isinstance(domain, Aula):
         return AulaDB(
             id=domain.id,
@@ -90,76 +55,58 @@ def to_db(domain: DomainModel) -> DBModel:
             tipo=domain.tipo,
             descripcion=domain.descripcion,
         )
-    
+
     if isinstance(domain, Materia):
         return MateriaDB(
             codigo=domain.codigo,
             nombre=domain.nombre,
+            codigo_guarani=domain.codigo_guarani,
             cupo=domain.cupo,
             horas_semanales=domain.horas_semanales,
+            periodo=domain.periodo,
+            active=domain.active,
+            virtual=domain.virtual,
+            optativa=domain.optativa,
         )
-    
+
     if isinstance(domain, Comision):
         return ComisionDB(
             id=domain.id,
             materia_codigo=domain.materia_codigo,
+            plan_cursada_id=domain.plan_cursada_id,
+            comision_key=domain.comision_key,
             nombre=domain.nombre,
             numero=domain.numero,
             cupo=domain.cupo,
         )
-    
-    if isinstance(domain, HorarioCronograma):
-        return HorarioCronogramaDB(
+
+    if isinstance(domain, Horario):
+        return HorarioDB(
             id=domain.id,
-            dia_semana=domain.dia_semana,
+            comision_id=domain.comision_id,
+            codigo_materia=domain.codigo_materia,
+            dia=domain.dia,
             hora_inicio=domain.hora_inicio,
             hora_fin=domain.hora_fin,
         )
-    
-    if isinstance(domain, Clase):
-        return ClaseDB(
-            id=domain.id,
-            comision_id=domain.comision_id,
-            horario_id=domain.horario_id,
-            dia=domain.dia,
+
+    if isinstance(domain, Carrera):
+        return CarreraDB(
+            codigo=domain.codigo,
+            nombre=domain.nombre,
+            titulo_otorgado=domain.titulo_otorgado,
+            duracion_anios=domain.duracion_anios,
+            cantidad_materias=domain.cantidad_materias,
+            dicta_recursado=domain.dicta_recursado,
         )
-    
-    if isinstance(domain, Inscripcion):
-        return InscripcionDB(
-            id=domain.id,
-            alumno_legajo=domain.alumno_legajo,
-            comision_id=domain.comision_id,
-            fecha_inscripcion=domain.fecha_inscripcion,
-            activa=domain.activa,
-        )
-    
-    if isinstance(domain, Asistencia):
-        return AsistenciaDB(
-            id=domain.id,
-            alumno_legajo=domain.alumno_legajo,
-            clase_id=domain.clase_id,
-            fecha=domain.fecha,
-            presente=domain.presente,
-        )
-    
-    if isinstance(domain, AsignacionAula):
-        return AsignacionAulaDB(
-            id=domain.id,
-            clase_id=domain.clase_id,
-            aula_id=domain.aula_id,
-            fecha_asignacion=domain.fecha_asignacion,
-            vigente=domain.vigente,
-        )
-    
+
     raise TypeError(f"Unknown domain model type: {type(domain)}")
 
 
 # =============================================================================
-# DB → Domain Converters
+# DB -> Domain Converters
 # =============================================================================
 
-@overload
-def to_domain(db: AlumnoDB) -> Alumno: ...
 @overload
 def to_domain(db: AulaDB) -> Aula: ...
 @overload
@@ -167,27 +114,13 @@ def to_domain(db: MateriaDB) -> Materia: ...
 @overload
 def to_domain(db: ComisionDB) -> Comision: ...
 @overload
-def to_domain(db: HorarioCronogramaDB) -> HorarioCronograma: ...
+def to_domain(db: HorarioDB) -> Horario: ...
 @overload
-def to_domain(db: ClaseDB) -> Clase: ...
-@overload
-def to_domain(db: InscripcionDB) -> Inscripcion: ...
-@overload
-def to_domain(db: AsistenciaDB) -> Asistencia: ...
-@overload
-def to_domain(db: AsignacionAulaDB) -> AsignacionAula: ...
+def to_domain(db: CarreraDB) -> Carrera: ...
 
 def to_domain(db: DBModel) -> DomainModel:
     """Convert a DB model to its domain equivalent."""
-    
-    if isinstance(db, AlumnoDB):
-        return Alumno(
-            legajo=db.legajo,
-            email=db.email,
-            nombre=db.nombre,
-            dni=db.dni,
-        )
-    
+
     if isinstance(db, AulaDB):
         return Aula(
             id=db.id,
@@ -197,67 +130,51 @@ def to_domain(db: DBModel) -> DomainModel:
             tipo=db.tipo,
             descripcion=db.descripcion,
         )
-    
+
     if isinstance(db, MateriaDB):
         return Materia(
             codigo=db.codigo,
             nombre=db.nombre,
+            codigo_guarani=db.codigo_guarani,
             cupo=db.cupo,
             horas_semanales=db.horas_semanales,
+            periodo=db.periodo,
+            active=db.active,
+            virtual=db.virtual,
+            optativa=db.optativa,
         )
-    
+
     if isinstance(db, ComisionDB):
         return Comision(
             id=db.id,
             materia_codigo=db.materia_codigo,
+            plan_cursada_id=db.plan_cursada_id,
+            comision_key=db.comision_key or "",
             nombre=db.nombre,
             numero=db.numero,
             cupo=db.cupo,
         )
-    
-    if isinstance(db, HorarioCronogramaDB):
-        return HorarioCronograma(
+
+    if isinstance(db, HorarioDB):
+        return Horario(
             id=db.id,
-            dia_semana=db.dia_semana,
+            comision_id=db.comision_id,
+            codigo_materia=db.codigo_materia,
+            dia=db.dia,
             hora_inicio=db.hora_inicio,
             hora_fin=db.hora_fin,
         )
-    
-    if isinstance(db, ClaseDB):
-        return Clase(
-            id=db.id,
-            comision_id=db.comision_id,
-            horario_id=db.horario_id,
-            dia=db.dia,
+
+    if isinstance(db, CarreraDB):
+        return Carrera(
+            codigo=db.codigo,
+            nombre=db.nombre,
+            titulo_otorgado=db.titulo_otorgado,
+            duracion_anios=db.duracion_anios,
+            cantidad_materias=db.cantidad_materias,
+            dicta_recursado=db.dicta_recursado,
         )
-    
-    if isinstance(db, InscripcionDB):
-        return Inscripcion(
-            id=db.id,
-            alumno_legajo=db.alumno_legajo,
-            comision_id=db.comision_id,
-            fecha_inscripcion=db.fecha_inscripcion,
-            activa=db.activa,
-        )
-    
-    if isinstance(db, AsistenciaDB):
-        return Asistencia(
-            id=db.id,
-            alumno_legajo=db.alumno_legajo,
-            clase_id=db.clase_id,
-            fecha=db.fecha,
-            presente=db.presente,
-        )
-    
-    if isinstance(db, AsignacionAulaDB):
-        return AsignacionAula(
-            id=db.id,
-            clase_id=db.clase_id,
-            aula_id=db.aula_id,
-            fecha_asignacion=db.fecha_asignacion,
-            vigente=db.vigente,
-        )
-    
+
     raise TypeError(f"Unknown DB model type: {type(db)}")
 
 

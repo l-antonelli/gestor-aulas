@@ -1,0 +1,14 @@
+- Para el diseño de cualquier sistema de soporte informatico es necesario primero partir analizando el dominio del problema que busca solucionar.
+- La ingenieria industrial nos brinda muchisimas herramientas y tecnicas para comprender el negocio, sus reglas, sus actores y elementos intervinientes.
+- Para comprender y modelar adecuadamente el dominio hay que partir identificando las entidades del dominio del problema, sus relaciones, comportamiento y naturaleza.
+- Para diseñar una adecuada solucion tecnologica hay que definir y modelar cuales seran las entidades del dominio de la solucion.
+- La ingenieria de software nos brinda muchas tecnicas para plasmar estas definiciones y modelos en implementaciones robustas.
+- El problema con la asignacion y gestion de aulas es en esencia un problema de asignacion de recursos bajo restricciones.
+- La dificultad con la gestion de este proceso durante el cursado se relaciona a la cantidad de imprevistos que producen modificaciones en el esquema inicial (mas restricciones imprevistas, excepciones, etc). Esto produce la necesidad de una serie de ajustes en cascada, a menudo muy grande, por la naturaleza combinatoria elevada del problema.
+- Este proceso ademas no se puede hacer aislado del diseño de un schema de datos que permita la adecuada implementacion de la solucion pensada.
+- La facultad ademas cuenta con registros aislados en silos, a menudo sin codificaciones estandarizadas. Por ejemplo los planes de las carreras enlistan las materias que se deben cursar, con un codigo interno propio de la carrera muchas veces, aunque sean materias que comparten con otras carreras.
+- A su vez los datos de inscriptos y comisiones se manejan via siu guarani, y tiene otros codigos.
+- A su vez en los horarios se suelen publicar las clases de una misma materia, con distinto nombre para distintas carrearas.
+
+
+- Hay muchos conceptos o cosas que se mencionan a diario, coloquialmente, y todos entienden en general de lo que se habla cuando se menciona pero que carecen de una definicion explicita. Esto se refleja en muchas de las inconsistencias que observamos en el esquema de datos que tiene actualmente la facultad. Los alumnos y los profesores saben que es una clase pero algunos pueden atribuirle ciertas propiedades o atributos que otros no, o bien pueden no estar de acuerdo en el comportamiento de esta entidad. Pero al no estar definido en ningun lado y no ser motivo de conversacion, estas discrepancias en el entendimiento nunca saltan y se manifiestan ocultamente en las inconsistencias mencionadas. Que es una materia? Es parte de una carrera o bien  

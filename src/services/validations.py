@@ -1,55 +1,58 @@
 """
-Validaciones de factibilidad para el sistema de asignación de aulas.
+Validaciones de factibilidad para el sistema de asignacion de aulas.
 
-Este módulo contiene las validaciones que aseguran que los datos cargados
-son correctos y factibles para el problema de asignación.
+Este modulo contiene las validaciones que aseguran que los datos cargados
+son correctos y factibles para el problema de asignacion.
 """
 
 from dataclasses import dataclass
-from sqlmodel import Session, select
+from typing import Optional
+from sqlmodel import Session, select, col
 from src.database.models import (
-    MateriaDB, CarreraDB, ClaseDB, AsignacionAulaDB,
-    HorarioCronogramaDB, MateriaCarreraLink, ComisionDB
+    MateriaDB, CarreraDB, HorarioDB,
+    PlanEstudioDB, ComisionDB, ClaseDB,
+    CicloPlanVersionDB, PlanCarreraVersionDB,
+    DictadoDB, DictadoCicloDB, PlanificacionCursadaDB,
 )
 
 
 @dataclass
 class ValidationResult:
-    """Resultado de una validación."""
+    """Resultado de una validacion."""
     valid: bool
     message: str
     details: list[str] = None
-    
+
     def __post_init__(self):
         if self.details is None:
             self.details = []
 
 
 # =============================================================================
-# Validación 1: Toda materia debe pertenecer a al menos una carrera
+# Validacion 1: Toda materia debe pertenecer a al menos una carrera
 # =============================================================================
 
 def validar_materias_tienen_carrera(session: Session) -> ValidationResult:
     """
-    Verifica que todas las materias estén asociadas a al menos una carrera.
+    Verifica que todas las materias esten asociadas a al menos una carrera.
     """
     # Get all materias
     materias = session.exec(select(MateriaDB)).all()
-    
+
     # Get all links
-    links = session.exec(select(MateriaCarreraLink)).all()
+    links = session.exec(select(PlanEstudioDB)).all()
     materias_con_carrera = {link.materia_codigo for link in links}
-    
+
     # Find materias without carrera
     materias_sin_carrera = [m for m in materias if m.codigo not in materias_con_carrera]
-    
+
     if materias_sin_carrera:
         return ValidationResult(
             valid=False,
             message=f"{len(materias_sin_carrera)} materia(s) sin carrera asignada",
             details=[f"{m.codigo}: {m.nombre}" for m in materias_sin_carrera]
         )
-    
+
     return ValidationResult(
         valid=True,
         message=f"Todas las {len(materias)} materias tienen carrera asignada"
@@ -57,14 +60,14 @@ def validar_materias_tienen_carrera(session: Session) -> ValidationResult:
 
 
 # =============================================================================
-# Validación 2: Horarios no superpuestos para materias del mismo año/cuatrimestre
+# Validacion 2: Horarios no superpuestos para materias del mismo anio/cuatrimestre
 # =============================================================================
 
-def horarios_se_superponen(h1: HorarioCronogramaDB, h2: HorarioCronogramaDB) -> bool:
-    """Verifica si dos horarios se superponen (mismo día y horas solapadas)."""
-    if h1.dia_semana != h2.dia_semana:
+def horarios_se_superponen(h1: HorarioDB, h2: HorarioDB) -> bool:
+    """Verifica si dos horarios se superponen (mismo dia y horas solapadas)."""
+    if h1.dia != h2.dia:
         return False
-    
+
     # Check time overlap
     return not (h1.hora_fin <= h2.hora_inicio or h2.hora_fin <= h1.hora_inicio)
 
@@ -73,153 +76,406 @@ def validar_factibilidad_horarios_carrera(
     session: Session,
     carrera_codigo: str,
     anio: int,
-    cuatrimestre: int
+    cuatrimestre: str,
+    plan_version_id: Optional[str] = None,
 ) -> ValidationResult:
     """
-    Verifica que los horarios de las materias de una carrera/año/cuatrimestre
+    Verifica que los horarios de las materias de una carrera/anio/cuatrimestre
     no se superpongan, permitiendo que un alumno asista a todas.
+    Opcionalmente filtra por version de plan.
     """
-    # Get materias for this carrera/año/cuatrimestre
-    materias = session.exec(
+    # Get materias for this carrera/anio/cuatrimestre
+    statement = (
         select(MateriaDB)
-        .join(MateriaCarreraLink)
-        .where(MateriaCarreraLink.carrera_codigo == carrera_codigo)
-        .where(MateriaDB.anio_carrera == anio)
-        .where(MateriaDB.cuatrimestre_carrera == cuatrimestre)
-    ).all()
-    
+        .join(PlanEstudioDB)
+        .where(PlanEstudioDB.carrera_codigo == carrera_codigo)
+        .where(PlanEstudioDB.anio_plan == anio)
+        .where(PlanEstudioDB.cuatrimestre_plan == cuatrimestre)
+    )
+    if plan_version_id:
+        statement = statement.where(PlanEstudioDB.plan_version_id == plan_version_id)
+
+    materias = session.exec(statement).all()
+
     if not materias:
         return ValidationResult(
             valid=True,
-            message=f"No hay materias para {carrera_codigo} año {anio} cuatri {cuatrimestre}"
+            message=f"No hay materias para {carrera_codigo} anio {anio} cuatri {cuatrimestre}"
         )
-    
-    # Get all clases for these materias
-    clases_por_materia: dict[str, list[tuple[ClaseDB, HorarioCronogramaDB]]] = {}
-    
+
+    # Get all horarios for these materias (Comision -> Horario)
+    horarios_por_materia: dict[str, list[HorarioDB]] = {}
+
     for materia in materias:
         comisiones = session.exec(
             select(ComisionDB).where(ComisionDB.materia_codigo == materia.codigo)
         ).all()
-        
-        clases_horarios = []
+
+        materia_horarios = []
         for comision in comisiones:
-            clases = session.exec(
-                select(ClaseDB).where(ClaseDB.comision_id == comision.id)
+            horarios = session.exec(
+                select(HorarioDB).where(HorarioDB.comision_id == comision.id)
             ).all()
-            for clase in clases:
-                horario = session.get(HorarioCronogramaDB, clase.horario_id)
-                if horario:
-                    clases_horarios.append((clase, horario))
-        
-        if clases_horarios:
-            clases_por_materia[materia.codigo] = clases_horarios
-    
+            materia_horarios.extend(horarios)
+
+        if materia_horarios:
+            horarios_por_materia[materia.codigo] = materia_horarios
+
     # Check for overlaps between different materias
     conflictos = []
-    materias_codigos = list(clases_por_materia.keys())
-    
+    materias_codigos = list(horarios_por_materia.keys())
+
     for i, mat1 in enumerate(materias_codigos):
         for mat2 in materias_codigos[i+1:]:
-            for _, h1 in clases_por_materia[mat1]:
-                for _, h2 in clases_por_materia[mat2]:
+            for h1 in horarios_por_materia[mat1]:
+                for h2 in horarios_por_materia[mat2]:
                     if horarios_se_superponen(h1, h2):
                         conflictos.append(
-                            f"{mat1} vs {mat2}: {h1.dia_semana} "
+                            f"{mat1} vs {mat2}: {h1.dia} "
                             f"{h1.hora_inicio.strftime('%H:%M')}-{h1.hora_fin.strftime('%H:%M')}"
                         )
-    
+
     if conflictos:
         return ValidationResult(
             valid=False,
-            message=f"{len(conflictos)} conflicto(s) de horario en {carrera_codigo} año {anio} cuatri {cuatrimestre}",
+            message=f"{len(conflictos)} conflicto(s) de horario en {carrera_codigo} anio {anio} cuatri {cuatrimestre}",
             details=conflictos
         )
-    
+
     return ValidationResult(
         valid=True,
-        message=f"Sin conflictos de horario para {carrera_codigo} año {anio} cuatri {cuatrimestre}"
+        message=f"Sin conflictos de horario para {carrera_codigo} anio {anio} cuatri {cuatrimestre}"
     )
 
 
 def validar_factibilidad_horarios_todas_carreras(session: Session) -> list[ValidationResult]:
-    """Ejecuta la validación de horarios para todas las combinaciones carrera/año/cuatri."""
+    """Ejecuta la validacion de horarios para todas las combinaciones carrera/anio/cuatri."""
     results = []
-    
+
     carreras = session.exec(select(CarreraDB)).all()
-    
+
     for carrera in carreras:
         for anio in range(1, carrera.duracion_anios + 1):
-            for cuatri in [1, 2]:
+            for cuatri in ["1C", "2C"]:
                 result = validar_factibilidad_horarios_carrera(
                     session, carrera.codigo, anio, cuatri
                 )
                 if not result.valid:
                     results.append(result)
-    
+
     return results
 
 
 # =============================================================================
-# Validación 3: Un aula no puede estar asignada a dos clases en el mismo horario/ciclo
+# Validacion 3: Un aula no puede estar asignada a dos horarios en el mismo tiempo/ciclo
 # =============================================================================
 
-def validar_conflictos_aula_ciclo(session: Session, ciclo_id: str) -> ValidationResult:
+def validar_conflictos_aula_plan(session: Session, plan_cursada_id: str) -> ValidationResult:
     """
-    Verifica que no haya dos clases asignadas a la misma aula en el mismo
-    horario dentro de un ciclo.
+    Verifica que no haya dos clases asignadas a la misma aula con tiempos
+    superpuestos en la misma fecha dentro de un plan de cursada.
     """
-    # Get all active assignments for this ciclo
-    asignaciones = session.exec(
-        select(AsignacionAulaDB)
-        .where(AsignacionAulaDB.ciclo_id == ciclo_id)
-        .where(AsignacionAulaDB.vigente)
-    ).all()
-    
-    if not asignaciones:
+    from src.database.models import PlanificacionCursadaDB
+
+    plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
+    if plan is None:
         return ValidationResult(
             valid=True,
-            message=f"No hay asignaciones en el ciclo {ciclo_id}"
+            message=f"Plan '{plan_cursada_id}' no encontrado"
         )
-    
-    # Group by aula
-    asignaciones_por_aula: dict[str, list[AsignacionAulaDB]] = {}
-    for asig in asignaciones:
-        if asig.aula_id not in asignaciones_por_aula:
-            asignaciones_por_aula[asig.aula_id] = []
-        asignaciones_por_aula[asig.aula_id].append(asig)
-    
+
+    # Get all clases with aula assigned
+    clases = session.exec(
+        select(ClaseDB)
+        .where(ClaseDB.plan_cursada_id == plan_cursada_id)
+        .where(ClaseDB.aula_id != None)
+    ).all()
+
+    if not clases:
+        return ValidationResult(
+            valid=True,
+            message="No hay clases con aula asignada en este plan"
+        )
+
+    # Group by (aula_id, fecha)
+    by_aula_fecha: dict[tuple[str, str], list[ClaseDB]] = {}
+    for clase in clases:
+        key = (clase.aula_id, str(clase.fecha))
+        by_aula_fecha.setdefault(key, []).append(clase)
+
     conflictos = []
-    
-    for aula_id, asigs in asignaciones_por_aula.items():
-        # Get horarios for each clase
-        clases_horarios = []
-        for asig in asigs:
-            clase = session.get(ClaseDB, asig.clase_id)
-            if clase:
-                horario = session.get(HorarioCronogramaDB, clase.horario_id)
-                if horario:
-                    clases_horarios.append((clase, horario, asig))
-        
-        # Check for overlaps within same aula
-        for i, (c1, h1, _) in enumerate(clases_horarios):
-            for c2, h2, _ in clases_horarios[i+1:]:
-                if horarios_se_superponen(h1, h2):
+    for (aula_id, fecha), clases_grupo in by_aula_fecha.items():
+        for i, c1 in enumerate(clases_grupo):
+            for c2 in clases_grupo[i+1:]:
+                # Check time overlap
+                overlap = not (c1.hora_fin <= c2.hora_inicio or c2.hora_fin <= c1.hora_inicio)
+                if overlap:
                     conflictos.append(
-                        f"Aula {aula_id}: {c1.comision_id} vs {c2.comision_id} "
-                        f"en {h1.dia_semana} {h1.hora_inicio.strftime('%H:%M')}"
+                        f"Aula {aula_id} el {fecha}: "
+                        f"{c1.comision_id} ({c1.hora_inicio.strftime('%H:%M')}-{c1.hora_fin.strftime('%H:%M')}) vs "
+                        f"{c2.comision_id} ({c2.hora_inicio.strftime('%H:%M')}-{c2.hora_fin.strftime('%H:%M')})"
                     )
-    
+
     if conflictos:
         return ValidationResult(
             valid=False,
-            message=f"{len(conflictos)} conflicto(s) de aula en ciclo {ciclo_id}",
+            message=f"{len(conflictos)} conflicto(s) de aula en plan",
             details=conflictos
         )
-    
+
     return ValidationResult(
         valid=True,
-        message=f"Sin conflictos de aula en ciclo {ciclo_id}"
+        message="Sin conflictos de aula en el plan"
+    )
+
+
+# =============================================================================
+# Validacion 4: Conflictos de horarios dentro de un plan (BLOCKER)
+# =============================================================================
+
+def validar_conflictos_horarios_plan(
+    session: Session,
+    plan_id: str,
+) -> ValidationResult:
+    """
+    Verifica que no haya conflictos de horarios dentro de un plan de cursada.
+
+    Para cada combinacion carrera+año+cuatrimestre en las plan versions del ciclo:
+    - Obtiene las materias que corresponden a ese grupo
+    - Obtiene los horarios de comisiones dentro del plan
+    - Para 2C: incluye anuales (cuatrimestre_plan == "Anual")
+    - Detecta overlaps con horarios_se_superponen()
+
+    Severity: BLOCKER — debe resolverse antes de activar el plan.
+    """
+    plan = session.get(PlanificacionCursadaDB, plan_id)
+    if plan is None:
+        return ValidationResult(
+            valid=True,
+            message=f"Plan '{plan_id}' no encontrado"
+        )
+
+    # Get plan versions for the ciclo
+    plan_version_ids = session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
+    ).all()
+
+    if not plan_version_ids:
+        return ValidationResult(
+            valid=True,
+            message="El ciclo no tiene versiones de plan asignadas"
+        )
+
+    # Get all comisiones in this plan, indexed by materia_codigo
+    comisiones = session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
+    ).all()
+    comision_ids = [c.id for c in comisiones]
+    comision_map = {c.id: c for c in comisiones}
+
+    if not comision_ids:
+        return ValidationResult(
+            valid=True,
+            message="El plan no tiene comisiones"
+        )
+
+    # Load all horarios for the plan's comisiones
+    all_horarios = session.exec(
+        select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
+    ).all()
+
+    # Index horarios by materia_codigo
+    horarios_por_materia: dict[str, list[HorarioDB]] = {}
+    for h in all_horarios:
+        com = comision_map.get(h.comision_id)
+        if com:
+            horarios_por_materia.setdefault(com.materia_codigo, []).append(h)
+
+    # Get all distinct (carrera, anio, cuatrimestre) groups
+    plan_entries = session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))
+    ).all()
+
+    # Build groups: (carrera_codigo, anio_plan, cuatrimestre_plan) → set of materia_codigos
+    groups: dict[tuple[str, int, str], set[str]] = {}
+    for pe in plan_entries:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        groups.setdefault(key, set()).add(pe.materia_codigo)
+
+    # For each cuatrimestre group, also include anuales from the same carrera+year
+    enriched_groups: dict[tuple[str, int, str], set[str]] = {}
+    for (carrera, anio, cuatri), mat_codes in groups.items():
+        enriched = set(mat_codes)
+        if cuatri in ("1C", "2C"):
+            # Include anuales from same carrera+year
+            anual_key = (carrera, anio, "Anual")
+            if anual_key in groups:
+                enriched |= groups[anual_key]
+        enriched_groups[(carrera, anio, cuatri)] = enriched
+
+    # Check for conflicts within each group
+    conflictos = []
+    for (carrera, anio, cuatri), mat_codes in enriched_groups.items():
+        # Only check materias that have horarios in this plan
+        relevant = [mc for mc in mat_codes if mc in horarios_por_materia]
+
+        for i, mat1 in enumerate(relevant):
+            for mat2 in relevant[i + 1:]:
+                for h1 in horarios_por_materia[mat1]:
+                    for h2 in horarios_por_materia[mat2]:
+                        if horarios_se_superponen(h1, h2):
+                            conflictos.append(
+                                f"{carrera} Año {anio} {cuatri}: "
+                                f"{mat1} vs {mat2} — {h1.dia} "
+                                f"{h1.hora_inicio.strftime('%H:%M')}-"
+                                f"{h1.hora_fin.strftime('%H:%M')}"
+                            )
+
+    if conflictos:
+        return ValidationResult(
+            valid=False,
+            message=f"{len(conflictos)} conflicto(s) de horario en el plan",
+            details=conflictos,
+        )
+
+    return ValidationResult(
+        valid=True,
+        message="Sin conflictos de horario en el plan",
+    )
+
+
+# =============================================================================
+# Validacion 5: Cobertura del plan (WARNING)
+# =============================================================================
+
+def validar_cobertura_plan(
+    session: Session,
+    plan_id: str,
+    ciclo_id: str,
+) -> ValidationResult:
+    """
+    Verifica que toda materia con dictado activo tenga al menos una comisión
+    con horarios en el plan.
+
+    Severity: WARNING — informativo, no bloquea activación.
+    """
+    # Get active dictados for this ciclo
+    dictados_activos = session.exec(
+        select(DictadoDB)
+        .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
+        .where(DictadoCicloDB.ciclo_id == ciclo_id)
+        .where(DictadoDB.activo == True)  # noqa: E712
+    ).all()
+
+    if not dictados_activos:
+        return ValidationResult(
+            valid=True,
+            message="No hay dictados activos para este ciclo",
+        )
+
+    # Get comisiones in the plan that have at least one horario
+    comisiones_con_horario = session.exec(
+        select(ComisionDB.materia_codigo)
+        .where(ComisionDB.plan_cursada_id == plan_id)
+        .join(HorarioDB, HorarioDB.comision_id == ComisionDB.id)
+        .distinct()
+    ).all()
+    materias_cubiertas = set(comisiones_con_horario)
+
+    # Find dictados without coverage
+    sin_cobertura = []
+    for d in dictados_activos:
+        if d.materia_codigo not in materias_cubiertas:
+            sin_cobertura.append(
+                f"{d.dictado_codigo} ({d.materia_codigo})"
+            )
+
+    if sin_cobertura:
+        return ValidationResult(
+            valid=False,
+            message=f"{len(sin_cobertura)} materia(s) con dictado activo sin comisión/horarios en el plan",
+            details=sin_cobertura,
+        )
+
+    return ValidationResult(
+        valid=True,
+        message=f"Todas las {len(dictados_activos)} materias con dictado activo tienen cobertura en el plan",
+    )
+
+
+# =============================================================================
+# Validacion 6: Identificar materias virtuales en el plan (INFO)
+# =============================================================================
+
+def identificar_virtuales_plan(
+    session: Session,
+    plan_id: str,
+) -> ValidationResult:
+    """
+    Identifica materias virtuales que tienen horarios en el plan.
+    Estas materias no necesitan aula física.
+
+    Severity: INFO — puramente informativo.
+    """
+    # Get comisiones in the plan
+    comisiones = session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
+    ).all()
+
+    if not comisiones:
+        return ValidationResult(
+            valid=True,
+            message="El plan no tiene comisiones",
+        )
+
+    # Get unique materia codes
+    mat_codes = list({c.materia_codigo for c in comisiones})
+    materias = session.exec(
+        select(MateriaDB).where(col(MateriaDB.codigo).in_(mat_codes))
+    ).all()
+    virtual_materias = {m.codigo: m.nombre for m in materias if m.virtual}
+
+    if not virtual_materias:
+        return ValidationResult(
+            valid=True,
+            message="No hay materias virtuales en el plan",
+        )
+
+    # Check which virtual materias have horarios
+    virtuales_con_horario = []
+    comision_ids = [c.id for c in comisiones if c.materia_codigo in virtual_materias]
+    if comision_ids:
+        horarios = session.exec(
+            select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
+        ).all()
+
+        # Which materias have horarios
+        mat_con_horario = set()
+        com_map = {c.id: c.materia_codigo for c in comisiones}
+        for h in horarios:
+            mc = com_map.get(h.comision_id)
+            if mc and mc in virtual_materias:
+                mat_con_horario.add(mc)
+
+        for mc in sorted(mat_con_horario):
+            virtuales_con_horario.append(
+                f"{mc}: {virtual_materias[mc]} (no necesita aula)"
+            )
+
+    if virtuales_con_horario:
+        return ValidationResult(
+            valid=True,
+            message=f"{len(virtuales_con_horario)} materia(s) virtual(es) con horarios (no necesitan aula)",
+            details=virtuales_con_horario,
+        )
+
+    return ValidationResult(
+        valid=True,
+        message=f"{len(virtual_materias)} materia(s) virtual(es) en el plan, sin horarios asignados",
     )
 
 
@@ -227,16 +483,16 @@ def validar_conflictos_aula_ciclo(session: Session, ciclo_id: str) -> Validation
 # Ejecutar todas las validaciones
 # =============================================================================
 
-def ejecutar_todas_validaciones(session: Session, ciclo_id: str = None) -> dict[str, ValidationResult]:
+def ejecutar_todas_validaciones(session: Session) -> dict[str, ValidationResult]:
     """
     Ejecuta todas las validaciones y retorna un diccionario con los resultados.
     """
     results = {}
-    
-    # Validación 1: Materias con carrera
+
+    # Validacion 1: Materias con carrera
     results["materias_carrera"] = validar_materias_tienen_carrera(session)
-    
-    # Validación 2: Horarios por carrera
+
+    # Validacion 2: Horarios por carrera
     horarios_results = validar_factibilidad_horarios_todas_carreras(session)
     if horarios_results:
         # Combine all failures
@@ -253,9 +509,8 @@ def ejecutar_todas_validaciones(session: Session, ciclo_id: str = None) -> dict[
             valid=True,
             message="Sin conflictos de horario en ninguna carrera"
         )
-    
-    # Validación 3: Conflictos de aula (si se especifica ciclo)
-    if ciclo_id:
-        results["conflictos_aula"] = validar_conflictos_aula_ciclo(session, ciclo_id)
-    
+
+    # Validacion 3: Conflictos de aula (placeholder - requires plan_cursada_id)
+    # Use validar_conflictos_aula_plan(session, plan_cursada_id) directly when needed
+
     return results

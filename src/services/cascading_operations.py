@@ -245,7 +245,7 @@ class CascadingOperations:
                 )
                 
                 child_crud_func = CascadingOperations._get_crud_func_for_model(
-                    relationship.child_model
+                    relationship.child_model, operation="delete"
                 )
                 
                 if child_crud_func:
@@ -312,28 +312,41 @@ class CascadingOperations:
             return f"{parent_pk}-1"
     
     @staticmethod
-    def _get_crud_func_for_model(model: Type[BaseModel]) -> Optional[Callable]:
+    def _get_crud_func_for_model(model: Type[BaseModel], operation: str = "create") -> Optional[Callable]:
         """
         Get the appropriate CRUD function for a model.
         
         This is a helper to map models to their CRUD functions.
         In a real implementation, this might use a registry or dependency injection.
+        
+        Args:
+            model: The domain model class
+            operation: The CRUD operation ("create" or "delete")
+            
+        Returns:
+            The CRUD function for the specified operation, or None if not found
         """
         from src.database import crud
         
-        # Map model names to CRUD functions
-        crud_map = {
-            "Materia": crud.materia_crud.create,
-            "Comision": crud.comision_crud.create,
-            "Clase": crud.clase_crud.create,
-            "Alumno": crud.alumno_crud.create,
-            "Inscripcion": crud.inscripcion_crud.create,
-            "Asistencia": crud.asistencia_crud.create,
-            "AsignacionAula": crud.asignacion_crud.create,
+        # Map model names to CRUD instances
+        crud_instance_map = {
+            "Materia": crud.materia_crud,
+            "Comision": crud.comision_crud,
+            "Horario": crud.horario_crud,
         }
         
         model_name = model.__name__
-        return crud_map.get(model_name)
+        crud_instance = crud_instance_map.get(model_name)
+        
+        if crud_instance is None:
+            return None
+        
+        if operation == "create":
+            return crud_instance.create
+        elif operation == "delete":
+            return crud_instance.delete
+        else:
+            return None
     
     @staticmethod
     def _get_children(
@@ -343,24 +356,33 @@ class CascadingOperations:
     ) -> List[BaseModel]:
         """
         Get all child entities for a parent.
-        
-        This queries the database for all children that reference the parent.
+
+        For 1:N relationships, queries the child table using foreign_key_field.
+        For M:N relationships, queries the link table using parent_link_field.
         """
         from sqlmodel import select
-        
-        # Get the database model for the child
-        child_db_model = CascadingOperations._get_db_model_for_domain_model(
-            relationship.child_model
-        )
-        
-        if not child_db_model:
-            return []
-        
-        # Query for children
-        statement = select(child_db_model).where(
-            getattr(child_db_model, relationship.foreign_key_field) == parent_id
-        )
-        
+
+        if relationship.is_many_to_many:
+            if not relationship.link_table or not relationship.parent_link_field:
+                return []
+            link_db_model = CascadingOperations._get_db_model_for_link_table(
+                relationship.link_table
+            )
+            if not link_db_model:
+                return []
+            statement = select(link_db_model).where(
+                getattr(link_db_model, relationship.parent_link_field) == parent_id
+            )
+        else:
+            child_db_model = CascadingOperations._get_db_model_for_domain_model(
+                relationship.child_model
+            )
+            if not child_db_model:
+                return []
+            statement = select(child_db_model).where(
+                getattr(child_db_model, relationship.foreign_key_field) == parent_id
+            )
+
         results = session.exec(statement).all()
         return list(results)
     
@@ -372,23 +394,28 @@ class CascadingOperations:
         This is a helper to convert between domain and database layers.
         """
         from src.database.models import (
-            MateriaDB, ComisionDB, ClaseDB, AlumnoDB,
-            InscripcionDB, AsistenciaDB, AsignacionAulaDB
+            MateriaDB, ComisionDB, HorarioDB,
         )
-        
+
         db_model_map = {
             "Materia": MateriaDB,
             "Comision": ComisionDB,
-            "Clase": ClaseDB,
-            "Alumno": AlumnoDB,
-            "Inscripcion": InscripcionDB,
-            "Asistencia": AsistenciaDB,
-            "AsignacionAula": AsignacionAulaDB,
+            "Horario": HorarioDB,
         }
         
         model_name = domain_model.__name__
         return db_model_map.get(model_name)
     
+    @staticmethod
+    def _get_db_model_for_link_table(table_name: str) -> Optional[Type]:
+        """Map a link table name to its DB model class."""
+        from src.database.models import PlanEstudioDB
+
+        link_table_map = {
+            "plan_estudio": PlanEstudioDB,
+        }
+        return link_table_map.get(table_name)
+
     @staticmethod
     def _get_domain_model_for_db_model(db_model: Type) -> Optional[Type[BaseModel]]:
         """
@@ -396,17 +423,13 @@ class CascadingOperations:
         
         This is the reverse of _get_db_model_for_domain_model.
         """
-        from src.domain.problem import Materia, Comision, Clase, Alumno
-        from src.domain.solution import Inscripcion, Asistencia, AsignacionAula
-        
+        from src.domain.problem import Materia, Comision
+        from src.domain.problem.horario import Horario
+
         domain_model_map = {
             "MateriaDB": Materia,
             "ComisionDB": Comision,
-            "ClaseDB": Clase,
-            "AlumnoDB": Alumno,
-            "InscripcionDB": Inscripcion,
-            "AsistenciaDB": Asistencia,
-            "AsignacionAulaDB": AsignacionAula,
+            "HorarioDB": Horario,
         }
         
         model_name = db_model.__name__

@@ -30,29 +30,36 @@ Este sistema permite gestionar la asignación óptima de aulas para el dictado d
 
 Usa el menú lateral para navegar entre las secciones:
 
-- **📚 Materias**: Gestión de asignaturas académicas
-- **👥 Comisiones**: División de materias en comisiones
+- **📚 Materias**: Gestión de asignaturas académicas y relación con carreras
 - **🏛️ Aulas**: Gestión de espacios físicos
-- **📅 Horarios**: Franjas horarias del cronograma
-- **🎓 Alumnos**: Gestión de estudiantes
-- **📝 Inscripciones**: Inscripción de alumnos a comisiones
+- **👥 Comisiones**: Vista de comisiones por materia (solo lectura, cupo editable)
+- **📅 Horarios**: Carga de horarios por archivo CSV/Excel o entrada manual
+- **🎓 Carreras**: Carreras y planes de estudio
+- **📆 Ciclos**: Períodos lectivos
+
+### Funcionalidades Destacadas
+
+- **Carga de horarios**: Importación desde archivo o entrada manual, con creación automática de comisiones
+- **Validación de cupo**: Al editar comisiones, se valida que la suma de cupos no exceda el cupo de la materia
+- **Planes de estudio**: Relación materia-carrera con año y cuatrimestre del plan
+- **Navegación jerárquica**: Navegación intuitiva entre entidades relacionadas
 
 ### Estado del Sistema
 """)
 
 # Show quick stats
 from src.database.connection import get_session
-from src.database.models import MateriaDB, AulaDB, AlumnoDB, ComisionDB
+from src.database.models import MateriaDB, AulaDB, ComisionDB, HorarioDB
 from sqlmodel import select
 
 with next(get_session()) as session:
     n_materias = len(list(session.exec(select(MateriaDB)).all()))
     n_aulas = len(list(session.exec(select(AulaDB)).all()))
-    n_alumnos = len(list(session.exec(select(AlumnoDB)).all()))
     n_comisiones = len(list(session.exec(select(ComisionDB)).all()))
+    n_horarios = len(list(session.exec(select(HorarioDB)).all()))
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Materias", n_materias)
 col2.metric("Aulas", n_aulas)
-col3.metric("Alumnos", n_alumnos)
-col4.metric("Comisiones", n_comisiones)
+col3.metric("Comisiones", n_comisiones)
+col4.metric("Horarios", n_horarios)
