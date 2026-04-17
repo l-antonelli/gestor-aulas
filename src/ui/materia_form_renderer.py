@@ -57,79 +57,85 @@ class MateriaFormRenderer:
             st.markdown("### Asignación de Carreras")
             st.caption("Debe asignar al menos una carrera especificando año y cuatrimestre")
             
-            # Get all carreras
+            # Get all carreras and plan versions
             from src.services.crud_services import carrera_service
+            from src.database.models import PlanCarreraVersionDB
+            from sqlmodel import select
             import pandas as pd
-            
+
             all_carreras = carrera_service.get_all(session)
-            
+
             if not all_carreras:
                 st.warning("No hay carreras disponibles. Cree una carrera primero.")
                 return None
-            
+
+            # Build plan version options per carrera
+            all_plan_versions = session.exec(
+                select(PlanCarreraVersionDB)
+                .order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+            ).all()
+            plan_names_unique = sorted(set(pv.nombre for pv in all_plan_versions))
+            # Default: nombre del plan mas reciente (primera por orden desc)
+            default_plan_name = all_plan_versions[0].nombre if all_plan_versions else ""
+
             # Check if materia is annual based on form data
             is_anual = form_data.get("periodo") == "anual"
-            
+
             if is_anual:
-                st.info("ℹ️ Materia anual: El cuatrimestre se establece automáticamente en 0 (anual).")
-            
+                st.info("Materia anual: El cuatrimestre se establece automaticamente en 0 (anual).")
+
             # Create initial dataframe for carreras
             if f"{form_key}_carrera_data" not in st.session_state:
                 st.session_state[f"{form_key}_carrera_data"] = pd.DataFrame({
                     "Carrera": [],
                     "Año": [],
-                    "Cuatrimestre": []
+                    "Cuatrimestre": [],
+                    "Plan": [],
                 })
-            
+
             # Configure column settings based on periodo
+            carrera_options = [f"{c.codigo} - {c.nombre}" for c in all_carreras]
+            base_columns = {
+                "Carrera": st.column_config.SelectboxColumn(
+                    "Carrera",
+                    options=carrera_options,
+                    required=True,
+                    width="large"
+                ),
+                "Año": st.column_config.NumberColumn(
+                    "Año",
+                    min_value=1,
+                    max_value=6,
+                    default=1,
+                    required=True,
+                    width="small"
+                ),
+            }
             if is_anual:
-                column_config = {
-                    "Carrera": st.column_config.SelectboxColumn(
-                        "Carrera",
-                        options=[f"{c.codigo} - {c.nombre}" for c in all_carreras],
-                        required=True,
-                        width="large"
-                    ),
-                    "Año": st.column_config.NumberColumn(
-                        "Año",
-                        min_value=1,
-                        max_value=6,
-                        default=1,
-                        required=True,
-                        width="small"
-                    ),
-                    "Cuatrimestre": st.column_config.TextColumn(
-                        "Cuatrimestre",
-                        default="Anual",
-                        disabled=True,
-                        width="small"
-                    ),
-                }
+                base_columns["Cuatrimestre"] = st.column_config.TextColumn(
+                    "Cuatrimestre",
+                    default="Anual",
+                    disabled=True,
+                    width="small"
+                )
             else:
-                column_config = {
-                    "Carrera": st.column_config.SelectboxColumn(
-                        "Carrera",
-                        options=[f"{c.codigo} - {c.nombre}" for c in all_carreras],
-                        required=True,
-                        width="large"
-                    ),
-                    "Año": st.column_config.NumberColumn(
-                        "Año",
-                        min_value=1,
-                        max_value=6,
-                        default=1,
-                        required=True,
-                        width="small"
-                    ),
-                    "Cuatrimestre": st.column_config.SelectboxColumn(
-                        "Cuatrimestre",
-                        options=["1C", "2C"],
-                        default=1,
-                        required=True,
-                        width="small"
-                    ),
-                }
-            
+                base_columns["Cuatrimestre"] = st.column_config.SelectboxColumn(
+                    "Cuatrimestre",
+                    options=["1C", "2C"],
+                    default="1C",
+                    required=True,
+                    width="small"
+                )
+            base_columns["Plan"] = st.column_config.SelectboxColumn(
+                "Plan",
+                options=plan_names_unique,
+                default=default_plan_name,
+                required=True,
+                width="medium",
+                help="Version del plan de estudios"
+            )
+            column_config = base_columns
+
             # Render editable dataframe
             edited_df = st.data_editor(
                 st.session_state[f"{form_key}_carrera_data"],
@@ -139,7 +145,7 @@ class MateriaFormRenderer:
                 key=f"{form_key}_carreras_editor",
                 hide_index=True,
             )
-            
+
             # Update session state
             st.session_state[f"{form_key}_carrera_data"] = edited_df
             
@@ -157,16 +163,18 @@ class MateriaFormRenderer:
                             # Extract codigo from "CODIGO - Nombre" format
                             carrera_codigo = row["Carrera"].split(" - ")[0]
                             anio = int(row["Año"]) if pd.notna(row["Año"]) else 1
-                            
+                            plan_nombre = str(row["Plan"]) if pd.notna(row.get("Plan")) else default_plan_name
+
                             if is_anual:
                                 cuatri = "anual"
                             else:
                                 cuatri = str(row["Cuatrimestre"]) if pd.notna(row["Cuatrimestre"]) else "1C"
-                            
+
                             carrera_details.append({
                                 "carrera_codigo": carrera_codigo,
                                 "anio_plan": anio,
-                                "cuatrimestre_plan": cuatri
+                                "cuatrimestre_plan": cuatri,
+                                "plan_nombre": plan_nombre,
                             })
                 
                 # Validate carrera selection
@@ -303,36 +311,61 @@ class MateriaFormRenderer:
     ) -> Optional[Materia]:
         """
         Create a materia with carrera associations including year/semester.
-        
+
         Args:
             form_data: Form data including carrera_details
             session: Database session
-            
+
         Returns:
             Created Materia instance or None if failed
         """
+        from src.database.models import PlanCarreraVersionDB
+        from sqlmodel import select
+
         try:
             # Extract carrera details from form data
             carrera_details = form_data.pop("carrera_details", [])
-            
+
             # Create materia instance
             materia = Materia(**form_data)
-            
+
             # Create materia in database
             created_materia = materia_service.create(session, materia)
-            
+
             # Set carrera associations with year/semester
             for detail in carrera_details:
+                carrera_codigo = detail["carrera_codigo"]
+                plan_nombre = detail.get("plan_nombre")
+
+                # Resolve plan_version_id by (carrera_codigo, plan_nombre)
+                query = select(PlanCarreraVersionDB).where(
+                    PlanCarreraVersionDB.carrera_codigo == carrera_codigo
+                )
+                if plan_nombre:
+                    query = query.where(PlanCarreraVersionDB.nombre == plan_nombre)
+                # Prefer the most recent
+                query = query.order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+                plan_version = session.exec(query).first()
+
+                if plan_version is None:
+                    st.error(
+                        f"No se encontro plan de estudios para la carrera "
+                        f"'{carrera_codigo}'"
+                        + (f" con nombre '{plan_nombre}'" if plan_nombre else "")
+                    )
+                    return None
+
                 materia_service.add_carrera(
                     session,
                     created_materia.codigo,
-                    detail["carrera_codigo"],
+                    carrera_codigo,
+                    plan_version.id,
                     anio_plan=detail["anio_plan"],
-                    cuatrimestre_plan=detail["cuatrimestre_plan"]
+                    cuatrimestre_plan=detail["cuatrimestre_plan"],
                 )
-            
+
             return created_materia
-            
+
         except Exception as e:
             st.error(f"Error al crear materia: {str(e)}")
             return None
@@ -344,31 +377,57 @@ class MateriaFormRenderer:
     ) -> Optional[Materia]:
         """
         Update a materia with carrera associations.
-        
+
+        Uses the latest plan version for each carrera when updating
+        associations via set_carreras.
+
         Args:
             form_data: Form data including carreras
             session: Database session
-            
+
         Returns:
             Updated Materia instance or None if failed
         """
+        from src.database.models import PlanCarreraVersionDB
+        from sqlmodel import select
+
         try:
             # Extract carreras from form data
             carrera_codigos = form_data.pop("carreras", [])
             materia_codigo = form_data["codigo"]
-            
+
             # Create materia instance
             materia = Materia(**form_data)
-            
+
             # Update materia in database
             updated_materia = materia_service.update(session, materia)
-            
-            # Update carrera associations
+
+            # Update carrera associations per plan version
             if carrera_codigos:
-                materia_service.set_carreras(session, materia_codigo, carrera_codigos)
-            
+                for carrera_codigo in carrera_codigos:
+                    # Get latest plan version for this carrera
+                    plan_version = session.exec(
+                        select(PlanCarreraVersionDB)
+                        .where(PlanCarreraVersionDB.carrera_codigo == carrera_codigo)
+                        .order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+                    ).first()
+
+                    if plan_version is None:
+                        st.error(
+                            f"No se encontro plan de estudios para la carrera "
+                            f"'{carrera_codigo}'"
+                        )
+                        return None
+
+                    materia_service.add_carrera(
+                        session,
+                        materia_codigo,
+                        carrera_codigo,
+                        plan_version.id,
+                    )
+
             return updated_materia
-            
+
         except Exception as e:
             st.error(f"Error al actualizar materia: {str(e)}")
             return None

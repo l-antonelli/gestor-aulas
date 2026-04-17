@@ -21,16 +21,19 @@ class MateriaCarreraEditor:
     def render_associations_editor(
         session: Session,
         materia_codigo: str,
-        plan_version_id: str,
+        plan_version_id: str = None,
         key: str = "materia_carrera_editor",
     ) -> None:
         """
         Render an editable table for materia-carrera associations.
 
+        When plan_version_id is None, shows associations across ALL plan
+        versions (useful when editing a materia that spans multiple carreras).
+
         Args:
             session: Database session
             materia_codigo: The materia's codigo
-            plan_version_id: The plan version to filter by
+            plan_version_id: Optional plan version to filter by. None = all.
             key: Unique key for the component
         """
         st.markdown("### Carreras Asociadas")
@@ -41,10 +44,12 @@ class MateriaCarreraEditor:
         if is_anual:
             st.info("Esta es una materia **anual**. El cuatrimestre se establece automaticamente.")
 
-        associations = MateriaCarreraEditor._get_associations(session, materia_codigo, plan_version_id)
+        associations = MateriaCarreraEditor._get_associations(
+            session, materia_codigo, plan_version_id,
+        )
 
         if not associations:
-            st.info("Esta materia no esta asociada a ninguna carrera en esta version del plan.")
+            st.info("Esta materia no esta asociada a ninguna carrera.")
         else:
             df = pd.DataFrame(associations)
 
@@ -54,17 +59,33 @@ class MateriaCarreraEditor:
                 df["cuatrimestre_display"] = df["cuatrimestre_plan"]
 
             column_config = {
-                "carrera_codigo": st.column_config.TextColumn("Codigo Carrera", disabled=True, width="small"),
-                "carrera_nombre": st.column_config.TextColumn("Nombre Carrera", disabled=True, width="medium"),
-                "anio_plan": st.column_config.NumberColumn("Anio", min_value=1, max_value=6, step=1, width="small"),
+                "carrera_codigo": st.column_config.TextColumn(
+                    "Carrera", disabled=True, width="small",
+                ),
+                "carrera_nombre": st.column_config.TextColumn(
+                    "Nombre Carrera", disabled=True, width="medium",
+                ),
+                "plan_nombre": st.column_config.TextColumn(
+                    "Plan", disabled=True, width="medium",
+                ),
+                "anio_plan": st.column_config.NumberColumn(
+                    "Anio", min_value=1, max_value=6, step=1, width="small",
+                ),
                 "cuatrimestre_display": (
-                    st.column_config.TextColumn("Cuatrimestre", disabled=True, width="small")
-                    if is_anual else
-                    st.column_config.SelectboxColumn("Cuatrimestre", options=["1C", "2C"], width="small")
+                    st.column_config.TextColumn(
+                        "Cuatrimestre", disabled=True, width="small",
+                    )
+                    if is_anual
+                    else st.column_config.SelectboxColumn(
+                        "Cuatrimestre", options=["1C", "2C"], width="small",
+                    )
                 ),
             }
 
-            display_cols = ["carrera_codigo", "carrera_nombre", "anio_plan", "cuatrimestre_display"]
+            display_cols = [
+                "carrera_codigo", "carrera_nombre", "plan_nombre",
+                "anio_plan", "cuatrimestre_display",
+            ]
 
             edited_df = st.data_editor(
                 df[display_cols],
@@ -97,35 +118,54 @@ class MateriaCarreraEditor:
                     st.caption("Se detectaron cambios en anio o cuatrimestre")
 
             st.markdown("#### Desasociar Carrera")
-            carreras_to_remove = st.multiselect(
+            # Use plan_estudio_id as option key to handle same carrera in
+            # different plan versions correctly.
+            remove_options = {
+                row["plan_estudio_id"]: (
+                    f"{row['carrera_codigo']} - {row['carrera_nombre']}"
+                    f" ({row['plan_nombre']})"
+                )
+                for _, row in df.iterrows()
+            }
+            ids_to_remove = st.multiselect(
                 "Seleccione carreras para desasociar",
-                options=[row["carrera_codigo"] for _, row in df.iterrows()],
-                format_func=lambda x: f"{x} - {df[df['carrera_codigo']==x]['carrera_nombre'].iloc[0]}",
+                options=list(remove_options.keys()),
+                format_func=lambda x: remove_options[x],
                 key=f"{key}_remove",
             )
 
-            if carreras_to_remove:
+            if ids_to_remove:
                 if st.button("Desasociar Seleccionadas", key=f"{key}_remove_btn"):
                     try:
-                        for carrera_codigo in carreras_to_remove:
+                        for pe_id in ids_to_remove:
+                            row = df[df["plan_estudio_id"] == pe_id].iloc[0]
                             materia_service.remove_carrera(
-                                session, materia_codigo, carrera_codigo,
-                                plan_version_id=plan_version_id,
+                                session, materia_codigo,
+                                row["carrera_codigo"],
+                                plan_version_id=row["plan_version_id"],
                             )
-                        st.success(f"{len(carreras_to_remove)} carrera(s) desasociada(s)")
+                        st.success(f"{len(ids_to_remove)} carrera(s) desasociada(s)")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
         st.markdown("#### Asociar Nueva Carrera")
-        MateriaCarreraEditor._render_add_association(session, materia_codigo, plan_version_id, key)
+        MateriaCarreraEditor._render_add_association(
+            session, materia_codigo, plan_version_id, key,
+        )
 
     @staticmethod
     def _get_associations(
-        session: Session, materia_codigo: str, plan_version_id: str,
+        session: Session,
+        materia_codigo: str,
+        plan_version_id: str = None,
     ) -> List[Dict[str, Any]]:
-        """Get current associations with carrera details for a specific plan version."""
-        from src.database.models import CarreraDB
+        """Get current associations with carrera details.
+
+        If plan_version_id is None, returns associations across all plan
+        versions.
+        """
+        from src.database.models import CarreraDB, PlanCarreraVersionDB
 
         statement = (
             select(
@@ -134,11 +174,24 @@ class MateriaCarreraEditor:
                 CarreraDB.nombre,
                 PlanEstudioDB.anio_plan,
                 PlanEstudioDB.cuatrimestre_plan,
+                PlanCarreraVersionDB.id,
+                PlanCarreraVersionDB.nombre,
             )
             .join(CarreraDB, PlanEstudioDB.carrera_codigo == CarreraDB.codigo)
+            .join(
+                PlanCarreraVersionDB,
+                PlanEstudioDB.plan_version_id == PlanCarreraVersionDB.id,
+            )
             .where(PlanEstudioDB.materia_codigo == materia_codigo)
-            .where(PlanEstudioDB.plan_version_id == plan_version_id)
-            .order_by(PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
+        )
+        if plan_version_id is not None:
+            statement = statement.where(
+                PlanEstudioDB.plan_version_id == plan_version_id,
+            )
+        statement = statement.order_by(
+            PlanEstudioDB.carrera_codigo,
+            PlanEstudioDB.anio_plan,
+            PlanEstudioDB.cuatrimestre_plan,
         )
 
         results = session.exec(statement).all()
@@ -147,11 +200,14 @@ class MateriaCarreraEditor:
             {
                 "plan_estudio_id": pe_id,
                 "carrera_codigo": carrera_codigo,
-                "carrera_nombre": nombre,
+                "carrera_nombre": carrera_nombre,
                 "anio_plan": anio,
                 "cuatrimestre_plan": cuatri,
+                "plan_version_id": pv_id,
+                "plan_nombre": pv_nombre,
             }
-            for pe_id, carrera_codigo, nombre, anio, cuatri in results
+            for pe_id, carrera_codigo, carrera_nombre, anio, cuatri, pv_id, pv_nombre
+            in results
         ]
 
     @staticmethod
@@ -167,9 +223,18 @@ class MateriaCarreraEditor:
 
     @staticmethod
     def _render_add_association(
-        session: Session, materia_codigo: str, plan_version_id: str, key: str,
+        session: Session,
+        materia_codigo: str,
+        plan_version_id: str = None,
+        key: str = "materia_carrera_editor",
     ) -> None:
-        """Render form to add new association."""
+        """Render form to add new association.
+
+        If plan_version_id is None, auto-selects the most recent plan
+        version for the chosen carrera.
+        """
+        from src.database.models import PlanCarreraVersionDB
+
         materia = materia_service.get(session, materia_codigo)
         is_anual = materia and materia.periodo == "anual"
 
@@ -210,9 +275,30 @@ class MateriaCarreraEditor:
 
             if submitted:
                 try:
+                    # Resolve plan_version_id if not provided
+                    pv_id = plan_version_id
+                    if pv_id is None:
+                        pv = session.exec(
+                            select(PlanCarreraVersionDB)
+                            .where(
+                                PlanCarreraVersionDB.carrera_codigo
+                                == selected_carrera,
+                            )
+                            .order_by(
+                                PlanCarreraVersionDB.fecha_creacion.desc(),
+                            )
+                        ).first()
+                        if pv is None:
+                            st.error(
+                                f"No se encontro plan de estudios para "
+                                f"la carrera '{selected_carrera}'"
+                            )
+                            return
+                        pv_id = pv.id
+
                     materia_service.add_carrera(
                         session, materia_codigo, selected_carrera,
-                        plan_version_id=plan_version_id,
+                        plan_version_id=pv_id,
                         anio_plan=anio,
                         cuatrimestre_plan=cuatrimestre,
                     )
