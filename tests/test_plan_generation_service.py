@@ -17,6 +17,8 @@ from src.services.plan_generation_service import (
     activate_plan,
     generate_time_slots,
     build_timetable_grid,
+    _derive_comisiones,
+    apply_horario_edits,
 )
 
 
@@ -278,3 +280,247 @@ class TestBuildTimetableGrid:
         assert "MAT101" in all_codes
         # FIS101 should not appear
         assert "FIS101" not in all_codes
+
+
+def _make_entry(schedule_id, codigo, dia, hi, hf):
+    """Helper to create a ScheduleEntryDB."""
+    return ScheduleEntryDB(
+        id=str(uuid.uuid4()),
+        schedule_id=schedule_id,
+        codigo_materia=codigo,
+        dia=dia,
+        hora_inicio=hi,
+        hora_fin=hf,
+    )
+
+
+class TestDeriveComisionesParalelas:
+    """Tests for _derive_comisiones with max_clases_paralelas constraint."""
+
+    def test_max_paralelas_forces_minimum_comisiones(self):
+        """3 entries in same slot, ratio says 1 comision → n_comisiones=3,
+        flag 'needs_more_comisiones'."""
+        entries = [
+            _make_entry("s", "MAT1", "Lunes", time(8, 0), time(10, 0))
+            for _ in range(3)
+        ]
+
+        n_com, max_par, flag, detail = _derive_comisiones(
+            entries,
+            horas_semanales=6,  # 6h total / 6h = 1 by ratio
+            optativa=False,
+            n_carreras=2,
+        )
+
+        assert max_par == 3
+        assert n_com == 3
+        assert flag == "needs_more_comisiones"
+
+    def test_exclusive_carrera_with_parallel_classes(self):
+        """Materia exclusive to 1 carrera with 2 parallel entries →
+        n_comisiones=2 (not hardcoded 1)."""
+        entries = [
+            _make_entry("s", "MAT2", "Lunes", time(8, 0), time(10, 0))
+            for _ in range(2)
+        ]
+
+        n_com, max_par, flag, detail = _derive_comisiones(
+            entries,
+            horas_semanales=2,
+            optativa=False,
+            n_carreras=1,
+        )
+
+        assert max_par == 2
+        assert n_com == 2
+        assert flag == "needs_more_comisiones"
+
+    def test_optativa_respects_paralelas(self):
+        """Optativa with 2 parallel entries → n_comisiones=2."""
+        entries = [
+            _make_entry("s", "OPT1", "Martes", time(14, 0), time(16, 0))
+            for _ in range(2)
+        ]
+
+        n_com, max_par, flag, detail = _derive_comisiones(
+            entries,
+            horas_semanales=2,
+            optativa=True,
+            n_carreras=1,
+        )
+
+        assert max_par == 2
+        assert n_com == 2
+        assert flag == "needs_more_comisiones"
+
+    def test_no_paralelas_optativa_stays_1(self):
+        """Optativa with no parallel entries → stays 1 comision."""
+        entries = [
+            _make_entry("s", "OPT2", "Lunes", time(8, 0), time(10, 0)),
+            _make_entry("s", "OPT2", "Martes", time(8, 0), time(10, 0)),
+        ]
+
+        n_com, max_par, flag, detail = _derive_comisiones(
+            entries,
+            horas_semanales=4,
+            optativa=True,
+            n_carreras=1,
+        )
+
+        assert max_par == 1
+        assert n_com == 1
+        assert flag == "exact"
+
+    def test_shared_materia_exact_ratio_no_paralelas(self):
+        """Shared materia with exact ratio and no paralelas → normal derivation."""
+        entries = [
+            _make_entry("s", "SH1", "Lunes", time(8, 0), time(10, 0)),
+            _make_entry("s", "SH1", "Martes", time(8, 0), time(10, 0)),
+            _make_entry("s", "SH1", "Miércoles", time(8, 0), time(10, 0)),
+            _make_entry("s", "SH1", "Jueves", time(8, 0), time(10, 0)),
+        ]
+
+        n_com, max_par, flag, detail = _derive_comisiones(
+            entries,
+            horas_semanales=4,
+            optativa=False,
+            n_carreras=2,
+        )
+
+        assert max_par == 1
+        assert n_com == 2  # 8h / 4h = 2
+        assert flag == "exact"
+
+
+class TestApplyHorarioEdits:
+    """Tests for apply_horario_edits."""
+
+    def _make_plan_with_horarios(self, session, ciclo, materias):
+        """Helper: create plan with 1 comision, 2 horarios for MAT101."""
+        result = generate_plan_from_schedule(session, "sched-1", "Edit Test", ciclo.id)
+        assert result.plan is not None
+
+        # Find MAT101 comision and its horarios
+        mat_com = session.exec(
+            select(ComisionDB)
+            .where(ComisionDB.plan_cursada_id == result.plan.id)
+            .where(ComisionDB.materia_codigo == "MAT101")
+        ).first()
+        assert mat_com is not None
+
+        horarios = session.exec(
+            select(HorarioDB).where(HorarioDB.comision_id == mat_com.id)
+        ).all()
+        return result.plan, mat_com, list(horarios)
+
+    def test_update_existing_horario(self, session, ciclo, materias, schedule):
+        plan, com, horarios = self._make_plan_with_horarios(session, ciclo, materias)
+        h1 = horarios[0]
+
+        edited = [
+            {
+                "horario_id": h1.id,
+                "comision_numero": com.numero,
+                "dia": "Viernes",
+                "hora_inicio": time(10, 0),
+                "hora_fin": time(12, 0),
+            },
+            {
+                "horario_id": horarios[1].id,
+                "comision_numero": com.numero,
+                "dia": horarios[1].dia,
+                "hora_inicio": horarios[1].hora_inicio,
+                "hora_fin": horarios[1].hora_fin,
+            },
+        ]
+
+        updated, created, deleted = apply_horario_edits(
+            session, plan.id, "MAT101", edited,
+        )
+
+        assert updated == 1
+        assert created == 0
+        assert deleted == 0
+
+        refreshed = session.get(HorarioDB, h1.id)
+        assert refreshed.dia == "Viernes"
+        assert refreshed.hora_inicio == time(10, 0)
+
+    def test_create_new_horario(self, session, ciclo, materias, schedule):
+        plan, com, horarios = self._make_plan_with_horarios(session, ciclo, materias)
+
+        edited = [
+            {
+                "horario_id": h.id,
+                "comision_numero": com.numero,
+                "dia": h.dia,
+                "hora_inicio": h.hora_inicio,
+                "hora_fin": h.hora_fin,
+            }
+            for h in horarios
+        ] + [{
+            "horario_id": "new_0",
+            "comision_numero": com.numero,
+            "dia": "Sábado",
+            "hora_inicio": time(9, 0),
+            "hora_fin": time(11, 0),
+        }]
+
+        updated, created, deleted = apply_horario_edits(
+            session, plan.id, "MAT101", edited,
+        )
+
+        assert updated == 0
+        assert created == 1
+        assert deleted == 0
+
+    def test_delete_removed_horario(self, session, ciclo, materias, schedule):
+        plan, com, horarios = self._make_plan_with_horarios(session, ciclo, materias)
+
+        # Only keep first horario — second should be deleted
+        edited = [{
+            "horario_id": horarios[0].id,
+            "comision_numero": com.numero,
+            "dia": horarios[0].dia,
+            "hora_inicio": horarios[0].hora_inicio,
+            "hora_fin": horarios[0].hora_fin,
+        }]
+
+        updated, created, deleted = apply_horario_edits(
+            session, plan.id, "MAT101", edited,
+        )
+
+        assert updated == 0
+        assert created == 0
+        assert deleted == 1
+
+    def test_mixed_operations(self, session, ciclo, materias, schedule):
+        plan, com, horarios = self._make_plan_with_horarios(session, ciclo, materias)
+
+        edited = [
+            # Update first
+            {
+                "horario_id": horarios[0].id,
+                "comision_numero": com.numero,
+                "dia": "Jueves",
+                "hora_inicio": time(14, 0),
+                "hora_fin": time(16, 0),
+            },
+            # Delete second (not in list)
+            # Create new
+            {
+                "horario_id": "new_1",
+                "comision_numero": com.numero,
+                "dia": "Viernes",
+                "hora_inicio": time(8, 0),
+                "hora_fin": time(10, 0),
+            },
+        ]
+
+        updated, created, deleted = apply_horario_edits(
+            session, plan.id, "MAT101", edited,
+        )
+
+        assert updated == 1
+        assert created == 1
+        assert deleted == 1

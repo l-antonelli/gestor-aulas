@@ -52,8 +52,8 @@ class MateriaPreview:
     horas_semanales: Optional[int]
     total_horas_schedule: float
     n_comisiones: int
-    max_duplicados: int  # max entries in the same time slot
-    flag: str  # "exact", "duplicates", "uncertain", "no_data"
+    max_clases_paralelas: int  # max entries in the same time slot
+    flag: str  # "exact", "duplicates", "uncertain", "no_data", "needs_more_comisiones"
     flag_detail: str  # human-readable explanation
     entries: list[EntryPreview] = field(default_factory=list)
 
@@ -98,61 +98,75 @@ def _derive_comisiones(
     2. Exclusive to 1 carrera -> always 1
     3. Shared (>1 carrera) -> total_hours / horas_semanales ONLY if exact integer >= 1.
        Otherwise flag for correction.
+    4. CONSTRAINT: if max_clases_paralelas > n_comisiones, force n_comisiones =
+       max_clases_paralelas with flag "needs_more_comisiones".
 
-    Returns: (n_comisiones, max_duplicados, flag, flag_detail)
+    Returns: (n_comisiones, max_clases_paralelas, flag, flag_detail)
     """
     slot_counts = Counter(
         (e.dia, e.hora_inicio, e.hora_fin) for e in entries
     )
-    max_dupes = max(slot_counts.values()) if slot_counts else 1
+    max_paralelas = max(slot_counts.values()) if slot_counts else 1
     total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in entries)
 
     # Rule 1: optativa
     if optativa:
-        return 1, max_dupes, "exact", (
-            f"Materia optativa: 1 comision por defecto."
-        )
+        n_comisiones = 1
+        flag, flag_detail = "exact", "Materia optativa: 1 comision por defecto."
 
     # Rule 2: exclusive to 1 carrera
-    if n_carreras <= 1:
-        return 1, max_dupes, "exact", (
-            f"Materia exclusiva de 1 carrera: 1 comision por defecto."
-        )
+    elif n_carreras <= 1:
+        n_comisiones = 1
+        flag, flag_detail = "exact", "Materia exclusiva de 1 carrera: 1 comision por defecto."
 
     # Rule 3: shared across multiple carreras
-    if not horas_semanales or horas_semanales <= 0:
-        return 1, max_dupes, "no_data", (
+    elif not horas_semanales or horas_semanales <= 0:
+        n_comisiones = 1
+        flag = "no_data"
+        flag_detail = (
             f"Materia compartida ({n_carreras} carreras) sin horas_semanales. "
             f"Asumiendo 1 comision. Corregir horas_semanales para derivar correctamente."
         )
-
-    ratio = total_hours / horas_semanales
-
-    # Only accept if exact integer
-    if ratio >= 1 and abs(ratio - round(ratio)) < 0.01:
-        n = round(ratio)
-        return n, max_dupes, "exact", (
-            f"Materia compartida ({n_carreras} carreras): "
-            f"{total_hours:.0f}h / {horas_semanales}h = {n} comisiones."
-        )
     else:
-        return 1, max_dupes, "uncertain", (
-            f"Materia compartida ({n_carreras} carreras): "
-            f"{total_hours:.0f}h / {horas_semanales}h = {ratio:.2f} (no es entero). "
-            f"Asumiendo 1 comision. Verificar horas_semanales."
+        ratio = total_hours / horas_semanales
+        if ratio >= 1 and abs(ratio - round(ratio)) < 0.01:
+            n_comisiones = round(ratio)
+            flag = "exact"
+            flag_detail = (
+                f"Materia compartida ({n_carreras} carreras): "
+                f"{total_hours:.0f}h / {horas_semanales}h = {n_comisiones} comisiones."
+            )
+        else:
+            n_comisiones = 1
+            flag = "uncertain"
+            flag_detail = (
+                f"Materia compartida ({n_carreras} carreras): "
+                f"{total_hours:.0f}h / {horas_semanales}h = {ratio:.2f} (no es entero). "
+                f"Asumiendo 1 comision. Verificar horas_semanales."
+            )
+
+    # Rule 4: constraint — parallel classes require at least that many comisiones
+    if max_paralelas > n_comisiones:
+        flag = "needs_more_comisiones"
+        flag_detail = (
+            f"{max_paralelas} clases paralelas en el mismo horario requieren "
+            f"al menos {max_paralelas} comisiones (se derivaron {n_comisiones}). "
+            f"Forzando n_comisiones={max_paralelas}."
         )
+        n_comisiones = max_paralelas
+
+    return n_comisiones, max_paralelas, flag, flag_detail
 
 
 def _assign_entries_to_comisiones(
     entries: list[ScheduleEntryDB],
     n_comisiones: int,
 ) -> list[EntryPreview]:
-    """Distribute entries among comisiones using duplicate-aware round-robin.
+    """Distribute entries among comisiones.
 
-    For entries sharing the same time slot, each goes to a different comision.
-    Remaining unique entries are distributed round-robin.
+    If entries already have a comision value from the DB, use it.
+    For entries with comision=None, assign using duplicate-aware round-robin.
     """
-    # Sort entries
     dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
                  "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
     sorted_entries = sorted(
@@ -160,32 +174,46 @@ def _assign_entries_to_comisiones(
         key=lambda e: (dia_order.get(e.dia, 9), e.hora_inicio, e.hora_fin)
     )
 
-    # Group by time slot
-    slot_groups: dict[tuple, list[ScheduleEntryDB]] = {}
-    for e in sorted_entries:
-        key = (e.dia, e.hora_inicio, e.hora_fin)
-        slot_groups.setdefault(key, []).append(e)
-
-    # Assign: for each time slot group, distribute entries round-robin
-    # Track how many entries each comision has for balancing
+    # Separate entries with and without pre-assigned comision
+    pre_assigned: dict[str, int] = {}
+    needs_assignment: list[ScheduleEntryDB] = []
     comision_counts = Counter()
-    assignments: dict[str, int] = {}  # entry_id -> comision number (1-based)
 
-    for slot_key in sorted(slot_groups.keys(), key=lambda k: (dia_order.get(k[0], 9), k[1], k[2])):
-        group = slot_groups[slot_key]
-        if len(group) > 1:
-            # Parallel entries — each to a different comision
-            # Sort comisiones by current count to balance
-            available = sorted(range(1, n_comisiones + 1), key=lambda c: comision_counts[c])
-            for i, entry in enumerate(group):
-                com_num = available[i % len(available)]
-                assignments[entry.id] = com_num
-                comision_counts[com_num] += 1
+    for e in sorted_entries:
+        if e.comision is not None and 1 <= e.comision <= n_comisiones:
+            pre_assigned[e.id] = e.comision
+            comision_counts[e.comision] += 1
         else:
-            # Single entry — assign to least loaded comision
-            com_num = min(range(1, n_comisiones + 1), key=lambda c: comision_counts[c])
-            assignments[group[0].id] = com_num
-            comision_counts[com_num] += 1
+            needs_assignment.append(e)
+
+    # Assign remaining entries via round-robin
+    if needs_assignment:
+        slot_groups: dict[tuple, list[ScheduleEntryDB]] = {}
+        for e in needs_assignment:
+            key = (e.dia, e.hora_inicio, e.hora_fin)
+            slot_groups.setdefault(key, []).append(e)
+
+        for slot_key in sorted(
+            slot_groups.keys(),
+            key=lambda k: (dia_order.get(k[0], 9), k[1], k[2]),
+        ):
+            group = slot_groups[slot_key]
+            if len(group) > 1:
+                available = sorted(
+                    range(1, n_comisiones + 1),
+                    key=lambda c: comision_counts[c],
+                )
+                for i, entry in enumerate(group):
+                    com_num = available[i % len(available)]
+                    pre_assigned[entry.id] = com_num
+                    comision_counts[com_num] += 1
+            else:
+                com_num = min(
+                    range(1, n_comisiones + 1),
+                    key=lambda c: comision_counts[c],
+                )
+                pre_assigned[group[0].id] = com_num
+                comision_counts[com_num] += 1
 
     return [
         EntryPreview(
@@ -193,7 +221,7 @@ def _assign_entries_to_comisiones(
             dia=e.dia,
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
-            comision_asignada=assignments.get(e.id, 1),
+            comision_asignada=pre_assigned.get(e.id, 1),
         )
         for e in sorted_entries
     ]
@@ -236,7 +264,7 @@ def preview_plan_from_schedule(
 
         total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in mat_entries)
 
-        n_comisiones, max_dupes, flag, flag_detail = _derive_comisiones(
+        n_comisiones, max_paralelas, flag, flag_detail = _derive_comisiones(
             mat_entries, h_sem, optativa, n_carreras
         )
 
@@ -248,7 +276,7 @@ def preview_plan_from_schedule(
             horas_semanales=h_sem,
             total_horas_schedule=total_hours,
             n_comisiones=n_comisiones,
-            max_duplicados=max_dupes,
+            max_clases_paralelas=max_paralelas,
             flag=flag,
             flag_detail=flag_detail,
             entries=entry_previews,
@@ -479,6 +507,98 @@ def generate_plan_from_schedule(
     session.refresh(plan)
     result.plan = plan
     return result
+
+
+def apply_horario_edits(
+    session: Session,
+    plan_id: str,
+    materia_codigo: str,
+    edited_rows: list[dict],
+) -> tuple[int, int, int]:
+    """Aplica ediciones bulk a horarios de una materia dentro de un plan.
+
+    Args:
+        session: Database session.
+        plan_id: ID del plan de cursada.
+        materia_codigo: Codigo de la materia cuyos horarios se editan.
+        edited_rows: Lista de dicts con keys:
+            horario_id, comision_numero, dia, hora_inicio, hora_fin.
+
+    Returns:
+        (updated, created, deleted) — cantidad de cada operacion.
+
+    Logica:
+    - horario_id existente → update si hay cambios
+    - horario_id empieza con "new_" → crear nuevo HorarioDB
+    - horario_id en DB pero no en edited_rows → eliminar
+    """
+    # Get comisiones for this materia in the plan
+    comisiones = session.exec(
+        select(ComisionDB)
+        .where(ComisionDB.plan_cursada_id == plan_id)
+        .where(ComisionDB.materia_codigo == materia_codigo)
+    ).all()
+    com_by_numero = {c.numero: c for c in comisiones}
+    com_ids = [c.id for c in comisiones]
+
+    if not com_ids:
+        return 0, 0, 0
+
+    # Load existing horarios for these comisiones
+    existing_horarios = session.exec(
+        select(HorarioDB).where(col(HorarioDB.comision_id).in_(com_ids))
+    ).all()
+    existing_map = {h.id: h for h in existing_horarios}
+
+    edited_ids = set()
+    updated = 0
+    created = 0
+
+    for row in edited_rows:
+        hid = row["horario_id"]
+        com_num = row["comision_numero"]
+        target_com = com_by_numero.get(com_num)
+        if target_com is None:
+            continue
+
+        if isinstance(hid, str) and hid.startswith("new_"):
+            # Create new horario
+            new_h = HorarioDB(
+                id=str(uuid.uuid4()),
+                comision_id=target_com.id,
+                codigo_materia=materia_codigo,
+                dia=row["dia"],
+                hora_inicio=row["hora_inicio"],
+                hora_fin=row["hora_fin"],
+            )
+            session.add(new_h)
+            created += 1
+        elif hid in existing_map:
+            edited_ids.add(hid)
+            h = existing_map[hid]
+            changed = (
+                h.dia != row["dia"]
+                or h.hora_inicio != row["hora_inicio"]
+                or h.hora_fin != row["hora_fin"]
+                or h.comision_id != target_com.id
+            )
+            if changed:
+                h.dia = row["dia"]
+                h.hora_inicio = row["hora_inicio"]
+                h.hora_fin = row["hora_fin"]
+                h.comision_id = target_com.id
+                session.add(h)
+                updated += 1
+
+    # Delete horarios removed from the edited list
+    deleted = 0
+    for hid, h in existing_map.items():
+        if hid not in edited_ids:
+            session.delete(h)
+            deleted += 1
+
+    session.commit()
+    return updated, created, deleted
 
 
 def activate_plan(session: Session, plan_cursada_id: str) -> bool:

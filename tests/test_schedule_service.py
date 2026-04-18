@@ -1,17 +1,19 @@
 """Tests for schedule_service."""
 
 import io
+import uuid
 import pytest
-from datetime import date
+from datetime import date, time
 
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from src.database.models import CicloDB, MateriaDB
+from src.database.models import CicloDB, MateriaDB, ScheduleDB, ScheduleEntryDB
 from src.services.schedule_service import (
     create_schedule_from_file,
     get_schedules_for_ciclo,
     get_schedule_entries,
+    sync_preview_edits_to_schedule,
 )
 
 
@@ -154,3 +156,118 @@ class TestCreateScheduleFromFile:
 
         entries = get_schedule_entries(session, result.schedule.id)
         assert entries[0].codigo_materia == "MAT200"
+
+
+class TestSyncPreviewEditsToSchedule:
+    """Tests for sync_preview_edits_to_schedule."""
+
+    def _make_schedule(self, session, ciclo):
+        """Helper: create schedule with 2 entries for MAT101."""
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="Sync Test", fecha_upload=date.today(),
+        )
+        session.add(sched)
+        session.flush()
+
+        e1 = ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        e2 = ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Martes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        session.add_all([e1, e2])
+        session.commit()
+        return sched, [e1, e2]
+
+    def test_sync_updates_existing_entry(self, session, ciclo, materias):
+        sched, [e1, e2] = self._make_schedule(session, ciclo)
+
+        edited = [
+            {"entry_id": e1.id, "dia": "Miércoles",
+             "hora_inicio": time(10, 0), "hora_fin": time(12, 0)},
+            {"entry_id": e2.id, "dia": e2.dia,
+             "hora_inicio": e2.hora_inicio, "hora_fin": e2.hora_fin},
+        ]
+
+        updated, created, deleted = sync_preview_edits_to_schedule(
+            session, sched.id, "MAT101", edited,
+        )
+
+        assert updated == 1
+        assert created == 0
+        assert deleted == 0
+
+        refreshed = session.get(ScheduleEntryDB, e1.id)
+        assert refreshed.dia == "Miércoles"
+        assert refreshed.hora_inicio == time(10, 0)
+
+    def test_sync_creates_new_entry(self, session, ciclo, materias):
+        sched, [e1, e2] = self._make_schedule(session, ciclo)
+
+        edited = [
+            {"entry_id": e1.id, "dia": e1.dia,
+             "hora_inicio": e1.hora_inicio, "hora_fin": e1.hora_fin},
+            {"entry_id": e2.id, "dia": e2.dia,
+             "hora_inicio": e2.hora_inicio, "hora_fin": e2.hora_fin},
+            {"entry_id": "new_0_0", "dia": "Jueves",
+             "hora_inicio": time(14, 0), "hora_fin": time(16, 0)},
+        ]
+
+        updated, created, deleted = sync_preview_edits_to_schedule(
+            session, sched.id, "MAT101", edited,
+        )
+
+        assert updated == 0
+        assert created == 1
+        assert deleted == 0
+
+        all_entries = get_schedule_entries(session, sched.id)
+        mat_entries = [e for e in all_entries if e.codigo_materia == "MAT101"]
+        assert len(mat_entries) == 3
+
+    def test_sync_deletes_removed_entry(self, session, ciclo, materias):
+        sched, [e1, e2] = self._make_schedule(session, ciclo)
+
+        # Only include e1 — e2 should be deleted
+        edited = [
+            {"entry_id": e1.id, "dia": e1.dia,
+             "hora_inicio": e1.hora_inicio, "hora_fin": e1.hora_fin},
+        ]
+
+        updated, created, deleted = sync_preview_edits_to_schedule(
+            session, sched.id, "MAT101", edited,
+        )
+
+        assert updated == 0
+        assert created == 0
+        assert deleted == 1
+
+        all_entries = get_schedule_entries(session, sched.id)
+        mat_entries = [e for e in all_entries if e.codigo_materia == "MAT101"]
+        assert len(mat_entries) == 1
+
+    def test_sync_mixed_operations(self, session, ciclo, materias):
+        sched, [e1, e2] = self._make_schedule(session, ciclo)
+
+        edited = [
+            # e1: update dia
+            {"entry_id": e1.id, "dia": "Viernes",
+             "hora_inicio": e1.hora_inicio, "hora_fin": e1.hora_fin},
+            # e2 removed (not in list) → delete
+            # new entry → create
+            {"entry_id": "new_1_0", "dia": "Sábado",
+             "hora_inicio": time(9, 0), "hora_fin": time(11, 0)},
+        ]
+
+        updated, created, deleted = sync_preview_edits_to_schedule(
+            session, sched.id, "MAT101", edited,
+        )
+
+        assert updated == 1
+        assert created == 1
+        assert deleted == 1

@@ -2,10 +2,10 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes).
+> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión).
 > **Fecha diseño**: 2026-03-09
 > **Fecha implementacion**: 2026-03-09
-> **Ultima actualizacion**: 2026-03-09 (versionado de planes de estudio)
+> **Ultima actualizacion**: 2026-04-17 (validación por comisión, max_clases_paralelas, persistencia de ediciones)
 
 ---
 
@@ -653,6 +653,46 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | RN9 | Asignacion de versiones a ciclos | Al crear un ciclo, se seleccionan las versiones de plan que aplican. Default: ultima version de cada carrera |
 | RN10 | Proteccion de borrado Carrera | No se puede eliminar una Carrera si tiene PlanCarreraVersion asociadas. Se deben eliminar las versiones de plan primero |
 | RN11 | Proteccion de borrado M:N | No se puede eliminar una Carrera si existen entradas en PlanEstudio vinculadas a ella (restrict via link table). Aplica tanto a `delete()` como a `delete_with_cascading()` |
+| RN12 | Validación de conflictos por comisión | Al validar horarios de un plan, se verifica si existe al menos un par de comisiones compatible (una de cada materia) para cada par de materias del mismo grupo curricular. Si no existe ningún par compatible, es conflicto real. Esto reconoce que un alumno cursa una sola comisión por materia |
+| RN13 | Clases paralelas → mínimo de comisiones | Si una materia tiene `max_clases_paralelas` entries en el mismo slot horario, se fuerza `n_comisiones >= max_clases_paralelas` independientemente de la regla de derivación (optativa, exclusiva, compartida). Flag: `"needs_more_comisiones"` |
+| RN14 | Persistencia de ediciones de preview | Las ediciones que el usuario realiza en el preview de un plan se persisten al ScheduleEntryDB correspondiente, con opción de aplicar al cronograma original o crear una copia |
+
+---
+
+## 6b. Validación de Conflictos Horarios
+
+### Algoritmo: Compatibilidad Pairwise por Comisión
+
+La validación de conflictos horarios opera a nivel de **comisiones**, no de materias. El supuesto es que un alumno cursa exactamente **una comisión** por materia.
+
+**Entrada**: Plan de cursada con comisiones y horarios asignados.
+
+**Algoritmo**:
+
+```
+Para cada grupo curricular (carrera, año, cuatrimestre):
+  Para cada par de materias (mat_A, mat_B) del grupo:
+    comisiones_A = comisiones de mat_A con horarios
+    comisiones_B = comisiones de mat_B con horarios
+
+    compatible = False
+    Para cada com_a en comisiones_A:
+      Para cada com_b en comisiones_B:
+        Si ningún horario de com_a solapa con ningún horario de com_b:
+          compatible = True
+          break
+
+    Si NOT compatible:
+      Reportar conflicto(mat_A, mat_B)
+```
+
+**Complejidad**: O(G × M² × C² × H²) donde G=grupos, M=materias/grupo, C=comisiones/materia, H=horarios/comisión. En la práctica M~5-8, C~1-3, H~2-3 por lo que es instantáneo.
+
+**Limitación**: La verificación pairwise es condición necesaria pero no suficiente para conjuntos >2 materias. Puede existir un caso donde cada par es compatible individualmente pero no existe asignación global válida. Este edge case es raro en horarios universitarios reales dado que están diseñados para minimizar conflictos.
+
+### Concepto: max_clases_paralelas
+
+Cuando un cronograma (Schedule) contiene múltiples entries para la misma materia en el mismo slot horario `(día, hora_inicio, hora_fin)`, esto indica **clases paralelas** que deben asignarse a comisiones distintas. El campo `max_clases_paralelas` de `MateriaPreview` registra el máximo de entries coincidentes y actúa como **piso mínimo** para `n_comisiones`.
 
 ---
 

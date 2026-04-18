@@ -233,6 +233,18 @@ def validar_conflictos_aula_plan(session: Session, plan_cursada_id: str) -> Vali
 # Validacion 4: Conflictos de horarios dentro de un plan (BLOCKER)
 # =============================================================================
 
+def _comisiones_son_compatibles(
+    horarios_a: list[HorarioDB],
+    horarios_b: list[HorarioDB],
+) -> bool:
+    """True si ningún par de horarios entre dos comisiones se superpone."""
+    for h1 in horarios_a:
+        for h2 in horarios_b:
+            if horarios_se_superponen(h1, h2):
+                return False
+    return True
+
+
 def validar_conflictos_horarios_plan(
     session: Session,
     plan_id: str,
@@ -244,7 +256,9 @@ def validar_conflictos_horarios_plan(
     - Obtiene las materias que corresponden a ese grupo
     - Obtiene los horarios de comisiones dentro del plan
     - Para 2C: incluye anuales (cuatrimestre_plan == "Anual")
-    - Detecta overlaps con horarios_se_superponen()
+    - Para cada par de materias, verifica si EXISTE al menos un par
+      de comisiones compatible (una de cada materia). Si no existe
+      ningún par compatible → conflicto real.
 
     Severity: BLOCKER — debe resolverse antes de activar el plan.
     """
@@ -285,12 +299,15 @@ def validar_conflictos_horarios_plan(
         select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
     ).all()
 
-    # Index horarios by materia_codigo
-    horarios_por_materia: dict[str, list[HorarioDB]] = {}
+    # Index horarios by comision_id
+    horarios_por_comision: dict[str, list[HorarioDB]] = {}
     for h in all_horarios:
-        com = comision_map.get(h.comision_id)
-        if com:
-            horarios_por_materia.setdefault(com.materia_codigo, []).append(h)
+        horarios_por_comision.setdefault(h.comision_id, []).append(h)
+
+    # Index comisiones by materia_codigo
+    comisiones_por_materia: dict[str, list[str]] = {}
+    for c in comisiones:
+        comisiones_por_materia.setdefault(c.materia_codigo, []).append(c.id)
 
     # Get all distinct (carrera, anio, cuatrimestre) groups
     plan_entries = session.exec(
@@ -317,23 +334,53 @@ def validar_conflictos_horarios_plan(
                 enriched |= groups[anual_key]
         enriched_groups[(carrera, anio, cuatri)] = enriched
 
-    # Check for conflicts within each group
+    # Check for conflicts within each group using pairwise comision compatibility
     conflictos = []
     for (carrera, anio, cuatri), mat_codes in enriched_groups.items():
-        # Only check materias that have horarios in this plan
-        relevant = [mc for mc in mat_codes if mc in horarios_por_materia]
+        # Only check materias that have comisiones with horarios in this plan
+        relevant = [
+            mc for mc in mat_codes
+            if mc in comisiones_por_materia
+            and any(cid in horarios_por_comision for cid in comisiones_por_materia[mc])
+        ]
 
         for i, mat1 in enumerate(relevant):
             for mat2 in relevant[i + 1:]:
-                for h1 in horarios_por_materia[mat1]:
-                    for h2 in horarios_por_materia[mat2]:
-                        if horarios_se_superponen(h1, h2):
-                            conflictos.append(
-                                f"{carrera} Año {anio} {cuatri}: "
-                                f"{mat1} vs {mat2} — {h1.dia} "
-                                f"{h1.hora_inicio.strftime('%H:%M')}-"
-                                f"{h1.hora_fin.strftime('%H:%M')}"
-                            )
+                # Check if at least one pair of comisiones is compatible
+                com_ids_1 = [
+                    cid for cid in comisiones_por_materia[mat1]
+                    if cid in horarios_por_comision
+                ]
+                com_ids_2 = [
+                    cid for cid in comisiones_por_materia[mat2]
+                    if cid in horarios_por_comision
+                ]
+
+                found_compatible = False
+                for cid1 in com_ids_1:
+                    for cid2 in com_ids_2:
+                        if _comisiones_son_compatibles(
+                            horarios_por_comision[cid1],
+                            horarios_por_comision[cid2],
+                        ):
+                            found_compatible = True
+                            break
+                    if found_compatible:
+                        break
+
+                if not found_compatible:
+                    # Build detail: list overlapping slots from first conflicting pair
+                    sample_h1 = horarios_por_comision[com_ids_1[0]]
+                    sample_h2 = horarios_por_comision[com_ids_2[0]]
+                    for h1 in sample_h1:
+                        for h2 in sample_h2:
+                            if horarios_se_superponen(h1, h2):
+                                conflictos.append(
+                                    f"{carrera} Año {anio} {cuatri}: "
+                                    f"{mat1} vs {mat2} — {h1.dia} "
+                                    f"{h1.hora_inicio.strftime('%H:%M')}-"
+                                    f"{h1.hora_fin.strftime('%H:%M')}"
+                                )
 
     if conflictos:
         return ValidationResult(

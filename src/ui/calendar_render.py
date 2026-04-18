@@ -304,6 +304,7 @@ def render_editable_schedule_calendar(
     grid_data: dict[str, list[ScheduleBlock]],
     config: ConfiguracionHoraria,
     key: str = "editable_schedule_cal",
+    allow_empty: bool = False,
 ) -> Optional[CalendarAction]:
     """Renderiza un cronograma editable como calendario semanal FullCalendar.
 
@@ -313,8 +314,12 @@ def render_editable_schedule_calendar(
     Usa eventos recurrentes (daysOfWeek). Los callbacks devuelven fechas
     concretas de la semana visible, que se parsean con weekday() para
     recuperar el dia de la semana.
+
+    Args:
+        allow_empty: Si True, renderiza la grilla vacía (para poder
+            seleccionar rangos) en vez de mostrar un mensaje informativo.
     """
-    if not grid_data:
+    if not grid_data and not allow_empty:
         st.info("El cronograma no tiene entradas.")
         return None
 

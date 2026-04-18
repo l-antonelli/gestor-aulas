@@ -292,6 +292,250 @@ class TestValidarConflictosHorariosPlan:
         result = validar_conflictos_horarios_plan(session, "NONEXISTENT")
         assert result.valid is True
 
+    def test_multi_comision_compatible_no_conflict(self, session, base_data):
+        """M1 has Com1 (lunes 8-10) and Com2 (martes 8-10).
+        M2 has Com1 (lunes 8-10).
+        Compatible via M1-Com2 + M2-Com1 → valid=True."""
+        pv = base_data["pv"]
+        ciclo = base_data["ciclo"]
+
+        m1 = MateriaDB(codigo="MC1", nombre="Multi 1", periodo="cuatrimestral")
+        m2 = MateriaDB(codigo="MC2", nombre="Multi 2", periodo="cuatrimestral")
+        session.add_all([m1, m2])
+        session.flush()
+
+        for m in [m1, m2]:
+            session.add(PlanEstudioDB(
+                plan_version_id=pv.id, materia_codigo=m.codigo,
+                carrera_codigo="ING", anio_plan=1, cuatrimestre_plan="1C",
+            ))
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="MultiCom",
+            ciclo_id=ciclo.id, activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        # M1 Com1: Lunes 8-10
+        com1_m1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="MC1",
+            plan_cursada_id=plan.id, comision_key="MC1-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        # M1 Com2: Martes 8-10
+        com2_m1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="MC1",
+            plan_cursada_id=plan.id, comision_key="MC1-002",
+            nombre="Com 2", numero=2, cupo=30,
+        )
+        # M2 Com1: Lunes 8-10 (overlaps with M1-Com1 but NOT with M1-Com2)
+        com1_m2 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="MC2",
+            plan_cursada_id=plan.id, comision_key="MC2-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        session.add_all([com1_m1, com2_m1, com1_m2])
+        session.flush()
+
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1_m1.id,
+            codigo_materia="MC1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2_m1.id,
+            codigo_materia="MC1", dia="Martes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1_m2.id,
+            codigo_materia="MC2", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        result = validar_conflictos_horarios_plan(session, plan.id)
+        assert result.valid is True
+
+    def test_multi_comision_all_overlap_is_conflict(self, session, base_data):
+        """All comisiones of M1 overlap with all comisiones of M2 → valid=False."""
+        pv = base_data["pv"]
+        ciclo = base_data["ciclo"]
+
+        m1 = MateriaDB(codigo="AO1", nombre="AllOverlap 1", periodo="cuatrimestral")
+        m2 = MateriaDB(codigo="AO2", nombre="AllOverlap 2", periodo="cuatrimestral")
+        session.add_all([m1, m2])
+        session.flush()
+
+        for m in [m1, m2]:
+            session.add(PlanEstudioDB(
+                plan_version_id=pv.id, materia_codigo=m.codigo,
+                carrera_codigo="ING", anio_plan=1, cuatrimestre_plan="1C",
+            ))
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="AllOverlap",
+            ciclo_id=ciclo.id, activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        # M1 Com1: Lunes 8-10, Martes 8-10
+        com1_m1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="AO1",
+            plan_cursada_id=plan.id, comision_key="AO1-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        # M1 Com2: Lunes 8-10, Miércoles 8-10
+        com2_m1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="AO1",
+            plan_cursada_id=plan.id, comision_key="AO1-002",
+            nombre="Com 2", numero=2, cupo=30,
+        )
+        # M2 Com1: Lunes 8-10 (overlaps with BOTH M1 comisiones)
+        com1_m2 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="AO2",
+            plan_cursada_id=plan.id, comision_key="AO2-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        session.add_all([com1_m1, com2_m1, com1_m2])
+        session.flush()
+
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1_m1.id,
+            codigo_materia="AO1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1_m1.id,
+            codigo_materia="AO1", dia="Martes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2_m1.id,
+            codigo_materia="AO1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2_m1.id,
+            codigo_materia="AO1", dia="Miércoles",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1_m2.id,
+            codigo_materia="AO2", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        result = validar_conflictos_horarios_plan(session, plan.id)
+        assert result.valid is False
+
+    def test_single_comision_overlap_detected(self, session, base_data):
+        """1 comision each, overlapping → valid=False (regression)."""
+        pv = base_data["pv"]
+        ciclo = base_data["ciclo"]
+
+        m1 = MateriaDB(codigo="SO1", nombre="SingleOvl 1", periodo="cuatrimestral")
+        m2 = MateriaDB(codigo="SO2", nombre="SingleOvl 2", periodo="cuatrimestral")
+        session.add_all([m1, m2])
+        session.flush()
+
+        for m in [m1, m2]:
+            session.add(PlanEstudioDB(
+                plan_version_id=pv.id, materia_codigo=m.codigo,
+                carrera_codigo="ING", anio_plan=1, cuatrimestre_plan="1C",
+            ))
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="SingleOvl",
+            ciclo_id=ciclo.id, activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        com1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="SO1",
+            plan_cursada_id=plan.id, comision_key="SO1-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        com2 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="SO2",
+            plan_cursada_id=plan.id, comision_key="SO2-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        session.add_all([com1, com2])
+        session.flush()
+
+        # Both on Lunes 8-10
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1.id,
+            codigo_materia="SO1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2.id,
+            codigo_materia="SO2", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        result = validar_conflictos_horarios_plan(session, plan.id)
+        assert result.valid is False
+
+    def test_single_comision_no_overlap(self, session, base_data):
+        """1 comision each, no overlap → valid=True (regression)."""
+        pv = base_data["pv"]
+        ciclo = base_data["ciclo"]
+
+        m1 = MateriaDB(codigo="SN1", nombre="SingleNoOvl 1", periodo="cuatrimestral")
+        m2 = MateriaDB(codigo="SN2", nombre="SingleNoOvl 2", periodo="cuatrimestral")
+        session.add_all([m1, m2])
+        session.flush()
+
+        for m in [m1, m2]:
+            session.add(PlanEstudioDB(
+                plan_version_id=pv.id, materia_codigo=m.codigo,
+                carrera_codigo="ING", anio_plan=1, cuatrimestre_plan="1C",
+            ))
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="SingleNoOvl",
+            ciclo_id=ciclo.id, activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        com1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="SN1",
+            plan_cursada_id=plan.id, comision_key="SN1-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        com2 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="SN2",
+            plan_cursada_id=plan.id, comision_key="SN2-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        session.add_all([com1, com2])
+        session.flush()
+
+        # M1: Lunes 8-10, M2: Lunes 10-12
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1.id,
+            codigo_materia="SN1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2.id,
+            codigo_materia="SN2", dia="Lunes",
+            hora_inicio=time(10, 0), hora_fin=time(12, 0),
+        ))
+        session.commit()
+
+        result = validar_conflictos_horarios_plan(session, plan.id)
+        assert result.valid is True
+
 
 class TestValidarCoberturaPlan:
     """Tests for validar_cobertura_plan."""

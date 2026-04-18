@@ -280,6 +280,7 @@ def duplicate_schedule(
             dia=e.dia,
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
+            comision=e.comision,
         )
         session.add(new_entry)
 
@@ -308,6 +309,7 @@ def add_schedule_entry(
     dia: str,
     hora_inicio: time,
     hora_fin: time,
+    comision: int | None = None,
 ) -> ScheduleEntryDB:
     """Agregar una entrada a un cronograma existente."""
     entry = ScheduleEntryDB(
@@ -317,6 +319,7 @@ def add_schedule_entry(
         dia=dia,
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
+        comision=comision,
     )
     session.add(entry)
     session.commit()
@@ -330,7 +333,7 @@ def update_schedule_entry(session: Session, entry_id: str, **campos) -> Schedule
     if entry is None:
         raise ValueError(f"Entry '{entry_id}' no encontrada")
 
-    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia"}
+    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia", "comision"}
     for key, value in campos.items():
         if key not in allowed:
             raise ValueError(f"Campo '{key}' no permitido")
@@ -348,6 +351,82 @@ def delete_schedule_entry(session: Session, entry_id: str) -> None:
     if entry:
         session.delete(entry)
         session.commit()
+
+
+def sync_preview_edits_to_schedule(
+    session: Session,
+    schedule_id: str,
+    materia_codigo: str,
+    edited_entries: list[dict],
+) -> tuple[int, int, int]:
+    """Sincroniza entries editados con la DB para una materia.
+
+    Args:
+        session: Database session.
+        schedule_id: ID del schedule a sincronizar.
+        materia_codigo: Codigo de la materia cuyos entries se editaron.
+        edited_entries: Lista de dicts con keys: entry_id, dia, hora_inicio,
+            hora_fin, comision (opcional).
+
+    Returns:
+        (updated, created, deleted) — cantidad de cada operacion.
+
+    Logica:
+    - entry_id existente en DB → update si hay cambios
+    - entry_id empieza con "new_" → add_schedule_entry()
+    - entry_id en DB pero no en edited_entries → delete_schedule_entry()
+    """
+    # Get current entries for this materia in the schedule
+    current_entries = session.exec(
+        select(ScheduleEntryDB)
+        .where(ScheduleEntryDB.schedule_id == schedule_id)
+        .where(ScheduleEntryDB.codigo_materia == materia_codigo)
+    ).all()
+    current_map = {e.id: e for e in current_entries}
+
+    edited_ids = set()
+    updated = 0
+    created = 0
+
+    for ed in edited_entries:
+        eid = ed["entry_id"]
+        ed_comision = ed.get("comision")
+
+        if isinstance(eid, str) and eid.startswith("new_"):
+            # New entry
+            add_schedule_entry(
+                session, schedule_id, materia_codigo,
+                ed["dia"], ed["hora_inicio"], ed["hora_fin"],
+                comision=ed_comision,
+            )
+            created += 1
+        elif eid in current_map:
+            edited_ids.add(eid)
+            existing = current_map[eid]
+            changed = (
+                existing.dia != ed["dia"]
+                or existing.hora_inicio != ed["hora_inicio"]
+                or existing.hora_fin != ed["hora_fin"]
+                or existing.comision != ed_comision
+            )
+            if changed:
+                update_schedule_entry(
+                    session, eid,
+                    dia=ed["dia"],
+                    hora_inicio=ed["hora_inicio"],
+                    hora_fin=ed["hora_fin"],
+                    comision=ed_comision,
+                )
+                updated += 1
+
+    # Delete entries that were removed from the edited list
+    deleted = 0
+    for eid, entry in current_map.items():
+        if eid not in edited_ids:
+            delete_schedule_entry(session, eid)
+            deleted += 1
+
+    return updated, created, deleted
 
 
 # =============================================================================
