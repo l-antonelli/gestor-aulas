@@ -82,6 +82,7 @@ class CalendarAction:
     dia: Optional[str] = None
     hora_inicio: Optional[time] = None
     hora_fin: Optional[time] = None
+    comision: Optional[int] = None
 
 
 def _inject_tab_fix(height: int = 700) -> None:
@@ -108,6 +109,7 @@ def _build_calendar_options(
     """Opciones comunes de FullCalendar para ambas funciones de render."""
     return {
         "initialView": "timeGridWeek",
+        "timeZone": "UTC",
         "slotMinTime": _fmt_time(config.hora_inicio_operativo),
         "slotMaxTime": _fmt_time(config.hora_fin_operativo),
         "allDaySlot": False,
@@ -139,24 +141,29 @@ def _compute_hidden_days(config: ConfiguracionHoraria) -> list[int]:
     return sorted(all_dow - active_dow)
 
 
-def _render_legend(mat_colors: dict[str, tuple[str, str]], mat_names: dict[str, str]) -> None:
-    """Renderiza la leyenda de colores de materias."""
+def _render_legend(
+    mat_colors: dict[str, tuple[str, str]],
+    mat_names: dict[str, str],
+    title: str = "Materias:",
+) -> None:
+    """Renderiza la leyenda de colores."""
     codes = sorted(mat_colors.keys())
     if not codes:
         return
     st.divider()
-    st.markdown("**Materias:**")
+    st.markdown(f"**{title}**")
     n_cols = min(len(codes), 4) or 1
     legend_cols = st.columns(n_cols)
     for i, code in enumerate(codes):
         with legend_cols[i % n_cols]:
             bg, fg = mat_colors[code]
-            nombre = mat_names.get(code, code)
+            nombre = mat_names.get(code, "")
+            label = f"<b>{code}</b> — {nombre}" if nombre else f"<b>{code}</b>"
             st.markdown(
                 f'<div style="background-color:{bg};color:{fg};'
                 f'padding:2px 8px;border-radius:3px;margin-bottom:4px;'
                 f'font-size:0.85em;">'
-                f'<b>{code}</b> — {nombre}</div>',
+                f'{label}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -203,8 +210,9 @@ def render_schedule_calendar(
             continue
         for b in blocks:
             bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
+            com_tag = f" [C{b.comision}]" if getattr(b, "comision", None) else ""
             events.append({
-                "title": f"{b.materia_codigo} - {b.materia_nombre}",
+                "title": f"{b.materia_codigo}{com_tag} - {b.materia_nombre}",
                 "daysOfWeek": [dow],
                 "startTime": _fmt_time(b.hora_inicio),
                 "endTime": _fmt_time(b.hora_fin),
@@ -304,6 +312,8 @@ def render_editable_schedule_calendar(
     grid_data: dict[str, list[ScheduleBlock]],
     config: ConfiguracionHoraria,
     key: str = "editable_schedule_cal",
+    allow_empty: bool = False,
+    color_by_comision: bool = False,
 ) -> Optional[CalendarAction]:
     """Renderiza un cronograma editable como calendario semanal FullCalendar.
 
@@ -313,12 +323,27 @@ def render_editable_schedule_calendar(
     Usa eventos recurrentes (daysOfWeek). Los callbacks devuelven fechas
     concretas de la semana visible, que se parsean con weekday() para
     recuperar el dia de la semana.
+
+    Args:
+        allow_empty: Si True, renderiza la grilla vacía (para poder
+            seleccionar rangos) en vez de mostrar un mensaje informativo.
     """
-    if not grid_data:
+    if not grid_data and not allow_empty:
         st.info("El cronograma no tiene entradas.")
         return None
 
     mat_colors, mat_names = _assign_colors(grid_data)
+
+    # Color by comision: assign colors per comision number instead of materia
+    if color_by_comision:
+        _com_nums = sorted({
+            getattr(b, "comision", None) or 0
+            for blocks in grid_data.values() for b in blocks
+        })
+        _com_colors = {
+            cn: (PALETTE[i % len(PALETTE)], TEXT_COLOR)
+            for i, cn in enumerate(_com_nums)
+        }
 
     events = []
     for dia, blocks in grid_data.items():
@@ -326,10 +351,15 @@ def render_editable_schedule_calendar(
         if dow is None:
             continue
         for b in blocks:
-            bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
+            com = getattr(b, "comision", None)
+            com_tag = f" [C{com}]" if com else ""
+            if color_by_comision:
+                bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
+            else:
+                bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
             events.append({
                 "id": b.entry_id,
-                "title": f"{b.materia_codigo} - {b.materia_nombre}",
+                "title": f"{b.materia_codigo}{com_tag} - {b.materia_nombre}",
                 "daysOfWeek": [dow],
                 "startTime": _fmt_time(b.hora_inicio),
                 "endTime": _fmt_time(b.hora_fin),
@@ -339,6 +369,7 @@ def render_editable_schedule_calendar(
                 "extendedProps": {
                     "materia_codigo": b.materia_codigo,
                     "materia_nombre": b.materia_nombre,
+                    "comision": com,
                 },
             })
 
@@ -360,7 +391,15 @@ def render_editable_schedule_calendar(
     """
 
     # Leyenda arriba del calendario (referencia visual para edicion)
-    _render_legend(mat_colors, mat_names)
+    if color_by_comision:
+        _com_legend_colors = {
+            (f"C{cn}" if cn > 0 else "Sin asignar"): color
+            for cn, color in _com_colors.items()
+        }
+        _com_legend_names = {k: "" for k in _com_legend_colors}
+        _render_legend(_com_legend_colors, _com_legend_names, title="Comisiones:")
+    else:
+        _render_legend(mat_colors, mat_names)
 
     _inject_tab_fix(options["height"])
     result = calendar(
@@ -414,6 +453,7 @@ def render_editable_schedule_calendar(
                     dia=dia,
                     hora_inicio=hora_inicio,
                     hora_fin=hora_fin,
+                    comision=ext.get("comision"),
                 )
             except (ValueError, KeyError):
                 pass

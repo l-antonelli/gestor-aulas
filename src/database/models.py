@@ -167,7 +167,7 @@ class MateriaDB(SQLModel, table=True):
     nombre: str = Field(min_length=1)
     codigo_guarani: Optional[str] = Field(default=None)
     cupo: Optional[int] = Field(default=None, gt=0)
-    horas_semanales: Optional[int] = Field(default=None, gt=0)
+    horas_semanales: Optional[float] = Field(default=None, gt=0)
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
     active: bool = Field(default=True)
     virtual: bool = Field(default=False)
@@ -259,7 +259,7 @@ class ScheduleDB(SQLModel, table=True):
 
 
 class ScheduleEntryDB(SQLModel, table=True):
-    """A single row from a schedule file: materia + dia + hora."""
+    """A single row from a schedule file: materia + dia + hora + comision opcional."""
     __tablename__ = "schedule_entries"
 
     id: str = Field(primary_key=True)  # UUID
@@ -268,6 +268,7 @@ class ScheduleEntryDB(SQLModel, table=True):
     dia: str
     hora_inicio: time
     hora_fin: time
+    comision: Optional[int] = Field(default=None)
 
     # Relationships
     schedule: Optional[ScheduleDB] = Relationship(back_populates="entries")

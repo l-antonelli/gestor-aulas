@@ -173,21 +173,30 @@ class WidgetMapper:
         
         elif widget_type == "number_input":
             # Determine if int or float
-            step = 1 if field_type == int else 0.1
-            value = default_value if default_value is not None else 0
-            
+            is_float = field_type == float
+            step = 0.1 if is_float else 1
+            value = default_value if default_value is not None else (0.0 if is_float else 0)
+
+            # Coerce all numeric params to matching type for Streamlit
+            if is_float:
+                value = float(value)
+                if "min_value" in widget_params:
+                    widget_params["min_value"] = float(widget_params["min_value"])
+                if "max_value" in widget_params:
+                    widget_params["max_value"] = float(widget_params["max_value"])
+
             # Ensure default value respects min_value constraint
             if "min_value" in widget_params:
                 min_val = widget_params["min_value"]
                 if value < min_val:
                     value = min_val
-            
+
             # Ensure default value respects max_value constraint
             if "max_value" in widget_params:
                 max_val = widget_params["max_value"]
                 if value > max_val:
                     value = max_val
-            
+
             return st.number_input(
                 label,
                 value=value,

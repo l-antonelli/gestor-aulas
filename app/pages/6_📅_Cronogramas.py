@@ -5,7 +5,11 @@ de asociarlos a un ciclo.  Luego desde Planes se puede seleccionar
 un cronograma existente para generar un plan de cursada.
 """
 
+from datetime import time
+
+import pandas as pd
 import streamlit as st
+from streamlit import column_config
 from sqlmodel import select, col, func
 
 from src.database.connection import get_session, init_db
@@ -106,9 +110,17 @@ def _dialog_confirm_add():
         f"{pending['hora_fin'].strftime('%H:%M')}"
     )
 
+    add_comision = st.number_input(
+        "Comisión (opcional, 0 = sin asignar)",
+        min_value=0, max_value=20,
+        value=pending.get("comision") or 0,
+        key="dlg_add_comision",
+    )
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirmar", type="primary", use_container_width=True):
+            _com_val = add_comision if add_comision > 0 else None
             with next(get_session()) as session:
                 add_schedule_entry(
                     session,
@@ -117,6 +129,7 @@ def _dialog_confirm_add():
                     pending["dia"],
                     pending["hora_inicio"],
                     pending["hora_fin"],
+                    comision=_com_val,
                 )
             st.session_state["_edit_processed_select"] = pending["_key"]
             st.session_state["_edit_toast"] = (
@@ -185,6 +198,13 @@ def _dialog_edit_entry():
             "Fin", value=pending["hora_fin"], key="dlg_edit_fin",
         )
 
+    _pending_com = pending.get("comision") or 0
+    new_comision = st.number_input(
+        "Comisión (0 = sin asignar)",
+        min_value=0, max_value=20, value=_pending_com,
+        key="dlg_edit_comision",
+    )
+
     st.divider()
 
     col1, col2, col3 = st.columns(3)
@@ -199,6 +219,9 @@ def _dialog_edit_entry():
                 cambios["hora_inicio"] = new_inicio
             if new_fin != pending["hora_fin"]:
                 cambios["hora_fin"] = new_fin
+            _new_com_val = new_comision if new_comision > 0 else None
+            if _new_com_val != (pending.get("comision") or None):
+                cambios["comision"] = _new_com_val
             mat_label = materias_map.get(new_mat, new_mat)
             if cambios:
                 with next(get_session()) as session:
@@ -364,22 +387,26 @@ with tab_visualizar:
             # --- Filtros fila 1: carrera, año, cuatrimestre ---
             col_f1, col_f2, col_f3 = st.columns(3)
             with col_f1:
-                carrera_opts = ["Todas"] + [
+                carrera_opts = [
                     f"{c.codigo} - {c.nombre}" for c in all_carreras
                 ]
                 viz_filtro_carrera = st.selectbox(
-                    "Carrera", options=carrera_opts, key="viz_filtro_carrera"
+                    "Carrera", options=carrera_opts,
+                    index=None, placeholder="Seleccionar carrera...",
+                    key="viz_filtro_carrera",
                 )
             with col_f2:
                 viz_filtro_anio = st.selectbox(
                     "Año de cursada",
-                    options=["Todos", 1, 2, 3, 4, 5, 6],
+                    options=[1, 2, 3, 4, 5, 6],
+                    index=None, placeholder="Seleccionar año...",
                     key="viz_filtro_anio",
                 )
             with col_f3:
                 viz_filtro_cuatri = st.selectbox(
                     "Cuatrimestre",
-                    options=["Todos", "1C", "2C", "Anual"],
+                    options=["1C", "2C", "Anual"],
+                    index=None, placeholder="Seleccionar cuatrimestre...",
                     key="viz_filtro_cuatri",
                 )
 
@@ -397,64 +424,71 @@ with tab_visualizar:
                     key="viz_excluir_comunes",
                 )
 
+            _viz_all_filters_set = (
+                viz_filtro_carrera is not None
+                and viz_filtro_anio is not None
+                and viz_filtro_cuatri is not None
+            )
+
             # Determinar materias filtradas via PlanEstudioDB
-            viz_filtered_mats = None
-            if (viz_filtro_carrera != "Todas"
-                    or viz_filtro_anio != "Todos"
-                    or viz_filtro_cuatri != "Todos"):
+            viz_filtered_mats: set[str] | None = None
+            if _viz_all_filters_set:
                 with next(get_session()) as session:
                     q = select(PlanEstudioDB.materia_codigo)
-                    if viz_filtro_carrera != "Todas":
-                        carrera_cod = viz_filtro_carrera.split(" - ")[0]
-                        q = q.where(PlanEstudioDB.carrera_codigo == carrera_cod)
-                    if viz_filtro_anio != "Todos":
-                        q = q.where(PlanEstudioDB.anio_plan == int(viz_filtro_anio))
-                    if viz_filtro_cuatri != "Todos":
-                        if viz_filtro_cuatri == "Anual":
-                            q = q.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
-                        else:
-                            q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
+                    carrera_cod = viz_filtro_carrera.split(" - ")[0]
+                    q = q.where(PlanEstudioDB.carrera_codigo == carrera_cod)
+                    q = q.where(PlanEstudioDB.anio_plan == int(viz_filtro_anio))
+                    if viz_filtro_cuatri == "Anual":
+                        q = q.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
+                    else:
+                        q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
                     viz_filtered_mats = set(session.exec(q.distinct()).all())
 
-            # --- Multiselect de materias ---
-            with next(get_session()) as session:
-                grid_data = build_schedule_grid(session, sel_id)
+            if not _viz_all_filters_set:
+                st.caption(
+                    "Seleccioná Carrera, Año y Cuatrimestre para ver "
+                    "las materias del cronograma."
+                )
+            else:
+                # --- Multiselect de materias ---
+                with next(get_session()) as session:
+                    grid_data = build_schedule_grid(session, sel_id)
 
-            # Materias presentes en el cronograma
-            _viz_mats_en_schedule = set()
-            for _blocks in grid_data.values():
-                for _b in _blocks:
-                    _viz_mats_en_schedule.add(_b.materia_codigo)
+                # Materias presentes en el cronograma
+                _viz_mats_en_schedule = set()
+                for _blocks in grid_data.values():
+                    for _b in _blocks:
+                        _viz_mats_en_schedule.add(_b.materia_codigo)
 
-            # Intersectar con filtros de plan si aplican
-            _viz_mats_disponibles = _viz_mats_en_schedule
-            if viz_filtered_mats is not None:
-                _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
+                # Intersectar con filtros de plan
+                _viz_mats_disponibles = _viz_mats_en_schedule
+                if viz_filtered_mats is not None:
+                    _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
 
-            _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
-            viz_materias_sel = st.multiselect(
-                "Materias a mostrar",
-                options=_viz_mat_list,
-                default=_viz_mat_list,
-                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                key="viz_filtro_materias",
-            )
-            _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
+                _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
+                viz_materias_sel = st.multiselect(
+                    "Materias a mostrar",
+                    options=_viz_mat_list,
+                    default=_viz_mat_list,
+                    format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                    key="viz_filtro_materias",
+                )
+                _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
 
-            st.divider()
+                st.divider()
 
-            # Aplicar filtro de materias seleccionadas
-            if grid_data:
-                grid_data = {
-                    dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
-                    for dia, blocks in grid_data.items()
-                }
-                grid_data = {d: bs for d, bs in grid_data.items() if bs}
+                # Aplicar filtro de materias seleccionadas
+                if grid_data:
+                    grid_data = {
+                        dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
+                        for dia, blocks in grid_data.items()
+                    }
+                    grid_data = {d: bs for d, bs in grid_data.items() if bs}
 
-            # Aplicar filtros de tipo y comunes
-            grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
+                # Aplicar filtros de tipo y comunes
+                grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
 
-            render_schedule_calendar(grid_data, config, key="viz_cal")
+                render_schedule_calendar(grid_data, config, key="viz_cal")
 
 
 # =============================================================================
@@ -487,148 +521,420 @@ with tab_editar:
         )
 
         if sel_edit_id:
-            # --- Filtros fila 1: carrera, año, cuatrimestre ---
-            col_ef1, col_ef2, col_ef3 = st.columns(3)
-            with col_ef1:
-                edit_carrera_opts = ["Todas"] + [
-                    f"{c.codigo} - {c.nombre}" for c in all_carreras
-                ]
-                edit_filtro_carrera = st.selectbox(
-                    "Carrera", options=edit_carrera_opts, key="edit_filtro_carrera"
+            edit_modo = st.radio(
+                "Modo de edición",
+                options=["Por grupo", "Por materia"],
+                horizontal=True,
+                key="edit_modo",
+                help=(
+                    "'Por grupo' filtra por carrera/año/cuatrimestre. "
+                    "'Por materia' permite enfocarse en una sola materia "
+                    "(útil para materias compartidas entre carreras)."
+                ),
+            )
+
+            action = None
+            sel_mat_add = None
+
+            # =================================================================
+            # Mode: Por materia
+            # =================================================================
+            if edit_modo == "Por materia":
+                _sm_busqueda = st.text_input(
+                    "🔍 Buscar materia por nombre o código",
+                    key="edit_sm_buscar",
+                    placeholder="Ej: fisica III, FB10, algebra...",
                 )
-            with col_ef2:
-                edit_filtro_anio = st.selectbox(
-                    "Año de cursada",
-                    options=["Todos", 1, 2, 3, 4, 5, 6],
-                    key="edit_filtro_anio",
-                )
-            with col_ef3:
-                edit_filtro_cuatri = st.selectbox(
-                    "Cuatrimestre",
-                    options=["Todos", "1C", "2C", "Anual"],
-                    key="edit_filtro_cuatri",
+                _sm_all = sorted(materias_map.keys())
+                if _sm_busqueda.strip():
+                    _sm_term = _sm_busqueda.strip().lower()
+                    _sm_opts = [
+                        c for c in _sm_all
+                        if _sm_term in c.lower()
+                        or _sm_term in materias_map[c].lower()
+                    ]
+                else:
+                    _sm_opts = _sm_all
+                if not _sm_opts:
+                    _sm_opts = _sm_all
+
+                _sm_sel = st.selectbox(
+                    "Materia",
+                    options=_sm_opts,
+                    index=None,
+                    format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                    placeholder="Seleccioná una materia...",
+                    key="edit_sm_materia",
                 )
 
-            # --- Filtros fila 2: tipo de materia, excluir comunes ---
-            col_ef4, col_ef5 = st.columns(2)
-            with col_ef4:
-                edit_filtro_tipo = st.selectbox(
-                    "Tipo de materia",
-                    options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
-                    key="edit_filtro_tipo",
-                )
-            with col_ef5:
-                edit_excluir_comunes = st.checkbox(
-                    "Excluir materias comunes (multi-carrera)",
-                    key="edit_excluir_comunes",
+                if _sm_sel:
+                    sel_mat_add = _sm_sel
+
+                    with next(get_session()) as session:
+                        _sm_grid = build_schedule_grid(session, sel_edit_id)
+
+                    # Filter to only selected materia
+                    _sm_grid = {
+                        dia: [b for b in blocks if b.materia_codigo == _sm_sel]
+                        for dia, blocks in _sm_grid.items()
+                    }
+                    _sm_grid = {d: bs for d, bs in _sm_grid.items() if bs}
+
+                    _sm_n = sum(len(bs) for bs in _sm_grid.values())
+                    if _sm_n > 0:
+                        st.caption(
+                            f"{_sm_n} entrada(s) para "
+                            f"**{materias_map.get(_sm_sel, _sm_sel)}**. "
+                            f"Seleccioná un rango vacío en la grilla para agregar."
+                        )
+                    else:
+                        st.info(
+                            f"No hay entradas para "
+                            f"**{materias_map.get(_sm_sel, _sm_sel)}**. "
+                            f"Seleccioná un rango en la grilla para agregar la primera."
+                        )
+
+                    st.divider()
+
+                    action = render_editable_schedule_calendar(
+                        _sm_grid, config,
+                        key=f"edit_cal_{_sm_n}",
+                        allow_empty=True,
+                        color_by_comision=True,
+                    )
+
+                    # --- Tabla editable de entradas ---
+                    st.divider()
+                    st.markdown("##### Entradas y comisiones")
+
+                    with next(get_session()) as session:
+                        _sm_entries = list(session.exec(
+                            select(ScheduleEntryDB)
+                            .where(ScheduleEntryDB.schedule_id == sel_edit_id)
+                            .where(ScheduleEntryDB.codigo_materia == _sm_sel)
+                            .order_by(ScheduleEntryDB.dia, ScheduleEntryDB.hora_inicio)
+                        ).all())
+
+                    _dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+                    _sm_max_com = max(
+                        max((e.comision or 0) for e in _sm_entries), 1,
+                    ) if _sm_entries else 1
+                    _sm_com_options = list(range(0, _sm_max_com + 3))
+
+                    _sm_df = pd.DataFrame([
+                        {
+                            "entry_id": e.id,
+                            "Día": e.dia,
+                            "Inicio": e.hora_inicio,
+                            "Fin": e.hora_fin,
+                            "Comisión": e.comision or 0,
+                        }
+                        for e in _sm_entries
+                    ]) if _sm_entries else pd.DataFrame(
+                        columns=["entry_id", "Día", "Inicio", "Fin", "Comisión"]
+                    )
+
+                    _sm_de_key = f"sm_de_{sel_edit_id}_{_sm_sel}_{len(_sm_entries)}"
+
+                    def _coerce_time(val) -> time:
+                        """Convierte string HH:MM:SS.mmm o time a time."""
+                        if isinstance(val, time):
+                            return val
+                        s = str(val).split(".")[0]  # strip millis
+                        parts = s.split(":")
+                        return time(int(parts[0]), int(parts[1]),
+                                    int(parts[2]) if len(parts) > 2 else 0)
+
+                    def _sm_on_change():
+                        """Autoguardar cambios del data_editor."""
+                        edited = st.session_state.get(_sm_de_key)
+                        if not edited:
+                            return
+                        _saved = 0
+                        _deleted = 0
+                        _created = 0
+                        with next(get_session()) as sess:
+                            # Edited rows
+                            for idx_str, changes in (
+                                edited.get("edited_rows") or {}
+                            ).items():
+                                idx = int(idx_str)
+                                if idx < len(_sm_entries):
+                                    _e = _sm_entries[idx]
+                                    _cambios = {}
+                                    if "Día" in changes:
+                                        _cambios["dia"] = changes["Día"]
+                                    if "Inicio" in changes:
+                                        _cambios["hora_inicio"] = _coerce_time(changes["Inicio"])
+                                    if "Fin" in changes:
+                                        _cambios["hora_fin"] = _coerce_time(changes["Fin"])
+                                    if "Comisión" in changes:
+                                        _cv = int(changes["Comisión"])
+                                        _cambios["comision"] = _cv if _cv > 0 else None
+                                    if _cambios:
+                                        update_schedule_entry(
+                                            sess, _e.id, **_cambios,
+                                        )
+                                        _saved += 1
+                            # Deleted rows
+                            for idx in edited.get("deleted_rows") or []:
+                                if idx < len(_sm_entries):
+                                    delete_schedule_entry(
+                                        sess, _sm_entries[idx].id,
+                                    )
+                                    _deleted += 1
+                            # Added rows
+                            for row in edited.get("added_rows") or []:
+                                if row.get("Día") and row.get("Inicio") and row.get("Fin"):
+                                    _cv = int(row.get("Comisión") or 0)
+                                    add_schedule_entry(
+                                        sess,
+                                        sel_edit_id,
+                                        _sm_sel,
+                                        row["Día"],
+                                        _coerce_time(row["Inicio"]),
+                                        _coerce_time(row["Fin"]),
+                                        comision=_cv if _cv > 0 else None,
+                                    )
+                                    _created += 1
+                        _parts = []
+                        if _saved:
+                            _parts.append(f"{_saved} modificada(s)")
+                        if _created:
+                            _parts.append(f"{_created} agregada(s)")
+                        if _deleted:
+                            _parts.append(f"{_deleted} eliminada(s)")
+                        if _parts:
+                            st.session_state["_edit_toast"] = (
+                                ", ".join(_parts).capitalize()
+                            )
+
+                    st.data_editor(
+                        _sm_df,
+                        column_config={
+                            "entry_id": None,
+                            "Día": column_config.SelectboxColumn(
+                                options=_dias_orden, width="small",
+                            ),
+                            "Inicio": column_config.TimeColumn(
+                                format="HH:mm", width="small",
+                            ),
+                            "Fin": column_config.TimeColumn(
+                                format="HH:mm", width="small",
+                            ),
+                            "Comisión": column_config.SelectboxColumn(
+                                options=_sm_com_options,
+                                help="0 = sin asignar",
+                                width="small",
+                            ),
+                        },
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        on_change=_sm_on_change,
+                        key=_sm_de_key,
+                    )
+
+                    # --- Resumen por comisión ---
+                    if _sm_entries:
+                        _sm_summary_rows = []
+                        for _cn in _sm_com_options:
+                            _cn_entries = [
+                                e for e in _sm_entries if (e.comision or 0) == _cn
+                            ]
+                            _horarios = []
+                            for _e in _cn_entries:
+                                _hi = _e.hora_inicio.strftime("%H:%M")
+                                _hf = _e.hora_fin.strftime("%H:%M")
+                                _horarios.append(
+                                    f"{_e.dia[:3]} {_hi}-{_hf}"
+                                )
+                            if _cn_entries or _cn > 0:
+                                _sm_summary_rows.append({
+                                    "Comisión": _cn if _cn > 0 else "Sin asignar",
+                                    "Clases": len(_cn_entries),
+                                    "Horarios": ", ".join(_horarios) if _horarios else "—",
+                                })
+                        if _sm_summary_rows:
+                            st.caption("Resumen por comisión")
+                            st.dataframe(
+                                pd.DataFrame(_sm_summary_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                else:
+                    st.caption(
+                        "Seleccioná una materia para ver y editar "
+                        "sus horarios en el cronograma."
+                    )
+
+            # =================================================================
+            # Mode: Por grupo (carrera/año/cuatri)
+            # =================================================================
+            else:
+                col_ef1, col_ef2, col_ef3 = st.columns(3)
+                with col_ef1:
+                    edit_carrera_opts = [
+                        f"{c.codigo} - {c.nombre}" for c in all_carreras
+                    ]
+                    edit_filtro_carrera = st.selectbox(
+                        "Carrera", options=edit_carrera_opts,
+                        index=None, placeholder="Seleccionar carrera...",
+                        key="edit_filtro_carrera",
+                    )
+                with col_ef2:
+                    edit_filtro_anio = st.selectbox(
+                        "Año de cursada",
+                        options=[1, 2, 3, 4, 5, 6],
+                        index=None, placeholder="Seleccionar año...",
+                        key="edit_filtro_anio",
+                    )
+                with col_ef3:
+                    edit_filtro_cuatri = st.selectbox(
+                        "Cuatrimestre",
+                        options=["1C", "2C", "Anual"],
+                        index=None, placeholder="Seleccionar cuatrimestre...",
+                        key="edit_filtro_cuatri",
+                    )
+
+                col_ef4, col_ef5 = st.columns(2)
+                with col_ef4:
+                    edit_filtro_tipo = st.selectbox(
+                        "Tipo de materia",
+                        options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
+                        key="edit_filtro_tipo",
+                    )
+                with col_ef5:
+                    edit_excluir_comunes = st.checkbox(
+                        "Excluir materias comunes (multi-carrera)",
+                        key="edit_excluir_comunes",
+                    )
+
+                _edit_all_filters_set = (
+                    edit_filtro_carrera is not None
+                    and edit_filtro_anio is not None
+                    and edit_filtro_cuatri is not None
                 )
 
-            # Determinar materias filtradas via PlanEstudioDB
-            edit_filtered_mats = None
-            if (edit_filtro_carrera != "Todas"
-                    or edit_filtro_anio != "Todos"
-                    or edit_filtro_cuatri != "Todos"):
-                with next(get_session()) as session:
-                    eq = select(PlanEstudioDB.materia_codigo)
-                    if edit_filtro_carrera != "Todas":
+                edit_filtered_mats: set[str] | None = None
+                if _edit_all_filters_set:
+                    with next(get_session()) as session:
+                        eq = select(PlanEstudioDB.materia_codigo)
                         e_carrera_cod = edit_filtro_carrera.split(" - ")[0]
                         eq = eq.where(PlanEstudioDB.carrera_codigo == e_carrera_cod)
-                    if edit_filtro_anio != "Todos":
                         eq = eq.where(PlanEstudioDB.anio_plan == int(edit_filtro_anio))
-                    if edit_filtro_cuatri != "Todos":
                         if edit_filtro_cuatri == "Anual":
                             eq = eq.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
                         else:
                             eq = eq.where(PlanEstudioDB.cuatrimestre_plan == edit_filtro_cuatri)
-                    edit_filtered_mats = set(session.exec(eq.distinct()).all())
+                        edit_filtered_mats = set(session.exec(eq.distinct()).all())
 
-            # --- Multiselect de materias ---
-            with next(get_session()) as session:
-                grid_data_full = build_schedule_grid(session, sel_edit_id)
-
-            # Materias presentes en el cronograma
-            _edit_mats_en_schedule = set()
-            for _blocks in grid_data_full.values():
-                for _b in _blocks:
-                    _edit_mats_en_schedule.add(_b.materia_codigo)
-
-            # Intersectar con filtros de plan si aplican
-            _edit_mats_disponibles = _edit_mats_en_schedule
-            if edit_filtered_mats is not None:
-                _edit_mats_disponibles = _edit_mats_en_schedule & edit_filtered_mats
-
-            _edit_mat_list = sorted(_edit_mats_disponibles, key=lambda c: materias_map.get(c, c))
-            edit_materias_sel = st.multiselect(
-                "Materias a mostrar",
-                options=_edit_mat_list,
-                default=_edit_mat_list,
-                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                key="edit_filtro_materias",
-            )
-            _edit_selected_set = set(edit_materias_sel) if edit_materias_sel else _edit_mats_disponibles
-
-            st.divider()
-
-            # --- Calendario editable ---
-            grid_data = grid_data_full
-
-            # Aplicar filtro de materias seleccionadas
-            if grid_data:
-                grid_data = {
-                    dia: [b for b in blocks if b.materia_codigo in _edit_selected_set]
-                    for dia, blocks in grid_data.items()
-                }
-                grid_data = {d: bs for d, bs in grid_data.items() if bs}
-
-            # Aplicar filtros de tipo y comunes
-            grid_data = _aplicar_filtro_tipo(grid_data, edit_filtro_tipo, edit_excluir_comunes)
-
-            action = render_editable_schedule_calendar(
-                grid_data, config, key="edit_cal",
-            )
-
-            # --- Selector de materia para agregar (con buscador) ---
-            st.divider()
-            if edit_filtered_mats is not None:
-                mat_options_base = sorted(c for c in materias_map if c in edit_filtered_mats)
-            else:
-                mat_options_base = sorted(materias_map.keys())
-
-            busqueda_mat = st.text_input(
-                "🔍 Buscar materia por nombre o código",
-                key="edit_buscar_materia",
-                placeholder="Ej: algebra, F0301, programacion...",
-            )
-
-            if busqueda_mat.strip():
-                termino = busqueda_mat.strip().lower()
-                mat_options = [
-                    c for c in mat_options_base
-                    if termino in c.lower() or termino in materias_map[c].lower()
-                ]
-            else:
-                mat_options = mat_options_base
-
-            if mat_options:
-                sel_mat_add = st.selectbox(
-                    "Materia (para agregar al seleccionar un rango)",
-                    options=mat_options,
-                    index=None,
-                    format_func=lambda x: f"{materias_map[x]} — {x}",
-                    placeholder="Seleccioná una materia...",
-                    key="edit_add_materia",
-                )
-            else:
-                sel_mat_add = None
-                if busqueda_mat.strip():
-                    st.warning(f"No se encontraron materias para '{busqueda_mat}'")
+                if not _edit_all_filters_set:
+                    st.caption(
+                        "Seleccioná Carrera, Año y Cuatrimestre para ver "
+                        "y editar las materias del cronograma."
+                    )
                 else:
-                    st.info("No hay materias disponibles con los filtros actuales.")
+                    with next(get_session()) as session:
+                        grid_data_full = build_schedule_grid(session, sel_edit_id)
 
-            # --- Procesar acciones ---
+                    _edit_mats_en_schedule = set()
+                    for _blocks in grid_data_full.values():
+                        for _b in _blocks:
+                            _edit_mats_en_schedule.add(_b.materia_codigo)
+
+                    _edit_mats_disponibles = _edit_mats_en_schedule
+                    if edit_filtered_mats is not None:
+                        _edit_mats_disponibles = _edit_mats_en_schedule & edit_filtered_mats
+
+                    _edit_mat_list = sorted(
+                        _edit_mats_disponibles,
+                        key=lambda c: materias_map.get(c, c),
+                    )
+                    edit_materias_sel = st.multiselect(
+                        "Materias a mostrar",
+                        options=_edit_mat_list,
+                        default=_edit_mat_list,
+                        format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                        key="edit_filtro_materias",
+                    )
+                    _edit_selected_set = (
+                        set(edit_materias_sel)
+                        if edit_materias_sel
+                        else _edit_mats_disponibles
+                    )
+
+                    st.divider()
+
+                    grid_data = grid_data_full
+                    if grid_data:
+                        grid_data = {
+                            dia: [
+                                b for b in blocks
+                                if b.materia_codigo in _edit_selected_set
+                            ]
+                            for dia, blocks in grid_data.items()
+                        }
+                        grid_data = {d: bs for d, bs in grid_data.items() if bs}
+
+                    grid_data = _aplicar_filtro_tipo(
+                        grid_data, edit_filtro_tipo, edit_excluir_comunes,
+                    )
+
+                    action = render_editable_schedule_calendar(
+                        grid_data, config, key="edit_cal",
+                    )
+
+                    # --- Selector de materia para agregar ---
+                    st.divider()
+                    mat_options_base = sorted(
+                        c for c in materias_map
+                        if c in edit_filtered_mats
+                    )
+
+                    busqueda_mat = st.text_input(
+                        "🔍 Buscar materia por nombre o código",
+                        key="edit_buscar_materia",
+                        placeholder="Ej: algebra, F0301, programacion...",
+                    )
+
+                    if busqueda_mat.strip():
+                        termino = busqueda_mat.strip().lower()
+                        mat_options = [
+                            c for c in mat_options_base
+                            if termino in c.lower()
+                            or termino in materias_map[c].lower()
+                        ]
+                    else:
+                        mat_options = mat_options_base
+
+                    if mat_options:
+                        sel_mat_add = st.selectbox(
+                            "Materia (para agregar al seleccionar un rango)",
+                            options=mat_options,
+                            index=None,
+                            format_func=lambda x: f"{materias_map[x]} — {x}",
+                            placeholder="Seleccioná una materia...",
+                            key="edit_add_materia",
+                        )
+                    else:
+                        if busqueda_mat.strip():
+                            st.warning(
+                                f"No se encontraron materias para "
+                                f"'{busqueda_mat}'"
+                            )
+                        else:
+                            st.info(
+                                "No hay materias disponibles con "
+                                "los filtros actuales."
+                            )
+
+            # =================================================================
+            # Shared: process calendar actions
+            # =================================================================
             if action is not None:
                 if action.action == "move":
-                    # Deduplicar: no re-procesar el mismo move tras rerun
                     move_key = f"{action.entry_id}|{action.dia}|{action.hora_inicio}|{action.hora_fin}"
                     if st.session_state.get("_edit_processed_move") != move_key:
                         with next(get_session()) as session:
@@ -639,7 +945,10 @@ with tab_editar:
                                 hora_inicio=action.hora_inicio,
                                 hora_fin=action.hora_fin,
                             )
-                        mat_nombre = materias_map.get(action.materia_codigo, action.materia_codigo or "")
+                        mat_nombre = materias_map.get(
+                            action.materia_codigo,
+                            action.materia_codigo or "",
+                        )
                         st.session_state["_edit_toast"] = (
                             f"{mat_nombre} movida a {action.dia} "
                             f"{action.hora_inicio.strftime('%H:%M')}-"
@@ -649,7 +958,6 @@ with tab_editar:
                         st.rerun()
 
                 elif action.action == "click":
-                    # Deduplicar: no re-procesar el mismo click tras rerun
                     click_key = f"{action.entry_id}|{action.dia}|{action.hora_inicio}"
                     if st.session_state.get("_edit_processed_click") != click_key:
                         st.session_state["edit_pending_click"] = {
@@ -658,12 +966,12 @@ with tab_editar:
                             "dia": action.dia,
                             "hora_inicio": action.hora_inicio,
                             "hora_fin": action.hora_fin,
+                            "comision": action.comision,
                             "_key": click_key,
                         }
                         _dialog_edit_entry()
 
                 elif action.action == "select" and sel_mat_add:
-                    # Deduplicar: no re-procesar el mismo select tras rerun
                     select_key = f"{action.dia}|{action.hora_inicio}|{action.hora_fin}"
                     if st.session_state.get("_edit_processed_select") != select_key:
                         st.session_state["edit_pending_add"] = {
