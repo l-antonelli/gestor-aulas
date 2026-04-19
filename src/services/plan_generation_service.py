@@ -195,10 +195,11 @@ def _assign_entries_to_comisiones(
     entries: list[ScheduleEntryDB],
     n_comisiones: int,
 ) -> list[EntryPreview]:
-    """Distribute entries among comisiones.
+    """Distribute entries among comisiones balancing by total hours.
 
     If entries already have a comision value from the DB, use it.
-    For entries with comision=None, assign using duplicate-aware round-robin.
+    For entries with comision=None, assign using hours-balanced algorithm
+    that ensures each comision gets roughly equal total hours.
     """
     dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
                  "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
@@ -210,16 +211,16 @@ def _assign_entries_to_comisiones(
     # Separate entries with and without pre-assigned comision
     pre_assigned: dict[str, int] = {}
     needs_assignment: list[ScheduleEntryDB] = []
-    comision_counts = Counter()
+    com_hours: dict[int, float] = {c: 0.0 for c in range(1, n_comisiones + 1)}
 
     for e in sorted_entries:
         if e.comision is not None and 1 <= e.comision <= n_comisiones:
             pre_assigned[e.id] = e.comision
-            comision_counts[e.comision] += 1
+            com_hours[e.comision] += _calc_entry_hours(e.hora_inicio, e.hora_fin)
         else:
             needs_assignment.append(e)
 
-    # Assign remaining entries via round-robin
+    # Assign remaining entries balanced by accumulated hours
     if needs_assignment:
         slot_groups: dict[tuple, list[ScheduleEntryDB]] = {}
         for e in needs_assignment:
@@ -231,22 +232,25 @@ def _assign_entries_to_comisiones(
             key=lambda k: (dia_order.get(k[0], 9), k[1], k[2]),
         ):
             group = slot_groups[slot_key]
+            dur = _calc_entry_hours(group[0].hora_inicio, group[0].hora_fin)
             if len(group) > 1:
+                # Parallel entries: assign each to a different comision,
+                # preferring those with fewest accumulated hours.
                 available = sorted(
                     range(1, n_comisiones + 1),
-                    key=lambda c: comision_counts[c],
+                    key=lambda c: com_hours[c],
                 )
                 for i, entry in enumerate(group):
                     com_num = available[i % len(available)]
                     pre_assigned[entry.id] = com_num
-                    comision_counts[com_num] += 1
+                    com_hours[com_num] += dur
             else:
                 com_num = min(
                     range(1, n_comisiones + 1),
-                    key=lambda c: comision_counts[c],
+                    key=lambda c: com_hours[c],
                 )
                 pre_assigned[group[0].id] = com_num
-                comision_counts[com_num] += 1
+                com_hours[com_num] += dur
 
     return [
         EntryPreview(
