@@ -417,6 +417,39 @@ with tab_cronogramas:
         ):
             with next(get_session()) as session:
                 _prev_result = preview_plan_from_schedule(session, _sel_sched_id)
+
+                # Build materia → carrera/año/cuatri mapping for grouping
+                _pv_ids = session.exec(
+                    select(CicloPlanVersionDB.plan_version_id)
+                    .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_crono)
+                ).all()
+                _pe_rows = session.exec(
+                    select(
+                        PlanEstudioDB.materia_codigo,
+                        PlanEstudioDB.carrera_codigo,
+                        PlanEstudioDB.anio_plan,
+                        PlanEstudioDB.cuatrimestre_plan,
+                    )
+                    .where(PlanEstudioDB.plan_version_id.in_(_pv_ids))
+                ).all() if _pv_ids else []
+                # materia → list of (carrera, anio, cuatri)
+                _mat_carreras: dict[str, list[dict]] = {}
+                for _mc, _cc, _anio, _cuatri in _pe_rows:
+                    _mat_carreras.setdefault(_mc, []).append({
+                        "carrera": _cc, "anio": _anio,
+                        "cuatrimestre": _cuatri,
+                    })
+                # Carrera names
+                _all_carr_codes = list({_cc for _mc, _cc, _, _ in _pe_rows})
+                _carr_names: dict[str, str] = {}
+                if _all_carr_codes:
+                    _carr_db = session.exec(
+                        select(CarreraDB).where(
+                            col(CarreraDB.codigo).in_(_all_carr_codes)
+                        )
+                    ).all()
+                    _carr_names = {c.codigo: c.nombre for c in _carr_db}
+
             if _prev_result.errors:
                 for _err in _prev_result.errors:
                     st.error(_err)
@@ -455,7 +488,9 @@ with tab_cronogramas:
                             ],
                         }
                         for mp in _prev_result.materias
-                    ]
+                    ],
+                    "mat_carreras": _mat_carreras,
+                    "carrera_nombres": _carr_names,
                 }
                 st.rerun()
 
@@ -467,6 +502,8 @@ with tab_cronogramas:
 
         _preview_data = st.session_state[_preview_key]
         _materias_preview = _preview_data["materias"]
+        _mat_carreras = _preview_data.get("mat_carreras", {})
+        _carrera_nombres = _preview_data.get("carrera_nombres", {})
 
         st.divider()
         st.markdown("### Previsualizacion de comisiones")
@@ -489,8 +526,119 @@ with tab_cronogramas:
                 f"Revisa y corregi antes de generar el plan."
             )
 
-        # --- Render each materia ---
-        for _mp_idx, mp in enumerate(_materias_preview):
+        # --- Build per-materia index for fast lookup ---
+        _mp_by_code = {mp["materia_codigo"]: (_i, mp) for _i, mp in enumerate(_materias_preview)}
+
+        # --- Summary table per carrera ---
+        _carrera_summary_rows = []
+        _all_carrera_codes = sorted(_carrera_nombres.keys())
+        for _cc in _all_carrera_codes:
+            # Find materias for this carrera that are in the preview
+            _cc_mats = set()
+            for _mc, _locs in _mat_carreras.items():
+                if any(loc["carrera"] == _cc for loc in _locs):
+                    _cc_mats.add(_mc)
+            _cc_in_preview = [c for c in _cc_mats if c in _mp_by_code]
+            if not _cc_in_preview:
+                continue
+            _cc_ok = sum(
+                1 for c in _cc_in_preview
+                if _mp_by_code[c][1]["flag"] == "exact"
+            )
+            _cc_flag = len(_cc_in_preview) - _cc_ok
+            _carrera_summary_rows.append({
+                "Carrera": _cc,
+                "Nombre": _carrera_nombres.get(_cc, ""),
+                "Materias": len(_cc_in_preview),
+                "OK": _cc_ok,
+                "Revisar": _cc_flag,
+            })
+
+        if _carrera_summary_rows:
+            st.markdown("#### Resumen por carrera")
+            st.dataframe(
+                pd.DataFrame(_carrera_summary_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # --- Filters ---
+        st.markdown("#### Filtros")
+        _pf1, _pf2, _pf3 = st.columns(3)
+        with _pf1:
+            _prev_carrera_opts = [
+                f"{r['Carrera']} - {r['Nombre']}"
+                for r in _carrera_summary_rows
+            ]
+            _prev_filt_carrera = st.selectbox(
+                "Carrera", options=_prev_carrera_opts,
+                index=None, placeholder="Seleccionar carrera...",
+                key=f"prev_filt_carrera_{_sel_sched_id}",
+            )
+        with _pf2:
+            _prev_filt_anio = st.selectbox(
+                "Año", options=[1, 2, 3, 4, 5, 6],
+                index=None, placeholder="Seleccionar año...",
+                key=f"prev_filt_anio_{_sel_sched_id}",
+            )
+        with _pf3:
+            _prev_filt_cuatri = st.selectbox(
+                "Cuatrimestre",
+                options=["1C", "2C", "Anual"],
+                index=None, placeholder="Seleccionar cuatrimestre...",
+                key=f"prev_filt_cuatri_{_sel_sched_id}",
+            )
+
+        _prev_all_filters = (
+            _prev_filt_carrera is not None
+            and _prev_filt_anio is not None
+            and _prev_filt_cuatri is not None
+        )
+
+        if not _prev_all_filters:
+            st.caption(
+                "Seleccioná Carrera, Año y Cuatrimestre para ver "
+                "las materias correspondientes."
+            )
+            st.stop()
+
+        # Resolve filter values
+        _filt_cc = _prev_filt_carrera.split(" - ")[0]
+        _filt_anio = int(_prev_filt_anio)
+        _filt_cuatri = _prev_filt_cuatri
+
+        # Find materia codes matching the filter
+        _filtered_codes: set[str] = set()
+        for _mc, _locs in _mat_carreras.items():
+            for _loc in _locs:
+                if (
+                    _loc["carrera"] == _filt_cc
+                    and _loc["anio"] == _filt_anio
+                    and _loc["cuatrimestre"] == _filt_cuatri
+                ):
+                    _filtered_codes.add(_mc)
+                    break
+
+        # Also include materias not in any plan (extra) that are in the preview
+        # These won't match any filter — that's fine, user can find them separately.
+
+        # Build sorted display list: only materias in preview AND matching filter
+        _display_indices = sorted(
+            [_mp_by_code[c][0] for c in _filtered_codes if c in _mp_by_code]
+        )
+
+        if not _display_indices:
+            st.info("No hay materias en el cronograma para este grupo.")
+            st.stop()
+
+        st.markdown(
+            f"**{len(_display_indices)} materia(s)** para "
+            f"{_filt_cc} · {_filt_anio}° año · {_filt_cuatri}"
+        )
+
+        # --- Render filtered materias ---
+        for _mp_idx in _display_indices:
+            mp = _materias_preview[_mp_idx]
             # --- Compute live header icon from current state ---
             _cur_ncom = st.session_state.get(
                 f"prev_ncom_{_sel_sched_id}_{_mp_idx}", mp["n_comisiones"]
