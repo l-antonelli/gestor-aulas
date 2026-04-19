@@ -30,6 +30,7 @@ class ScheduleBlock:
     materia_nombre: str
     hora_inicio: time
     hora_fin: time
+    comision: int | None = None
 
 
 # =============================================================================
@@ -463,6 +464,7 @@ def build_schedule_grid(
             materia_nombre=mat_names.get(e.codigo_materia, e.codigo_materia),
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
+            comision=e.comision,
         )
         grid.setdefault(e.dia, []).append(block)
 

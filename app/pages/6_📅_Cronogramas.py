@@ -5,7 +5,11 @@ de asociarlos a un ciclo.  Luego desde Planes se puede seleccionar
 un cronograma existente para generar un plan de cursada.
 """
 
+from datetime import time
+
+import pandas as pd
 import streamlit as st
+from streamlit import column_config
 from sqlmodel import select, col, func
 
 from src.database.connection import get_session, init_db
@@ -106,9 +110,17 @@ def _dialog_confirm_add():
         f"{pending['hora_fin'].strftime('%H:%M')}"
     )
 
+    add_comision = st.number_input(
+        "Comisión (opcional, 0 = sin asignar)",
+        min_value=0, max_value=20,
+        value=pending.get("comision") or 0,
+        key="dlg_add_comision",
+    )
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirmar", type="primary", use_container_width=True):
+            _com_val = add_comision if add_comision > 0 else None
             with next(get_session()) as session:
                 add_schedule_entry(
                     session,
@@ -117,6 +129,7 @@ def _dialog_confirm_add():
                     pending["dia"],
                     pending["hora_inicio"],
                     pending["hora_fin"],
+                    comision=_com_val,
                 )
             st.session_state["_edit_processed_select"] = pending["_key"]
             st.session_state["_edit_toast"] = (
@@ -185,6 +198,13 @@ def _dialog_edit_entry():
             "Fin", value=pending["hora_fin"], key="dlg_edit_fin",
         )
 
+    _pending_com = pending.get("comision") or 0
+    new_comision = st.number_input(
+        "Comisión (0 = sin asignar)",
+        min_value=0, max_value=20, value=_pending_com,
+        key="dlg_edit_comision",
+    )
+
     st.divider()
 
     col1, col2, col3 = st.columns(3)
@@ -199,6 +219,9 @@ def _dialog_edit_entry():
                 cambios["hora_inicio"] = new_inicio
             if new_fin != pending["hora_fin"]:
                 cambios["hora_fin"] = new_fin
+            _new_com_val = new_comision if new_comision > 0 else None
+            if _new_com_val != (pending.get("comision") or None):
+                cambios["comision"] = _new_com_val
             mat_label = materias_map.get(new_mat, new_mat)
             if cambios:
                 with next(get_session()) as session:
@@ -574,9 +597,172 @@ with tab_editar:
                     st.divider()
 
                     action = render_editable_schedule_calendar(
-                        _sm_grid, config, key="edit_cal",
+                        _sm_grid, config,
+                        key=f"edit_cal_{_sm_n}",
                         allow_empty=True,
+                        color_by_comision=True,
                     )
+
+                    # --- Tabla editable de entradas ---
+                    st.divider()
+                    st.markdown("##### Entradas y comisiones")
+
+                    with next(get_session()) as session:
+                        _sm_entries = list(session.exec(
+                            select(ScheduleEntryDB)
+                            .where(ScheduleEntryDB.schedule_id == sel_edit_id)
+                            .where(ScheduleEntryDB.codigo_materia == _sm_sel)
+                            .order_by(ScheduleEntryDB.dia, ScheduleEntryDB.hora_inicio)
+                        ).all())
+
+                    _dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+                    _sm_max_com = max(
+                        max((e.comision or 0) for e in _sm_entries), 1,
+                    ) if _sm_entries else 1
+                    _sm_com_options = list(range(0, _sm_max_com + 3))
+
+                    _sm_df = pd.DataFrame([
+                        {
+                            "entry_id": e.id,
+                            "Día": e.dia,
+                            "Inicio": e.hora_inicio,
+                            "Fin": e.hora_fin,
+                            "Comisión": e.comision or 0,
+                        }
+                        for e in _sm_entries
+                    ]) if _sm_entries else pd.DataFrame(
+                        columns=["entry_id", "Día", "Inicio", "Fin", "Comisión"]
+                    )
+
+                    _sm_de_key = f"sm_de_{sel_edit_id}_{_sm_sel}_{len(_sm_entries)}"
+
+                    def _coerce_time(val) -> time:
+                        """Convierte string HH:MM:SS.mmm o time a time."""
+                        if isinstance(val, time):
+                            return val
+                        s = str(val).split(".")[0]  # strip millis
+                        parts = s.split(":")
+                        return time(int(parts[0]), int(parts[1]),
+                                    int(parts[2]) if len(parts) > 2 else 0)
+
+                    def _sm_on_change():
+                        """Autoguardar cambios del data_editor."""
+                        edited = st.session_state.get(_sm_de_key)
+                        if not edited:
+                            return
+                        _saved = 0
+                        _deleted = 0
+                        _created = 0
+                        with next(get_session()) as sess:
+                            # Edited rows
+                            for idx_str, changes in (
+                                edited.get("edited_rows") or {}
+                            ).items():
+                                idx = int(idx_str)
+                                if idx < len(_sm_entries):
+                                    _e = _sm_entries[idx]
+                                    _cambios = {}
+                                    if "Día" in changes:
+                                        _cambios["dia"] = changes["Día"]
+                                    if "Inicio" in changes:
+                                        _cambios["hora_inicio"] = _coerce_time(changes["Inicio"])
+                                    if "Fin" in changes:
+                                        _cambios["hora_fin"] = _coerce_time(changes["Fin"])
+                                    if "Comisión" in changes:
+                                        _cv = int(changes["Comisión"])
+                                        _cambios["comision"] = _cv if _cv > 0 else None
+                                    if _cambios:
+                                        update_schedule_entry(
+                                            sess, _e.id, **_cambios,
+                                        )
+                                        _saved += 1
+                            # Deleted rows
+                            for idx in edited.get("deleted_rows") or []:
+                                if idx < len(_sm_entries):
+                                    delete_schedule_entry(
+                                        sess, _sm_entries[idx].id,
+                                    )
+                                    _deleted += 1
+                            # Added rows
+                            for row in edited.get("added_rows") or []:
+                                if row.get("Día") and row.get("Inicio") and row.get("Fin"):
+                                    _cv = int(row.get("Comisión") or 0)
+                                    add_schedule_entry(
+                                        sess,
+                                        sel_edit_id,
+                                        _sm_sel,
+                                        row["Día"],
+                                        _coerce_time(row["Inicio"]),
+                                        _coerce_time(row["Fin"]),
+                                        comision=_cv if _cv > 0 else None,
+                                    )
+                                    _created += 1
+                        _parts = []
+                        if _saved:
+                            _parts.append(f"{_saved} modificada(s)")
+                        if _created:
+                            _parts.append(f"{_created} agregada(s)")
+                        if _deleted:
+                            _parts.append(f"{_deleted} eliminada(s)")
+                        if _parts:
+                            st.session_state["_edit_toast"] = (
+                                ", ".join(_parts).capitalize()
+                            )
+
+                    st.data_editor(
+                        _sm_df,
+                        column_config={
+                            "entry_id": None,
+                            "Día": column_config.SelectboxColumn(
+                                options=_dias_orden, width="small",
+                            ),
+                            "Inicio": column_config.TimeColumn(
+                                format="HH:mm", width="small",
+                            ),
+                            "Fin": column_config.TimeColumn(
+                                format="HH:mm", width="small",
+                            ),
+                            "Comisión": column_config.SelectboxColumn(
+                                options=_sm_com_options,
+                                help="0 = sin asignar",
+                                width="small",
+                            ),
+                        },
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        on_change=_sm_on_change,
+                        key=_sm_de_key,
+                    )
+
+                    # --- Resumen por comisión ---
+                    if _sm_entries:
+                        _sm_summary_rows = []
+                        for _cn in _sm_com_options:
+                            _cn_entries = [
+                                e for e in _sm_entries if (e.comision or 0) == _cn
+                            ]
+                            _horarios = []
+                            for _e in _cn_entries:
+                                _hi = _e.hora_inicio.strftime("%H:%M")
+                                _hf = _e.hora_fin.strftime("%H:%M")
+                                _horarios.append(
+                                    f"{_e.dia[:3]} {_hi}-{_hf}"
+                                )
+                            if _cn_entries or _cn > 0:
+                                _sm_summary_rows.append({
+                                    "Comisión": _cn if _cn > 0 else "Sin asignar",
+                                    "Clases": len(_cn_entries),
+                                    "Horarios": ", ".join(_horarios) if _horarios else "—",
+                                })
+                        if _sm_summary_rows:
+                            st.caption("Resumen por comisión")
+                            st.dataframe(
+                                pd.DataFrame(_sm_summary_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
                 else:
                     st.caption(
                         "Seleccioná una materia para ver y editar "
@@ -780,6 +966,7 @@ with tab_editar:
                             "dia": action.dia,
                             "hora_inicio": action.hora_inicio,
                             "hora_fin": action.hora_fin,
+                            "comision": action.comision,
                             "_key": click_key,
                         }
                         _dialog_edit_entry()

@@ -24,7 +24,7 @@ class Materia(Entity):
     nombre: str = Field(..., min_length=1, description="Subject name")
     codigo_guarani: Optional[str] = Field(default=None, description="SIU Guarani system code")
     cupo: Optional[int] = Field(default=None, gt=0, description="Maximum capacity")
-    horas_semanales: Optional[int] = Field(default=None, gt=0, description="Weekly hours")
+    horas_semanales: Optional[float] = Field(default=None, gt=0, description="Weekly hours")
     periodo: Literal["anual", "cuatrimestral"] = Field(
         default="cuatrimestral",
         description="Course period type"

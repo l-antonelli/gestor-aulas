@@ -93,7 +93,7 @@ def _resolve_materia_code(session: Session, codigo: str) -> CodeResolution:
 
 def derive_comision_count(
     total_weekly_hours_from_schedule: float,
-    horas_semanales: Optional[int],
+    horas_semanales: Optional[float],
 ) -> tuple[int, str]:
     """
     Derive how many comisiones a materia should have.

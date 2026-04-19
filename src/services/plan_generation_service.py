@@ -49,7 +49,7 @@ class MateriaPreview:
     """Preview of how a materia would be split into comisiones."""
     materia_codigo: str
     materia_nombre: str
-    horas_semanales: Optional[int]
+    horas_semanales: Optional[float]
     total_horas_schedule: float
     n_comisiones: int
     max_clases_paralelas: int  # max entries in the same time slot
@@ -87,15 +87,17 @@ def _count_carreras_for_materia(session: Session, materia_codigo: str) -> int:
 
 def _derive_comisiones(
     entries: list[ScheduleEntryDB],
-    horas_semanales: Optional[int],
+    horas_semanales: Optional[float],
     optativa: bool,
     n_carreras: int,
 ) -> tuple[int, int, str, str]:
     """Derive comision count using simplified rules.
 
     Rules:
-    1. Optativa -> always 1
-    2. Exclusive to 1 carrera -> always 1
+    0. Pre-assigned: if entries already have comision values from DB,
+       use max(comision) as floor for n_comisiones.
+    1. Optativa -> always 1 (unless pre-assigned > 1)
+    2. Exclusive to 1 carrera -> always 1 (unless pre-assigned > 1)
     3. Shared (>1 carrera) -> total_hours / horas_semanales ONLY if exact integer >= 1.
        Otherwise flag for correction.
     4. CONSTRAINT: if max_clases_paralelas > n_comisiones, force n_comisiones =
@@ -108,6 +110,30 @@ def _derive_comisiones(
     )
     max_paralelas = max(slot_counts.values()) if slot_counts else 1
     total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in entries)
+
+    # Rule 0: check pre-assigned comision values from the schedule
+    pre_assigned_vals = [e.comision for e in entries if e.comision is not None and e.comision >= 1]
+    pre_assigned_max = max(pre_assigned_vals) if pre_assigned_vals else 0
+    all_pre_assigned = len(pre_assigned_vals) == len(entries) and pre_assigned_max > 0
+
+    if all_pre_assigned:
+        # All entries have explicit comision — trust the user's assignment
+        n_comisiones = pre_assigned_max
+        flag = "exact"
+        flag_detail = (
+            f"Comisiones pre-asignadas en el cronograma: "
+            f"{n_comisiones} comision(es) detectada(s)."
+        )
+        # Still check parallel constraint
+        if max_paralelas > n_comisiones:
+            flag = "needs_more_comisiones"
+            flag_detail = (
+                f"{max_paralelas} clases paralelas en el mismo horario requieren "
+                f"al menos {max_paralelas} comisiones (pre-asignadas: {n_comisiones}). "
+                f"Forzando n_comisiones={max_paralelas}."
+            )
+            n_comisiones = max_paralelas
+        return n_comisiones, max_paralelas, flag, flag_detail
 
     # Rule 1: optativa
     if optativa:
@@ -134,16 +160,23 @@ def _derive_comisiones(
             flag = "exact"
             flag_detail = (
                 f"Materia compartida ({n_carreras} carreras): "
-                f"{total_hours:.0f}h / {horas_semanales}h = {n_comisiones} comisiones."
+                f"{total_hours:g}h / {horas_semanales}h = {n_comisiones} comision(es)."
             )
         else:
             n_comisiones = 1
             flag = "uncertain"
             flag_detail = (
                 f"Materia compartida ({n_carreras} carreras): "
-                f"{total_hours:.0f}h / {horas_semanales}h = {ratio:.2f} (no es entero). "
+                f"{total_hours:g}h / {horas_semanales}h = {ratio:.2f} (no es entero). "
                 f"Asumiendo 1 comision. Verificar horas_semanales."
             )
+
+    # Ensure pre-assigned floor is respected (partial pre-assignment)
+    if pre_assigned_max > n_comisiones:
+        n_comisiones = pre_assigned_max
+        flag_detail += (
+            f" Ajustado a {pre_assigned_max} por comisiones pre-asignadas en el cronograma."
+        )
 
     # Rule 4: constraint — parallel classes require at least that many comisiones
     if max_paralelas > n_comisiones:

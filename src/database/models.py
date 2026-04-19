@@ -167,7 +167,7 @@ class MateriaDB(SQLModel, table=True):
     nombre: str = Field(min_length=1)
     codigo_guarani: Optional[str] = Field(default=None)
     cupo: Optional[int] = Field(default=None, gt=0)
-    horas_semanales: Optional[int] = Field(default=None, gt=0)
+    horas_semanales: Optional[float] = Field(default=None, gt=0)
     periodo: str = Field(default="cuatrimestral")  # "anual" o "cuatrimestral"
     active: bool = Field(default=True)
     virtual: bool = Field(default=False)

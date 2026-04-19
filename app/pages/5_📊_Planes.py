@@ -16,7 +16,7 @@ from src.database.models import (
     CicloPlanVersionDB, PlanCarreraVersionDB, PlanEstudioDB,
     CarreraDB, ConfiguracionHoraria,
 )
-from src.database.crud import ciclo_crud, get_or_create_config, update_config
+from src.database.crud import ciclo_crud, materia_crud, get_or_create_config, update_config
 from src.services.schedule_service import (
     create_schedule_from_file,
     get_schedules_for_ciclo,
@@ -47,6 +47,12 @@ from src.ui.calendar_render import render_timetable_calendar
 from src.domain.types import DIAS_SEMANA
 
 init_db()
+
+
+def _fmt_hours(h: float) -> str:
+    """Format hours: '18h' if integer, '17.5h' otherwise."""
+    return f"{h:g}h"
+
 
 st.set_page_config(page_title="Planes de Cursada", page_icon="📊", layout="wide")
 st.title("📊 Planes de Cursada")
@@ -321,7 +327,7 @@ with tab_cronogramas:
         _pv_c1, _pv_c2, _pv_c3, _pv_c4, _pv_c5, _pv_c6 = st.columns(6)
         _pv_c1.metric("Materias", _pv["n_materias"])
         _pv_c2.metric("Clases", _pv["n_clases"])
-        _pv_c3.metric("Horas totales", f"{_pv['total_horas']:.0f}h")
+        _pv_c3.metric("Horas cronograma", _fmt_hours(_pv['total_horas']))
         _pv_c4.metric("Esperadas", _pv["n_esperadas"])
         _pv_c5.metric("Cubiertas", f"{_pv['n_cubiertas']}/{_pv['n_esperadas']}")
         _pv_c6.metric("Faltantes", _pv["n_faltantes"])
@@ -492,17 +498,14 @@ with tab_cronogramas:
             # Read fresh horas_semanales from DB
             with next(get_session()) as _hsem_session:
                 _db_mat = _hsem_session.get(MateriaDB, mp["materia_codigo"])
-                _db_hsem = _db_mat.horas_semanales if _db_mat and _db_mat.horas_semanales else 0
+                _db_hsem = float(_db_mat.horas_semanales) if _db_mat and _db_mat.horas_semanales else 0.0
 
-            _cur_hsem = st.session_state.get(
-                f"prev_hsem_{_sel_sched_id}_{_mp_idx}", _db_hsem
-            )
             _cur_total = mp["total_horas_schedule"]
             _cur_paralelas = mp["max_clases_paralelas"]
 
-            # Compute live flag for header
-            if _cur_hsem > 0 and _cur_total > 0:
-                _hdr_ratio = _cur_total / _cur_hsem
+            # Compute live flag for header (uses DB value, not widget value)
+            if _db_hsem > 0 and _cur_total > 0:
+                _hdr_ratio = _cur_total / _db_hsem
                 _hdr_ratio_ok = abs(_hdr_ratio - round(_hdr_ratio)) < 0.01
                 if _hdr_ratio_ok and round(_hdr_ratio) == _cur_ncom:
                     _live_icon = "\u2705"
@@ -513,7 +516,7 @@ with tab_cronogramas:
                 else:
                     _live_icon = "\u26a0\ufe0f"
                     _live_expand = True
-            elif _cur_hsem == 0:
+            elif _db_hsem == 0:
                 _live_icon = "\u2753"
                 _live_expand = True
             else:
@@ -537,19 +540,28 @@ with tab_cronogramas:
                 _display_hsem = ic2.number_input(
                     "h/sem",
                     value=_db_hsem,
-                    min_value=0,
+                    min_value=0.0,
+                    step=0.25,
+                    format="%.2f",
                     key=f"prev_hsem_{_sel_sched_id}_{_mp_idx}",
                     label_visibility="collapsed",
-                    help=(
-                        "Valor actual en la materia. Si necesitas cambiarlo, "
-                        "editalo desde la pagina de Materias."
-                    ),
                 )
+                # Auto-save when value changes
                 if _display_hsem != _db_hsem:
-                    st.info(
-                        f"El valor actual de la materia es {_db_hsem}h. "
-                        f"Para cambiarlo, editalo desde la pagina de Materias."
-                    )
+                    with next(get_session()) as _sess:
+                        _mat = materia_crud.get(_sess, mp["materia_codigo"])
+                        if _mat:
+                            _mat.horas_semanales = (
+                                _display_hsem if _display_hsem > 0 else None
+                            )
+                            _sess.add(_mat)
+                            _sess.commit()
+                            mp["horas_semanales"] = _display_hsem
+                            st.toast(
+                                f"{mp['materia_codigo']}: horas semanales "
+                                f"actualizadas a {_fmt_hours(_display_hsem)}."
+                            )
+                            st.rerun()
 
                 # --- b) Comisiones selector ---
                 ic3.markdown("**Comisiones:**")
@@ -571,52 +583,11 @@ with tab_cronogramas:
                 if new_n_com != mp["n_comisiones"]:
                     mp["n_comisiones"] = new_n_com
 
-                # --- c) Dynamic validation text ---
-                _total_h = mp["total_horas_schedule"]
                 _h_sem = _display_hsem or 0
                 _n_com = new_n_com
                 _paralelas = mp["max_clases_paralelas"]
 
-                _validations = []
-                if _h_sem > 0 and _total_h > 0:
-                    _ratio = _total_h / _h_sem
-                    _ratio_int = abs(_ratio - round(_ratio)) < 0.01
-                    if _ratio_int and round(_ratio) == _n_com:
-                        st.success(
-                            f"{_n_com} comisiones \u00d7 {_h_sem}h/sem = "
-                            f"{_n_com * _h_sem:.0f}h. "
-                            f"Coincide con las {_total_h:.0f}h del cronograma."
-                        )
-                    elif _ratio_int:
-                        _expected = round(_ratio)
-                        _validations.append(
-                            f"Segun horas: {_total_h:.0f}h / {_h_sem}h = "
-                            f"{_expected} comisiones, pero se "
-                            f"seleccionaron {_n_com}."
-                        )
-                    else:
-                        _validations.append(
-                            f"{_total_h:.0f}h / {_h_sem}h/sem = "
-                            f"{_ratio:.2f} (no entero). Revisar "
-                            f"horarios o horas semanales."
-                        )
-                elif _h_sem == 0:
-                    _validations.append(
-                        "Sin dato de horas semanales. "
-                        "Completalo para validar la cantidad de comisiones."
-                    )
-
-                if _paralelas > _n_com:
-                    _validations.append(
-                        f"Hay {_paralelas} clases en el mismo "
-                        f"horario pero solo {_n_com} comision(es). "
-                        f"Se necesitan al menos {_paralelas}."
-                    )
-
-                for _v in _validations:
-                    st.warning(_v)
-
-                # --- d) Reasignar comisiones button ---
+                # --- c) Reasignar comisiones button ---
                 if st.button(
                     "Reasignar comisiones",
                     key=f"btn_reassign_{_sel_sched_id}_{_mp_idx}",
@@ -761,10 +732,52 @@ with tab_cronogramas:
                         _new_total += max(0, _mins) / 60
 
                 st.markdown(
-                    f"**Resumen:** {len(_valid)} clases \u00b7 "
-                    f"{_new_total:.0f}h total \u00b7 "
-                    f"{_n_com} comisiones"
+                    f"**Resumen:** {len(_valid)} clases · "
+                    f"{_fmt_hours(_new_total)} en cronograma · "
+                    f"{_n_com} comision(es)"
                 )
+
+                # --- Validation messages (live, based on current editor state) ---
+                _validations = []
+                if _h_sem > 0 and _new_total > 0:
+                    _ratio = _new_total / _h_sem
+                    _ratio_int = abs(_ratio - round(_ratio)) < 0.01
+                    if _ratio_int and round(_ratio) == _n_com:
+                        st.success(
+                            f"{_n_com} comision(es) × {_fmt_hours(_h_sem)}/sem = "
+                            f"{_fmt_hours(_n_com * _h_sem)}. "
+                            f"Coincide con las {_fmt_hours(_new_total)} del cronograma."
+                        )
+                    elif _ratio_int:
+                        _expected = round(_ratio)
+                        _validations.append(
+                            f"Horas cronograma: {_fmt_hours(_new_total)} / "
+                            f"{_fmt_hours(_h_sem)}/sem = "
+                            f"{_expected} comision(es), pero se "
+                            f"seleccionaron {_n_com}."
+                        )
+                    else:
+                        _validations.append(
+                            f"Horas cronograma: {_fmt_hours(_new_total)} / "
+                            f"{_fmt_hours(_h_sem)}/sem = "
+                            f"{_ratio:.2f} (no es entero). "
+                            f"Revisar horarios o horas semanales."
+                        )
+                elif _h_sem == 0:
+                    _validations.append(
+                        "Sin dato de horas semanales. "
+                        "Completalo para validar la cantidad de comisiones."
+                    )
+
+                if _paralelas > _n_com:
+                    _validations.append(
+                        f"Hay {_paralelas} clases en el mismo "
+                        f"horario pero solo {_n_com} comision(es). "
+                        f"Se necesitan al menos {_paralelas}."
+                    )
+
+                for _v in _validations:
+                    st.warning(_v)
 
                 # Build summary table
                 _summary_rows = []
@@ -876,20 +889,20 @@ with tab_cronogramas:
                         ):
                             mp["flag"] = "exact"
                             mp["flag_detail"] = (
-                                f"{_n_com} \u00d7 {_h_sem}h = "
-                                f"{_new_total:.0f}h. OK."
+                                f"{_n_com} × {_h_sem}h/sem = "
+                                f"{_fmt_hours(_new_total)}. OK."
                             )
                         else:
                             mp["flag"] = "uncertain"
                             mp["flag_detail"] = (
-                                f"{_new_total:.0f}h / {_h_sem}h = "
+                                f"{_fmt_hours(_new_total)} / {_h_sem}h/sem = "
                                 f"{_ratio:.2f}. Revisar."
                             )
                     else:
                         mp["flag"] = "no_data" if _h_sem == 0 else "exact"
                         mp["flag_detail"] = (
                             f"{len(_final)} entradas, "
-                            f"{_new_total:.0f}h."
+                            f"{_fmt_hours(_new_total)}."
                         )
 
                     # Persist edits to schedule DB
