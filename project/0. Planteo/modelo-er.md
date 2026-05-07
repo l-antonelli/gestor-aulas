@@ -1,5 +1,20 @@
 # Modelo de Entidad-Relación del Sistema de Asignación de Aulas
 
+> **⚠️ Nota sobre vigencia**: Este documento representa el **modelo conceptual original (v1)** del
+> sistema, elaborado durante la etapa de planteo inicial. Incluye entidades conceptuales como
+> `Inscripción`, `Asistencia` y `AsignacionAula` que forman parte del modelo teórico completo
+> pero **aún no están implementadas** (fueron diferidas para etapas futuras).
+>
+> El modelo **efectivamente implementado** se encuentra en:
+> - **`1. Diseño/diagrama-entidades.md`** — Diagrama UML de clases con políticas de borrado
+> - **`1. Diseño/modelo-planificacion-cursada.md`** — Modelo detallado del flujo Schedule → Plan → Clases
+>
+> Las diferencias principales entre este modelo conceptual y la implementación son:
+> - `AsignacionAulaDB` fue eliminada; la asignación de aula es ahora un campo directo en `ClaseDB.aula_id`
+> - `Inscripción`, `Asistencia`, `Alumno` y `Profesor` están fuera de alcance actual
+> - Se agregaron `ScheduleDB`, `ScheduleEntryDB`, `PlanificacionCursadaDB` como entidades de gestión
+> - El versionado de planes de estudio (`PlanCarreraVersionDB`, `CicloPlanVersionDB`) reemplaza la relación simple Materia↔Carrera
+
 Este documento presenta el modelo conceptual completo del Sistema de Información para la Asignación de Aulas de la Facultad de Ciencias Exactas, Ingeniería y Agrimensura (FCEIA) de la Universidad Nacional de Rosario. El diseño sigue un enfoque de modelado en capas que permite derivar entidades abstractas a partir de las entidades del dominio real.
 
 ---

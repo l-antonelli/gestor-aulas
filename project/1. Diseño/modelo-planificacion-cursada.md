@@ -2,10 +2,10 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión).
+> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones).
 > **Fecha diseño**: 2026-03-09
 > **Fecha implementacion**: 2026-03-09
-> **Ultima actualizacion**: 2026-04-17 (validación por comisión, max_clases_paralelas, persistencia de ediciones)
+> **Ultima actualizacion**: 2026-04-19 (campo comision en ScheduleEntry, horas_semanales float, prevalidación UX)
 
 ---
 
@@ -101,7 +101,7 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 | nombre | str | |
 | codigo_guarani | str nullable | Codigo en SIU Guarani (puede diferir del codigo) |
 | cupo | int nullable | Capacidad maxima (nullable para actividades sin cupo) |
-| horas_semanales | int nullable | Horas semanales de catedra (nullable para actividades asincronas) |
+| horas_semanales | **float** nullable | Horas semanales de catedra. Float para permitir valores como 1.5 o 2.5. Nullable para actividades asincronas |
 | periodo | str | "anual" o "cuatrimestral" |
 | **active** | **bool** | **Campo informativo. NO controla creacion de dictados (ver PlanCarreraVersion)** |
 
@@ -236,9 +236,13 @@ Filas individuales del schedule, normalizadas y validadas.
 | dia | str | Dia de la semana validado |
 | hora_inicio | time | |
 | hora_fin | time | |
+| **comision** | **int nullable** | **Numero de comision asignada (1, 2, ...). Nullable = sin asignar. Se edita desde la prevalidacion (Phase 2) y se persiste al schedule** |
 
 > Al persistir, los codigos guarani ya estan resueltos a codigo_plan.
 > Las filas con codigos no resueltos no se persisten (se reportan como errores).
+> El campo `comision` permite persistir la asignacion de comisiones editada por el
+> usuario durante la prevalidacion, de modo que al re-prevalidar o generar un plan,
+> la asignacion se preserve.
 
 #### PlanificacionCursada
 
@@ -483,9 +487,10 @@ erDiagram
         str nombre
         str codigo_guarani
         int cupo
-        int horas_semanales
+        float horas_semanales
         str periodo
         bool active
+        bool virtual
     }
     CARRERA {
         str codigo PK
@@ -544,6 +549,7 @@ erDiagram
         str dia
         time hora_inicio
         time hora_fin
+        int comision "nullable - asignacion editada"
     }
     PLANIFICACION_CURSADA {
         str id PK
