@@ -311,3 +311,13 @@ class ClaseDB(SQLModel, table=True):
 
     # Relationships
     plan_cursada: Optional[PlanificacionCursadaDB] = Relationship(back_populates="clases")
+
+
+class InscripcionHistoricaDB(SQLModel, table=True):
+    """Registro historico de inscriptos por materia, año y cuatrimestre."""
+    __tablename__ = "inscripciones_historicas"
+
+    materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
+    anio: int = Field(primary_key=True)
+    cuatrimestre: str = Field(primary_key=True)  # "1C", "2C", "Anual"
+    inscriptos: int = Field(ge=0)
