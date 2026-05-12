@@ -229,6 +229,7 @@ class HorarioDB(SQLModel, table=True):
     dia: str = Field(index=True)
     hora_inicio: time
     hora_fin: time
+    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
 
     # Relationships
     comision: Optional[ComisionDB] = Relationship(back_populates="horarios")
@@ -269,6 +270,7 @@ class ScheduleEntryDB(SQLModel, table=True):
     hora_inicio: time
     hora_fin: time
     comision: Optional[int] = Field(default=None)
+    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
 
     # Relationships
     schedule: Optional[ScheduleDB] = Relationship(back_populates="entries")
@@ -308,9 +310,18 @@ class ClaseDB(SQLModel, table=True):
     hora_fin: time
     executed: bool = Field(default=False)
     aula_id: Optional[str] = Field(default=None, foreign_key="aulas.id")
+    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
 
     # Relationships
     plan_cursada: Optional[PlanificacionCursadaDB] = Relationship(back_populates="clases")
+
+
+class MateriaLaboratorioDB(SQLModel, table=True):
+    """Tabla link M:N entre materias y laboratorios compatibles para dictar clases de lab."""
+    __tablename__ = "materia_laboratorio"
+
+    materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
+    aula_id: str = Field(foreign_key="aulas.id", primary_key=True)
 
 
 class InscripcionHistoricaDB(SQLModel, table=True):

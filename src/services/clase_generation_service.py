@@ -123,6 +123,7 @@ def generate_clases_for_plan(
                     hora_fin=horario.hora_fin,
                     executed=False,
                     aula_id=None,
+                    tipo_clase=horario.tipo_clase,
                 )
                 session.add(clase)
                 result.clases_created += 1

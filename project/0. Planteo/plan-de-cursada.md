@@ -74,30 +74,97 @@ PlanificacionCursada (escenario completo para un ciclo)
 
 ## 3. Ciclo de Vida
 
-### 3.1 Flujo de trabajo
+El plan de cursada atraviesa **tres etapas** claramente separadas en su ciclo de vida,
+cada una con un proposito distinto y restricciones propias sobre que se puede modificar.
+
+### 3.1 Etapa 1 — Carga y Prevalidacion
+
+**Proposito**: Transformar los datos crudos del cronograma (Excel/CSV) en una
+estructura revisada y corregida, lista para convertirse en plan.
 
 ```
-1. CARGA          Cargar cronograma desde archivo (Schedule + ScheduleEntries)
+1. CARGA          Importar cronograma desde archivo (Schedule + ScheduleEntries)
+                  Resolver codigos Guarani, detectar errores de parseo
        ↓
-2. PREVALIDACION  Revisar: materias presentes/faltantes, asignar comisiones,
-                  validar consistencia de horas (Phase 1 + Phase 2 en la UI)
+2. PREVALIDACION  Phase 1: Verificar cobertura de materias del plan de estudio
+                  Phase 2: Asignar comisiones, marcar tipo de clase (teorica/lab),
+                           validar consistencia de horas, editar horarios
+```
+
+**Que se puede modificar**: Todos los datos del schedule — horarios, comisiones
+asignadas, tipo de clase (teorica/laboratorio), horas semanales de la materia, etc.
+El cronograma es mutable hasta que se genera el plan.
+
+**Salida**: Un `ScheduleDB` con sus `ScheduleEntryDB` limpios, con asignacion de
+comisiones y tipos de clase validados.
+
+### 3.2 Etapa 2 — Generacion del Plan Inicial
+
+**Proposito**: Construir la estructura jerarquica formal del plan a partir del
+schedule prevalidado. Esta es la "foto inicial" del plan.
+
+```
+3. GENERACION     Crear PlanificacionCursada + Comisiones + Horarios
+                  (propaga tipo_clase de ScheduleEntry a Horario)
        ↓
-3. GENERACION     Crear el plan: PlanificacionCursada + Comisiones + Horarios
-                  (copiar entries del schedule a horarios bajo comisiones)
+4. EDICION        Ajustar comisiones, horarios, cupos en el tab Detalle del plan
+                  (propaga cambios a la estructura ya generada)
        ↓
-4. EDICION        Ajustar comisiones, horarios, cupos en el tab Detalle
-       ↓
-5. VALIDACION     Verificar factibilidad: conflictos horarios por carrera,
-                  cobertura de materias, materias virtuales
-       ↓
+5. VALIDACION     Verificar factibilidad:
+                  - conflictos horarios por carrera
+                  - cobertura de materias
+                  - materias virtuales
+                  - compatibilidad materia-laboratorio
+```
+
+**Que se puede modificar**: La estructura del plan (agregar/quitar comisiones,
+modificar horarios, cupos, tipos de clase). Los cambios afectan el plan pero no
+tocan todavia las clases individuales porque aun no fueron generadas.
+
+**Salida**: Un `PlanificacionCursadaDB` validado, listo para activar. Pueden
+coexistir multiples planes en estado "borrador" para el mismo ciclo (escenarios
+alternativos).
+
+### 3.3 Etapa 3 — Implementacion y Ajustes
+
+**Proposito**: Activar un plan, generar las clases individuales con fecha, asignar
+aulas, y gestionar excepciones puntuales durante la cursada.
+
+```
 6. ACTIVACION     Marcar el plan como activo (desactiva otros del mismo ciclo)
        ↓
-7. GEN. CLASES    Expandir horarios en clases con fecha concreta
+7. GEN. CLASES    Expandir horarios en ClaseDB con fecha concreta
+                  (propaga tipo_clase de Horario a Clase)
        ↓
-8. ASIG. AULAS    (Futuro) Ejecutar algoritmo de optimizacion para asignar aulas
+8. ASIG. AULAS    Asignar aulas a clases:
+                  - clases teoricas → aulas teoricas (aulas normales)
+                  - clases laboratorio → aulas laboratorio (segun compatibilidad
+                    definida en MateriaLaboratorioDB)
+       ↓
+9. AJUSTES        Durante la cursada, modificaciones puntuales a clases futuras:
+                  - cambiar tipo de clase (ej: marcar clase teorica como lab)
+                  - cambiar aula asignada (reserva puntual de laboratorio)
+                  - cancelar/reprogramar clases
+                  - respetando restricciones ya impuestas
 ```
 
-### 3.2 Multiples escenarios
+**Que se puede modificar**: Solo clases individuales a futuro (fecha > hoy). Las
+clases ya ejecutadas (`executed=True`) son permanentes. Los cambios deben
+respetar las validaciones del plan. Si un ajuste hace inviable alguna restriccion
+(ej: el laboratorio que se quiere reservar choca con otra clase), el sistema debe
+indicarlo antes de aplicar el cambio.
+
+**Casos de uso tipicos de ajustes**:
+- **Reserva de laboratorio**: Materia con clases teoricas semanales que
+  ocasionalmente necesita laboratorio. El docente marca una clase especifica como
+  tipo "laboratorio" y le asigna un aula de laboratorio. Esto libera el aula
+  teorica que tenia asignada para esa fecha.
+- **Cambio de aula puntual**: Por motivos operativos (aula no disponible,
+  sobrecupo, etc.) se reubica una clase especifica a otra aula.
+- **Reprogramacion**: Una clase se mueve a otra fecha/hora por feriado, paro,
+  evento especial.
+
+### 3.4 Multiples escenarios
 
 Se pueden generar multiples planes a partir del mismo cronograma (o de diferentes
 cronogramas del mismo ciclo) para comparar configuraciones:
@@ -108,7 +175,7 @@ cronogramas del mismo ciclo) para comparar configuraciones:
 La comparacion se hace via `comision_key`, que es una clave plan-agnostica formada por
 `{dictado_codigo}-{numero:03d}`. Permite identificar "la misma comision" entre planes.
 
-### 3.3 Estados de Clase
+### 3.5 Estados de Clase
 
 Las clases derivadas de un plan tienen tres estados posibles:
 
@@ -195,7 +262,75 @@ cambian los horarios sin tener que recrear todo el plan.
 
 ---
 
-## 6. El Plan de Cursada en el Contexto del Proyecto
+## 6. Tipos de Clase y Laboratorios
+
+Una clase puede ser **teorica** o **de laboratorio**. Esta distincion es relevante
+porque cada tipo requiere un tipo distinto de aula:
+
+- **Clase teorica** → Aula teorica (aula comun, cualquiera con capacidad suficiente)
+- **Clase laboratorio** → Aula laboratorio (laboratorio especifico, no todos los
+  laboratorios son compatibles con todas las materias)
+
+### 6.1 El campo `tipo_clase`
+
+Es un atributo que se propaga desde la carga hasta la clase individual:
+
+```
+ScheduleEntry.tipo_clase → Horario.tipo_clase → Clase.tipo_clase
+      (carga)                 (generacion)          (expansion)
+```
+
+Valores posibles: `"teorica"` (default) o `"laboratorio"`.
+
+El usuario marca el tipo durante la prevalidacion (en la tabla editable). Al
+generar el plan, el tipo se copia al `HorarioDB`. Al generar las clases, se copia
+a cada `ClaseDB`. En la etapa de implementacion, el tipo de una clase
+individual puede modificarse (ver seccion 3.3 — caso "reserva de laboratorio").
+
+### 6.2 Compatibilidad Materia-Laboratorio
+
+No todas las materias pueden dictar clases de laboratorio en cualquier lab. Los
+laboratorios tienen equipamiento especifico (ej: lab de informatica, lab de quimica,
+lab de electronica) y cada materia requiere uno o mas laboratorios particulares.
+
+Esta compatibilidad se modela como una relacion **M:N sin orden de preferencia**:
+
+```
+MateriaLaboratorioDB (tabla link)
+├── materia_codigo (FK a MateriaDB)
+└── aula_id       (FK a AulaDB donde tipo = "laboratorio")
+```
+
+Una materia puede tener 0, 1 o varios laboratorios compatibles. A la hora de
+asignar aulas, el algoritmo debe respetar esta restriccion: una clase de
+laboratorio de la materia X solo puede asignarse a un lab listado como compatible
+con X.
+
+### 6.3 Dos modos de uso del laboratorio
+
+En la practica, las materias usan los laboratorios de dos maneras distintas:
+
+**Modo 1 — Laboratorio fijo semanal**: Algunas materias tienen una clase semanal
+de laboratorio ya contemplada en su cronograma (ej: "los lunes 10-12 siempre en
+lab"). Se carga con `tipo_clase = "laboratorio"` desde la prevalidacion y se
+propaga automaticamente a todas las instancias semanales.
+
+**Modo 2 — Reserva puntual**: La mayoria de las materias no tienen lab todas las
+semanas. El uso se determina durante la cursada (ej: "esta semana damos lab").
+En estos casos, todas las clases se cargan como teoricas, y durante la etapa de
+implementacion el docente/administrador edita una clase individual especifica:
+cambia su `tipo_clase` a "laboratorio" y le asigna un aula de laboratorio. Esto
+libera el aula teorica que tenia asignada para esa fecha.
+
+El modo 2 requiere que la UI de implementacion permita:
+- Editar clases individuales a futuro (no las ya ejecutadas)
+- Validar que el laboratorio seleccionado sea compatible con la materia
+- Validar que el laboratorio no este ocupado por otra clase en ese dia/hora
+- Indicar si el cambio invalida otras restricciones
+
+---
+
+## 7. El Plan de Cursada en el Contexto del Proyecto
 
 El plan de cursada es el artefacto que conecta la **etapa de planificacion** con la
 **etapa de asignacion de aulas** (objetivo central del sistema):
@@ -223,7 +358,7 @@ este rol de "gate" entre etapas.
 
 ---
 
-## 7. Supuestos y Decisiones de Diseño
+## 8. Supuestos y Decisiones de Diseño
 
 | Supuesto/Decision | Justificacion |
 |-------------------|---------------|
@@ -233,10 +368,12 @@ este rol de "gate" entre etapas.
 | Las clases ejecutadas son permanentes | Una vez que una clase ocurrio, su registro no se modifica aunque cambie el plan |
 | La asignacion de comisiones se persiste en el schedule | Permite que al re-prevalidar se preserven las asignaciones del usuario |
 | Las comisiones son componentes del plan (composicion) | No tienen existencia independiente; se borran al borrar el plan |
+| Tipo de clase se propaga por la cadena Entry → Horario → Clase | Permite definir el tipo en la carga y propagarlo automaticamente, manteniendo la posibilidad de sobrescribir individualmente en clases puntuales |
+| Compatibilidad materia-laboratorio es M:N sin orden | Las autoridades definen que labs son validos para cada materia; no hay preferencia, cualquier lab compatible es aceptable para el algoritmo |
 
 ---
 
-## 8. Glosario Especifico
+## 9. Glosario Especifico
 
 | Termino | Definicion en este contexto |
 |---------|---------------------------|
@@ -248,3 +385,8 @@ este rol de "gate" entre etapas.
 | **Clase** | Instancia concreta de un horario en una fecha especifica del ciclo |
 | **Slot paralelo** | Dos o mas entries de la misma materia en el mismo dia y rango horario, indicando comisiones simultaneas |
 | **comision_key** | Clave plan-agnostica (`{dictado_codigo}-{numero:03d}`) para comparar la "misma" comision entre planes |
+| **tipo_clase** | Atributo que indica si una entry/horario/clase es `"teorica"` o `"laboratorio"`. Determina si requiere aula teorica o aula laboratorio |
+| **Aula teorica** | `AulaDB` con `tipo = "teorica"`. Aula comun, sin equipamiento especifico. Puede alojar clases teoricas de cualquier materia |
+| **Aula laboratorio** | `AulaDB` con `tipo = "laboratorio"`. Aula con equipamiento especifico (informatica, quimica, etc.). Solo alojal clases de lab de materias compatibles |
+| **Compatibilidad materia-lab** | Relacion M:N (`MateriaLaboratorioDB`) que define que laboratorios acepta cada materia para sus clases de lab |
+| **Reserva de laboratorio** | Caso de uso donde se marca una clase individual especifica como `tipo_clase = "laboratorio"` durante la cursada (etapa 3), liberando el aula teorica y asignando un lab compatible |

@@ -2,10 +2,10 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones).
+> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones + tipo_clase y laboratorios).
 > **Fecha diseño**: 2026-03-09
 > **Fecha implementacion**: 2026-03-09
-> **Ultima actualizacion**: 2026-04-19 (campo comision en ScheduleEntry, horas_semanales float, prevalidación UX)
+> **Ultima actualizacion**: 2026-05-11 (tipo_clase en Entry/Horario/Clase, MateriaLaboratorioDB para compatibilidad M:N)
 
 ---
 
@@ -119,8 +119,22 @@ Sin cambios. Espacio fisico para clases.
 | sede | str | |
 | nombre | str | |
 | capacidad | int | |
-| tipo | str | "aula", "laboratorio", "anfiteatro" |
+| tipo | str | `"teorica"` (default) o `"laboratorio"`. Determina a que clases puede asignarse |
 | descripcion | str | |
+
+#### MateriaLaboratorio (nueva)
+
+Tabla link M:N entre materias y aulas de tipo laboratorio. Define que laboratorios
+son compatibles con cada materia para dictar clases de lab.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| materia_codigo | str PK, FK -> Materia | |
+| aula_id | str PK, FK -> Aula (tipo=laboratorio) | |
+
+> Sin orden de preferencia. Una materia puede tener 0, 1 o mas labs compatibles.
+> A la hora de asignar aulas a clases de laboratorio, el algoritmo debe elegir un
+> lab de la lista compatible con la materia.
 
 #### Carrera
 
@@ -237,12 +251,15 @@ Filas individuales del schedule, normalizadas y validadas.
 | hora_inicio | time | |
 | hora_fin | time | |
 | **comision** | **int nullable** | **Numero de comision asignada (1, 2, ...). Nullable = sin asignar. Se edita desde la prevalidacion (Phase 2) y se persiste al schedule** |
+| **tipo_clase** | **str** | **`"teorica"` (default) o `"laboratorio"`. Marcado desde la prevalidacion. Se propaga a HorarioDB y luego a ClaseDB** |
 
 > Al persistir, los codigos guarani ya estan resueltos a codigo_plan.
 > Las filas con codigos no resueltos no se persisten (se reportan como errores).
 > El campo `comision` permite persistir la asignacion de comisiones editada por el
 > usuario durante la prevalidacion, de modo que al re-prevalidar o generar un plan,
 > la asignacion se preserve.
+> El campo `tipo_clase` distingue clases teoricas de laboratorio, determinando
+> que tipo de aula requieren al asignar (ver seccion 6 de `plan-de-cursada.md`).
 
 #### PlanificacionCursada
 
@@ -289,9 +306,11 @@ Patron semanal de clases. Pertenece a una comision (y por transitividad a un pla
 | dia | str | Dia de la semana |
 | hora_inicio | time | |
 | hora_fin | time | |
+| **tipo_clase** | **str** | **`"teorica"` (default) o `"laboratorio"`. Propagado desde ScheduleEntry al generar el plan. Se propaga a ClaseDB al expandir fechas** |
 
 > Al crear un plan desde un schedule, los Horarios se copian de ScheduleEntries
-> y se vinculan a las comisiones correspondientes.
+> y se vinculan a las comisiones correspondientes. El `tipo_clase` se copia
+> directamente del entry.
 
 #### Clase (nueva)
 
@@ -309,6 +328,7 @@ Instancia individual de una clase con fecha concreta. Generada a partir de un Ho
 | hora_fin | time | Copiado del horario al momento de generacion |
 | executed | bool | Marca permanente: True cuando la clase ocurrio |
 | aula_id | str FK nullable | -> aulas (asignado por algoritmo de optimizacion) |
+| **tipo_clase** | **str** | **`"teorica"` (default) o `"laboratorio"`. Propagado desde el horario al generar. Puede modificarse individualmente en la etapa de implementacion (ej: reserva puntual de laboratorio)** |
 
 ---
 
@@ -550,6 +570,7 @@ erDiagram
         time hora_inicio
         time hora_fin
         int comision "nullable - asignacion editada"
+        str tipo_clase "teorica | laboratorio"
     }
     PLANIFICACION_CURSADA {
         str id PK
@@ -575,6 +596,7 @@ erDiagram
         str dia
         time hora_inicio
         time hora_fin
+        str tipo_clase "teorica | laboratorio"
     }
     CLASE {
         str id PK
@@ -587,13 +609,18 @@ erDiagram
         time hora_fin
         bool executed
         str aula_id FK
+        str tipo_clase "teorica | laboratorio"
     }
     AULA {
         str id PK
         str sede
         str nombre
         int capacidad
-        str tipo
+        str tipo "teorica | laboratorio"
+    }
+    MATERIA_LABORATORIO {
+        str materia_codigo PK_FK
+        str aula_id PK_FK
     }
 
     %% Catalogo y versionado de planes
@@ -626,6 +653,10 @@ erDiagram
     PLANIFICACION_CURSADA ||--o{ CLASE : "clases"
     DICTADO ||--o{ CLASE : "clases"
     AULA ||--o{ CLASE : "asignada"
+
+    %% Compatibilidad materia-laboratorio (M:N)
+    MATERIA ||--o{ MATERIA_LABORATORIO : "acepta labs"
+    AULA ||--o{ MATERIA_LABORATORIO : "es compatible con materias"
 ```
 
 ### 5.2 Campos denormalizados

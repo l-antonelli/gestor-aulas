@@ -42,6 +42,7 @@ class EntryPreview:
     hora_inicio: time
     hora_fin: time
     comision_asignada: int  # 1-based comision number
+    tipo_clase: str = "teorica"  # "teorica" o "laboratorio"
 
 
 @dataclass
@@ -259,6 +260,7 @@ def _assign_entries_to_comisiones(
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
             comision_asignada=pre_assigned.get(e.id, 1),
+            tipo_clase=e.tipo_clase,
         )
         for e in sorted_entries
     ]
@@ -390,6 +392,7 @@ def generate_plan_from_preview(
                     dia=ep.dia,
                     hora_inicio=ep.hora_inicio,
                     hora_fin=ep.hora_fin,
+                    tipo_clase=getattr(ep, "tipo_clase", "teorica"),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -536,6 +539,7 @@ def generate_plan_from_schedule(
                     dia=entry.dia,
                     hora_inicio=entry.hora_inicio,
                     hora_fin=entry.hora_fin,
+                    tipo_clase=getattr(entry, "tipo_clase", "teorica"),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -598,6 +602,8 @@ def apply_horario_edits(
         if target_com is None:
             continue
 
+        _row_tipo = row.get("tipo_clase", "teorica")
+
         if isinstance(hid, str) and hid.startswith("new_"):
             # Create new horario
             new_h = HorarioDB(
@@ -607,6 +613,7 @@ def apply_horario_edits(
                 dia=row["dia"],
                 hora_inicio=row["hora_inicio"],
                 hora_fin=row["hora_fin"],
+                tipo_clase=_row_tipo,
             )
             session.add(new_h)
             created += 1
@@ -618,12 +625,14 @@ def apply_horario_edits(
                 or h.hora_inicio != row["hora_inicio"]
                 or h.hora_fin != row["hora_fin"]
                 or h.comision_id != target_com.id
+                or h.tipo_clase != _row_tipo
             )
             if changed:
                 h.dia = row["dia"]
                 h.hora_inicio = row["hora_inicio"]
                 h.hora_fin = row["hora_fin"]
                 h.comision_id = target_com.id
+                h.tipo_clase = _row_tipo
                 session.add(h)
                 updated += 1
 

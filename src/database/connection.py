@@ -34,6 +34,9 @@ def _run_migrations(eng):
         "ALTER TABLE carreras ADD COLUMN dicta_recursado BOOLEAN DEFAULT 1",
         "ALTER TABLE materias ADD COLUMN virtual BOOLEAN DEFAULT 0",
         "ALTER TABLE dictados ADD COLUMN virtual BOOLEAN DEFAULT 0",
+        "ALTER TABLE schedule_entries ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
+        "ALTER TABLE horarios ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
+        "ALTER TABLE clases ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
     ]
     with eng.connect() as conn:
         for sql in migrations:

@@ -282,6 +282,7 @@ def duplicate_schedule(
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
             comision=e.comision,
+            tipo_clase=e.tipo_clase,
         )
         session.add(new_entry)
 
@@ -311,6 +312,7 @@ def add_schedule_entry(
     hora_inicio: time,
     hora_fin: time,
     comision: int | None = None,
+    tipo_clase: str = "teorica",
 ) -> ScheduleEntryDB:
     """Agregar una entrada a un cronograma existente."""
     entry = ScheduleEntryDB(
@@ -321,6 +323,7 @@ def add_schedule_entry(
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
         comision=comision,
+        tipo_clase=tipo_clase,
     )
     session.add(entry)
     session.commit()
@@ -334,7 +337,7 @@ def update_schedule_entry(session: Session, entry_id: str, **campos) -> Schedule
     if entry is None:
         raise ValueError(f"Entry '{entry_id}' no encontrada")
 
-    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia", "comision"}
+    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia", "comision", "tipo_clase"}
     for key, value in campos.items():
         if key not in allowed:
             raise ValueError(f"Campo '{key}' no permitido")
@@ -392,6 +395,7 @@ def sync_preview_edits_to_schedule(
     for ed in edited_entries:
         eid = ed["entry_id"]
         ed_comision = ed.get("comision")
+        ed_tipo = ed.get("tipo_clase", "teorica")
 
         if isinstance(eid, str) and eid.startswith("new_"):
             # New entry
@@ -399,6 +403,7 @@ def sync_preview_edits_to_schedule(
                 session, schedule_id, materia_codigo,
                 ed["dia"], ed["hora_inicio"], ed["hora_fin"],
                 comision=ed_comision,
+                tipo_clase=ed_tipo,
             )
             created += 1
         elif eid in current_map:
@@ -409,6 +414,7 @@ def sync_preview_edits_to_schedule(
                 or existing.hora_inicio != ed["hora_inicio"]
                 or existing.hora_fin != ed["hora_fin"]
                 or existing.comision != ed_comision
+                or existing.tipo_clase != ed_tipo
             )
             if changed:
                 update_schedule_entry(
@@ -417,6 +423,7 @@ def sync_preview_edits_to_schedule(
                     hora_inicio=ed["hora_inicio"],
                     hora_fin=ed["hora_fin"],
                     comision=ed_comision,
+                    tipo_clase=ed_tipo,
                 )
                 updated += 1
 
