@@ -191,11 +191,17 @@ def render_schedule_calendar(
     grid_data: dict[str, list[ScheduleBlock]],
     config: ConfiguracionHoraria,
     key: str = "schedule_cal",
+    color_by_comision: bool = False,
 ) -> Optional[dict]:
     """Renderiza un cronograma como calendario semanal FullCalendar (read-only).
 
     Usa eventos recurrentes (daysOfWeek + startTime/endTime) para que se
     muestren en cualquier semana sin depender de una fecha fija.
+
+    Args:
+        color_by_comision: Si True, asigna colores por numero de comision
+            en vez de por materia. Util cuando se filtra por una sola
+            materia para distinguir comisiones.
     """
     if not grid_data:
         st.info("El cronograma no tiene entradas.")
@@ -203,14 +209,29 @@ def render_schedule_calendar(
 
     mat_colors, mat_names = _assign_colors(grid_data)
 
+    _com_colors: dict[int, tuple[str, str]] = {}
+    if color_by_comision:
+        _com_nums = sorted({
+            getattr(b, "comision", None) or 0
+            for blocks in grid_data.values() for b in blocks
+        })
+        _com_colors = {
+            cn: (PALETTE[i % len(PALETTE)], TEXT_COLOR)
+            for i, cn in enumerate(_com_nums)
+        }
+
     events = []
     for dia, blocks in grid_data.items():
         dow = DIA_TO_DOW.get(dia)
         if dow is None:
             continue
         for b in blocks:
-            bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
-            com_tag = f" [C{b.comision}]" if getattr(b, "comision", None) else ""
+            com = getattr(b, "comision", None)
+            com_tag = f" [C{com}]" if com else ""
+            if color_by_comision:
+                bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
+            else:
+                bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
             events.append({
                 "title": f"{b.materia_codigo}{com_tag} - {b.materia_nombre}",
                 "daysOfWeek": [dow],
@@ -232,7 +253,15 @@ def render_schedule_calendar(
         key=key,
     )
 
-    _render_legend(mat_colors, mat_names)
+    if color_by_comision:
+        _com_legend_colors = {
+            (f"C{cn}" if cn > 0 else "Sin asignar"): color
+            for cn, color in _com_colors.items()
+        }
+        _com_legend_names = {k: "" for k in _com_legend_colors}
+        _render_legend(_com_legend_colors, _com_legend_names, title="Comisiones:")
+    else:
+        _render_legend(mat_colors, mat_names)
 
     return result
 

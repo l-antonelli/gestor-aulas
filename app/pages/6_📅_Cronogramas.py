@@ -454,7 +454,9 @@ with tab_visualizar:
 
                     if _vm_grid:
                         render_schedule_calendar(
-                            _vm_grid, config, key=f"viz_cal_mat_{_vm_n}",
+                            _vm_grid, config,
+                            key=f"viz_cal_mat_{_vm_n}",
+                            color_by_comision=True,
                         )
                 else:
                     st.caption(
