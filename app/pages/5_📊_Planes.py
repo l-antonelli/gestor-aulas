@@ -1129,13 +1129,14 @@ with tab_cronogramas:
                             "Inicio": _time_str(_e["hora_inicio"]),
                             "Fin": _time_str(_e["hora_fin"]),
                             "Comision": _e["comision_asignada"],
+                            "Tipo": _e.get("tipo_clase", "teorica"),
                         })
 
                     _df = (
                         pd.DataFrame(_rows)
                         if _rows
                         else pd.DataFrame(
-                            columns=["_eid", "Dia", "Inicio", "Fin", "Comision"]
+                            columns=["_eid", "Dia", "Inicio", "Fin", "Comision", "Tipo"]
                         )
                     )
                     if not _df.empty:
@@ -1194,6 +1195,13 @@ with tab_cronogramas:
                             "Comision",
                             options=_com_options,
                             required=True,
+                            width="small",
+                        ),
+                        "Tipo": st.column_config.SelectboxColumn(
+                            "Tipo",
+                            options=["teorica", "laboratorio"],
+                            default="teorica",
+                            help="teorica (aula comun) o laboratorio",
                             width="small",
                         ),
                         "Hs": st.column_config.NumberColumn(
@@ -1467,12 +1475,14 @@ with tab_cronogramas:
                         )
                         _hi_str = str(_r["Inicio"])[:5]
                         _hf_str = str(_r["Fin"])[:5]
+                        _tipo_v = str(_r.get("Tipo") or "teorica")
                         _final.append({
                             "entry_id": _eid_v,
                             "dia": _r["Dia"],
                             "hora_inicio": time.fromisoformat(_hi_str) if ":" in _hi_str else _r["Inicio"],
                             "hora_fin": time.fromisoformat(_hf_str) if ":" in _hf_str else _r["Fin"],
                             "comision_asignada": _com_v,
+                            "tipo_clase": _tipo_v,
                         })
 
                     mp["entries"] = _final
@@ -1530,6 +1540,7 @@ with tab_cronogramas:
                                 "hora_inicio": _fe["hora_inicio"],
                                 "hora_fin": _fe["hora_fin"],
                                 "comision": _fe.get("comision_asignada"),
+                                "tipo_clase": _fe.get("tipo_clase", "teorica"),
                             })
                         _u, _c, _d = sync_preview_edits_to_schedule(
                             _sync_session, _effective_sid,
@@ -1625,7 +1636,7 @@ with tab_cronogramas:
                     # Empty data editor for adding entries
                     _falt_com_options = list(range(1, _falt_ncom + 1))
                     _falt_df = pd.DataFrame(
-                        columns=["_eid", "Dia", "Inicio", "Fin", "Comision"]
+                        columns=["_eid", "Dia", "Inicio", "Fin", "Comision", "Tipo"]
                     )
                     _falt_df["Hs"] = pd.Series(dtype=float)
 
@@ -1655,6 +1666,12 @@ with tab_cronogramas:
                                 "Comision",
                                 options=_falt_com_options,
                                 required=True,
+                                width="small",
+                            ),
+                            "Tipo": st.column_config.SelectboxColumn(
+                                "Tipo",
+                                options=["teorica", "laboratorio"],
+                                default="teorica",
                                 width="small",
                             ),
                             "Hs": st.column_config.NumberColumn(
@@ -1700,12 +1717,14 @@ with tab_cronogramas:
                                 )
                                 _fhi = str(_r["Inicio"])[:5]
                                 _fhf = str(_r["Fin"])[:5]
+                                _ftipo = str(_r.get("Tipo") or "teorica")
                                 _falt_final.append({
                                     "entry_id": f"new_falt_{_falt_code}_{_i}",
                                     "dia": _r["Dia"],
                                     "hora_inicio": time.fromisoformat(_fhi) if ":" in _fhi else _r["Inicio"],
                                     "hora_fin": time.fromisoformat(_fhf) if ":" in _fhf else _r["Fin"],
                                     "comision": _com_v,
+                                    "tipo_clase": _ftipo,
                                 })
 
                             with next(get_session()) as _sync_sess:
@@ -2157,13 +2176,14 @@ with tab_detalle:
                                         "Inicio": _de_h.hora_inicio,
                                         "Fin": _de_h.hora_fin,
                                         "Comisión": _de_com.nombre,
+                                        "Tipo": _de_h.tipo_clase,
                                     })
 
                             _de_df = (
                                 pd.DataFrame(_de_rows)
                                 if _de_rows
                                 else pd.DataFrame(
-                                    columns=["_hid", "Día", "Inicio", "Fin", "Comisión"]
+                                    columns=["_hid", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
                                 )
                             )
                             if not _de_df.empty:
@@ -2201,6 +2221,13 @@ with tab_detalle:
                                         required=True,
                                         width="medium",
                                     ),
+                                    "Tipo": st.column_config.SelectboxColumn(
+                                        "Tipo",
+                                        options=["teorica", "laboratorio"],
+                                        default="teorica",
+                                        required=True,
+                                        width="small",
+                                    ),
                                 },
                                 num_rows="dynamic",
                                 use_container_width=True,
@@ -2209,8 +2236,8 @@ with tab_detalle:
                             )
 
                             # Detect changes
-                            _de_orig_cmp = _de_df[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
-                            _de_edit_cmp = _de_edited[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
+                            _de_orig_cmp = _de_df[["Día", "Inicio", "Fin", "Comisión", "Tipo"]].reset_index(drop=True)
+                            _de_edit_cmp = _de_edited[["Día", "Inicio", "Fin", "Comisión", "Tipo"]].reset_index(drop=True)
                             _de_has_changes = (
                                 len(_de_orig_cmp) != len(_de_edit_cmp)
                                 or not _de_orig_cmp.equals(_de_edit_cmp)
@@ -2242,6 +2269,7 @@ with tab_detalle:
                                             "dia": _row["Día"],
                                             "hora_inicio": _row["Inicio"],
                                             "hora_fin": _row["Fin"],
+                                            "tipo_clase": str(_row.get("Tipo") or "teorica"),
                                         })
 
                                     with next(get_session()) as session:

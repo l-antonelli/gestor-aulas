@@ -4,7 +4,9 @@ Requirements: 7.1, 7.2, 7.4, 7.5
 """
 
 import streamlit as st
+from sqlmodel import select, col
 from src.database.connection import get_session, init_db
+from src.database.models import AulaDB, MateriaLaboratorioDB
 from src.services.crud_services import materia_service
 from src.ui.materia_form_renderer import MateriaFormRenderer
 from src.ui.carrera_status_widget import CarreraStatusWidget
@@ -12,6 +14,77 @@ from src.ui.materia_carrera_editor import MateriaCarreraEditor
 
 # Import relationship definitions to register relationships
 import src.services.relationship_definitions  # noqa: F401
+
+
+def _render_laboratorios_editor(session, materia_codigo: str, key_prefix: str):
+    """Editor de laboratorios compatibles con una materia (relacion M:N)."""
+    labs = list(session.exec(
+        select(AulaDB)
+        .where(AulaDB.tipo == "laboratorio")
+        .order_by(col(AulaDB.sede), col(AulaDB.nombre))
+    ).all())
+
+    if not labs:
+        st.info(
+            "No hay aulas de tipo 'laboratorio' cargadas en la base de datos. "
+            "Agregalas desde la pagina de Aulas marcando el tipo como 'laboratorio'."
+        )
+        return
+
+    # Get current associations
+    current = list(session.exec(
+        select(MateriaLaboratorioDB.aula_id)
+        .where(MateriaLaboratorioDB.materia_codigo == materia_codigo)
+    ).all())
+    current_set = set(current)
+
+    st.markdown("### Laboratorios compatibles")
+    st.caption(
+        "Seleccioná los laboratorios donde esta materia puede dictar sus "
+        "clases de tipo 'laboratorio'. Se usan al asignar aulas a clases."
+    )
+
+    lab_options = [f"{lab.id} — {lab.nombre} ({lab.sede})" for lab in labs]
+    lab_ids = [lab.id for lab in labs]
+    lab_id_to_label = dict(zip(lab_ids, lab_options))
+
+    default_selected = [lab_id_to_label[lid] for lid in current if lid in lab_id_to_label]
+    selected = st.multiselect(
+        "Laboratorios",
+        options=lab_options,
+        default=default_selected,
+        key=f"{key_prefix}_labs",
+    )
+
+    selected_ids = {opt.split(" — ")[0] for opt in selected}
+    to_add = selected_ids - current_set
+    to_remove = current_set - selected_ids
+
+    if to_add or to_remove:
+        st.info(
+            f"{len(to_add)} para agregar, {len(to_remove)} para quitar. "
+            "Presioná 'Guardar' para aplicar."
+        )
+        if st.button("Guardar", type="primary", key=f"{key_prefix}_save"):
+            for aula_id in to_add:
+                session.add(MateriaLaboratorioDB(
+                    materia_codigo=materia_codigo,
+                    aula_id=aula_id,
+                ))
+            for aula_id in to_remove:
+                existing = session.get(
+                    MateriaLaboratorioDB, (materia_codigo, aula_id),
+                )
+                if existing:
+                    session.delete(existing)
+            session.commit()
+            st.toast(
+                f"Laboratorios actualizados: {len(to_add)} agregados, "
+                f"{len(to_remove)} quitados."
+            )
+            st.rerun()
+    else:
+        st.caption(f"{len(current_set)} laboratorio(s) asociado(s). Sin cambios.")
 
 # Initialize database
 init_db()
@@ -76,8 +149,8 @@ def render_custom_materia_page():
                             else dict(existing_materia)
                         )
 
-                        edit_tab1, edit_tab2 = st.tabs([
-                            "Datos Basicos", "Carreras",
+                        edit_tab1, edit_tab2, edit_tab3 = st.tabs([
+                            "Datos Basicos", "Carreras", "Laboratorios",
                         ])
 
                         with edit_tab1:
@@ -124,6 +197,13 @@ def render_custom_materia_page():
                                 session=session,
                                 materia_codigo=materia_codigo,
                                 key=f"edit_{materia_codigo}_carreras",
+                            )
+
+                        with edit_tab3:
+                            _render_laboratorios_editor(
+                                session=session,
+                                materia_codigo=materia_codigo,
+                                key_prefix=f"edit_{materia_codigo}",
                             )
 
                         st.divider()
@@ -193,6 +273,15 @@ def render_custom_materia_page():
                                         st.write(f"**Carreras:** {', '.join(c.codigo for c in carreras)}")
                                     else:
                                         st.caption("Sin carreras asignadas")
+                                except Exception:
+                                    pass
+                                try:
+                                    _n_labs = len(list(session.exec(
+                                        select(MateriaLaboratorioDB.aula_id)
+                                        .where(MateriaLaboratorioDB.materia_codigo == materia.codigo)
+                                    ).all()))
+                                    if _n_labs:
+                                        st.write(f"**Laboratorios compatibles:** {_n_labs}")
                                 except Exception:
                                     pass
 

@@ -628,10 +628,11 @@ with tab_editar:
                             "Inicio": e.hora_inicio,
                             "Fin": e.hora_fin,
                             "Comisión": e.comision or 0,
+                            "Tipo": e.tipo_clase,
                         }
                         for e in _sm_entries
                     ]) if _sm_entries else pd.DataFrame(
-                        columns=["entry_id", "Día", "Inicio", "Fin", "Comisión"]
+                        columns=["entry_id", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
                     )
 
                     _sm_de_key = f"sm_de_{sel_edit_id}_{_sm_sel}_{len(_sm_entries)}"
@@ -671,6 +672,8 @@ with tab_editar:
                                     if "Comisión" in changes:
                                         _cv = int(changes["Comisión"])
                                         _cambios["comision"] = _cv if _cv > 0 else None
+                                    if "Tipo" in changes:
+                                        _cambios["tipo_clase"] = changes["Tipo"]
                                     if _cambios:
                                         update_schedule_entry(
                                             sess, _e.id, **_cambios,
@@ -687,6 +690,7 @@ with tab_editar:
                             for row in edited.get("added_rows") or []:
                                 if row.get("Día") and row.get("Inicio") and row.get("Fin"):
                                     _cv = int(row.get("Comisión") or 0)
+                                    _tipo = row.get("Tipo") or "teorica"
                                     add_schedule_entry(
                                         sess,
                                         sel_edit_id,
@@ -695,6 +699,7 @@ with tab_editar:
                                         _coerce_time(row["Inicio"]),
                                         _coerce_time(row["Fin"]),
                                         comision=_cv if _cv > 0 else None,
+                                        tipo_clase=_tipo,
                                     )
                                     _created += 1
                         _parts = []
@@ -725,6 +730,12 @@ with tab_editar:
                             "Comisión": column_config.SelectboxColumn(
                                 options=_sm_com_options,
                                 help="0 = sin asignar",
+                                width="small",
+                            ),
+                            "Tipo": column_config.SelectboxColumn(
+                                options=["teorica", "laboratorio"],
+                                default="teorica",
+                                help="Tipo de clase: teorica (aula comun) o laboratorio",
                                 width="small",
                             ),
                         },
