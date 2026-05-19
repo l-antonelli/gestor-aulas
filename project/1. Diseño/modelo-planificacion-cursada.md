@@ -775,3 +775,77 @@ Cuando un cronograma (Schedule) contiene múltiples entries para la misma materi
 
 - `AsignacionAulaDB`: reemplazada por `aula_id` directo en `ClaseDB`
 - `DictadoDB` (la version vieja en models.py si existe): reemplazar con la nueva definicion
+
+---
+
+## 9. Decision de diseño: Programa Lineal único para asignacion
+
+### 9.1 Resumen de la decision
+
+La asignacion de **aulas teoricas a clases de teoria**, **laboratorios a clases de laboratorio** y la determinacion (cuando no este predeterminado) del **tipo de cada clase** se resuelven en un **unico programa lineal entero (ILP)**, no en dos LP independientes ni en un pipeline secuencial.
+
+> Decisión tomada el 2026-05-19. Aplica a la etapa de generacion de plan inicial
+> (no a la etapa de implementacion con ajustes puntuales).
+
+### 9.2 Por que un solo LP — el acoplamiento es estructural
+
+Las tres decisiones — **a que aula va cada clase**, **que tipo es cada clase no predeterminada** y **que clases concretas de cada comision son teoria vs laboratorio** — estan **acopladas** por las siguientes razones:
+
+#### Acoplamiento 1: Tipo de clase ↔ pool de aulas elegibles
+
+El tipo de aula que requiere una clase depende de su `tipo_clase`:
+
+- `tipo_clase = "teorica"` → puede ir a cualquier aula con `tipo = "teorica"`.
+- `tipo_clase = "laboratorio"` → solo puede ir a aulas `tipo = "laboratorio"` que ademas figuren en `MateriaLaboratorioDB` para la materia.
+
+Si se separan los problemas, el LP de aulas necesita como entrada el `tipo_clase` ya resuelto, lo que obliga a un orden secuencial **tipo → aula**. Pero ese orden pierde optimalidad: una decision de tipo tomada sin conocer la disponibilidad de aulas puede ser infactible o subóptima.
+
+**Ejemplo concreto.** Materia FB7 con `horas_laboratorio = 2` y dos clases en distintos slots: una el lunes de 18-20, otra el jueves de 16-18. En el slot del lunes, el unico lab compatible esta libre. En el jueves, ese lab esta tomado por otra materia, pero hay disponibilidad de aula teorica de sobra. Si fijamos arbitrariamente que la clase de lab es la del jueves, el LP de aulas no encuentra solucion. Si las decisiones se toman juntas, el LP elige naturalmente el lunes como la clase de laboratorio.
+
+#### Acoplamiento 2: Compartencia de capacidad de aulas entre teoria y laboratorios
+
+Las restricciones de capacidad sobre slots horarios `(dia, hora)` son **transversales al tipo**: una franja horaria saturada de aulas teoricas puede aliviarse moviendo clases de teoria a laboratorios libres (si la materia lo admite) o, al reves, declarando teorica una clase candidata a lab para liberar el lab. Estas decisiones cruzadas solo emergen si las variables conviven en el mismo modelo.
+
+#### Acoplamiento 3: Optimalidad global vs. localmente factible
+
+Un pipeline secuencial **tipo → aula** garantiza factibilidad local (cada paso es factible aisladamente) pero no garantiza optimalidad global. Un ILP unico encuentra el optimo del problema combinado o demuestra infactibilidad de manera definitiva.
+
+### 9.3 Variables del LP
+
+Sea `C` el conjunto de clases del plan, `A_t` las aulas teoricas, y para cada materia `m`, `A_lab(m)` los labs compatibles (`MateriaLaboratorioDB`). Las variables son:
+
+| Variable | Tipo | Significado |
+|----------|------|-------------|
+| `x[c, a]` | binaria | 1 si la clase `c` se asigna al aula `a` |
+| `t[c]` | binaria | 1 si la clase `c` es de laboratorio, 0 si es de teoria |
+
+Si `tipo_clase` esta predeterminado (`= "teorica"` o `= "laboratorio"`), `t[c]` se **fija** a 0 o 1 respectivamente y deja de ser variable de decision: pasa a ser una **constante/restriccion del modelo**. Coexisten clases con tipo predeterminado y clases con tipo a decidir en el mismo LP.
+
+### 9.4 Restricciones clave (resumen)
+
+1. **Asignacion unica**: cada clase se asigna a exactamente un aula: `Σ_a x[c,a] = 1 ∀c`.
+2. **Capacidad de slot**: dos clases en el mismo `(dia, hora)` no comparten aula.
+3. **Tipo ↔ pool de aulas**:
+   - `t[c] = 0 → x[c, a] = 0` para `a ∉ A_t`
+   - `t[c] = 1 → x[c, a] = 0` para `a ∉ A_lab(materia(c))`
+4. **Horas de teoria/laboratorio por comision**: para cada comision `k` de materia `m`,
+   `Σ_{c ∈ k} duracion(c) · t[c] = horas_laboratorio(m)`
+   `Σ_{c ∈ k} duracion(c) · (1 − t[c]) = horas_teoria(m)`
+5. **Capacidad de alumnos**: `cupo(comision(c)) ≤ capacidad(a)` si `x[c,a] = 1`.
+
+### 9.5 Que queda fuera del LP
+
+- **Materias con `horas_laboratorio = 0`** que tienen labs compatibles: estos labs se reservan **post-asignacion** durante la cursada (reserva ad-hoc por la docente). El LP les asigna aula teorica como cualquier otra clase; el cambio puntual a lab es una operacion del flujo de implementacion, no del plan inicial.
+- **Etapa de implementacion**: el LP corre una vez al generar el plan. Cambios durante la cursada (reasignacion puntual, reserva de lab para una fecha) no requieren re-correr el LP completo.
+
+### 9.6 Consecuencia para la prevalidacion
+
+Como el LP decide tipos cuando no estan predeterminados, la prevalidacion debe garantizar **factibilidad de la particion**: las clases de cada comision deben poder dividirse en subconjuntos cuyas duraciones sumen `horas_teoria` y `horas_laboratorio`. Si hay tipos predeterminados, ademas las sumas predeterminadas deben ser consistentes con esas horas. Sin esta prevalidacion, el LP es infactible y el usuario solo se entera al correrlo.
+
+### 9.7 Alternativas descartadas
+
+| Alternativa | Por que se descarta |
+|-------------|---------------------|
+| Dos LP independientes (teoria, lab) | Requiere fijar `tipo_clase` antes de correr; pierde el acoplamiento descripto en 9.2 |
+| Pipeline secuencial tipo → aula | Idem: optimalidad local pero no global; puede arrojar infactibilidad evitable |
+| Heuristica sin LP | Difcil garantizar factibilidad cuando hay restricciones cruzadas. Util como warm-start del LP, no como reemplazo |

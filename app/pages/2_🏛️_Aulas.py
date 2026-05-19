@@ -4,7 +4,10 @@ Requirements: 7.1, 7.2, 7.4, 7.5
 """
 
 import streamlit as st
+from sqlmodel import select, col
+
 from src.database.connection import get_session, init_db
+from src.database.models import AulaDB, MateriaDB, MateriaLaboratorioDB
 from src.services.crud_services import aula_service
 from src.domain.problem.aula import Aula
 from src.ui.page_template import EntityPageTemplate, EntityPageConfig
@@ -16,6 +19,121 @@ import src.services.relationship_definitions  # noqa: F401
 init_db()
 
 st.set_page_config(page_title="Aulas", page_icon="🏛️", layout="wide")
+
+
+def _render_materias_compatibles_editor(session, aula_id: str, key_prefix: str):
+    """Editor de materias compatibles con un laboratorio (relacion M:N).
+
+    Espejo de _render_laboratorios_editor en la pagina de Materias:
+    el efecto de agregar una materia desde aca es identico a asignar
+    el lab desde la pagina de Materias.
+    """
+    materias = list(session.exec(
+        select(MateriaDB)
+        .where(MateriaDB.active == True)
+        .order_by(col(MateriaDB.codigo))
+    ).all())
+
+    if not materias:
+        st.info("No hay materias activas en la base de datos.")
+        return
+
+    current = list(session.exec(
+        select(MateriaLaboratorioDB.materia_codigo)
+        .where(MateriaLaboratorioDB.aula_id == aula_id)
+    ).all())
+    current_set = set(current)
+
+    st.markdown("### Materias que usan este laboratorio")
+    st.caption(
+        "Seleccioná las materias que pueden dictar clases de tipo "
+        "'laboratorio' en este lab. Es la misma relacion M:N que se "
+        "edita desde la pagina de Materias."
+    )
+
+    mat_options = [f"{m.codigo} — {m.nombre}" for m in materias]
+    mat_codes = [m.codigo for m in materias]
+    mat_code_to_label = dict(zip(mat_codes, mat_options))
+
+    default_selected = [
+        mat_code_to_label[mc] for mc in current
+        if mc in mat_code_to_label
+    ]
+    selected = st.multiselect(
+        "Materias compatibles",
+        options=mat_options,
+        default=default_selected,
+        key=f"{key_prefix}_mats",
+    )
+
+    selected_codes = {opt.split(" — ")[0] for opt in selected}
+    to_add = selected_codes - current_set
+    to_remove = current_set - selected_codes
+
+    if to_add or to_remove:
+        st.info(
+            f"{len(to_add)} para agregar, {len(to_remove)} para quitar. "
+            "Presioná 'Guardar' para aplicar."
+        )
+        if st.button("Guardar", type="primary", key=f"{key_prefix}_save"):
+            for mat_codigo in to_add:
+                session.add(MateriaLaboratorioDB(
+                    materia_codigo=mat_codigo,
+                    aula_id=aula_id,
+                ))
+            for mat_codigo in to_remove:
+                existing = session.get(
+                    MateriaLaboratorioDB, (mat_codigo, aula_id),
+                )
+                if existing:
+                    session.delete(existing)
+            session.commit()
+            st.toast(
+                f"Materias actualizadas: {len(to_add)} agregadas, "
+                f"{len(to_remove)} quitadas."
+            )
+            st.rerun()
+    else:
+        st.caption(f"{len(current_set)} materia(s) asociada(s). Sin cambios.")
+
+
+def _render_labs_overview(session):
+    """Resumen read-only por laboratorio con sus materias asociadas."""
+    labs = list(session.exec(
+        select(AulaDB)
+        .where(AulaDB.tipo == "laboratorio")
+        .order_by(col(AulaDB.sede), col(AulaDB.nombre))
+    ).all())
+
+    if not labs:
+        return
+
+    st.divider()
+    st.subheader("🔬 Laboratorios y materias compatibles")
+    st.caption(
+        "Vista inversa: para cada laboratorio, las materias que pueden "
+        "dictar clases de tipo 'laboratorio' en él. Para editar, ir a "
+        "la pestaña 'Ver Detalle' y seleccionar el laboratorio."
+    )
+
+    materias_all = list(session.exec(select(MateriaDB)).all())
+    nombre_por_codigo = {m.codigo: m.nombre for m in materias_all}
+
+    for lab in labs:
+        rows = list(session.exec(
+            select(MateriaLaboratorioDB.materia_codigo)
+            .where(MateriaLaboratorioDB.aula_id == lab.id)
+        ).all())
+        n = len(rows)
+        with st.expander(
+            f"**{lab.id}** — {lab.nombre} ({lab.sede}) — {n} materia(s)"
+        ):
+            if not rows:
+                st.caption("Sin materias asociadas.")
+            else:
+                for mc in sorted(rows):
+                    st.write(f"- **{mc}** — {nombre_por_codigo.get(mc, '?')}")
+
 
 # Configure the entity page
 config = EntityPageConfig(
@@ -39,6 +157,32 @@ config = EntityPageConfig(
     exclude_from_create=[],
 )
 
-# Render the page using EntityPageTemplate
+# Render the page using EntityPageTemplate, but with custom additions for labs
+st.title(f"{config.page_icon} {config.page_title}")
+
+tab_list, tab_create, tab_view = st.tabs([
+    "📋 Listado", "➕ Crear", "👁️ Ver Detalle",
+])
+
 with next(get_session()) as session:
-    EntityPageTemplate.render_entity_page(config, session)
+    with tab_list:
+        EntityPageTemplate.render_list_tab(config, session)
+        _render_labs_overview(session)
+
+    with tab_create:
+        EntityPageTemplate.render_create_tab(config, session)
+
+    with tab_view:
+        EntityPageTemplate.render_detail_tab(config, session)
+
+        # Si la aula seleccionada es un laboratorio, mostrar editor de materias
+        selected_id = st.session_state.get(f"view_{config.model.__name__}")
+        if selected_id:
+            aula = session.get(AulaDB, selected_id)
+            if aula and aula.tipo == "laboratorio":
+                st.divider()
+                _render_materias_compatibles_editor(
+                    session=session,
+                    aula_id=aula.id,
+                    key_prefix=f"aula_detail_{aula.id}",
+                )

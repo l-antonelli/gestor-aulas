@@ -384,111 +384,193 @@ with tab_visualizar:
         )
 
         if sel_id:
-            # --- Filtros fila 1: carrera, año, cuatrimestre ---
-            col_f1, col_f2, col_f3 = st.columns(3)
-            with col_f1:
-                carrera_opts = [
-                    f"{c.codigo} - {c.nombre}" for c in all_carreras
-                ]
-                viz_filtro_carrera = st.selectbox(
-                    "Carrera", options=carrera_opts,
-                    index=None, placeholder="Seleccionar carrera...",
-                    key="viz_filtro_carrera",
-                )
-            with col_f2:
-                viz_filtro_anio = st.selectbox(
-                    "Año de cursada",
-                    options=[1, 2, 3, 4, 5, 6],
-                    index=None, placeholder="Seleccionar año...",
-                    key="viz_filtro_anio",
-                )
-            with col_f3:
-                viz_filtro_cuatri = st.selectbox(
-                    "Cuatrimestre",
-                    options=["1C", "2C", "Anual"],
-                    index=None, placeholder="Seleccionar cuatrimestre...",
-                    key="viz_filtro_cuatri",
-                )
-
-            # --- Filtros fila 2: tipo de materia, excluir comunes ---
-            col_f4, col_f5 = st.columns(2)
-            with col_f4:
-                viz_filtro_tipo = st.selectbox(
-                    "Tipo de materia",
-                    options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
-                    key="viz_filtro_tipo",
-                )
-            with col_f5:
-                viz_excluir_comunes = st.checkbox(
-                    "Excluir materias comunes (multi-carrera)",
-                    key="viz_excluir_comunes",
-                )
-
-            _viz_all_filters_set = (
-                viz_filtro_carrera is not None
-                and viz_filtro_anio is not None
-                and viz_filtro_cuatri is not None
+            viz_modo = st.radio(
+                "Modo de visualización",
+                options=["Por grupo", "Por materia"],
+                horizontal=True,
+                key="viz_modo",
+                help=(
+                    "'Por grupo' filtra por carrera/año/cuatrimestre. "
+                    "'Por materia' permite enfocarse en una sola materia "
+                    "(útil para materias compartidas entre carreras)."
+                ),
             )
 
-            # Determinar materias filtradas via PlanEstudioDB
-            viz_filtered_mats: set[str] | None = None
-            if _viz_all_filters_set:
-                with next(get_session()) as session:
-                    q = select(PlanEstudioDB.materia_codigo)
-                    carrera_cod = viz_filtro_carrera.split(" - ")[0]
-                    q = q.where(PlanEstudioDB.carrera_codigo == carrera_cod)
-                    q = q.where(PlanEstudioDB.anio_plan == int(viz_filtro_anio))
-                    if viz_filtro_cuatri == "Anual":
-                        q = q.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
-                    else:
-                        q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
-                    viz_filtered_mats = set(session.exec(q.distinct()).all())
-
-            if not _viz_all_filters_set:
-                st.caption(
-                    "Seleccioná Carrera, Año y Cuatrimestre para ver "
-                    "las materias del cronograma."
+            # =================================================================
+            # Mode: Por materia
+            # =================================================================
+            if viz_modo == "Por materia":
+                _vm_busqueda = st.text_input(
+                    "🔍 Buscar materia por nombre o código",
+                    key="viz_sm_buscar",
+                    placeholder="Ej: fisica III, FB10, algebra...",
                 )
-            else:
-                # --- Multiselect de materias ---
-                with next(get_session()) as session:
-                    grid_data = build_schedule_grid(session, sel_id)
+                _vm_all = sorted(materias_map.keys())
+                if _vm_busqueda.strip():
+                    _vm_term = _vm_busqueda.strip().lower()
+                    _vm_opts = [
+                        c for c in _vm_all
+                        if _vm_term in c.lower()
+                        or _vm_term in materias_map[c].lower()
+                    ]
+                else:
+                    _vm_opts = _vm_all
+                if not _vm_opts:
+                    _vm_opts = _vm_all
 
-                # Materias presentes en el cronograma
-                _viz_mats_en_schedule = set()
-                for _blocks in grid_data.values():
-                    for _b in _blocks:
-                        _viz_mats_en_schedule.add(_b.materia_codigo)
-
-                # Intersectar con filtros de plan
-                _viz_mats_disponibles = _viz_mats_en_schedule
-                if viz_filtered_mats is not None:
-                    _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
-
-                _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
-                viz_materias_sel = st.multiselect(
-                    "Materias a mostrar",
-                    options=_viz_mat_list,
-                    default=_viz_mat_list,
+                _vm_sel = st.selectbox(
+                    "Materia",
+                    options=_vm_opts,
+                    index=None,
                     format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                    key="viz_filtro_materias",
+                    placeholder="Seleccioná una materia...",
+                    key="viz_sm_materia",
                 )
-                _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
 
-                st.divider()
+                if _vm_sel:
+                    with next(get_session()) as session:
+                        _vm_grid = build_schedule_grid(session, sel_id)
 
-                # Aplicar filtro de materias seleccionadas
-                if grid_data:
-                    grid_data = {
-                        dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
-                        for dia, blocks in grid_data.items()
+                    _vm_grid = {
+                        dia: [b for b in blocks if b.materia_codigo == _vm_sel]
+                        for dia, blocks in _vm_grid.items()
                     }
-                    grid_data = {d: bs for d, bs in grid_data.items() if bs}
+                    _vm_grid = {d: bs for d, bs in _vm_grid.items() if bs}
 
-                # Aplicar filtros de tipo y comunes
-                grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
+                    _vm_n = sum(len(bs) for bs in _vm_grid.values())
+                    if _vm_n > 0:
+                        st.caption(
+                            f"{_vm_n} entrada(s) para "
+                            f"**{materias_map.get(_vm_sel, _vm_sel)}**."
+                        )
+                    else:
+                        st.info(
+                            f"No hay entradas para "
+                            f"**{materias_map.get(_vm_sel, _vm_sel)}** "
+                            f"en este cronograma."
+                        )
 
-                render_schedule_calendar(grid_data, config, key="viz_cal")
+                    st.divider()
+
+                    if _vm_grid:
+                        render_schedule_calendar(
+                            _vm_grid, config, key=f"viz_cal_mat_{_vm_n}",
+                        )
+                else:
+                    st.caption(
+                        "Seleccioná una materia para ver sus horarios "
+                        "en el cronograma."
+                    )
+
+            # =================================================================
+            # Mode: Por grupo (carrera/año/cuatri)
+            # =================================================================
+            else:
+                # --- Filtros fila 1: carrera, año, cuatrimestre ---
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    carrera_opts = [
+                        f"{c.codigo} - {c.nombre}" for c in all_carreras
+                    ]
+                    viz_filtro_carrera = st.selectbox(
+                        "Carrera", options=carrera_opts,
+                        index=None, placeholder="Seleccionar carrera...",
+                        key="viz_filtro_carrera",
+                    )
+                with col_f2:
+                    viz_filtro_anio = st.selectbox(
+                        "Año de cursada",
+                        options=[1, 2, 3, 4, 5, 6],
+                        index=None, placeholder="Seleccionar año...",
+                        key="viz_filtro_anio",
+                    )
+                with col_f3:
+                    viz_filtro_cuatri = st.selectbox(
+                        "Cuatrimestre",
+                        options=["1C", "2C", "Anual"],
+                        index=None, placeholder="Seleccionar cuatrimestre...",
+                        key="viz_filtro_cuatri",
+                    )
+
+                # --- Filtros fila 2: tipo de materia, excluir comunes ---
+                col_f4, col_f5 = st.columns(2)
+                with col_f4:
+                    viz_filtro_tipo = st.selectbox(
+                        "Tipo de materia",
+                        options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
+                        key="viz_filtro_tipo",
+                    )
+                with col_f5:
+                    viz_excluir_comunes = st.checkbox(
+                        "Excluir materias comunes (multi-carrera)",
+                        key="viz_excluir_comunes",
+                    )
+
+                _viz_all_filters_set = (
+                    viz_filtro_carrera is not None
+                    and viz_filtro_anio is not None
+                    and viz_filtro_cuatri is not None
+                )
+
+                # Determinar materias filtradas via PlanEstudioDB
+                viz_filtered_mats: set[str] | None = None
+                if _viz_all_filters_set:
+                    with next(get_session()) as session:
+                        q = select(PlanEstudioDB.materia_codigo)
+                        carrera_cod = viz_filtro_carrera.split(" - ")[0]
+                        q = q.where(PlanEstudioDB.carrera_codigo == carrera_cod)
+                        q = q.where(PlanEstudioDB.anio_plan == int(viz_filtro_anio))
+                        if viz_filtro_cuatri == "Anual":
+                            q = q.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
+                        else:
+                            q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
+                        viz_filtered_mats = set(session.exec(q.distinct()).all())
+
+                if not _viz_all_filters_set:
+                    st.caption(
+                        "Seleccioná Carrera, Año y Cuatrimestre para ver "
+                        "las materias del cronograma."
+                    )
+                else:
+                    # --- Multiselect de materias ---
+                    with next(get_session()) as session:
+                        grid_data = build_schedule_grid(session, sel_id)
+
+                    # Materias presentes en el cronograma
+                    _viz_mats_en_schedule = set()
+                    for _blocks in grid_data.values():
+                        for _b in _blocks:
+                            _viz_mats_en_schedule.add(_b.materia_codigo)
+
+                    # Intersectar con filtros de plan
+                    _viz_mats_disponibles = _viz_mats_en_schedule
+                    if viz_filtered_mats is not None:
+                        _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
+
+                    _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
+                    viz_materias_sel = st.multiselect(
+                        "Materias a mostrar",
+                        options=_viz_mat_list,
+                        default=_viz_mat_list,
+                        format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                        key="viz_filtro_materias",
+                    )
+                    _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
+
+                    st.divider()
+
+                    # Aplicar filtro de materias seleccionadas
+                    if grid_data:
+                        grid_data = {
+                            dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
+                            for dia, blocks in grid_data.items()
+                        }
+                        grid_data = {d: bs for d, bs in grid_data.items() if bs}
+
+                    # Aplicar filtros de tipo y comunes
+                    grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
+
+                    render_schedule_calendar(grid_data, config, key="viz_cal")
 
 
 # =============================================================================
