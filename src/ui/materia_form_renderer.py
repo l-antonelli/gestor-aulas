@@ -187,11 +187,22 @@ class MateriaFormRenderer:
                 if not is_valid:
                     FormInputRenderer.display_validation_errors(errors)
                     return None
-                
+
+                _hs = form_data.get("horas_semanales")
+                _ht = form_data.get("horas_teoria") or 0
+                _hl = form_data.get("horas_laboratorio") or 0
+                if _hs and (_ht + _hl) != _hs:
+                    st.warning(
+                        f"Hs Teoría ({_ht}) + Hs Lab ({_hl}) "
+                        f"= {_ht + _hl} ≠ Hs/Sem ({_hs}). "
+                        "Corregí antes de guardar."
+                    )
+                    return None
+
                 # Clear session state
                 if f"{form_key}_carrera_data" in st.session_state:
                     del st.session_state[f"{form_key}_carrera_data"]
-                
+
                 # Add carreras with details to form data
                 form_data["carrera_details"] = carrera_details
                 return form_data

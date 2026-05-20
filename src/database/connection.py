@@ -37,6 +37,8 @@ def _run_migrations(eng):
         "ALTER TABLE schedule_entries ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
         "ALTER TABLE horarios ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
         "ALTER TABLE clases ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
+        "ALTER TABLE materias ADD COLUMN horas_teoria REAL DEFAULT NULL",
+        "ALTER TABLE materias ADD COLUMN horas_laboratorio REAL DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -46,6 +48,14 @@ def _run_migrations(eng):
             except Exception:
                 # Column already exists — safe to ignore
                 conn.rollback()
+
+    # Data migration: populate horas_teoria/horas_laboratorio from horas_semanales
+    with eng.connect() as conn:
+        conn.exec_driver_sql(
+            "UPDATE materias SET horas_teoria = horas_semanales, horas_laboratorio = 0 "
+            "WHERE horas_teoria IS NULL AND horas_semanales IS NOT NULL"
+        )
+        conn.commit()
 
     # Migration: make schedules.ciclo_id nullable (SQLite requires table recreation)
     _migrate_schedules_nullable_ciclo(eng)

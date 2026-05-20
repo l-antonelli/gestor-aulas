@@ -102,6 +102,8 @@ def render_custom_materia_page():
         "periodo": "Período",
         "cupo": "Cupo",
         "horas_semanales": "Hs/Sem",
+        "horas_teoria": "Hs Teoría",
+        "horas_laboratorio": "Hs Laboratorio",
         "virtual": "Virtual",
         "optativa": "Optativa",
     }
@@ -181,16 +183,26 @@ def render_custom_materia_page():
                                     if not is_valid:
                                         FormInputRenderer.display_validation_errors(errors)
                                     else:
-                                        try:
-                                            updated = materia_service.update(session, Materia(**form_data))
-                                            if updated:
-                                                st.success("Materia actualizada")
-                                                del st.session_state["edit_materia"]
-                                                st.rerun()
-                                            else:
-                                                st.error("No se pudo actualizar")
-                                        except Exception as e:
-                                            st.error(f"Error: {e}")
+                                        _hs = form_data.get("horas_semanales")
+                                        _ht = form_data.get("horas_teoria") or 0
+                                        _hl = form_data.get("horas_laboratorio") or 0
+                                        if _hs and (_ht + _hl) != _hs:
+                                            st.warning(
+                                                f"Hs Teoría ({_ht}) + Hs Lab ({_hl}) "
+                                                f"= {_ht + _hl} ≠ Hs/Sem ({_hs}). "
+                                                "Corregí antes de guardar."
+                                            )
+                                        else:
+                                            try:
+                                                updated = materia_service.update(session, Materia(**form_data))
+                                                if updated:
+                                                    st.success("Materia actualizada")
+                                                    del st.session_state["edit_materia"]
+                                                    st.rerun()
+                                                else:
+                                                    st.error("No se pudo actualizar")
+                                            except Exception as e:
+                                                st.error(f"Error: {e}")
 
                         with edit_tab2:
                             MateriaCarreraEditor.render_associations_editor(
@@ -262,6 +274,10 @@ def render_custom_materia_page():
                                 st.write(f"**Nombre:** {materia.nombre}")
                                 st.write(f"**Periodo:** {materia.periodo}")
                                 st.write(f"**Horas/Semana:** {materia.horas_semanales or '-'}")
+                                _ht = getattr(materia, "horas_teoria", None)
+                                _hl = getattr(materia, "horas_laboratorio", None)
+                                if _ht or _hl:
+                                    st.write(f"**Hs Teoría/Lab:** {_ht or 0} / {_hl or 0}")
 
                             with col2:
                                 st.write(f"**Cupo:** {materia.cupo or '-'}")
