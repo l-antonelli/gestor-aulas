@@ -312,7 +312,7 @@ def add_schedule_entry(
     hora_inicio: time,
     hora_fin: time,
     comision: int | None = None,
-    tipo_clase: str = "teorica",
+    tipo_clase: str | None = None,
 ) -> ScheduleEntryDB:
     """Agregar una entrada a un cronograma existente."""
     entry = ScheduleEntryDB(
@@ -395,7 +395,7 @@ def sync_preview_edits_to_schedule(
     for ed in edited_entries:
         eid = ed["entry_id"]
         ed_comision = ed.get("comision")
-        ed_tipo = ed.get("tipo_clase", "teorica")
+        ed_tipo = ed.get("tipo_clase") or None
 
         if isinstance(eid, str) and eid.startswith("new_"):
             # New entry

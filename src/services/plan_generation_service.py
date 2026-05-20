@@ -42,7 +42,7 @@ class EntryPreview:
     hora_inicio: time
     hora_fin: time
     comision_asignada: int  # 1-based comision number
-    tipo_clase: str = "teorica"  # "teorica" o "laboratorio"
+    tipo_clase: Optional[str] = None  # "teorica", "laboratorio" o None (sin determinar)
 
 
 @dataclass
@@ -392,7 +392,7 @@ def generate_plan_from_preview(
                     dia=ep.dia,
                     hora_inicio=ep.hora_inicio,
                     hora_fin=ep.hora_fin,
-                    tipo_clase=getattr(ep, "tipo_clase", "teorica"),
+                    tipo_clase=getattr(ep, "tipo_clase", None),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -539,7 +539,7 @@ def generate_plan_from_schedule(
                     dia=entry.dia,
                     hora_inicio=entry.hora_inicio,
                     hora_fin=entry.hora_fin,
-                    tipo_clase=getattr(entry, "tipo_clase", "teorica"),
+                    tipo_clase=getattr(entry, "tipo_clase", None),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -602,7 +602,7 @@ def apply_horario_edits(
         if target_com is None:
             continue
 
-        _row_tipo = row.get("tipo_clase", "teorica")
+        _row_tipo = row.get("tipo_clase") or None
 
         if isinstance(hid, str) and hid.startswith("new_"):
             # Create new horario

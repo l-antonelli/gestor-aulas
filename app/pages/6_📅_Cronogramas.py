@@ -712,7 +712,7 @@ with tab_editar:
                             "Inicio": e.hora_inicio,
                             "Fin": e.hora_fin,
                             "Comisión": e.comision or 0,
-                            "Tipo": e.tipo_clase,
+                            "Tipo": e.tipo_clase or "sin determinar",
                         }
                         for e in _sm_entries
                     ]) if _sm_entries else pd.DataFrame(
@@ -757,7 +757,8 @@ with tab_editar:
                                         _cv = int(changes["Comisión"])
                                         _cambios["comision"] = _cv if _cv > 0 else None
                                     if "Tipo" in changes:
-                                        _cambios["tipo_clase"] = changes["Tipo"]
+                                        _tv = changes["Tipo"]
+                                        _cambios["tipo_clase"] = None if _tv == "sin determinar" else _tv
                                     if _cambios:
                                         update_schedule_entry(
                                             sess, _e.id, **_cambios,
@@ -774,7 +775,8 @@ with tab_editar:
                             for row in edited.get("added_rows") or []:
                                 if row.get("Día") and row.get("Inicio") and row.get("Fin"):
                                     _cv = int(row.get("Comisión") or 0)
-                                    _tipo = row.get("Tipo") or "teorica"
+                                    _tipo_raw = row.get("Tipo")
+                                    _tipo = None if (not _tipo_raw or _tipo_raw == "sin determinar") else _tipo_raw
                                     add_schedule_entry(
                                         sess,
                                         sel_edit_id,
@@ -817,9 +819,9 @@ with tab_editar:
                                 width="small",
                             ),
                             "Tipo": column_config.SelectboxColumn(
-                                options=["teorica", "laboratorio"],
-                                default="teorica",
-                                help="Tipo de clase: teorica (aula comun) o laboratorio",
+                                options=["sin determinar", "teorica", "laboratorio"],
+                                default="sin determinar",
+                                help="Tipo de clase: sin determinar (LP decide), teorica o laboratorio",
                                 width="small",
                             ),
                         },

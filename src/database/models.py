@@ -231,7 +231,7 @@ class HorarioDB(SQLModel, table=True):
     dia: str = Field(index=True)
     hora_inicio: time
     hora_fin: time
-    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
+    tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
 
     # Relationships
     comision: Optional[ComisionDB] = Relationship(back_populates="horarios")
@@ -272,7 +272,7 @@ class ScheduleEntryDB(SQLModel, table=True):
     hora_inicio: time
     hora_fin: time
     comision: Optional[int] = Field(default=None)
-    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
+    tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
 
     # Relationships
     schedule: Optional[ScheduleDB] = Relationship(back_populates="entries")
@@ -312,7 +312,7 @@ class ClaseDB(SQLModel, table=True):
     hora_fin: time
     executed: bool = Field(default=False)
     aula_id: Optional[str] = Field(default=None, foreign_key="aulas.id")
-    tipo_clase: str = Field(default="teorica")  # "teorica" o "laboratorio"
+    tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
 
     # Relationships
     plan_cursada: Optional[PlanificacionCursadaDB] = Relationship(back_populates="clases")

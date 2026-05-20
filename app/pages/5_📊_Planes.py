@@ -1129,7 +1129,7 @@ with tab_cronogramas:
                             "Inicio": _time_str(_e["hora_inicio"]),
                             "Fin": _time_str(_e["hora_fin"]),
                             "Comision": _e["comision_asignada"],
-                            "Tipo": _e.get("tipo_clase", "teorica"),
+                            "Tipo": _e.get("tipo_clase") or "sin determinar",
                         })
 
                     _df = (
@@ -1199,9 +1199,9 @@ with tab_cronogramas:
                         ),
                         "Tipo": st.column_config.SelectboxColumn(
                             "Tipo",
-                            options=["teorica", "laboratorio"],
-                            default="teorica",
-                            help="teorica (aula comun) o laboratorio",
+                            options=["sin determinar", "teorica", "laboratorio"],
+                            default="sin determinar",
+                            help="sin determinar (LP decide), teorica o laboratorio",
                             width="small",
                         ),
                         "Hs": st.column_config.NumberColumn(
@@ -1475,7 +1475,8 @@ with tab_cronogramas:
                         )
                         _hi_str = str(_r["Inicio"])[:5]
                         _hf_str = str(_r["Fin"])[:5]
-                        _tipo_v = str(_r.get("Tipo") or "teorica")
+                        _tipo_raw_v = _r.get("Tipo")
+                        _tipo_v = None if (not _tipo_raw_v or _tipo_raw_v == "sin determinar") else str(_tipo_raw_v)
                         _final.append({
                             "entry_id": _eid_v,
                             "dia": _r["Dia"],
@@ -1540,7 +1541,7 @@ with tab_cronogramas:
                                 "hora_inicio": _fe["hora_inicio"],
                                 "hora_fin": _fe["hora_fin"],
                                 "comision": _fe.get("comision_asignada"),
-                                "tipo_clase": _fe.get("tipo_clase", "teorica"),
+                                "tipo_clase": _fe.get("tipo_clase") or None,
                             })
                         _u, _c, _d = sync_preview_edits_to_schedule(
                             _sync_session, _effective_sid,
@@ -1670,8 +1671,8 @@ with tab_cronogramas:
                             ),
                             "Tipo": st.column_config.SelectboxColumn(
                                 "Tipo",
-                                options=["teorica", "laboratorio"],
-                                default="teorica",
+                                options=["sin determinar", "teorica", "laboratorio"],
+                                default="sin determinar",
                                 width="small",
                             ),
                             "Hs": st.column_config.NumberColumn(
@@ -1717,7 +1718,8 @@ with tab_cronogramas:
                                 )
                                 _fhi = str(_r["Inicio"])[:5]
                                 _fhf = str(_r["Fin"])[:5]
-                                _ftipo = str(_r.get("Tipo") or "teorica")
+                                _ftipo_raw = _r.get("Tipo")
+                                _ftipo = None if (not _ftipo_raw or _ftipo_raw == "sin determinar") else str(_ftipo_raw)
                                 _falt_final.append({
                                     "entry_id": f"new_falt_{_falt_code}_{_i}",
                                     "dia": _r["Dia"],
@@ -2176,7 +2178,7 @@ with tab_detalle:
                                         "Inicio": _de_h.hora_inicio,
                                         "Fin": _de_h.hora_fin,
                                         "Comisión": _de_com.nombre,
-                                        "Tipo": _de_h.tipo_clase,
+                                        "Tipo": _de_h.tipo_clase or "sin determinar",
                                     })
 
                             _de_df = (
@@ -2223,9 +2225,8 @@ with tab_detalle:
                                     ),
                                     "Tipo": st.column_config.SelectboxColumn(
                                         "Tipo",
-                                        options=["teorica", "laboratorio"],
-                                        default="teorica",
-                                        required=True,
+                                        options=["sin determinar", "teorica", "laboratorio"],
+                                        default="sin determinar",
                                         width="small",
                                     ),
                                 },
@@ -2269,7 +2270,7 @@ with tab_detalle:
                                             "dia": _row["Día"],
                                             "hora_inicio": _row["Inicio"],
                                             "hora_fin": _row["Fin"],
-                                            "tipo_clase": str(_row.get("Tipo") or "teorica"),
+                                            "tipo_clase": None if (_row.get("Tipo") or "sin determinar") == "sin determinar" else str(_row["Tipo"]),
                                         })
 
                                     with next(get_session()) as session:
