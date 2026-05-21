@@ -1613,7 +1613,8 @@ with tab_cronogramas:
                         _checks.append({"id": "thl_partition", "label": "Partici\u00f3n te\u00f3rica/lab factible",
                             "status": "error", "detail": "; ".join(_infactibles)})
 
-                # Cache worst check status for header icon on next render
+                # Cache worst check status for header icon on next render.
+                # 'info' es informativo (ej. modo reserva) y no degrada el ✅.
                 _worst = "ok"
                 for _ck in _checks:
                     if _ck["status"] == "error":
@@ -1621,8 +1622,6 @@ with tab_cronogramas:
                         break
                     if _ck["status"] == "warn" and _worst != "error":
                         _worst = "warn"
-                    if _ck["status"] == "info" and _worst == "ok":
-                        _worst = "info"
                 st.session_state[f"_chk_worst_{_sel_sched_id}_{_mat_code}"] = _worst
 
                 # Render checks as detailed rows
