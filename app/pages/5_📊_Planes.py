@@ -42,6 +42,7 @@ from src.services.validations import (
     validar_conflictos_horarios_plan,
     validar_cobertura_plan,
     identificar_virtuales_plan,
+    validar_factibilidad_particion_horas,
 )
 from src.ui.calendar_render import render_timetable_calendar
 from src.domain.types import DIAS_SEMANA
@@ -321,6 +322,11 @@ with tab_cronogramas:
                     )
                     _total_horas += max(0, _mins) / 60
 
+                # Particion-de-horas feasibility check
+                _part_result = validar_factibilidad_particion_horas(
+                    session, schedule_id=_sel_sched_id,
+                )
+
             st.session_state[_prevalidation_key] = {
                 "n_materias": len(_mat_codigos),
                 "n_clases": _total_clases,
@@ -336,6 +342,9 @@ with tab_cronogramas:
                 "esperadas": _esperadas,
                 "mat_map": _mat_map,
                 "schedule_entry_count": _total_clases,
+                "particion_valid": _part_result.valid,
+                "particion_message": _part_result.message,
+                "particion_details": list(_part_result.details or []),
             }
             # Clear any previous preview when re-prevalidating
             st.session_state.pop(_preview_key, None)
@@ -418,6 +427,23 @@ with tab_cronogramas:
                         use_container_width=True,
                         hide_index=True,
                     )
+
+        # --- Particion de horas (teoria/laboratorio) ---
+        _part_valid = _pv.get("particion_valid")
+        if _part_valid is not None:
+            _part_msg = _pv.get("particion_message", "")
+            _part_dets = _pv.get("particion_details") or []
+            if _part_valid:
+                st.success(f"Partición teoría/lab: {_part_msg}")
+            else:
+                st.error(f"Partición teoría/lab: {_part_msg}")
+                if _part_dets:
+                    with st.expander(
+                        f"Detalle de particiones infactibles ({len(_part_dets)})",
+                        expanded=False,
+                    ):
+                        for _d in _part_dets:
+                            st.markdown(f"- {_d}")
 
         # --- Materias extras (collapsed) ---
         if _pv["extra"]:

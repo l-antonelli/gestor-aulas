@@ -527,6 +527,206 @@ def identificar_virtuales_plan(
 
 
 # =============================================================================
+# =============================================================================
+# Prevalidación: factibilidad de partición teoría/laboratorio
+# =============================================================================
+
+def validar_factibilidad_particion_horas(
+    session: Session,
+    schedule_id: str | None = None,
+    plan_cursada_id: str | None = None,
+) -> ValidationResult:
+    """Valida que para cada comisión con horas_laboratorio > 0, las clases
+    puedan particionarse en subconjuntos que sumen horas_teoria y horas_laboratorio.
+
+    Trabaja a nivel de schedule entries (agrupadas por materia+comision) o de
+    horarios de un plan existente.
+
+    Reglas:
+    - Si materia.horas_laboratorio is None o == 0: skip (no requiere lab fijo).
+    - Las duraciones de clases de la comision deben poder particionarse en
+      dos subconjuntos: uno que sume horas_teoria y otro que sume horas_laboratorio.
+    - Si hay tipos predeterminados (!= None), las duraciones predeterminadas como
+      'laboratorio' deben sumar <= horas_laboratorio y las predeterminadas como
+      'teorica' deben sumar <= horas_teoria.
+    """
+    from src.database.models import ScheduleEntryDB
+    from itertools import combinations
+
+    errors: list[str] = []
+
+    # Collect materias with horas_laboratorio > 0
+    materias = list(session.exec(
+        select(MateriaDB).where(
+            MateriaDB.horas_laboratorio != None,  # noqa: E711
+            MateriaDB.horas_laboratorio > 0,
+        )
+    ).all())
+
+    if not materias:
+        return ValidationResult(
+            valid=True,
+            message="No hay materias con horas de laboratorio fijas definidas.",
+        )
+
+    mat_map = {m.codigo: m for m in materias}
+
+    if schedule_id:
+        entries = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == schedule_id)
+            .where(ScheduleEntryDB.codigo_materia.in_(list(mat_map.keys())))
+        ).all())
+
+        # Group by (materia, comision)
+        from collections import defaultdict
+        groups: dict[tuple[str, int], list] = defaultdict(list)
+        for e in entries:
+            com = e.comision or 1
+            groups[(e.codigo_materia, com)].append(e)
+
+        for (mat_code, com_num), group_entries in sorted(groups.items()):
+            mat = mat_map[mat_code]
+            ht = mat.horas_teoria or 0
+            hl = mat.horas_laboratorio or 0
+
+            durations = []
+            pre_lab_sum = 0.0
+            pre_teo_sum = 0.0
+            for e in group_entries:
+                h_ini = e.hora_inicio
+                h_fin = e.hora_fin
+                dur = (h_fin.hour * 60 + h_fin.minute - h_ini.hour * 60 - h_ini.minute) / 60.0
+                durations.append(dur)
+                if e.tipo_clase == "laboratorio":
+                    pre_lab_sum += dur
+                elif e.tipo_clase == "teorica":
+                    pre_teo_sum += dur
+
+            # Check predetermined consistency
+            if pre_lab_sum > hl + 0.01:
+                errors.append(
+                    f"{mat_code} C{com_num}: horas predeterminadas como lab "
+                    f"({pre_lab_sum:.1f}) > horas_laboratorio ({hl:.1f})"
+                )
+                continue
+            if pre_teo_sum > ht + 0.01:
+                errors.append(
+                    f"{mat_code} C{com_num}: horas predeterminadas como teoría "
+                    f"({pre_teo_sum:.1f}) > horas_teoria ({ht:.1f})"
+                )
+                continue
+
+            # Check if a partition exists (subset-sum on lab hours)
+            total = sum(durations)
+            expected_total = ht + hl
+            if abs(total - expected_total) > 0.01:
+                errors.append(
+                    f"{mat_code} C{com_num}: duracion total ({total:.1f}h) "
+                    f"≠ horas_teoria + horas_laboratorio ({expected_total:.1f}h)"
+                )
+                continue
+
+            # Subset-sum: find a subset of durations summing to hl
+            if not _subset_sum_exists(durations, hl):
+                errors.append(
+                    f"{mat_code} C{com_num}: no existe partición de clases "
+                    f"({[f'{d:.1f}' for d in durations]}) que sume "
+                    f"horas_laboratorio={hl:.1f}"
+                )
+
+    elif plan_cursada_id:
+        horarios = list(session.exec(
+            select(HorarioDB)
+            .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)
+            .where(ComisionDB.plan_cursada_id == plan_cursada_id)
+            .where(HorarioDB.codigo_materia.in_(list(mat_map.keys())))
+        ).all())
+
+        from collections import defaultdict
+        groups_h: dict[tuple[str, str], list] = defaultdict(list)
+        for h in horarios:
+            groups_h[(h.codigo_materia, h.comision_id)].append(h)
+
+        for (mat_code, com_id), group_hs in sorted(groups_h.items()):
+            mat = mat_map[mat_code]
+            ht = mat.horas_teoria or 0
+            hl = mat.horas_laboratorio or 0
+
+            durations = []
+            pre_lab_sum = 0.0
+            pre_teo_sum = 0.0
+            for h in group_hs:
+                dur = (h.hora_fin.hour * 60 + h.hora_fin.minute - h.hora_inicio.hour * 60 - h.hora_inicio.minute) / 60.0
+                durations.append(dur)
+                if h.tipo_clase == "laboratorio":
+                    pre_lab_sum += dur
+                elif h.tipo_clase == "teorica":
+                    pre_teo_sum += dur
+
+            if pre_lab_sum > hl + 0.01:
+                errors.append(
+                    f"{mat_code} (comision {com_id[:8]}): predeterminadas lab "
+                    f"({pre_lab_sum:.1f}) > horas_laboratorio ({hl:.1f})"
+                )
+                continue
+            if pre_teo_sum > ht + 0.01:
+                errors.append(
+                    f"{mat_code} (comision {com_id[:8]}): predeterminadas teoría "
+                    f"({pre_teo_sum:.1f}) > horas_teoria ({ht:.1f})"
+                )
+                continue
+
+            total = sum(durations)
+            expected_total = ht + hl
+            if abs(total - expected_total) > 0.01:
+                errors.append(
+                    f"{mat_code} (comision {com_id[:8]}): duracion total ({total:.1f}h) "
+                    f"≠ ht+hl ({expected_total:.1f}h)"
+                )
+                continue
+
+            if not _subset_sum_exists(durations, hl):
+                errors.append(
+                    f"{mat_code} (comision {com_id[:8]}): no existe partición "
+                    f"que sume horas_laboratorio={hl:.1f}"
+                )
+
+    if errors:
+        return ValidationResult(
+            valid=False,
+            message=f"{len(errors)} comisión(es) con partición de horas infactible",
+            details=errors,
+        )
+    return ValidationResult(
+        valid=True,
+        message="Todas las comisiones con lab fijo tienen partición factible.",
+    )
+
+
+def _subset_sum_exists(values: list[float], target: float, tol: float = 0.01) -> bool:
+    """Check if any subset of values sums to target (within tolerance).
+
+    Uses dynamic programming on discretized values (resolution 0.25h = 15min).
+    """
+    if abs(target) < tol:
+        return True
+    if not values:
+        return False
+
+    # Discretize to quarter-hours
+    scale = 4  # 4 units per hour
+    target_int = round(target * scale)
+    vals_int = [round(v * scale) for v in values]
+
+    # DP: reachable sums
+    reachable = {0}
+    for v in vals_int:
+        reachable = reachable | {s + v for s in reachable}
+
+    return target_int in reachable
+
+
 # Ejecutar todas las validaciones
 # =============================================================================
 
