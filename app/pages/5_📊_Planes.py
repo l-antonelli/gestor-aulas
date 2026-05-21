@@ -998,11 +998,22 @@ with tab_cronogramas:
                     _live_icon = "\u2705"
                     _live_expand = False
 
+            # Sufijo de modo lab: ad-hoc (reserva) si tiene lab asignado y hl=0
+            _hdr_lab_db = _hlab_map.get(_mat_code)
+            _hdr_has_lab = _mat_code in _labs_set
+            if _hdr_has_lab and _hdr_lab_db is not None and _hdr_lab_db == 0:
+                _lab_suffix = " \u00b7 \u2139\ufe0f lab por reserva"
+            elif _hdr_has_lab and _hdr_lab_db is not None and _hdr_lab_db > 0:
+                _lab_suffix = f" \u00b7 \U0001f9ea lab fijo {_hdr_lab_db:g}h"
+            else:
+                _lab_suffix = ""
+
             _header = (
                 f"{_live_icon} {mp['materia_codigo']} \u2014 "
                 f"{mp['materia_nombre']} | "
                 f"{_cur_ncom} com \u00b7 {_fmt_hours(_cur_total)} \u00b7 "
                 f"h/sem: {_fmt_hours(_db_hsem) if _db_hsem > 0 else '?'}"
+                f"{_lab_suffix}"
             )
 
             with st.expander(_header, expanded=_live_expand):
