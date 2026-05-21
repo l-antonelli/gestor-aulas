@@ -659,7 +659,10 @@ with tab_cronogramas:
                 .where(col(MateriaLaboratorioDB.materia_codigo).in_(_all_mat_codes))
                 .distinct()
             ).all() if _all_mat_codes else []
-        _hsem_map = {cod: float(h) if h else 0.0 for cod, *_ in _batch_mats}
+        _hsem_map = {
+            cod: float(hs) if hs else 0.0
+            for cod, hs, _ht, _hl in _batch_mats
+        }
         _hteo_map = {
             cod: float(ht) if ht is not None else None
             for cod, _hs, ht, _hl in _batch_mats
