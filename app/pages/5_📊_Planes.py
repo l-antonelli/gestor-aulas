@@ -1470,6 +1470,138 @@ with tab_cronogramas:
                     _checks.append({"id": "hsem_set", "label": "Horas semanales definidas",
                         "status": "warn", "detail": "Sin dato. Completar para validar."})
 
+                # --- Checks 7-10: Particion teoria/laboratorio ---
+                _ht = _hteo_map.get(_mat_code)
+                _hl = _hlab_map.get(_mat_code)
+                _has_lab = _mat_code in _labs_set
+                _has_thl_data = _ht is not None or _hl is not None
+
+                # Check 7: Hs teoria + Hs laboratorio = Hs semanales
+                if _has_thl_data:
+                    _ht_v = _ht or 0.0
+                    _hl_v = _hl or 0.0
+                    _sum_thl = round(_ht_v + _hl_v, 2)
+                    if _h_sem > 0 and abs(_sum_thl - _h_sem) < 0.01:
+                        _checks.append({"id": "thl_sum", "label": "Hs te\u00f3rica + Hs lab = Hs semanales",
+                            "status": "ok",
+                            "detail": f"{_ht_v:g} + {_hl_v:g} = {_sum_thl:g} = {_h_sem:g}"})
+                    elif _h_sem == 0:
+                        _checks.append({"id": "thl_sum", "label": "Hs te\u00f3rica + Hs lab = Hs semanales",
+                            "status": "info",
+                            "detail": "Sin dato de h/sem para comparar"})
+                    else:
+                        _checks.append({"id": "thl_sum", "label": "Hs te\u00f3rica + Hs lab = Hs semanales",
+                            "status": "error",
+                            "detail": f"{_ht_v:g} + {_hl_v:g} = {_sum_thl:g} \u2260 {_h_sem:g}"})
+                elif _has_lab:
+                    _checks.append({"id": "thl_sum", "label": "Hs te\u00f3rica + Hs lab = Hs semanales",
+                        "status": "warn",
+                        "detail": "Materia con lab asignado pero sin Hs te\u00f3rica/lab definidas. Completar arriba."})
+
+                # Check 8: caso reserva ad-hoc (lab asignado + hl == 0)
+                if _has_lab and _hl is not None and _hl == 0 and _ht is not None:
+                    _checks.append({"id": "thl_reserva", "label": "Modo lab",
+                        "status": "info",
+                        "detail": "Reserva ad-hoc (Hs lab = 0): el LP no fija lab; los docentes lo reservan caso por caso."})
+                elif _has_lab and _hl is not None and _hl > 0:
+                    _checks.append({"id": "thl_reserva", "label": "Modo lab",
+                        "status": "ok",
+                        "detail": f"Lab fijo: {_hl:g}h por comisi\u00f3n entran al LP."})
+                elif _has_lab and _hl is None:
+                    _checks.append({"id": "thl_reserva", "label": "Modo lab",
+                        "status": "warn",
+                        "detail": "Materia con lab asignado pero sin Hs lab definidas."})
+
+                # Check 9: predeterminados consistentes con Hs lab
+                # Suma de duraciones por tipo en _valid (usando columna 'Tipo')
+                if _has_lab and _hl is not None and _hl > 0:
+                    _pre_lab_sum = 0.0
+                    _pre_teo_sum = 0.0
+                    _per_com_lab: dict = {}
+                    _per_com_teo: dict = {}
+                    for _cn in _com_options:
+                        _per_com_lab[_cn] = 0.0
+                        _per_com_teo[_cn] = 0.0
+                    for _, _r in _valid.iterrows():
+                        _hi_m = _parse_minutes(_r["Inicio"])
+                        _hf_m = _parse_minutes(_r["Fin"])
+                        if _hi_m is None or _hf_m is None:
+                            continue
+                        _dur = max(0, _hf_m - _hi_m) / 60
+                        _tipo = str(_r.get("Tipo", "sin determinar")).strip()
+                        _cn = _r.get("Comision")
+                        if _tipo == "laboratorio":
+                            _pre_lab_sum += _dur
+                            if _cn in _per_com_lab:
+                                _per_com_lab[_cn] += _dur
+                        elif _tipo == "teorica":
+                            _pre_teo_sum += _dur
+                            if _cn in _per_com_teo:
+                                _per_com_teo[_cn] += _dur
+
+                    # Violacion por comision (predeterminados > Hs lab)
+                    _ht_v = _ht or 0.0
+                    _violators_lab = [
+                        (cn, h) for cn, h in _per_com_lab.items()
+                        if h > _hl + 0.01
+                    ]
+                    _violators_teo = [
+                        (cn, h) for cn, h in _per_com_teo.items()
+                        if h > _ht_v + 0.01
+                    ]
+                    if not _violators_lab and not _violators_teo:
+                        _det_parts = []
+                        if _pre_lab_sum > 0:
+                            _det_parts.append(f"predeterminadas como lab: {_pre_lab_sum:g}h")
+                        if _pre_teo_sum > 0:
+                            _det_parts.append(f"predeterminadas como te\u00f3ricas: {_pre_teo_sum:g}h")
+                        _det = "; ".join(_det_parts) if _det_parts else "Todas 'sin determinar' (LP decide)"
+                        _checks.append({"id": "thl_predet", "label": "Predeterminados consistentes",
+                            "status": "ok", "detail": _det})
+                    else:
+                        _msgs = []
+                        for cn, h in _violators_lab:
+                            _msgs.append(f"C{cn}: lab predeterminado {h:g}h > Hs lab {_hl:g}h")
+                        for cn, h in _violators_teo:
+                            _msgs.append(f"C{cn}: te\u00f3rica predeterminada {h:g}h > Hs te\u00f3rica {_ht_v:g}h")
+                        _checks.append({"id": "thl_predet", "label": "Predeterminados consistentes",
+                            "status": "error", "detail": "; ".join(_msgs)})
+
+                # Check 10: factibilidad de particion subset-sum por comision
+                if _has_lab and _hl is not None and _hl > 0 and _ht is not None:
+                    from src.services.validations import _subset_sum_exists
+                    _expected_total = _ht + _hl
+                    _infactibles = []
+                    for _cn in _com_options:
+                        _ce = _valid[_valid["Comision"] == _cn] if not _valid.empty else pd.DataFrame()
+                        _durs = []
+                        for _, _r in _ce.iterrows():
+                            _hi_m = _parse_minutes(_r["Inicio"])
+                            _hf_m = _parse_minutes(_r["Fin"])
+                            if _hi_m is None or _hf_m is None:
+                                continue
+                            _durs.append(max(0, _hf_m - _hi_m) / 60)
+                        if not _durs:
+                            continue
+                        _total_c = sum(_durs)
+                        if abs(_total_c - _expected_total) > 0.01:
+                            _infactibles.append(
+                                f"C{_cn}: total {_total_c:g}h \u2260 Hs te\u00f3rica + lab ({_expected_total:g}h)"
+                            )
+                            continue
+                        if not _subset_sum_exists(_durs, _hl):
+                            _durs_str = ", ".join(f"{d:g}" for d in _durs)
+                            _infactibles.append(
+                                f"C{_cn}: clases [{_durs_str}] no se pueden particionar para sumar Hs lab {_hl:g}h"
+                            )
+                    if not _infactibles:
+                        _checks.append({"id": "thl_partition", "label": "Partici\u00f3n te\u00f3rica/lab factible",
+                            "status": "ok",
+                            "detail": f"Cada comisi\u00f3n puede dividirse en {_ht:g}h te\u00f3rica + {_hl:g}h lab"})
+                    else:
+                        _checks.append({"id": "thl_partition", "label": "Partici\u00f3n te\u00f3rica/lab factible",
+                            "status": "error", "detail": "; ".join(_infactibles)})
+
                 # Cache worst check status for header icon on next render
                 _worst = "ok"
                 for _ck in _checks:
