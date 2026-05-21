@@ -14,7 +14,7 @@ from src.database.models import (
     PlanificacionCursadaDB, ComisionDB, HorarioDB, ClaseDB, MateriaDB,
     ScheduleDB, ScheduleEntryDB,
     CicloPlanVersionDB, PlanCarreraVersionDB, PlanEstudioDB,
-    CarreraDB, ConfiguracionHoraria,
+    CarreraDB, ConfiguracionHoraria, MateriaLaboratorioDB,
 )
 from src.database.crud import ciclo_crud, materia_crud, get_or_create_config, update_config
 from src.services.schedule_service import (
@@ -632,11 +632,16 @@ with tab_cronogramas:
         # --- Build per-materia index for fast lookup ---
         _mp_by_code = {mp["materia_codigo"]: (_i, mp) for _i, mp in enumerate(_materias_preview)}
 
-        # --- Batch-read horas_semanales and optativa status ---
+        # --- Batch-read horas_semanales/teoria/laboratorio, optativa, labs ---
         _all_mat_codes = [mp["materia_codigo"] for mp in _materias_preview]
         with next(get_session()) as _batch_session:
             _batch_mats = _batch_session.exec(
-                select(MateriaDB.codigo, MateriaDB.horas_semanales)
+                select(
+                    MateriaDB.codigo,
+                    MateriaDB.horas_semanales,
+                    MateriaDB.horas_teoria,
+                    MateriaDB.horas_laboratorio,
+                )
                 .where(col(MateriaDB.codigo).in_(_all_mat_codes))
             ).all() if _all_mat_codes else []
             # Optativa: a materia is optativa if ANY plan_estudio entry marks it
@@ -648,8 +653,23 @@ with tab_cronogramas:
                 )
                 .distinct()
             ).all() if _all_mat_codes else []
-        _hsem_map = {cod: float(h) if h else 0.0 for cod, h in _batch_mats}
+            # Materias que tienen al menos un laboratorio compatible asignado
+            _lab_rows = _batch_session.exec(
+                select(MateriaLaboratorioDB.materia_codigo)
+                .where(col(MateriaLaboratorioDB.materia_codigo).in_(_all_mat_codes))
+                .distinct()
+            ).all() if _all_mat_codes else []
+        _hsem_map = {cod: float(h) if h else 0.0 for cod, *_ in _batch_mats}
+        _hteo_map = {
+            cod: float(ht) if ht is not None else None
+            for cod, _hs, ht, _hl in _batch_mats
+        }
+        _hlab_map = {
+            cod: float(hl) if hl is not None else None
+            for cod, _hs, _ht, hl in _batch_mats
+        }
         _optativa_set: set[str] = set(_opt_rows)
+        _labs_set: set[str] = set(_lab_rows)
 
         def _precheck_status(mp_data, db_hsem):
             """Quick pre-check returning worst status: 'ok', 'warn', 'error', 'no_data'."""
@@ -801,7 +821,7 @@ with tab_cronogramas:
                 ),
             )
 
-        _tf1, _tf2 = st.columns(2)
+        _tf1, _tf2, _tf3 = st.columns(3)
         with _tf1:
             _show_faltantes = st.toggle(
                 "Incluir faltantes",
@@ -815,6 +835,16 @@ with tab_cronogramas:
                 value=False,
                 key=f"prev_filt_optativas_{_sel_sched_id}",
                 help="Ocultar materias marcadas como optativas/electivas en el plan de estudios.",
+            )
+        with _tf3:
+            _only_with_lab = st.toggle(
+                "Solo con lab asignado",
+                value=False,
+                key=f"prev_filt_lab_{_sel_sched_id}",
+                help=(
+                    "Mostrar unicamente materias que tienen al menos un "
+                    "laboratorio compatible asignado en MateriaLaboratorioDB."
+                ),
             )
 
         # Resolve filter values
@@ -879,6 +909,13 @@ with tab_cronogramas:
             }
             _filtered_faltantes = {
                 c for c in _filtered_faltantes if c not in _optativa_set
+            }
+
+        # Apply "solo con lab asignado" filter
+        if _only_with_lab:
+            _filtered_codes = {c for c in _filtered_codes if c in _labs_set}
+            _filtered_faltantes = {
+                c for c in _filtered_faltantes if c in _labs_set
             }
 
         # Build sorted display list: only materias in preview AND matching filter
@@ -999,6 +1036,90 @@ with tab_cronogramas:
                                 f"{_mat_code}: horas semanales "
                                 f"actualizadas a {_fmt_hours(_display_hsem)}."
                             )
+
+                # --- a.2) Horas teoria / laboratorio (solo si tiene lab asignado o ya tiene valores) ---
+                _has_lab = _mat_code in _labs_set
+                _db_hteo = _hteo_map.get(_mat_code)
+                _db_hlab = _hlab_map.get(_mat_code)
+                _has_hteo_hlab_data = _db_hteo is not None or _db_hlab is not None
+
+                if _has_lab or _has_hteo_hlab_data:
+                    _hl_c1, _hl_c2, _hl_c3, _hl_c4 = st.columns(4)
+                    _hl_c1.markdown("**Hs teor\u00eda:**")
+                    _new_hteo = _hl_c2.number_input(
+                        "h_teo",
+                        value=float(_db_hteo) if _db_hteo is not None else 0.0,
+                        min_value=0.0,
+                        step=0.25,
+                        format="%.2f",
+                        key=f"prev_hteo_{_sel_sched_id}_{_mat_code}",
+                        label_visibility="collapsed",
+                        help=(
+                            "Horas semanales que se dictan como teor\u00eda. "
+                            "Junto con Hs lab debe sumar Hs semanales."
+                        ),
+                    )
+                    _hl_c3.markdown("**Hs laboratorio:**")
+                    _new_hlab = _hl_c4.number_input(
+                        "h_lab",
+                        value=float(_db_hlab) if _db_hlab is not None else 0.0,
+                        min_value=0.0,
+                        step=0.25,
+                        format="%.2f",
+                        key=f"prev_hlab_{_sel_sched_id}_{_mat_code}",
+                        label_visibility="collapsed",
+                        help=(
+                            "Horas semanales fijas como laboratorio. "
+                            "Si tiene lab asignado pero Hs lab = 0, se "
+                            "asume reserva ad-hoc (decide el docente "
+                            "durante el ejercicio del plan, fuera del LP)."
+                        ),
+                    )
+
+                    # Validacion: ht + hl == hsem
+                    _sum_thl = round(_new_hteo + _new_hlab, 2)
+                    _hsem_round = round(_display_hsem, 2)
+                    _sum_ok = abs(_sum_thl - _hsem_round) < 0.01
+
+                    if not _sum_ok:
+                        st.warning(
+                            f"Hs teor\u00eda ({_new_hteo:g}) + Hs laboratorio "
+                            f"({_new_hlab:g}) = {_sum_thl:g} \u2260 Hs "
+                            f"semanales ({_hsem_round:g}). Ajust\u00e1 los "
+                            f"valores antes de guardar."
+                        )
+
+                    # Mensaje informativo: caso reserva
+                    if _has_lab and _new_hlab == 0 and _sum_ok:
+                        st.caption(
+                            "\u2139\ufe0f Tiene laboratorios asignados con "
+                            "**Hs lab = 0** \u2192 se trata como reserva "
+                            "ad-hoc: el LP no fija laboratorio, los docentes "
+                            "lo reservan caso por caso durante el ejercicio."
+                        )
+
+                    # Auto-save solo si la suma es valida y cambio algun valor
+                    _hteo_changed = (
+                        _db_hteo is None or abs(_new_hteo - _db_hteo) > 0.001
+                    )
+                    _hlab_changed = (
+                        _db_hlab is None or abs(_new_hlab - _db_hlab) > 0.001
+                    )
+                    if _sum_ok and (_hteo_changed or _hlab_changed):
+                        with next(get_session()) as _sess:
+                            _mat = materia_crud.get(_sess, _mat_code)
+                            if _mat:
+                                _mat.horas_teoria = _new_hteo
+                                _mat.horas_laboratorio = _new_hlab
+                                _sess.add(_mat)
+                                _sess.commit()
+                                _hteo_map[_mat_code] = _new_hteo
+                                _hlab_map[_mat_code] = _new_hlab
+                                st.toast(
+                                    f"{_mat_code}: Hs te\u00f3rica/lab "
+                                    f"actualizadas a "
+                                    f"{_new_hteo:g}/{_new_hlab:g}."
+                                )
 
                 # --- b) Comisiones selector ---
                 ic3.markdown("**Comisiones:**")
