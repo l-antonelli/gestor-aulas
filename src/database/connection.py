@@ -34,9 +34,9 @@ def _run_migrations(eng):
         "ALTER TABLE carreras ADD COLUMN dicta_recursado BOOLEAN DEFAULT 1",
         "ALTER TABLE materias ADD COLUMN virtual BOOLEAN DEFAULT 0",
         "ALTER TABLE dictados ADD COLUMN virtual BOOLEAN DEFAULT 0",
-        "ALTER TABLE schedule_entries ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
-        "ALTER TABLE horarios ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
-        "ALTER TABLE clases ADD COLUMN tipo_clase VARCHAR DEFAULT 'teorica'",
+        "ALTER TABLE schedule_entries ADD COLUMN tipo_clase VARCHAR DEFAULT NULL",
+        "ALTER TABLE horarios ADD COLUMN tipo_clase VARCHAR DEFAULT NULL",
+        "ALTER TABLE clases ADD COLUMN tipo_clase VARCHAR DEFAULT NULL",
         "ALTER TABLE materias ADD COLUMN horas_teoria REAL DEFAULT NULL",
         "ALTER TABLE materias ADD COLUMN horas_laboratorio REAL DEFAULT NULL",
     ]
@@ -54,6 +54,21 @@ def _run_migrations(eng):
         conn.exec_driver_sql(
             "UPDATE materias SET horas_teoria = horas_semanales, horas_laboratorio = 0 "
             "WHERE horas_teoria IS NULL AND horas_semanales IS NOT NULL"
+        )
+        conn.commit()
+
+    # Data migration: limpiar tipo_clase='teorica' heredado del DEFAULT de la
+    # migracion ALTER TABLE. Ninguno fue seteado manualmente; el default correcto
+    # ahora es NULL (sin determinar, el LP decide).
+    with eng.connect() as conn:
+        conn.exec_driver_sql(
+            "UPDATE schedule_entries SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
+        )
+        conn.exec_driver_sql(
+            "UPDATE horarios SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
+        )
+        conn.exec_driver_sql(
+            "UPDATE clases SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
         )
         conn.commit()
 

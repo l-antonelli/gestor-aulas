@@ -561,6 +561,7 @@ with tab_cronogramas:
                                     "hora_inicio": ep.hora_inicio,
                                     "hora_fin": ep.hora_fin,
                                     "comision_asignada": ep.comision_asignada,
+                                    "tipo_clase": ep.tipo_clase,
                                 }
                                 for ep in mp.entries
                             ],
