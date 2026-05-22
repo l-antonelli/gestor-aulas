@@ -578,12 +578,14 @@ def validar_factibilidad_particion_horas(
             .where(ScheduleEntryDB.codigo_materia.in_(list(mat_map.keys())))
         ).all())
 
-        # Group by (materia, comision)
+        # Group by (materia, comision). Skip entries sin comision asignada
+        # (la Phase 2 valida con comisiones del preview).
         from collections import defaultdict
         groups: dict[tuple[str, int], list] = defaultdict(list)
         for e in entries:
-            com = e.comision or 1
-            groups[(e.codigo_materia, com)].append(e)
+            if e.comision is None:
+                continue
+            groups[(e.codigo_materia, e.comision)].append(e)
 
         for (mat_code, com_num), group_entries in sorted(groups.items()):
             mat = mat_map[mat_code]
