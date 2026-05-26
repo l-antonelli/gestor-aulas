@@ -7,7 +7,7 @@ They use SQLModel which combines Pydantic validation with SQLAlchemy ORM.
 
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional
-from datetime import date, time
+from datetime import date, datetime, time
 import uuid
 
 
@@ -276,6 +276,52 @@ class ScheduleEntryDB(SQLModel, table=True):
 
     # Relationships
     schedule: Optional[ScheduleDB] = Relationship(back_populates="entries")
+
+
+class ScheduleValidationDB(SQLModel, table=True):
+    """Snapshot historico de una validacion de cronograma contra un ciclo.
+
+    Cada vez que el usuario corre 'Prevalidar cronograma contra ciclo' se
+    inserta una fila. La UI por defecto muestra la mas reciente para el par
+    (schedule_id, ciclo_id), pero se mantienen todas para auditoria.
+
+    El snapshot de detalle (faltantes_por_carrera, extras, particion_details,
+    etc.) se guarda como JSON serializado en `details_json` para reconstruir
+    la vista sin recomputar.
+    """
+    __tablename__ = "schedule_validations"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    schedule_id: str = Field(foreign_key="schedules.id", index=True)
+    ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
+    validated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Snapshot del cronograma al momento de validar (para detectar staleness)
+    entry_count_at_validation: int = Field(ge=0)
+
+    # Resumen general
+    n_materias: int = Field(ge=0)
+    n_clases: int = Field(ge=0)
+    total_horas: float = Field(ge=0)
+
+    # Cobertura vs ciclo
+    n_esperadas: int = Field(ge=0)
+    n_cubiertas: int = Field(ge=0)
+    n_faltantes: int = Field(ge=0)
+    n_extra: int = Field(default=0, ge=0)
+
+    # Resumen de laboratorios
+    n_con_lab_asignado: int = Field(default=0, ge=0)
+    n_lab_fijo: int = Field(default=0, ge=0)
+    n_lab_reserva: int = Field(default=0, ge=0)
+    n_lab_pendiente: int = Field(default=0, ge=0)
+
+    # Particion teoria/lab
+    particion_valid: bool = Field(default=True)
+    particion_n_infactibles: int = Field(default=0, ge=0)
+
+    # Snapshot de detalle (JSON-serialized para reconstruccion de la UI)
+    details_json: str = Field(default="{}")
 
 
 class PlanificacionCursadaDB(SQLModel, table=True):
