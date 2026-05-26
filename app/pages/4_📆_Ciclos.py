@@ -9,13 +9,16 @@ from src.database.models import (
     CicloDB, CicloPlanVersionDB, PlanCarreraVersionDB,
     PlanEstudioDB, CarreraDB, DictadoDB, DictadoCicloDB,
     ScheduleDB, ScheduleEntryDB, PlanificacionCursadaDB,
-    ComisionDB, HorarioDB, ClaseDB,
+    ComisionDB, HorarioDB, ClaseDB, MateriaDB,
 )
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
+    get_drift_summary,
     get_skipped_materias_for_ciclo,
+    recompute_activo_for_ciclo,
+    swap_plan_version_for_ciclo,
     update_dictado,
 )
 from src.services.crud_services import carrera_service
@@ -217,6 +220,13 @@ with tab_ciclos:
 # =============================================================================
 with tab_dictados:
     st.subheader("Dictados por Ciclo")
+    st.caption(
+        "Los **dictados activos** acá son lo que la prevalidación de cronogramas "
+        "espera del ciclo. Si una materia del plan **no se va a dictar** este "
+        "cuatrimestre, marcala como `Activo=False` y desaparece de las "
+        "esperadas. La bandera `Virtual` se hereda de la materia pero se puede "
+        "ajustar caso por caso."
+    )
 
     if not ciclo_ids:
         st.info("Crea un ciclo primero en la pestana 'Ciclos'.")
@@ -226,180 +236,820 @@ with tab_dictados:
         )
 
         if sel_ciclo_dict:
-            # Show assigned plan versions
+            # =========================================================
+            # Panel de configuracion (carreras + planes + materias)
+            # =========================================================
             with next(get_session()) as session:
-                assigned_versions = session.exec(
+                _cfg_versions = list(session.exec(
                     select(PlanCarreraVersionDB)
-                    .join(CicloPlanVersionDB, PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
+                    .join(
+                        CicloPlanVersionDB,
+                        PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id,
+                    )
                     .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_dict)
-                ).all()
+                ).all())
+                _cfg_carrera_codes = sorted({v.carrera_codigo for v in _cfg_versions})
+                _cfg_carreras = {
+                    c.codigo: c for c in (
+                        session.get(CarreraDB, cc) for cc in _cfg_carrera_codes
+                    ) if c
+                }
+                _cfg_plan_ids = [v.id for v in _cfg_versions]
+                _cfg_pe = list(session.exec(
+                    select(PlanEstudioDB).where(
+                        PlanEstudioDB.plan_version_id.in_(_cfg_plan_ids)
+                    )
+                ).all()) if _cfg_plan_ids else []
+                _cfg_mat_codes = sorted({pe.materia_codigo for pe in _cfg_pe})
+                _cfg_mats = list(session.exec(
+                    select(MateriaDB).where(MateriaDB.codigo.in_(_cfg_mat_codes))
+                ).all()) if _cfg_mat_codes else []
 
-            if assigned_versions:
-                st.markdown("**Versiones de plan asignadas:**")
-                for v in assigned_versions:
-                    st.caption(f"- {v.carrera_codigo}: {v.nombre}")
-            else:
+            if not _cfg_versions:
                 st.warning(
                     "Este ciclo no tiene versiones de plan asignadas. "
                     "Los dictados no se pueden crear sin versiones asignadas."
                 )
+                st.stop()
+
+            # Stats agregadas
+            _cfg_n_carreras = len(_cfg_carreras)
+            _cfg_n_no_recursado = sum(
+                1 for c in _cfg_carreras.values() if not c.dicta_recursado
+            )
+            _cfg_n_planes = len(_cfg_versions)
+            _cfg_n_mats = len(_cfg_mats)
+            _cfg_n_optativas = sum(1 for m in _cfg_mats if m.optativa)
+            _cfg_n_virtuales = sum(1 for m in _cfg_mats if m.virtual)
+            _cfg_n_anuales = sum(1 for m in _cfg_mats if m.periodo == "anual")
+            _cfg_n_inactive = sum(1 for m in _cfg_mats if not m.active)
+            _cfg_n_override = sum(
+                1 for m in _cfg_mats if m.dicta_recursado is not None
+            )
+
+            # Resumen compacto de configuración (ediciones por carrera abajo)
+            _cfg1, _cfg2, _cfg3, _cfg4, _cfg5 = st.columns(5)
+            _cfg1.metric("Carreras", _cfg_n_carreras)
+            _cfg2.metric("Planes", _cfg_n_planes)
+            _cfg3.metric("Materias", _cfg_n_mats)
+            _cfg4.metric("Optativas", _cfg_n_optativas)
+            _cfg5.metric("Override recursado", _cfg_n_override)
+            if _cfg_n_no_recursado:
+                st.caption(
+                    f"⚠️ {_cfg_n_no_recursado} carrera(s) con "
+                    f"`dicta_recursado=False`: las materias exclusivas y del "
+                    f"cuatri opuesto se crean como **inactivas** (salvo override)."
+                )
+            if _cfg_n_inactive:
+                st.caption(
+                    f"ℹ️ {_cfg_n_inactive} materia(s) con `active=False` "
+                    "(soft-delete) — siguen apareciendo en planes y se crean dictados igual."
+                )
+            st.caption(
+                "Editá `dicta_recursado` (carrera y materia) y la versión del plan "
+                "asignada al ciclo desde **dentro de cada expander de carrera** abajo. "
+                "Después tocá **🔄 Recalcular** para alinear los dictados con las "
+                "reglas actualizadas."
+            )
 
             st.divider()
 
-            # --- Create dictados button ---
-            if st.button("Crear Dictados", type="primary", key="btn_create_dictados"):
+            # --- Create + Recompute buttons ---
+            st.caption(
+                "**Crear Dictados** genera todas las materias del plan como "
+                "dictados de este ciclo. Las que la regla de `dicta_recursado` "
+                "indique no dictar quedan creadas pero **inactivas** — las "
+                "podés activar manualmente cuando quieras. Es idempotente. "
+                "**Recalcular según reglas** revisa todos los dictados y "
+                "ajusta `activo` según las banderas actuales (útil después de "
+                "tocar `dicta_recursado` en una carrera)."
+            )
+            # Drift summary: detecta recompute pendiente, materias sin
+            # dictado y dictados huerfanos. Se muestra como un chip al lado
+            # del boton Recalcular para que el usuario sepa si hay cambios
+            # pendientes despues de tocar configuracion.
+            with next(get_session()) as _drift_sess:
+                _drift = get_drift_summary(_drift_sess, sel_ciclo_dict)
+
+            _bcol1, _bcol2, _bcol3 = st.columns([1, 1.4, 3])
+            with _bcol1:
+                _do_create = st.button(
+                    "➕ Crear Dictados",
+                    type="primary",
+                    key="btn_create_dictados",
+                )
+            with _bcol2:
+                _do_recompute = st.button(
+                    "🔄 Recalcular según reglas",
+                    key="btn_recompute_dictados",
+                    help=(
+                        "Compara la bandera `activo` de cada dictado contra las "
+                        "reglas vigentes y muestra un preview de los cambios."
+                    ),
+                )
+            with _bcol3:
+                if _drift.is_clean:
+                    st.success("✅ Dictados al día con la configuración.")
+                else:
+                    _drift_parts = []
+                    _n_recompute = (
+                        len(_drift.recompute_to_activate)
+                        + len(_drift.recompute_to_deactivate)
+                    )
+                    if _n_recompute > 0:
+                        _drift_parts.append(
+                            f"🔄 {_n_recompute} a recalcular"
+                        )
+                    if _drift.missing_materias:
+                        _drift_parts.append(
+                            f"➕ {len(_drift.missing_materias)} sin dictado"
+                        )
+                    if _drift.orphan_dictados:
+                        _drift_parts.append(
+                            f"🗑️ {len(_drift.orphan_dictados)} huérfano(s)"
+                        )
+                    st.warning(
+                        "⚠️ Cambios pendientes: " + " · ".join(_drift_parts)
+                    )
+                    with st.popover(
+                        "Ver detalle", use_container_width=False,
+                    ):
+                        if _drift.recompute_to_activate:
+                            st.markdown(
+                                f"**🟢 Pasarán a Activo al recalcular "
+                                f"({len(_drift.recompute_to_activate)})**"
+                            )
+                            for _mc, _dc in _drift.recompute_to_activate:
+                                st.write(f"- `{_dc}` ({_mc})")
+                        if _drift.recompute_to_deactivate:
+                            st.markdown(
+                                f"**⚪ Pasarán a Inactivo al recalcular "
+                                f"({len(_drift.recompute_to_deactivate)})**"
+                            )
+                            for _mc, _dc in _drift.recompute_to_deactivate:
+                                st.write(f"- `{_dc}` ({_mc})")
+                        if _drift.missing_materias:
+                            st.markdown(
+                                f"**➕ Materias del plan sin dictado "
+                                f"({len(_drift.missing_materias)})**"
+                            )
+                            st.caption(
+                                "Apretá **Crear Dictados** para crearlos."
+                            )
+                            for _mc, _nm in _drift.missing_materias:
+                                st.write(f"- {_mc} — {_nm}")
+                        if _drift.orphan_dictados:
+                            st.markdown(
+                                f"**🗑️ Dictados huérfanos "
+                                f"({len(_drift.orphan_dictados)})**"
+                            )
+                            st.caption(
+                                "Materias con dictado pero que ya no están "
+                                "en ningún plan asignado al ciclo. Suele "
+                                "pasar después de cambiar la versión del plan."
+                            )
+                            for _mc, _dc in _drift.orphan_dictados:
+                                st.write(f"- `{_dc}` ({_mc})")
+                            if st.button(
+                                "🗑️ Eliminar huérfanos",
+                                key="btn_delete_orphans",
+                                type="secondary",
+                            ):
+                                _orphan_codes = [
+                                    mc for mc, _ in _drift.orphan_dictados
+                                ]
+                                with next(get_session()) as _del_s:
+                                    _del_n = 0
+                                    for _orp_mc in _orphan_codes:
+                                        _orp_d = _del_s.exec(
+                                            select(DictadoDB)
+                                            .where(DictadoDB.materia_codigo == _orp_mc)
+                                            .join(
+                                                DictadoCicloDB,
+                                                DictadoDB.id == DictadoCicloDB.dictado_id,
+                                            )
+                                            .where(DictadoCicloDB.ciclo_id == sel_ciclo_dict)
+                                        ).first()
+                                        if _orp_d is None:
+                                            continue
+                                        # borrar link y dictado
+                                        _orp_link = _del_s.get(
+                                            DictadoCicloDB,
+                                            (_orp_d.id, sel_ciclo_dict),
+                                        )
+                                        if _orp_link:
+                                            _del_s.delete(_orp_link)
+                                        _del_s.delete(_orp_d)
+                                        _del_n += 1
+                                    _del_s.commit()
+                                st.toast(f"{_del_n} huérfano(s) eliminado(s).")
+                                st.rerun()
+
+            if _do_create:
                 with next(get_session()) as session:
                     result = create_dictados_for_ciclo(session, sel_ciclo_dict)
-
                 if result.errors:
                     for err in result.errors:
                         st.error(err)
                 else:
                     msg_parts = []
                     if result.created:
-                        msg_parts.append(f"{result.created} creados")
+                        _act = result.created - result.created_inactive
+                        msg_parts.append(
+                            f"{result.created} creados "
+                            f"({_act} activos, {result.created_inactive} inactivos)"
+                        )
                     if result.linked:
                         msg_parts.append(f"{result.linked} vinculados (anuales)")
                     if result.skipped:
                         msg_parts.append(f"{result.skipped} ya existentes")
-                    if result.skipped_recursado:
-                        msg_parts.append(f"{result.skipped_recursado} omitidos (sin recursado)")
                     st.success(f"Dictados: {', '.join(msg_parts)}")
                     st.rerun()
 
+            if _do_recompute:
+                with next(get_session()) as session:
+                    preview = recompute_activo_for_ciclo(
+                        session, sel_ciclo_dict, apply=False,
+                    )
+                st.session_state["dict_recompute_preview"] = {
+                    "ciclo": sel_ciclo_dict,
+                    "to_activate": preview.to_activate,
+                    "to_deactivate": preview.to_deactivate,
+                    "unchanged": preview.unchanged,
+                }
+
+            # --- Recompute preview UI ---
+            _rprev = st.session_state.get("dict_recompute_preview")
+            if _rprev and _rprev.get("ciclo") == sel_ciclo_dict:
+                _to_act = _rprev["to_activate"]
+                _to_deact = _rprev["to_deactivate"]
+                _n_changes = len(_to_act) + len(_to_deact)
+                if _n_changes == 0:
+                    st.info(
+                        f"Todos los dictados ya están alineados con las reglas "
+                        f"actuales ({_rprev['unchanged']} sin cambios)."
+                    )
+                    st.session_state.pop("dict_recompute_preview", None)
+                else:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**Preview de recálculo** — "
+                            f"{_n_changes} cambio(s), "
+                            f"{_rprev['unchanged']} sin cambio."
+                        )
+                        if _to_act:
+                            with st.expander(
+                                f"🟢 Pasarán a Activo ({len(_to_act)})",
+                                expanded=True,
+                            ):
+                                for _mc, _dc in _to_act:
+                                    st.write(f"- `{_dc}` ({_mc})")
+                        if _to_deact:
+                            with st.expander(
+                                f"⚪ Pasarán a Inactivo ({len(_to_deact)})",
+                                expanded=True,
+                            ):
+                                for _mc, _dc in _to_deact:
+                                    st.write(f"- `{_dc}` ({_mc})")
+                        _ac1, _ac2, _ = st.columns([1, 1, 3])
+                        with _ac1:
+                            if st.button(
+                                "Aplicar cambios",
+                                type="primary",
+                                key="btn_apply_recompute",
+                            ):
+                                with next(get_session()) as session:
+                                    res = recompute_activo_for_ciclo(
+                                        session, sel_ciclo_dict, apply=True,
+                                    )
+                                st.success(
+                                    f"{res.n_changes} dictado(s) actualizado(s)."
+                                )
+                                st.session_state.pop(
+                                    "dict_recompute_preview", None,
+                                )
+                                st.rerun()
+                        with _ac2:
+                            if st.button(
+                                "Cancelar", key="btn_cancel_recompute",
+                            ):
+                                st.session_state.pop(
+                                    "dict_recompute_preview", None,
+                                )
+                                st.rerun()
+
             st.divider()
 
-            # --- Dictados grouped by carrera ---
+            # --- Build unified per-carrera/per-materia view ---
             with next(get_session()) as session:
                 dictados = get_dictados_for_ciclo(session, sel_ciclo_dict)
+                plan_version_ids = list(session.exec(
+                    select(CicloPlanVersionDB.plan_version_id)
+                    .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_dict)
+                ).all())
 
-                if not dictados:
-                    st.info("No hay dictados para este ciclo. Use el boton 'Crear Dictados'.")
+                if not plan_version_ids:
+                    st.info("Asigne versiones de plan al ciclo para gestionar dictados.")
+                    st.stop()
+
+                # Index dictados por materia
+                dict_by_mat: dict[str, DictadoDB] = {d.materia_codigo: d for d in dictados}
+
+                # Plan entries (todas las materias del plan, con anio/cuatri/optativa)
+                pe_rows = list(session.exec(
+                    select(PlanEstudioDB)
+                    .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))
+                ).all())
+
+                # Materias data
+                mat_codigos = list({pe.materia_codigo for pe in pe_rows})
+                mats = list(session.exec(
+                    select(MateriaDB).where(MateriaDB.codigo.in_(mat_codigos))
+                ).all()) if mat_codigos else []
+                mat_map: dict[str, MateriaDB] = {m.codigo: m for m in mats}
+
+                # Carrera names + objects (necesitamos dicta_recursado tambien)
+                carrera_codigos = sorted({pe.carrera_codigo for pe in pe_rows})
+                carrera_nombres = {}
+                carrera_objs: dict[str, CarreraDB] = {}
+                for cc in carrera_codigos:
+                    carrera_db = session.get(CarreraDB, cc)
+                    if carrera_db:
+                        carrera_nombres[cc] = carrera_db.nombre
+                        carrera_objs[cc] = carrera_db
+                    else:
+                        carrera_nombres[cc] = cc
+
+                # Plan versions: cual está asignada (current) y cuales hay
+                # disponibles por carrera (para el swap).
+                _current_pv_by_carrera: dict[str, str] = {}
+                for pv_id in plan_version_ids:
+                    _pv = session.get(PlanCarreraVersionDB, pv_id)
+                    if _pv:
+                        _current_pv_by_carrera[_pv.carrera_codigo] = pv_id
+                _available_pvs_by_carrera: dict[str, list[PlanCarreraVersionDB]] = {}
+                for cc in carrera_codigos:
+                    _avail = list(session.exec(
+                        select(PlanCarreraVersionDB)
+                        .where(PlanCarreraVersionDB.carrera_codigo == cc)
+                        .order_by(PlanCarreraVersionDB.fecha_creacion.desc())
+                    ).all())
+                    _available_pvs_by_carrera[cc] = _avail
+
+                # Per-carrera index: codigo_carrera -> { materia_codigo -> {pe, dictado, materia, otras_carreras} }
+                # otras_carreras indica si la materia aparece en otros planes del ciclo (compartida).
+                materia_carreras: dict[str, set[str]] = {}
+                for pe in pe_rows:
+                    materia_carreras.setdefault(pe.materia_codigo, set()).add(pe.carrera_codigo)
+
+                items_by_carrera: dict[str, list[dict]] = {}
+                for pe in pe_rows:
+                    mat = mat_map.get(pe.materia_codigo)
+                    if not mat:
+                        continue
+                    d = dict_by_mat.get(pe.materia_codigo)
+                    items_by_carrera.setdefault(pe.carrera_codigo, []).append({
+                        "materia": mat,
+                        "pe": pe,
+                        "dictado": d,
+                        "otras": sorted(
+                            materia_carreras[pe.materia_codigo] - {pe.carrera_codigo}
+                        ),
+                    })
+
+                # Skipped materias (para razones)
+                skipped_list = get_skipped_materias_for_ciclo(session, sel_ciclo_dict)
+                skipped_razones = {sm.materia_codigo: sm.razon for sm in skipped_list}
+
+            if not items_by_carrera:
+                st.info(
+                    "Las versiones de plan asignadas a este ciclo no tienen "
+                    "materias cargadas. Cargá los planes de estudio primero."
+                )
+                st.stop()
+
+            # =========================================================
+            # Top stats
+            # =========================================================
+            _n_total_dict = len(dictados)
+            _n_activos = sum(1 for d in dictados if d.activo)
+            _n_virtuales = sum(1 for d in dictados if d.virtual and d.activo)
+            _n_inactivos = _n_total_dict - _n_activos
+            _n_sin_dict = sum(
+                1 for items in items_by_carrera.values()
+                for it in items if it["dictado"] is None
+            )
+            # Optativas (a nivel materia, contando una vez)
+            _opt_codigos = {
+                it["pe"].materia_codigo
+                for items in items_by_carrera.values()
+                for it in items if it["pe"].optativa
+            }
+
+            _ms1, _ms2, _ms3, _ms4 = st.columns(4)
+            _ms1.metric("Activos", _n_activos)
+            _ms2.metric("Inactivos", _n_inactivos)
+            _ms3.metric("Virtuales", _n_virtuales)
+            _ms4.metric("Optativas", len(_opt_codigos))
+            if _n_sin_dict > 0:
+                st.warning(
+                    f"⚠️ Hay {_n_sin_dict} materia(s) del plan sin dictado "
+                    "creado todavía. Apretá **Crear Dictados** para "
+                    "completar el set."
+                )
+            st.caption(
+                "**Esperadas en prevalidación = Activos.** Las inactivas se "
+                "excluyen del set de materias esperadas."
+            )
+
+            st.divider()
+
+            # =========================================================
+            # Filters
+            # =========================================================
+            _all_anios = sorted({
+                it["pe"].anio_plan
+                for items in items_by_carrera.values()
+                for it in items if it["pe"].anio_plan is not None
+            })
+            _all_cuatris = sorted({
+                it["pe"].cuatrimestre_plan or "—"
+                for items in items_by_carrera.values()
+                for it in items
+            })
+
+            _fc1, _fc2 = st.columns([3, 2])
+            with _fc1:
+                _q = st.text_input(
+                    "🔎 Buscar (código o nombre de materia)",
+                    key="dict_search",
+                    placeholder="Ej: MAT, Cálculo, FB1",
+                )
+            with _fc2:
+                _estado = st.multiselect(
+                    "Estado",
+                    options=["Activo", "Inactivo"],
+                    default=["Activo", "Inactivo"],
+                    key="dict_estado",
+                )
+
+            _fc3, _fc4, _fc5, _fc6 = st.columns([2, 2, 2, 2])
+            with _fc3:
+                _modal = st.multiselect(
+                    "Modalidad",
+                    options=["Presencial", "Virtual"],
+                    default=["Presencial", "Virtual"],
+                    key="dict_modal",
+                )
+            with _fc4:
+                _anios_sel = st.multiselect(
+                    "Año del plan",
+                    options=_all_anios,
+                    default=_all_anios,
+                    format_func=lambda a: f"{a}°",
+                    key="dict_anio",
+                )
+            with _fc5:
+                _cuatris_sel = st.multiselect(
+                    "Cuatri del plan",
+                    options=_all_cuatris,
+                    default=_all_cuatris,
+                    key="dict_cuatri",
+                )
+            with _fc6:
+                _opt_filt = st.selectbox(
+                    "Optativas",
+                    options=["Incluir", "Solo", "Excluir"],
+                    index=0,
+                    key="dict_opt",
+                )
+
+            # Open/close all
+            _bc1, _bc2, _bc3 = st.columns([1, 1, 4])
+            with _bc1:
+                if st.button("Abrir todos", key="dict_open_all"):
+                    st.session_state["dict_force_open"] = True
+                    st.rerun()
+            with _bc2:
+                if st.button("Cerrar todos", key="dict_close_all"):
+                    st.session_state["dict_force_open"] = False
+                    st.rerun()
+            _force_state = st.session_state.get("dict_force_open")
+
+            def _matches(item: dict) -> bool:
+                pe = item["pe"]
+                mat = item["materia"]
+                d = item["dictado"]
+                # search
+                if _q:
+                    qn = _q.strip().lower()
+                    if qn not in mat.codigo.lower() and qn not in mat.nombre.lower():
+                        return False
+                # estado: solo aplica filtro si hay dictado.
+                # Las "sin dictado" (legacy) se muestran siempre con badge.
+                if d is not None:
+                    if d.activo and "Activo" not in _estado:
+                        return False
+                    if not d.activo and "Inactivo" not in _estado:
+                        return False
+                # modalidad: si hay dictado, prima dictado.virtual; sin dictado, materia.virtual
+                _is_virtual = d.virtual if d is not None else mat.virtual
+                if _is_virtual and "Virtual" not in _modal:
+                    return False
+                if not _is_virtual and "Presencial" not in _modal:
+                    return False
+                # anio
+                if pe.anio_plan is not None and pe.anio_plan not in _anios_sel:
+                    return False
+                # cuatri
+                _ck = pe.cuatrimestre_plan or "—"
+                if _ck not in _cuatris_sel:
+                    return False
+                # optativas
+                if _opt_filt == "Solo" and not pe.optativa:
+                    return False
+                if _opt_filt == "Excluir" and pe.optativa:
+                    return False
+                return True
+
+            # =========================================================
+            # Per-carrera expanders
+            # =========================================================
+            changes: dict[str, dict] = {}  # dictado_id -> {activo, virtual}
+
+            def _render_item(item: dict, carrera_cod: str) -> None:
+                """Render one materia row inside a carrera expander."""
+                mat = item["materia"]
+                pe = item["pe"]
+                d = item["dictado"]
+                otras = item["otras"]
+
+                col_info, col_meta, col_rec, col_activo, col_virtual = st.columns(
+                    [4, 1.6, 1.4, 1, 1]
+                )
+
+                with col_info:
+                    # Estado tag
+                    if d is None:
+                        _badge = "🔘 Sin dictado"
+                    elif d.activo:
+                        _badge = "🟢 Activo"
+                    else:
+                        _badge = "⚪ Inactivo"
+                    _virt = " · 🌐 virtual" if (
+                        (d.virtual if d else mat.virtual)
+                    ) else ""
+                    _opt = " · 📘 optativa" if pe.optativa else ""
+                    _anu = " · 📅 anual" if mat.periodo == "anual" else ""
+                    st.markdown(
+                        f"**{mat.codigo}** — {mat.nombre}  \n"
+                        f"<span style='color:#888;font-size:0.85em'>"
+                        f"{_badge}{_virt}{_opt}{_anu}"
+                        f"</span>",
+                        unsafe_allow_html=True,
+                    )
+                    _shared_msg = (
+                        f"compartida con: {', '.join(otras)}" if otras else ""
+                    )
+                    if d is None:
+                        _sm_razon = skipped_razones.get(mat.codigo, "")
+                        _line = " · ".join(
+                            x for x in (_sm_razon, _shared_msg) if x
+                        )
+                    else:
+                        _line = _shared_msg
+                    if _line:
+                        st.caption(_line)
+
+                with col_meta:
+                    _anio = f"{pe.anio_plan}°" if pe.anio_plan else "—"
+                    _cuatri = pe.cuatrimestre_plan or "—"
+                    st.caption(
+                        f"Año: **{_anio}** · Cuatri: **{_cuatri}**  \n"
+                        f"h/sem: {mat.horas_semanales or '—'}"
+                    )
+
+                # Override de dicta_recursado por materia (3 estados)
+                with col_rec:
+                    _rec_options = ["Según Carrera", "Sí", "No"]
+                    _curr_idx = (
+                        0 if mat.dicta_recursado is None
+                        else (1 if mat.dicta_recursado else 2)
+                    )
+                    _new_rec_lbl = st.selectbox(
+                        "Recursado",
+                        options=_rec_options,
+                        index=_curr_idx,
+                        key=f"rec_mat_{carrera_cod}_{mat.codigo}",
+                        help=(
+                            "Override de la bandera de recursado de la carrera. "
+                            "Según Carrera = usa la bandera de la carrera. "
+                            "Sí/No fuerza para esta materia (se aplica al recalcular)."
+                        ),
+                        label_visibility="visible",
+                    )
+                    _new_rec_val = (
+                        None if _new_rec_lbl == "Según Carrera"
+                        else (True if _new_rec_lbl == "Sí" else False)
+                    )
+                    if _new_rec_val != mat.dicta_recursado:
+                        with next(get_session()) as _ds:
+                            _m_db = _ds.get(MateriaDB, mat.codigo)
+                            if _m_db:
+                                _m_db.dicta_recursado = _new_rec_val
+                                _ds.add(_m_db)
+                                _ds.commit()
+                        st.toast(
+                            f"{mat.codigo}: recursado override = {_new_rec_lbl}. "
+                            "🔄 Recalcular para aplicar."
+                        )
+                        st.rerun()
+
+                if d is not None:
+                    with col_activo:
+                        new_activo = st.checkbox(
+                            "Activo",
+                            value=d.activo,
+                            key=f"activo_{carrera_cod}_{d.id}",
+                        )
+                        if new_activo != d.activo:
+                            changes.setdefault(d.id, {})["activo"] = new_activo
+                    with col_virtual:
+                        new_virtual = st.checkbox(
+                            "Virtual",
+                            value=d.virtual,
+                            key=f"virtual_{carrera_cod}_{d.id}",
+                        )
+                        if new_virtual != d.virtual:
+                            changes.setdefault(d.id, {})["virtual"] = new_virtual
                 else:
-                    st.success(f"{len(dictados)} dictados para {sel_ciclo_dict}")
+                    # Caso raro: materia del plan sin dictado todavia. Suele
+                    # pasar solo en estado intermedio (DB pre-migracion).
+                    # Apretar "Crear Dictados" arriba completa el set.
+                    with col_activo:
+                        st.caption("(Sin dictado)")
+                    with col_virtual:
+                        st.caption("—")
 
-                    # Group dictados by carrera
-                    # For each dictado, find which carrera(s) it belongs to via PlanEstudioDB
-                    plan_version_ids = session.exec(
-                        select(CicloPlanVersionDB.plan_version_id)
-                        .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_dict)
-                    ).all()
+            for carrera_cod in sorted(items_by_carrera.keys()):
+                carrera_nombre = carrera_nombres.get(carrera_cod, carrera_cod)
+                items = items_by_carrera[carrera_cod]
+                # filter
+                items_filt = [it for it in items if _matches(it)]
+                # Header stats
+                n_obl = sum(1 for it in items_filt if not it["pe"].optativa)
+                n_opt = sum(1 for it in items_filt if it["pe"].optativa)
+                n_act = sum(
+                    1 for it in items_filt
+                    if it["dictado"] and it["dictado"].activo
+                )
+                n_inact = sum(
+                    1 for it in items_filt
+                    if it["dictado"] and not it["dictado"].activo
+                )
+                n_sd = sum(1 for it in items_filt if it["dictado"] is None)
+                _hdr = (
+                    f"🎓 {carrera_cod} · {carrera_nombre} — "
+                    f"{len(items_filt)} materia(s) "
+                    f"(🟢 {n_act} · ⚪ {n_inact} · 🔘 {n_sd})"
+                )
 
-                    dictado_by_carrera: dict[str, list[DictadoDB]] = {}
-                    dictado_sin_carrera: list[DictadoDB] = []
+                if _force_state is True:
+                    _expanded = True
+                elif _force_state is False:
+                    _expanded = False
+                else:
+                    _expanded = True
+                with st.expander(_hdr, expanded=_expanded):
+                    # =================================================
+                    # Configuración de la carrera (editable inline)
+                    # =================================================
+                    _carr = carrera_objs.get(carrera_cod)
+                    if _carr is not None:
+                        with st.container(border=True):
+                            st.markdown("**⚙️ Configuración**")
+                            _cc1, _cc2 = st.columns(2)
+                            with _cc1:
+                                _new_rec = st.toggle(
+                                    "Carrera dicta recursado",
+                                    value=_carr.dicta_recursado,
+                                    key=f"cfg_carr_rec_{carrera_cod}",
+                                    help=(
+                                        "Si está activo, todas las materias "
+                                        "(obligatorias o de cuatri opuesto) se "
+                                        "crean activas por defecto. Si está "
+                                        "apagado, las del cuatri opuesto a este "
+                                        "ciclo se crean inactivas (salvo override "
+                                        "de la materia)."
+                                    ),
+                                )
+                                if _new_rec != _carr.dicta_recursado:
+                                    with next(get_session()) as _ds:
+                                        _c_db = _ds.get(CarreraDB, carrera_cod)
+                                        if _c_db:
+                                            _c_db.dicta_recursado = _new_rec
+                                            _ds.add(_c_db)
+                                            _ds.commit()
+                                    st.toast(
+                                        f"{carrera_cod}: dicta_recursado = "
+                                        f"{'Sí' if _new_rec else 'No'}. "
+                                        "Apretá 🔄 Recalcular arriba para alinear "
+                                        "dictados existentes."
+                                    )
+                                    st.rerun()
+                            with _cc2:
+                                _avail = _available_pvs_by_carrera.get(carrera_cod, [])
+                                _curr_pv_id = _current_pv_by_carrera.get(carrera_cod)
+                                if len(_avail) > 1:
+                                    _pv_options = {pv.id: pv.nombre for pv in _avail}
+                                    _pv_idx = (
+                                        list(_pv_options.keys()).index(_curr_pv_id)
+                                        if _curr_pv_id in _pv_options else 0
+                                    )
+                                    _new_pv = st.selectbox(
+                                        "Plan asignado al ciclo",
+                                        options=list(_pv_options.keys()),
+                                        index=_pv_idx,
+                                        format_func=lambda x: _pv_options[x],
+                                        key=f"cfg_carr_pv_{carrera_cod}",
+                                        help=(
+                                            "Cambiar la versión del plan asignada "
+                                            "a esta carrera en este ciclo. Las "
+                                            "materias del plan nuevo pueden diferir; "
+                                            "tocá 🔄 Recalcular después para alinear."
+                                        ),
+                                    )
+                                    if _curr_pv_id and _new_pv != _curr_pv_id:
+                                        with next(get_session()) as _ds:
+                                            _ok = swap_plan_version_for_ciclo(
+                                                _ds, sel_ciclo_dict,
+                                                carrera_cod, _new_pv,
+                                            )
+                                        if _ok:
+                                            st.toast(
+                                                f"Plan de {carrera_cod} cambiado. "
+                                                "Apretá 🔄 Recalcular arriba."
+                                            )
+                                            st.rerun()
+                                elif _avail:
+                                    st.caption(
+                                        f"Plan: **{_avail[0].nombre}** "
+                                        "(única versión disponible)"
+                                    )
+                                else:
+                                    st.caption("Sin versiones de plan.")
 
-                    for d in dictados:
-                        # Find carreras for this materia in the assigned plan versions
-                        carrera_codigos = session.exec(
-                            select(PlanEstudioDB.carrera_codigo)
-                            .where(PlanEstudioDB.materia_codigo == d.materia_codigo)
-                            .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))
-                            .distinct()
-                        ).all()
+                    if not items_filt:
+                        st.caption("No hay materias que cumplan los filtros.")
+                        continue
 
-                        if not carrera_codigos:
-                            dictado_sin_carrera.append(d)
+                    # Split obligatorias / optativas
+                    obligatorias = [
+                        it for it in items_filt if not it["pe"].optativa
+                    ]
+                    optativas = [it for it in items_filt if it["pe"].optativa]
+
+                    if obligatorias:
+                        if optativas:
+                            st.markdown(f"**Obligatorias ({len(obligatorias)})**")
+                        # Sort: por anio, cuatri, codigo
+                        obligatorias.sort(key=lambda it: (
+                            it["pe"].anio_plan or 99,
+                            it["pe"].cuatrimestre_plan or "",
+                            it["materia"].codigo,
+                        ))
+                        for it in obligatorias:
+                            _render_item(it, carrera_cod)
+
+                    if optativas:
+                        if obligatorias:
+                            st.markdown(f"**Optativas ({len(optativas)})**")
                         else:
-                            for cc in carrera_codigos:
-                                dictado_by_carrera.setdefault(cc, []).append(d)
+                            st.caption(f"{len(optativas)} optativa(s).")
+                        optativas.sort(key=lambda it: (
+                            it["pe"].anio_plan or 99,
+                            it["materia"].codigo,
+                        ))
+                        for it in optativas:
+                            _render_item(it, carrera_cod)
 
-                    # Fetch carrera names for display
-                    carrera_nombres = {}
-                    for cc in dictado_by_carrera:
-                        carrera_db = session.get(CarreraDB, cc)
-                        carrera_nombres[cc] = carrera_db.nombre if carrera_db else cc
-
-                    # Identify shared dictados (appear in multiple carreras)
-                    dictado_carreras: dict[str, list[str]] = {}
-                    for cc, dicts in dictado_by_carrera.items():
-                        for d in dicts:
-                            dictado_carreras.setdefault(d.id, []).append(cc)
-
-                    # Track changes for batch save
-                    changes: dict[str, dict] = {}  # dictado_id -> {activo, virtual}
-
-                    for carrera_cod in sorted(dictado_by_carrera.keys()):
-                        carrera_nombre = carrera_nombres.get(carrera_cod, carrera_cod)
-                        carrera_dictados = dictado_by_carrera[carrera_cod]
-
-                        with st.expander(
-                            f"🎓 {carrera_cod} - {carrera_nombre} ({len(carrera_dictados)} dictados)",
-                            expanded=True,
-                        ):
-                            for d in sorted(carrera_dictados, key=lambda x: x.dictado_codigo):
-                                col_info, col_activo, col_virtual = st.columns([4, 1, 1])
-
-                                with col_info:
-                                    virtual_tag = " [V]" if d.virtual else ""
-                                    activo_tag = "" if d.activo else " (inactivo)"
-                                    otras = [
-                                        c for c in dictado_carreras.get(d.id, [])
-                                        if c != carrera_cod
-                                    ]
-                                    compartida_tag = (
-                                        f" (compartida con {', '.join(otras)})"
-                                        if otras else ""
-                                    )
-                                    st.markdown(
-                                        f"**{d.dictado_codigo}**{virtual_tag}{activo_tag}"
-                                    )
-                                    st.caption(f"{d.materia_codigo}{compartida_tag}")
-
-                                with col_activo:
-                                    new_activo = st.checkbox(
-                                        "Activo",
-                                        value=d.activo,
-                                        key=f"activo_{carrera_cod}_{d.id}",
-                                    )
-                                    if new_activo != d.activo:
-                                        changes.setdefault(d.id, {})["activo"] = new_activo
-
-                                with col_virtual:
-                                    new_virtual = st.checkbox(
-                                        "Virtual",
-                                        value=d.virtual,
-                                        key=f"virtual_{carrera_cod}_{d.id}",
-                                    )
-                                    if new_virtual != d.virtual:
-                                        changes.setdefault(d.id, {})["virtual"] = new_virtual
-
-                    if dictado_sin_carrera:
-                        with st.expander(
-                            f"Sin carrera asignada ({len(dictado_sin_carrera)} dictados)",
-                        ):
-                            for d in dictado_sin_carrera:
-                                st.write(f"- {d.dictado_codigo} ({d.materia_codigo})")
-
-                    # Batch save button
-                    if changes:
-                        st.divider()
-                        if st.button(
-                            f"💾 Guardar cambios ({len(changes)} dictado(s))",
-                            type="primary",
-                            key="btn_save_dictados",
-                        ):
-                            with next(get_session()) as save_session:
-                                for did, vals in changes.items():
-                                    update_dictado(
-                                        save_session,
-                                        did,
-                                        activo=vals.get("activo"),
-                                        virtual=vals.get("virtual"),
-                                    )
-                            st.success(f"{len(changes)} dictado(s) actualizado(s)")
-                            st.rerun()
-
-                # --- Materias sin dictado ---
+            # =========================================================
+            # Batch save (toggles activo/virtual)
+            # =========================================================
+            if changes:
                 st.divider()
-                skipped = get_skipped_materias_for_ciclo(session, sel_ciclo_dict)
-
-            if skipped:
-                with st.expander(
-                    f"⚠️ Materias sin dictado ({len(skipped)})", expanded=False
+                if st.button(
+                    f"💾 Guardar cambios ({len(changes)} dictado(s))",
+                    type="primary",
+                    key="btn_save_dictados",
                 ):
-                    for sm in skipped:
-                        col_mat, col_reason = st.columns([2, 3])
-                        with col_mat:
-                            st.markdown(f"**{sm.materia_codigo}** - {sm.materia_nombre}")
-                        with col_reason:
-                            st.caption(sm.razon)
+                    with next(get_session()) as save_session:
+                        for did, vals in changes.items():
+                            update_dictado(
+                                save_session,
+                                did,
+                                activo=vals.get("activo"),
+                                virtual=vals.get("virtual"),
+                            )
+                    st.success(f"{len(changes)} dictado(s) actualizado(s)")
+                    st.rerun()

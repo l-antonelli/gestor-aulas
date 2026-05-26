@@ -38,6 +38,15 @@ from src.services.schedule_service import (
 from src.services.plan_generation_service import (
     preview_plan_from_schedule,
 )
+from src.services.dictado_service import (
+    get_dictado_codigos_for_ciclo,
+    get_materias_esperadas_from_dictados,
+    has_dictados_for_ciclo,
+    set_activo_for_materias_in_ciclo,
+)
+from src.services.cronograma_validation_service import (
+    _get_faltantes_por_carrera as _service_get_faltantes_por_carrera,
+)
 from src.services.validations import (
     validar_factibilidad_particion_horas,
 )
@@ -80,103 +89,10 @@ _BASE_TIME_OPTIONS = [
 ]
 
 
-def _get_materias_esperadas(session, ciclo_id: str) -> dict[str, str]:
-    """Return {materia_codigo: materia_nombre} for all materias in plan versions of a ciclo."""
-    statement = (
-        select(MateriaDB.codigo, MateriaDB.nombre)
-        .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
-        .join(PlanCarreraVersionDB, PlanEstudioDB.plan_version_id == PlanCarreraVersionDB.id)
-        .join(CicloPlanVersionDB, PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
-        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
-        .distinct()
-    )
-    rows = session.exec(statement).all()
-    return {codigo: nombre for codigo, nombre in rows}
-
-
-def _get_faltantes_por_carrera(
-    session, ciclo_id: str, materias_en_schedule: set[str],
-) -> list[dict]:
-    """Return enriched faltantes grouped by carrera with plan info and reasons."""
-    ciclo = ciclo_crud.get(session, ciclo_id)
-    if not ciclo:
-        return []
-    cuatri_ciclo = f"{ciclo.numero}C"
-
-    cpv_rows = session.exec(
-        select(CicloPlanVersionDB).where(CicloPlanVersionDB.ciclo_id == ciclo_id)
-    ).all()
-
-    result = []
-    for cpv in cpv_rows:
-        pv = session.get(PlanCarreraVersionDB, cpv.plan_version_id)
-        if not pv:
-            continue
-        carrera = session.get(CarreraDB, pv.carrera_codigo)
-        if not carrera:
-            continue
-
-        pe_rows = session.exec(
-            select(PlanEstudioDB)
-            .where(PlanEstudioDB.plan_version_id == pv.id)
-            .order_by(PlanEstudioDB.anio_plan, PlanEstudioDB.cuatrimestre_plan)
-        ).all()
-
-        faltantes_pe = [
-            pe for pe in pe_rows
-            if pe.materia_codigo not in materias_en_schedule
-        ]
-        if not faltantes_pe:
-            continue
-
-        falt_codigos = list({pe.materia_codigo for pe in faltantes_pe})
-        mats_db = session.exec(
-            select(MateriaDB).where(col(MateriaDB.codigo).in_(falt_codigos))
-        ).all()
-        mat_map = {m.codigo: m for m in mats_db}
-
-        materias_faltantes = []
-        for pe in faltantes_pe:
-            mat = mat_map.get(pe.materia_codigo)
-            if not mat:
-                continue
-
-            cuatri = pe.cuatrimestre_plan
-            if cuatri and cuatri == cuatri_ciclo:
-                razon = f"Materia del {cuatri_ciclo}, sin horarios"
-            elif cuatri and cuatri.lower() == "anual":
-                razon = "Materia anual, se espera en ambos cuatrimestres"
-            elif cuatri:
-                if carrera.dicta_recursado:
-                    razon = f"Es de {cuatri}, incluida por recursado"
-                else:
-                    razon = f"Es de {cuatri} (carrera no dicta recursado)"
-            else:
-                razon = "Sin cuatrimestre asignado en el plan"
-
-            materias_faltantes.append({
-                "codigo": mat.codigo,
-                "nombre": mat.nombre,
-                "anio_plan": pe.anio_plan,
-                "cuatrimestre_plan": pe.cuatrimestre_plan,
-                "optativa": pe.optativa,
-                "periodo": mat.periodo,
-                "horas_semanales": mat.horas_semanales,
-                "virtual": mat.virtual,
-                "razon": razon,
-            })
-
-        if materias_faltantes:
-            result.append({
-                "carrera_codigo": carrera.codigo,
-                "carrera_nombre": carrera.nombre,
-                "plan_version_nombre": pv.nombre,
-                "dicta_recursado": carrera.dicta_recursado,
-                "materias": materias_faltantes,
-            })
-
-    result.sort(key=lambda x: x["carrera_codigo"])
-    return result
+# Las funciones `_get_materias_esperadas` y `_get_faltantes_por_carrera`
+# vivian aca como duplicado de las del service. Ahora delegamos en
+# `src/services/cronograma_validation_service.py` y `dictado_service.py`
+# para que la fuente de verdad sea unica: dictados activos del ciclo.
 
 
 # ---------------------------------------------------------------------------
@@ -202,15 +118,21 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
             """
             **Validar un cronograma contra un ciclo** compara las materias
             presentes en el cronograma con las que se esperan dictar en ese
-            ciclo segun los planes de estudios asociados, y verifica
-            condiciones estructurales que necesita el siguiente paso (generar
-            plan + asignar aulas).
+            ciclo, y verifica condiciones estructurales que necesita el
+            siguiente paso (generar plan + asignar aulas).
+
+            **Materias esperadas = `Dictados` activos del ciclo**. Los dictados
+            se gestionan en **📆 Ciclos → 📚 Dictados**: ahi se decide para
+            cada materia del plan si se va a dictar este cuatrimestre y como
+            (`activo`, `virtual`). Si una materia esta marcada `activo=False`,
+            no aparece en faltantes ni se considera esperada.
 
             **Que se controla**:
 
-            - **Cobertura**: cuantas materias esperadas estan cubiertas, cuales
-              faltan (con detalle por carrera y razon), y cuales aparecen en el
-              cronograma sin estar en ningun plan del ciclo (extras).
+            - **Cobertura**: cuantas materias esperadas (dictados activos) estan
+              cubiertas, cuales faltan (con detalle por carrera y dictado
+              codigo), y cuales aparecen en el cronograma sin tener un dictado
+              activo en el ciclo (extras).
             - **Laboratorios**: cuantas materias del cronograma tienen
               laboratorios compatibles asignados, y como esta configurado su
               modo:
@@ -283,18 +205,35 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
         _prevalidation_key = f"prevalidation_{_sel_sched_id}"
         _preview_key = f"preview_{_sel_sched_id}"
 
+        # Pre-check: el ciclo necesita tener dictados creados para que la
+        # prevalidacion tenga "materias esperadas" contra las cuales comparar.
+        with next(get_session()) as _dchk_sess:
+            _has_dictados = has_dictados_for_ciclo(_dchk_sess, sel_ciclo_crono)
+        if not _has_dictados:
+            st.error(
+                "Este ciclo no tiene dictados creados. "
+                "Ir a **📆 Ciclos → 📚 Dictados**, seleccionar este ciclo "
+                "y apretar **Crear Dictados** antes de prevalidar."
+            )
+            return
+
         if st.button(
             "Prevalidar cronograma contra ciclo",
             type="primary",
             key=f"btn_prevalidar_{_sel_sched_id}",
             help=(
                 "Analiza el cronograma seleccionado comparando las materias "
-                "con las esperadas por los planes de estudio del ciclo."
+                "con los dictados activos de este ciclo."
             ),
         ):
             with next(get_session()) as session:
                 _entries = get_schedule_entries(session, _sel_sched_id)
-                _esperadas = _get_materias_esperadas(session, sel_ciclo_crono)
+                _esperadas = get_materias_esperadas_from_dictados(
+                    session, sel_ciclo_crono,
+                )
+                _dictado_codigos = get_dictado_codigos_for_ciclo(
+                    session, sel_ciclo_crono, only_active=True,
+                )
                 _mat_codigos = list({e.codigo_materia for e in _entries})
                 _mat_map: dict[str, str] = {}
                 if _mat_codigos:
@@ -309,9 +248,102 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 _cubiertas = _materias_en_sched & set(_esperadas.keys())
                 _faltantes_set = set(_esperadas.keys()) - _materias_en_sched
                 _extra = _materias_en_sched - set(_esperadas.keys())
-                _faltantes_por_carrera = _get_faltantes_por_carrera(
-                    session, sel_ciclo_crono, _materias_en_sched,
+                _faltantes_por_carrera = _service_get_faltantes_por_carrera(
+                    session, sel_ciclo_crono, _esperadas,
+                    _materias_en_sched, _dictado_codigos,
                 )
+
+                # --- Atributos por materia esperada (para filtro virt+opt) ---
+                _esp_attrs: dict[str, dict] = {}
+                if _esperadas:
+                    _esp_codes = list(_esperadas.keys())
+                    _esp_mats = session.exec(
+                        select(MateriaDB).where(
+                            col(MateriaDB.codigo).in_(_esp_codes)
+                        )
+                    ).all()
+                    _esp_mat_map = {m.codigo: m for m in _esp_mats}
+                    # PE rows para optativa por materia (cualquier plan que la marque)
+                    _pe_opt = session.exec(
+                        select(PlanEstudioDB.materia_codigo, PlanEstudioDB.optativa)
+                        .where(PlanEstudioDB.materia_codigo.in_(_esp_codes))
+                    ).all()
+                    _opt_set = {mc for mc, opt in _pe_opt if opt}
+                    for _mc in _esp_codes:
+                        _m_obj = _esp_mat_map.get(_mc)
+                        _esp_attrs[_mc] = {
+                            "virtual": bool(_m_obj.virtual) if _m_obj else False,
+                            "optativa": _mc in _opt_set,
+                            "periodo": _m_obj.periodo if _m_obj else "cuatrimestral",
+                        }
+
+                # --- Extras enriquecidas con carrera + atributos ---
+                _extras_por_carrera: list[dict] = []
+                if _extra:
+                    # Pull MateriaDB para los extras
+                    _ext_mats = session.exec(
+                        select(MateriaDB).where(
+                            col(MateriaDB.codigo).in_(list(_extra))
+                        )
+                    ).all()
+                    _ext_mat_map = {m.codigo: m for m in _ext_mats}
+                    # PE rows para mapping a carrera
+                    _ext_pe = session.exec(
+                        select(PlanEstudioDB)
+                        .join(PlanCarreraVersionDB,
+                              PlanEstudioDB.plan_version_id == PlanCarreraVersionDB.id)
+                        .join(CicloPlanVersionDB,
+                              PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
+                        .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_crono)
+                        .where(PlanEstudioDB.materia_codigo.in_(list(_extra)))
+                    ).all()
+                    _by_carr: dict[str, list[dict]] = {}
+                    _seen: set[tuple[str, str]] = set()
+                    for _pe in _ext_pe:
+                        _key = (_pe.carrera_codigo, _pe.materia_codigo)
+                        if _key in _seen:
+                            continue
+                        _seen.add(_key)
+                        _m_obj = _ext_mat_map.get(_pe.materia_codigo)
+                        _by_carr.setdefault(_pe.carrera_codigo, []).append({
+                            "codigo": _pe.materia_codigo,
+                            "nombre": _m_obj.nombre if _m_obj else "?",
+                            "anio_plan": _pe.anio_plan,
+                            "cuatrimestre_plan": _pe.cuatrimestre_plan,
+                            "optativa": bool(_pe.optativa),
+                            "virtual": bool(_m_obj.virtual) if _m_obj else False,
+                            "periodo": _m_obj.periodo if _m_obj else "cuatrimestral",
+                        })
+                    # Materias en cronograma que no están en ningún plan del ciclo
+                    _no_plan_extras = set(_extra) - {
+                        m["codigo"] for ms in _by_carr.values() for m in ms
+                    }
+                    for _cc, _mlist in _by_carr.items():
+                        _carr = session.get(CarreraDB, _cc)
+                        _extras_por_carrera.append({
+                            "carrera_codigo": _cc,
+                            "carrera_nombre": _carr.nombre if _carr else _cc,
+                            "materias": _mlist,
+                        })
+                    if _no_plan_extras:
+                        _np_list = []
+                        for _mc in sorted(_no_plan_extras):
+                            _m_obj = _ext_mat_map.get(_mc)
+                            _np_list.append({
+                                "codigo": _mc,
+                                "nombre": _m_obj.nombre if _m_obj else "?",
+                                "anio_plan": None,
+                                "cuatrimestre_plan": None,
+                                "optativa": False,
+                                "virtual": bool(_m_obj.virtual) if _m_obj else False,
+                                "periodo": _m_obj.periodo if _m_obj else "cuatrimestral",
+                            })
+                        _extras_por_carrera.append({
+                            "carrera_codigo": "—",
+                            "carrera_nombre": "Sin carrera asignada",
+                            "materias": _np_list,
+                        })
+                    _extras_por_carrera.sort(key=lambda x: x["carrera_codigo"])
 
                 # Compute totals
                 _total_clases = len(_entries)
@@ -328,6 +360,8 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     session, schedule_id=_sel_sched_id,
                 )
 
+                _dictado_count = len(_dictado_codigos)
+
             st.session_state[_prevalidation_key] = {
                 "n_materias": len(_mat_codigos),
                 "n_clases": _total_clases,
@@ -336,12 +370,16 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 "n_cubiertas": len(_cubiertas),
                 "n_faltantes": len(_faltantes_set),
                 "faltantes_por_carrera": _faltantes_por_carrera,
+                "extras_por_carrera": _extras_por_carrera,
                 "extra": [
                     {"codigo": cod, "nombre": _mat_map.get(cod, "?")}
                     for cod in sorted(_extra)
                 ],
                 "esperadas": _esperadas,
+                "esperadas_attrs": _esp_attrs,
                 "mat_map": _mat_map,
+                "dictado_codigos": _dictado_codigos,
+                "dictado_count_at_validation": _dictado_count,
                 "schedule_entry_count": _total_clases,
                 "particion_valid": _part_result.valid,
                 "particion_message": _part_result.message,
@@ -361,12 +399,19 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
 
         # --- Staleness check for Phase 1 ---
         _stored_pv_count = _pv.get("schedule_entry_count")
+        _stored_dict_count = _pv.get("dictado_count_at_validation")
         if _stored_pv_count is not None:
             with next(get_session()) as _stale_sess:
                 _current_pv_count = _stale_sess.exec(
                     select(func.count(ScheduleEntryDB.id))
                     .where(ScheduleEntryDB.schedule_id == _sel_sched_id)
                 ).one()
+                from src.services.dictado_service import (
+                    count_active_dictados_for_ciclo as _cnt_dict,
+                )
+                _current_dict_count = _cnt_dict(
+                    _stale_sess, sel_ciclo_crono,
+                )
             if _current_pv_count != _stored_pv_count:
                 st.warning(
                     f"El cronograma fue modificado desde la \u00faltima "
@@ -374,60 +419,234 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     f"{_current_pv_count} entradas). "
                     f"Presion\u00e1 **Prevalidar** para actualizar."
                 )
+            elif (
+                _stored_dict_count is not None
+                and _current_dict_count != _stored_dict_count
+            ):
+                st.warning(
+                    f"Los dictados del ciclo cambiaron desde la \u00faltima "
+                    f"prevalidaci\u00f3n ({_stored_dict_count} \u2192 "
+                    f"{_current_dict_count} activos). "
+                    f"Presion\u00e1 **Prevalidar** para actualizar."
+                )
 
         st.divider()
         st.markdown("### Resumen de cobertura")
+
+        # Toggle excluir virtuales y optativas (no requieren aula)
+        _exclude_vo = st.toggle(
+            "Excluir virtuales y optativas del cómputo",
+            value=st.session_state.get(
+                f"prev_exclude_vo_{_sel_sched_id}", False,
+            ),
+            key=f"prev_exclude_vo_{_sel_sched_id}",
+            help=(
+                "Las materias virtuales y optativas no requieren asignación "
+                "de aula y suelen poder coordinarse después. Excluirlas da "
+                "una visión más realista del bloque a planificar."
+            ),
+        )
+
+        # Recompute metrics si está activado el toggle
+        _esp_attrs_ui = _pv.get("esperadas_attrs") or {}
+        _esp_set_full = set(_pv.get("esperadas", {}).keys())
+        if _exclude_vo and _esp_attrs_ui:
+            _esp_relevantes = {
+                mc for mc in _esp_set_full
+                if not (
+                    _esp_attrs_ui.get(mc, {}).get("virtual")
+                    or _esp_attrs_ui.get(mc, {}).get("optativa")
+                )
+            }
+        else:
+            _esp_relevantes = _esp_set_full
+
+        _materias_sched_set = set(_pv.get("mat_map", {}).keys())
+        _cubiertas_disp = _materias_sched_set & _esp_relevantes
+        _faltantes_disp_set = _esp_relevantes - _materias_sched_set
+        _n_esp_disp = len(_esp_relevantes)
+        _n_cub_disp = len(_cubiertas_disp)
+        _n_falt_disp = len(_faltantes_disp_set)
 
         _pv_c1, _pv_c2, _pv_c3, _pv_c4, _pv_c5, _pv_c6 = st.columns(6)
         _pv_c1.metric("Materias", _pv["n_materias"])
         _pv_c2.metric("Clases", _pv["n_clases"])
         _pv_c3.metric("Horas cronograma", _fmt_hours(_pv['total_horas']))
-        _pv_c4.metric("Esperadas", _pv["n_esperadas"])
-        _pv_c5.metric("Cubiertas", f"{_pv['n_cubiertas']}/{_pv['n_esperadas']}")
-        _pv_c6.metric("Faltantes", _pv["n_faltantes"])
+        _pv_c4.metric(
+            "Esperadas",
+            _n_esp_disp,
+            delta=(
+                None if not _exclude_vo
+                else f"−{_pv['n_esperadas'] - _n_esp_disp} virt/opt"
+            ),
+            delta_color="off",
+        )
+        _pv_c5.metric("Cubiertas", f"{_n_cub_disp}/{_n_esp_disp}")
+        _pv_c6.metric("Faltantes", _n_falt_disp)
 
-        # --- Materias faltantes (per carrera expanders) ---
+        # --- Materias faltantes y extras agrupadas por carrera ---
         _fpc = _pv["faltantes_por_carrera"]
-        # Guard: invalidate stale session_state with old dict format
         if isinstance(_fpc, dict):
             st.warning("Datos de prevalidacion desactualizados. Presiona 'Prevalidar' de nuevo.")
             _fpc = []
-        if _fpc:
-            st.markdown(f"**Materias faltantes ({_pv['n_faltantes']})**")
-            for _ci in _fpc:
-                _n_fc = len(_ci["materias"])
-                _rec_tag = " · dicta recursado" if _ci["dicta_recursado"] else ""
+
+        _epc = _pv.get("extras_por_carrera") or []
+
+        # Mapa por código de carrera para combinar faltantes + extras
+        _grupos: dict[str, dict] = {}
+        for _ci in _fpc:
+            _grupos[_ci["carrera_codigo"]] = {
+                "carrera_codigo": _ci["carrera_codigo"],
+                "carrera_nombre": _ci["carrera_nombre"],
+                "plan_version_nombre": _ci.get("plan_version_nombre", ""),
+                "dicta_recursado": _ci.get("dicta_recursado", False),
+                "faltantes": _ci["materias"],
+                "extras": [],
+            }
+        for _ei in _epc:
+            _cc = _ei["carrera_codigo"]
+            if _cc in _grupos:
+                _grupos[_cc]["extras"] = _ei["materias"]
+            else:
+                _grupos[_cc] = {
+                    "carrera_codigo": _cc,
+                    "carrera_nombre": _ei["carrera_nombre"],
+                    "plan_version_nombre": "",
+                    "dicta_recursado": False,
+                    "faltantes": [],
+                    "extras": _ei["materias"],
+                }
+
+        if _grupos:
+            st.markdown("**Detalle por carrera**")
+            for _cc in sorted(_grupos.keys()):
+                _g = _grupos[_cc]
+                # Aplicar filtro virt/opt sobre faltantes para el badge
+                _fal_filt = [
+                    _mf for _mf in _g["faltantes"]
+                    if not (
+                        _exclude_vo and (_mf.get("virtual") or _mf.get("optativa"))
+                    )
+                ]
+                _ext_list = _g["extras"]
+                _n_fc = len(_fal_filt)
+                _n_ec = len(_ext_list)
+                if _n_fc == 0 and _n_ec == 0:
+                    continue
+                _rec_tag = " · dicta recursado" if _g["dicta_recursado"] else ""
+                _plan_tag = (
+                    f" · Plan: {_g['plan_version_nombre']}"
+                    if _g["plan_version_nombre"] else ""
+                )
                 _exp_lbl = (
-                    f"{_ci['carrera_nombre']} ({_ci['carrera_codigo']}) "
-                    f"— Plan: {_ci['plan_version_nombre']} "
-                    f"— {_n_fc} faltante(s){_rec_tag}"
+                    f"{_g['carrera_nombre']} ({_g['carrera_codigo']})"
+                    f"{_plan_tag} — "
+                    f"📭 {_n_fc} faltante(s) · 📥 {_n_ec} no esperada(s)"
+                    f"{_rec_tag}"
                 )
                 with st.expander(_exp_lbl, expanded=False):
-                    _ft_rows = []
-                    for _mf in _ci["materias"]:
-                        _anio = f"{_mf['anio_plan']}°" if _mf["anio_plan"] else "—"
-                        _cuatri = _mf["cuatrimestre_plan"] or "—"
-                        _tags = []
-                        if _mf["optativa"]:
-                            _tags.append("optativa")
-                        if _mf["virtual"]:
-                            _tags.append("virtual")
-                        if _mf["periodo"] == "anual":
-                            _tags.append("anual")
-                        _ft_rows.append({
-                            "Código": _mf["codigo"],
-                            "Nombre": _mf["nombre"],
-                            "Año": _anio,
-                            "Cuatri": _cuatri,
-                            "h/sem": _mf["horas_semanales"] or "—",
-                            "Notas": ", ".join(_tags) if _tags else "",
-                            "Razón": _mf["razon"],
-                        })
-                    st.dataframe(
-                        pd.DataFrame(_ft_rows),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+                    if _fal_filt:
+                        st.markdown(f"**Faltantes ({_n_fc})**")
+                        _ft_rows = []
+                        for _mf in _fal_filt:
+                            _anio = f"{_mf['anio_plan']}°" if _mf["anio_plan"] else "—"
+                            _cuatri = _mf["cuatrimestre_plan"] or "—"
+                            _ft_rows.append({
+                                "Código": _mf["codigo"],
+                                "Nombre": _mf["nombre"],
+                                "Año": _anio,
+                                "Cuatri": _cuatri,
+                                "h/sem": _mf["horas_semanales"] or "—",
+                                "Optativa": "Sí" if _mf.get("optativa") else "—",
+                                "Virtual": "Sí" if _mf.get("virtual") else "—",
+                                "Anual": "Sí" if _mf.get("periodo") == "anual" else "—",
+                                "Dictado": _mf.get("dictado_codigo", "—"),
+                            })
+                        st.dataframe(
+                            pd.DataFrame(_ft_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        # Action: desactivar dictados de faltantes seleccionadas
+                        _fal_options = {
+                            f"{_mf['codigo']} — {_mf['nombre']}": _mf["codigo"]
+                            for _mf in _fal_filt
+                        }
+                        _fal_sel_labels = st.multiselect(
+                            "Desactivar dictados de:",
+                            options=list(_fal_options.keys()),
+                            key=f"prev_falt_sel_{_sel_sched_id}_{_cc}",
+                            help=(
+                                "Marca como Inactivo el dictado de las materias "
+                                "elegidas. Útil para sacarlas del set de esperadas "
+                                "sin tener que cargar horarios."
+                            ),
+                        )
+                        if _fal_sel_labels:
+                            if st.button(
+                                f"⚪ Desactivar {len(_fal_sel_labels)} dictado(s)",
+                                key=f"prev_falt_btn_{_sel_sched_id}_{_cc}",
+                            ):
+                                _codes = [_fal_options[l] for l in _fal_sel_labels]
+                                with next(get_session()) as _ds:
+                                    _n = set_activo_for_materias_in_ciclo(
+                                        _ds, sel_ciclo_crono, _codes, activo=False,
+                                    )
+                                st.session_state.pop(_prevalidation_key, None)
+                                st.toast(f"{_n} dictado(s) desactivado(s).")
+                                st.rerun()
+
+                    if _ext_list:
+                        st.markdown(
+                            f"**No esperadas — con horarios pero sin dictado activo "
+                            f"({_n_ec})**"
+                        )
+                        _ex_rows = []
+                        for _ex in _ext_list:
+                            _anio = f"{_ex['anio_plan']}°" if _ex.get("anio_plan") else "—"
+                            _cuatri = _ex.get("cuatrimestre_plan") or "—"
+                            _ex_rows.append({
+                                "Código": _ex["codigo"],
+                                "Nombre": _ex["nombre"],
+                                "Año": _anio,
+                                "Cuatri": _cuatri,
+                                "Optativa": "Sí" if _ex.get("optativa") else "—",
+                                "Virtual": "Sí" if _ex.get("virtual") else "—",
+                                "Anual": "Sí" if _ex.get("periodo") == "anual" else "—",
+                            })
+                        st.dataframe(
+                            pd.DataFrame(_ex_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        # Action: activar dictados de extras seleccionadas
+                        _ex_options = {
+                            f"{_ex['codigo']} — {_ex['nombre']}": _ex["codigo"]
+                            for _ex in _ext_list
+                        }
+                        _ex_sel_labels = st.multiselect(
+                            "Activar dictados de:",
+                            options=list(_ex_options.keys()),
+                            key=f"prev_ext_sel_{_sel_sched_id}_{_cc}",
+                            help=(
+                                "Pone Activo el dictado de las materias seleccionadas "
+                                "(creándolo si no existía). Pasan a contarse como "
+                                "esperadas y dejan de aparecer como 'no esperadas'."
+                            ),
+                        )
+                        if _ex_sel_labels:
+                            if st.button(
+                                f"🟢 Activar {len(_ex_sel_labels)} dictado(s)",
+                                key=f"prev_ext_btn_{_sel_sched_id}_{_cc}",
+                            ):
+                                _codes = [_ex_options[l] for l in _ex_sel_labels]
+                                with next(get_session()) as _ds:
+                                    _n = set_activo_for_materias_in_ciclo(
+                                        _ds, sel_ciclo_crono, _codes, activo=True,
+                                    )
+                                st.session_state.pop(_prevalidation_key, None)
+                                st.toast(f"{_n} dictado(s) activado(s).")
+                                st.rerun()
 
         # --- Particion de horas (teoria/laboratorio) ---
         _part_valid = _pv.get("particion_valid")
@@ -445,14 +664,6 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     ):
                         for _d in _part_dets:
                             st.markdown(f"- {_d}")
-
-        # --- Materias extras (collapsed) ---
-        if _pv["extra"]:
-            with st.expander(
-                f"Materias no esperadas ({len(_pv['extra'])})", expanded=False,
-            ):
-                for _ex in _pv["extra"]:
-                    st.markdown(f"- {_ex['nombre']} (`{_ex['codigo']}`)")
 
         # --- Original/copy toggle (once, global) ---
         _save_as_copy = st.toggle(
@@ -723,6 +934,7 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                             "optativa": _mf.get("optativa", False),
                             "virtual": _mf.get("virtual", False),
                             "periodo": _mf.get("periodo", "cuatrimestral"),
+                            "dictado_codigo": _mf.get("dictado_codigo", "?"),
                         }
                     _faltantes_carreras.setdefault(_mc, []).append({
                         "carrera": _ci["carrera_codigo"],
@@ -1933,10 +2145,11 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
             for _falt_code in sorted(_filtered_faltantes):
                 _falt = _faltantes_flat[_falt_code]
                 _falt_hsem_db = _hsem_map.get(_falt_code, 0.0)
+                _falt_dic = _falt.get("dictado_codigo", "?")
                 _falt_header = (
                     f"\U0001f4ed {_falt_code} \u2014 "
                     f"{_falt['materia_nombre']} | "
-                    f"Sin horarios \u00b7 "
+                    f"Dictado {_falt_dic} sin horarios \u00b7 "
                     f"h/sem: {_fmt_hours(_falt_hsem_db) if _falt_hsem_db > 0 else '?'}"
                 )
 

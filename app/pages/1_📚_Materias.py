@@ -162,9 +162,37 @@ def render_custom_materia_page():
                                 form_data = FormInputRenderer.render_form_input(
                                     model=Materia,
                                     key=f"edit_{materia_codigo}_input",
-                                    exclude_fields=["codigo"],
+                                    exclude_fields=["codigo", "dicta_recursado"],
                                     custom_labels=custom_labels,
                                     default_values=default_values,
+                                )
+
+                                # Override de recursado: 3 estados (default carrera, forzar Sí, forzar No)
+                                _rec_default = default_values.get("dicta_recursado")
+                                _rec_options = [
+                                    "Según Carrera",
+                                    "Sí (override)",
+                                    "No (override)",
+                                ]
+                                _rec_idx = (
+                                    0 if _rec_default is None
+                                    else (1 if _rec_default else 2)
+                                )
+                                _rec_choice = st.selectbox(
+                                    "Recursado (override por materia)",
+                                    options=_rec_options,
+                                    index=_rec_idx,
+                                    help=(
+                                        "Si la carrera tiene `dicta_recursado=False` "
+                                        "pero querés que esta materia se cree activa "
+                                        "igual (o viceversa), elegí un override. "
+                                        "`Según Carrera` deja la decisión "
+                                        "a la bandera de la carrera."
+                                    ),
+                                )
+                                _rec_value = (
+                                    None if _rec_choice == _rec_options[0]
+                                    else (True if _rec_choice == _rec_options[1] else False)
                                 )
 
                                 col_submit, col_cancel = st.columns(2)
@@ -179,6 +207,7 @@ def render_custom_materia_page():
 
                                 if submitted:
                                     form_data["codigo"] = materia_codigo
+                                    form_data["dicta_recursado"] = _rec_value
                                     is_valid, errors = FormInputRenderer.validate_form_data(form_data, Materia)
                                     if not is_valid:
                                         FormInputRenderer.display_validation_errors(errors)
