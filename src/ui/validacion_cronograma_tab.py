@@ -41,10 +41,6 @@ from src.services.plan_generation_service import (
 from src.services.validations import (
     validar_factibilidad_particion_horas,
 )
-from src.services.cronograma_validation_service import (
-    get_latest_validation,
-    is_validation_stale,
-)
 from src.domain.types import DIAS_SEMANA
 
 
@@ -258,71 +254,24 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
         # --- Cronograma selector in second column ---
         with next(get_session()) as session:
             schedules = get_schedules_for_ciclo(session, sel_ciclo_crono)
-            # Obtener estado de validacion de cada cronograma para este ciclo
-            _sched_val_state: dict[str, dict] = {}
-            for _s in schedules:
-                _v = get_latest_validation(session, _s.id, sel_ciclo_crono)
-                if _v is None:
-                    _sched_val_state[_s.id] = {"badge": "\u26aa sin validar", "ok": False, "stale": False}
-                else:
-                    _stale = is_validation_stale(session, _v)
-                    if _stale:
-                        _sched_val_state[_s.id] = {"badge": "\U0001f7e1 modificado", "ok": False, "stale": True}
-                    elif not _v.particion_valid or _v.n_faltantes > 0:
-                        _sched_val_state[_s.id] = {"badge": "\U0001f534 con issues", "ok": False, "stale": False}
-                    else:
-                        _sched_val_state[_s.id] = {"badge": "\U0001f7e2 validado", "ok": True, "stale": False}
 
         with _vc_c2:
-            # Toggle: filtrar solo validados (verde)
-            _only_validated = st.toggle(
-                "Solo validados",
-                value=False,
-                key=f"planes_only_validated_{sel_ciclo_crono}",
-                help=(
-                    "Mostrar solo cronogramas con badge verde (validados sin "
-                    "issues contra este ciclo). Validalos primero en "
-                    "\U0001f4c5 Cronogramas \u2192 Validar."
-                ),
-            )
-
             if schedules:
-                _shown_scheds = [
-                    s for s in schedules
-                    if not _only_validated or _sched_val_state[s.id]["ok"]
-                ]
-                if not _shown_scheds:
-                    st.info(
-                        "No hay cronogramas validados para este ciclo. "
-                        "Validar primero en **\U0001f4c5 Cronogramas \u2192 "
-                        "Validar** o desactivar el toggle."
-                    )
-                    _sel_sched_id = None
-                else:
-                    _sched_options = {
-                        s.id: (
-                            f"{_sched_val_state[s.id]['badge']} "
-                            f"{s.nombre} ({s.source_filename}, {s.fecha_upload})"
-                        )
-                        for s in _shown_scheds
-                    }
-                    # Restore cronograma selection if widget key was cleared
-                    if _P_CRONO in st.session_state and "planes_sel_cronograma" not in st.session_state:
-                        _v = st.session_state[_P_CRONO]
-                        if _v in _sched_options:
-                            st.session_state["planes_sel_cronograma"] = _v
+                _sched_options = {s.id: s.nombre for s in schedules}
+                # Restore cronograma selection if widget key was cleared
+                if _P_CRONO in st.session_state and "planes_sel_cronograma" not in st.session_state:
+                    _v = st.session_state[_P_CRONO]
+                    if _v in _sched_options:
+                        st.session_state["planes_sel_cronograma"] = _v
 
-                    _sel_sched_id = st.selectbox(
-                        "Cronograma",
-                        options=list(_sched_options.keys()),
-                        format_func=lambda x: _sched_options[x],
-                        key="planes_sel_cronograma",
-                        help=(
-                            "Cronograma cargado para este ciclo. El icono al "
-                            "principio indica el estado de validacion."
-                        ),
-                    )
-                    st.session_state[_P_CRONO] = _sel_sched_id
+                _sel_sched_id = st.selectbox(
+                    "Cronograma",
+                    options=list(_sched_options.keys()),
+                    format_func=lambda x: _sched_options[x],
+                    key="planes_sel_cronograma",
+                    help="Cronograma cargado para este ciclo.",
+                )
+                st.session_state[_P_CRONO] = _sel_sched_id
             else:
                 st.info("No hay cronogramas cargados para este ciclo.")
                 _sel_sched_id = None
