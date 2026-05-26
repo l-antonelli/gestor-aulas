@@ -97,6 +97,65 @@ def _render_materias_compatibles_editor(session, aula_id: str, key_prefix: str):
         st.caption(f"{len(current_set)} materia(s) asociada(s). Sin cambios.")
 
 
+def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> bool:
+    """Editor inline de campos basicos de un aula. Devuelve True si guardo."""
+    st.markdown("### \u270f\ufe0f Editar aula")
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        new_nombre = st.text_input(
+            "Nombre", value=aula.nombre, key=f"{key_prefix}_nombre",
+        )
+        new_sede = st.text_input(
+            "Sede", value=aula.sede, key=f"{key_prefix}_sede",
+        )
+        new_capacidad = st.number_input(
+            "Capacidad",
+            min_value=1, value=int(aula.capacidad),
+            step=1, key=f"{key_prefix}_capacidad",
+        )
+    with _c2:
+        _tipos = ["teorica", "practica", "laboratorio", "anfiteatro"]
+        _idx = _tipos.index(aula.tipo) if aula.tipo in _tipos else 0
+        new_tipo = st.selectbox(
+            "Tipo", options=_tipos, index=_idx, key=f"{key_prefix}_tipo",
+            help=(
+                "Si cambias a/desde 'laboratorio', record\u00e1 que la "
+                "relaci\u00f3n M:N con materias se mantiene; revisarla "
+                "abajo si es necesario."
+            ),
+        )
+        new_descripcion = st.text_area(
+            "Descripci\u00f3n",
+            value=aula.descripcion or "",
+            key=f"{key_prefix}_descripcion",
+            height=100,
+        )
+
+    _changed = (
+        new_nombre.strip() != aula.nombre
+        or new_sede.strip() != aula.sede
+        or int(new_capacidad) != aula.capacidad
+        or new_tipo != aula.tipo
+        or (new_descripcion or "") != (aula.descripcion or "")
+    )
+    if not _changed:
+        st.caption("Sin cambios.")
+        return False
+
+    if st.button("Guardar cambios", type="primary", key=f"{key_prefix}_save"):
+        aula.nombre = new_nombre.strip()
+        aula.sede = new_sede.strip()
+        aula.capacidad = int(new_capacidad)
+        aula.tipo = new_tipo
+        aula.descripcion = new_descripcion or ""
+        session.add(aula)
+        session.commit()
+        st.toast(f"Aula '{aula.id}' actualizada.")
+        st.rerun()
+        return True
+    return False
+
+
 def _render_labs_overview(session):
     """Resumen read-only por laboratorio con sus materias asociadas."""
     labs = list(session.exec(
@@ -175,14 +234,22 @@ with next(get_session()) as session:
     with tab_view:
         EntityPageTemplate.render_detail_tab(config, session)
 
-        # Si la aula seleccionada es un laboratorio, mostrar editor de materias
+        # Si hay un aula seleccionada, permitir editar sus campos basicos
+        # y, si es laboratorio, gestionar materias compatibles.
         selected_id = st.session_state.get(f"view_{config.model.__name__}")
         if selected_id:
             aula = session.get(AulaDB, selected_id)
-            if aula and aula.tipo == "laboratorio":
+            if aula:
                 st.divider()
-                _render_materias_compatibles_editor(
+                _render_aula_edit_form(
                     session=session,
-                    aula_id=aula.id,
-                    key_prefix=f"aula_detail_{aula.id}",
+                    aula=aula,
+                    key_prefix=f"aula_edit_{aula.id}",
                 )
+                if aula.tipo == "laboratorio":
+                    st.divider()
+                    _render_materias_compatibles_editor(
+                        session=session,
+                        aula_id=aula.id,
+                        key_prefix=f"aula_detail_{aula.id}",
+                    )
