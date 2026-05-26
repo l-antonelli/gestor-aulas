@@ -960,20 +960,27 @@ with tab_cronogramas:
             _cur_total = mp["total_horas_schedule"]
             _cur_paralelas = mp["max_clases_paralelas"]
 
-            # Use cached worst check status from previous render if available
+            # Use cached worst check status from previous render if available.
+            # El icono refleja el estado actual; el expander queda abierto si
+            # ya fue interactuado por el usuario (presencia de _init_df indica
+            # que se abrio al menos una vez en esta sesion).
             _cached_worst = st.session_state.get(
                 f"_chk_worst_{_sel_sched_id}_{_mat_code}"
             )
+            _was_opened = (
+                f"_init_df_{_sel_sched_id}_{_mat_code}" in st.session_state
+                or f"prev_entries_{_sel_sched_id}_{_mat_code}" in st.session_state
+            )
             if _cached_worst:
-                _icon_map = {
-                    "ok": ("\u2705", False),
-                    "warn": ("\u26a0\ufe0f", True),
-                    "error": ("\U0001f53a", True),
-                    "info": ("\u2753", True),
+                _icon_map_only = {
+                    "ok": "\u2705",
+                    "warn": "\u26a0\ufe0f",
+                    "error": "\U0001f53a",
+                    "info": "\u2753",
                 }
-                _live_icon, _live_expand = _icon_map.get(
-                    _cached_worst, ("\u2705", False)
-                )
+                _live_icon = _icon_map_only.get(_cached_worst, "\u2705")
+                # Mantener abierto si: tiene problemas O ya fue abierto
+                _live_expand = _cached_worst in ("warn", "error", "info") or _was_opened
             else:
                 # Quick pre-checks for header icon (first render only)
                 _hdr_issues = []
@@ -997,7 +1004,7 @@ with tab_cronogramas:
                     _live_expand = True
                 else:
                     _live_icon = "\u2705"
-                    _live_expand = False
+                    _live_expand = _was_opened
 
             # Sufijo de modo lab: ad-hoc (reserva) si tiene lab asignado y hl=0
             _hdr_lab_db = _hlab_map.get(_mat_code)
@@ -1387,6 +1394,13 @@ with tab_cronogramas:
                 # --- f) Summary section (always visible) ---
                 st.divider()
 
+                # Recompute Hs en _edited para que el resumen y validaciones
+                # cuenten correctamente las filas nuevas (la columna esta
+                # disabled y no se actualiza automaticamente al editar).
+                if not _edited.empty:
+                    _edited = _edited.copy()
+                    _edited["Hs"] = _edited.apply(_entry_hours, axis=1)
+
                 # Compute summary from current data_editor state
                 _valid = _edited.dropna(subset=["Dia", "Inicio", "Fin"])
                 _new_total = 0.0
@@ -1744,12 +1758,15 @@ with tab_cronogramas:
                         _save_label,
                         type="primary",
                         key=f"prev_save_{_sel_sched_id}_{_mat_code}",
-                        disabled=_is_stale,
                         help=(
                             "Persiste los horarios y la asignacion de "
                             "comisiones al cronograma"
                             + (" (copia)" if _save_as_copy else "")
                             + "."
+                            + (" \u26a0\ufe0f El cronograma cambio en DB; "
+                               "tus cambios se aplican igual sobre el "
+                               "estado actual."
+                               if _is_stale else "")
                         ),
                     )
                 if _do_save:
@@ -1992,7 +2009,6 @@ with tab_cronogramas:
                             "Guardar horarios",
                             type="primary",
                             key=f"prev_save_{_sel_sched_id}_falt_{_falt_code}",
-                            disabled=_is_stale,
                             help=(
                                 "Guarda los horarios cargados en el "
                                 "cronograma. Despu\u00e9s de guardar, "
