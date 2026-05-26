@@ -17,14 +17,6 @@ from src.database.models import (
     CarreraDB, ConfiguracionHoraria, MateriaLaboratorioDB,
 )
 from src.database.crud import ciclo_crud, materia_crud, get_or_create_config, update_config
-from src.services.schedule_service import (
-    create_schedule_from_file,
-    get_schedules_for_ciclo,
-    get_schedule_entries,
-    get_all_schedules,
-    duplicate_schedule,
-    sync_preview_edits_to_schedule,
-)
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
     generate_plan_from_preview,
@@ -42,11 +34,6 @@ from src.services.validations import (
     validar_conflictos_horarios_plan,
     validar_cobertura_plan,
     identificar_virtuales_plan,
-    validar_factibilidad_particion_horas,
-)
-from src.services.cronograma_validation_service import (
-    get_latest_validation,
-    is_validation_stale,
 )
 from src.ui.calendar_render import render_timetable_calendar
 from src.domain.types import DIAS_SEMANA
@@ -102,39 +89,26 @@ if not ciclo_ids:
     st.info("No hay ciclos registrados. Crea uno en la pagina de Ciclos.")
     st.stop()
 
-tab_cronogramas, tab_generar, tab_general, tab_detalle, tab_grilla, tab_clases, tab_config = st.tabs([
-    "🔍 Validación de Cronogramas", "📥 Generar Plan",
+tab_generar, tab_general, tab_detalle, tab_grilla, tab_clases, tab_config = st.tabs([
+    "📥 Generar Plan",
     "📋 Vista General", "🔍 Detalle del Plan",
     "📋 Grilla Horaria", "📅 Clases", "⚙️ Configuración",
 ])
 
 
 # =============================================================================
-# Helper: get materias expected for a ciclo (from plan versions)
+# Helper: faltantes por carrera (legacy, ya no usado en esta pagina)
 # =============================================================================
-def _get_materias_esperadas(session, ciclo_id: str) -> dict[str, str]:
-    """Return {materia_codigo: materia_nombre} for all materias in plan versions of a ciclo."""
-    statement = (
-        select(MateriaDB.codigo, MateriaDB.nombre)
-        .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
-        .join(PlanCarreraVersionDB, PlanEstudioDB.plan_version_id == PlanCarreraVersionDB.id)
-        .join(CicloPlanVersionDB, PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
-        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
-        .distinct()
-    )
-    rows = session.exec(statement).all()
-    return {codigo: nombre for codigo, nombre in rows}
-
-
 def _get_faltantes_por_carrera(
     session, ciclo_id: str, materias_en_schedule: set[str],
 ) -> list[dict]:
     """Return enriched faltantes grouped by carrera with plan info and reasons.
 
-    Each element is a dict with keys: carrera_codigo, carrera_nombre,
-    plan_version_nombre, dicta_recursado, materias (list of dicts with
-    codigo, nombre, anio_plan, cuatrimestre_plan, optativa, periodo,
-    horas_semanales, virtual, razon).
+    NOTA: La fuente de verdad para faltantes ahora es
+    `src/services/cronograma_validation_service.py::_get_faltantes_por_carrera`,
+    que toma como base los dictados activos del ciclo. Este helper queda
+    sin uso aca (la pestaña Validacion se movio a Cronogramas) pero se
+    deja por si algun consumidor externo lo importaba.
     """
     ciclo = ciclo_crud.get(session, ciclo_id)
     if not ciclo:
@@ -222,29 +196,14 @@ def _get_faltantes_por_carrera(
 
 
 # =============================================================================
-# Tab 1: Validación de Cronogramas (movido a pagina Cronogramas)
-# =============================================================================
-with tab_cronogramas:
-    st.subheader("Validación de Cronogramas")
-    st.info(
-        "Esta funcionalidad se movi\u00f3 a "
-        "**\U0001f4c5 Cronogramas \u2192 \u2705 Validar**. "
-        "Desde all\u00e1 pod\u00e9s seleccionar el cronograma + ciclo, "
-        "prevalidar, ajustar comisiones y horas te\u00f3ria/lab, y persistir "
-        "el resumen en el historial de validaciones. Despu\u00e9s volv\u00e9 "
-        "ac\u00e1 para generar el plan."
-    )
-
-
-
-# =============================================================================
-# Tab 2: Generar Plan (placeholder — task 12)
+# Tab 1: Generar Plan (placeholder — task 12)
 # =============================================================================
 with tab_generar:
     st.subheader("Generar Plan de Cursada")
     st.info(
-        "Seleccioná un cronograma ya validado desde la pestaña "
-        "'Validación de Cronogramas' y luego generá el plan acá."
+        "Antes de generar un plan, validá el cronograma desde "
+        "**📅 Cronogramas → ✅ Validar**. Una vez prevalidado, volvé acá "
+        "para generar el plan a partir del cronograma."
     )
     st.caption("Funcionalidad en desarrollo.")
 
