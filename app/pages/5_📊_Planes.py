@@ -948,6 +948,30 @@ with tab_cronogramas:
             f"{' \u00b7 '.join(_filt_parts)}"
         )
 
+        # --- Botones para abrir/cerrar todos los expanders ---
+        _force_expand_key = f"_force_expand_all_{_sel_sched_id}"
+        _be1, _be2, _be3 = st.columns([1, 1, 6])
+        with _be1:
+            if st.button(
+                "Abrir todos",
+                key=f"btn_expand_all_{_sel_sched_id}",
+                help="Expandir todas las materias visibles.",
+            ):
+                st.session_state[_force_expand_key] = "open"
+                st.rerun()
+        with _be2:
+            if st.button(
+                "Cerrar todos",
+                key=f"btn_collapse_all_{_sel_sched_id}",
+                help="Colapsar todas las materias visibles.",
+            ):
+                st.session_state[_force_expand_key] = "close"
+                st.rerun()
+        # Consumir el flag: se aplica solo en este render y se borra para
+        # que el usuario pueda colapsar/abrir individualmente sin que el
+        # flag global lo pise en el proximo rerun.
+        _force_expand_mode = st.session_state.pop(_force_expand_key, None)
+
         # --- Render filtered materias ---
         for _mp_idx in _display_indices:
             mp = _materias_preview[_mp_idx]
@@ -1024,7 +1048,15 @@ with tab_cronogramas:
                 f"{_lab_suffix}"
             )
 
-            with st.expander(_header, expanded=_live_expand):
+            # Override por boton global Abrir/Cerrar todos
+            if _force_expand_mode == "open":
+                _eff_expand = True
+            elif _force_expand_mode == "close":
+                _eff_expand = False
+            else:
+                _eff_expand = _live_expand
+
+            with st.expander(_header, expanded=_eff_expand):
                 # --- a) Horas semanales (reference only) ---
                 _dia_ord = {
                     "Lunes": 0, "Martes": 1, "Mi\u00e9rcoles": 2,
