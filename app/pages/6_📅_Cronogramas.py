@@ -29,6 +29,13 @@ from src.services.schedule_service import (
     delete_schedule_entry,
     build_schedule_grid,
 )
+from src.services.cronograma_validation_service import (
+    validar_cronograma,
+    persist_validation,
+    get_latest_validation,
+    is_validation_stale,
+    parse_details_json,
+)
 from src.ui.calendar_render import render_schedule_calendar, render_editable_schedule_calendar
 
 init_db()
@@ -258,8 +265,8 @@ def _dialog_edit_entry():
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_lista, tab_cargar, tab_visualizar, tab_editar = st.tabs([
-    "📋 Lista", "📤 Cargar", "👁 Visualizar", "✏️ Editar",
+tab_lista, tab_cargar, tab_visualizar, tab_editar, tab_validar = st.tabs([
+    "📋 Lista", "📤 Cargar", "👁 Visualizar", "✏️ Editar", "✅ Validar",
 ])
 
 
@@ -268,6 +275,11 @@ tab_lista, tab_cargar, tab_visualizar, tab_editar = st.tabs([
 # =============================================================================
 with tab_lista:
     st.subheader("Cronogramas existentes")
+    st.caption(
+        "Cada fila muestra el estado de validacion contra el ultimo "
+        "ciclo evaluado. Para validar un cronograma o ver el detalle, "
+        "abrilo en la pestana **Validar**."
+    )
 
     if not all_schedules:
         st.info("No hay cronogramas cargados. Usa la pestana 'Cargar' para subir uno.")
@@ -279,12 +291,82 @@ with tab_lista:
                         ScheduleEntryDB.schedule_id == s.id
                     )
                 ).one()
+                # Latest validation across any ciclo (for badge)
+                _latest_val = get_latest_validation(session, s.id)
+                _val_stale = (
+                    is_validation_stale(session, _latest_val)
+                    if _latest_val else False
+                )
+
+            # Badge de estado de validacion
+            if _latest_val is None:
+                _val_badge = "⚪ sin validar"
+            elif _val_stale:
+                _val_badge = (
+                    f"🟡 validado vs {_latest_val.ciclo_id} pero modificado"
+                )
+            elif not _latest_val.particion_valid or _latest_val.n_faltantes > 0:
+                _val_badge = (
+                    f"🔴 con issues vs {_latest_val.ciclo_id} "
+                    f"({_latest_val.n_faltantes} faltantes, "
+                    f"{_latest_val.particion_n_infactibles} part. infactibles)"
+                )
+            else:
+                _val_badge = f"🟢 validado vs {_latest_val.ciclo_id}"
 
             ciclo_label = s.ciclo_id if s.ciclo_id else "sin ciclo"
-            with st.expander(
-                f"**{s.nombre}** — {n_entries} entradas — ciclo: {ciclo_label} "
-                f"— {s.fecha_upload}"
-            ):
+            _header = (
+                f"**{s.nombre}** \u2014 {n_entries} entradas \u2014 "
+                f"ciclo upload: {ciclo_label} \u2014 {s.fecha_upload} \u2014 "
+                f"{_val_badge}"
+            )
+            with st.expander(_header):
+                # Nombre editable
+                _new_name = st.text_input(
+                    "Nombre del cronograma",
+                    value=s.nombre,
+                    key=f"name_edit_{s.id}",
+                    help="Editar y presionar Enter para guardar.",
+                )
+                if _new_name != s.nombre and _new_name.strip():
+                    with next(get_session()) as session:
+                        _sched = session.get(ScheduleDB, s.id)
+                        if _sched:
+                            _sched.nombre = _new_name.strip()
+                            session.add(_sched)
+                            session.commit()
+                    st.toast(f"Nombre actualizado a '{_new_name.strip()}'.")
+                    st.rerun()
+
+                # Mini-resumen de la ultima validacion (si existe)
+                if _latest_val is not None:
+                    _val_caption = (
+                        f"Ultima validacion: **{_latest_val.validated_at:%Y-%m-%d %H:%M}** "
+                        f"vs ciclo **{_latest_val.ciclo_id}** \u00b7 "
+                        f"cubiertas {_latest_val.n_cubiertas}/{_latest_val.n_esperadas} \u00b7 "
+                        f"con lab: {_latest_val.n_con_lab_asignado} "
+                        f"({_latest_val.n_lab_fijo} fijo, "
+                        f"{_latest_val.n_lab_reserva} reserva, "
+                        f"{_latest_val.n_lab_pendiente} pendiente) \u00b7 "
+                        f"particion: "
+                        f"{'OK' if _latest_val.particion_valid else f'{_latest_val.particion_n_infactibles} infactibles'}"
+                    )
+                    if _val_stale:
+                        st.warning(
+                            _val_caption
+                            + "\n\n\u26a0\ufe0f El cronograma fue modificado "
+                            "desde esta validacion. Re-validar en la pestana "
+                            "**Validar** para refrescar."
+                        )
+                    else:
+                        st.info(_val_caption)
+                else:
+                    st.caption(
+                        "Este cronograma todavia no fue validado contra "
+                        "ningun ciclo. Abrir la pestana **Validar** para hacerlo."
+                    )
+
+                # Acciones (duplicar, eliminar)
                 col_dup, col_del = st.columns([1, 1])
                 with col_dup:
                     new_name = st.text_input(
@@ -1080,3 +1162,242 @@ with tab_editar:
                             "_key": select_key,
                         }
                         _dialog_confirm_add()
+
+
+# =============================================================================
+# Tab 5: Validar contra ciclo
+# =============================================================================
+with tab_validar:
+    st.subheader("Validar cronograma contra un ciclo")
+
+    with st.expander("\u2139\ufe0f \u00bfQu\u00e9 significa validar?", expanded=False):
+        st.markdown(
+            """
+            **Validar un cronograma contra un ciclo** compara las materias presentes
+            en el cronograma con las que se esperan dictar en ese ciclo segun los
+            planes de estudios asociados, y verifica condiciones estructurales que
+            necesita el siguiente paso (generar plan + asignar aulas).
+
+            **Que se controla**:
+
+            - **Cobertura**: cuantas materias esperadas estan cubiertas, cuales
+              faltan (con detalle por carrera y razon), y cuales aparecen en el
+              cronograma sin estar en ningun plan del ciclo (extras).
+            - **Laboratorios**: cuantas materias del cronograma tienen
+              laboratorios compatibles asignados, y como esta configurado su modo:
+                - **fijo** (`horas_laboratorio > 0`): el LP usara los slots para fijar lab.
+                - **reserva ad-hoc** (`horas_laboratorio = 0`): el LP no fija lab; los
+                  docentes lo reservan caso por caso durante el ejercicio.
+                - **pendiente** (`horas_laboratorio is None`): falta definir; bloqueante.
+            - **Particion teor\u00eda/lab**: para cada comisi\u00f3n de materia con lab fijo,
+              que las clases puedan dividirse en subconjuntos que sumen
+              `horas_teoria` y `horas_laboratorio`.
+
+            Cada validacion queda registrada en el historial. La pagina **Planes**
+            empezar\u00e1 desde un cronograma validado para generar el plan + asignar
+            aulas + fijar la agenda concreta de clases.
+            """
+        )
+
+    if not all_schedules:
+        st.info("No hay cronogramas para validar. Cargar uno desde la pestana 'Cargar'.")
+    else:
+        with next(get_session()) as session:
+            _ciclos_val = ciclo_crud.get_all(session, limit=100)
+
+        if not _ciclos_val:
+            st.info("No hay ciclos registrados. Crear uno en la pagina de Ciclos.")
+        else:
+            _val_c1, _val_c2 = st.columns([1, 1])
+            with _val_c1:
+                _val_sched_options = {
+                    s.id: f"{s.nombre} ({s.fecha_upload})"
+                    for s in all_schedules
+                }
+                _val_sched_id = st.selectbox(
+                    "Cronograma",
+                    options=list(_val_sched_options.keys()),
+                    format_func=lambda x: _val_sched_options[x],
+                    key="val_schedule",
+                )
+            with _val_c2:
+                _val_ciclo_options = {
+                    c.id: f"{c.id} \u2014 {c.numero}\u00b0C {c.anio}"
+                    for c in _ciclos_val
+                }
+                _val_ciclo_id = st.selectbox(
+                    "Ciclo a validar contra",
+                    options=list(_val_ciclo_options.keys()),
+                    format_func=lambda x: _val_ciclo_options[x],
+                    key="val_ciclo",
+                )
+
+            if _val_sched_id and _val_ciclo_id:
+                # Estado actual de validacion
+                with next(get_session()) as session:
+                    _existing = get_latest_validation(
+                        session, _val_sched_id, _val_ciclo_id,
+                    )
+                    _existing_stale = (
+                        is_validation_stale(session, _existing)
+                        if _existing else False
+                    )
+
+                _btn_label = (
+                    "Validar contra este ciclo"
+                    if _existing is None
+                    else "Re-validar"
+                )
+
+                if st.button(
+                    _btn_label,
+                    type="primary",
+                    key=f"btn_validar_{_val_sched_id}_{_val_ciclo_id}",
+                ):
+                    with next(get_session()) as session:
+                        _summary = validar_cronograma(
+                            session, _val_sched_id, _val_ciclo_id,
+                        )
+                        _record = persist_validation(session, _summary)
+                    st.toast(
+                        f"Validacion registrada el "
+                        f"{_record.validated_at:%Y-%m-%d %H:%M}."
+                    )
+                    st.rerun()
+
+                # Mostrar el ultimo snapshot
+                if _existing is None:
+                    st.caption(
+                        "Este cronograma no fue validado contra este ciclo "
+                        "todavia. Presion\u00e1 el bot\u00f3n de arriba para hacerlo."
+                    )
+                else:
+                    if _existing_stale:
+                        st.warning(
+                            f"\u26a0\ufe0f Esta validacion qued\u00f3 desactualizada: "
+                            f"el cronograma fue modificado desde el "
+                            f"{_existing.validated_at:%Y-%m-%d %H:%M} "
+                            f"(tenia {_existing.entry_count_at_validation} entradas). "
+                            f"Re-validar para refrescar."
+                        )
+                    else:
+                        st.success(
+                            f"Validacion del "
+                            f"{_existing.validated_at:%Y-%m-%d %H:%M} "
+                            f"(snapshot: {_existing.entry_count_at_validation} entradas)."
+                        )
+
+                    # Resumen general
+                    st.markdown("### Resumen")
+                    _m1, _m2, _m3, _m4, _m5, _m6 = st.columns(6)
+                    _m1.metric("Materias", _existing.n_materias)
+                    _m2.metric("Clases", _existing.n_clases)
+                    _m3.metric("Horas", f"{_existing.total_horas:g}h")
+                    _m4.metric("Esperadas", _existing.n_esperadas)
+                    _m5.metric(
+                        "Cubiertas",
+                        f"{_existing.n_cubiertas}/{_existing.n_esperadas}",
+                    )
+                    _m6.metric("Faltantes", _existing.n_faltantes)
+
+                    # Resumen lab
+                    st.markdown("### Laboratorios")
+                    _l1, _l2, _l3, _l4 = st.columns(4)
+                    _l1.metric(
+                        "Con lab asignado",
+                        _existing.n_con_lab_asignado,
+                        help="Materias con al menos un MateriaLaboratorioDB.",
+                    )
+                    _l2.metric(
+                        "\U0001f9ea Lab fijo",
+                        _existing.n_lab_fijo,
+                        help="horas_laboratorio > 0 (entran al LP).",
+                    )
+                    _l3.metric(
+                        "\u2139\ufe0f Por reserva",
+                        _existing.n_lab_reserva,
+                        help="horas_laboratorio = 0 (reserva ad-hoc).",
+                    )
+                    _l4.metric(
+                        "Pendientes",
+                        _existing.n_lab_pendiente,
+                        help="horas_laboratorio sin definir. Completar en Materias.",
+                    )
+
+                    # Particion
+                    st.markdown("### Particion teor\u00eda/lab")
+                    _details = parse_details_json(_existing.details_json)
+                    _part_msg = _details.get("particion_message", "")
+                    if _existing.particion_valid:
+                        st.success(_part_msg or "Todas las comisiones factibles.")
+                    else:
+                        st.error(
+                            f"{_existing.particion_n_infactibles} comisi\u00f3n(es) "
+                            f"con particion infactible. {_part_msg}"
+                        )
+                        _part_dets = _details.get("particion_details", [])
+                        if _part_dets:
+                            with st.expander(
+                                f"Detalle de particiones infactibles "
+                                f"({len(_part_dets)})",
+                                expanded=False,
+                            ):
+                                for _d in _part_dets:
+                                    st.markdown(f"- {_d}")
+
+                    # Faltantes por carrera
+                    _fpc = _details.get("faltantes_por_carrera", [])
+                    if _fpc:
+                        st.markdown(f"### Materias faltantes ({_existing.n_faltantes})")
+                        for _ci in _fpc:
+                            _n_fc = len(_ci["materias"])
+                            _rec_tag = (
+                                " \u00b7 dicta recursado"
+                                if _ci.get("dicta_recursado") else ""
+                            )
+                            _exp_lbl = (
+                                f"{_ci['carrera_nombre']} ({_ci['carrera_codigo']}) "
+                                f"\u2014 Plan: {_ci['plan_version_nombre']} "
+                                f"\u2014 {_n_fc} faltante(s){_rec_tag}"
+                            )
+                            with st.expander(_exp_lbl, expanded=False):
+                                _ft_rows = []
+                                for _mf in _ci["materias"]:
+                                    _anio = (
+                                        f"{_mf['anio_plan']}\u00b0"
+                                        if _mf.get("anio_plan") else "\u2014"
+                                    )
+                                    _cuatri = _mf.get("cuatrimestre_plan") or "\u2014"
+                                    _tags = []
+                                    if _mf.get("optativa"):
+                                        _tags.append("optativa")
+                                    if _mf.get("virtual"):
+                                        _tags.append("virtual")
+                                    if _mf.get("periodo") == "anual":
+                                        _tags.append("anual")
+                                    _ft_rows.append({
+                                        "C\u00f3digo": _mf["codigo"],
+                                        "Nombre": _mf["nombre"],
+                                        "A\u00f1o": _anio,
+                                        "Cuatri": _cuatri,
+                                        "h/sem": _mf.get("horas_semanales") or "\u2014",
+                                        "Notas": ", ".join(_tags) if _tags else "",
+                                        "Raz\u00f3n": _mf.get("razon", ""),
+                                    })
+                                st.dataframe(
+                                    pd.DataFrame(_ft_rows),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+
+                    # Extras
+                    _ex = _details.get("extras", [])
+                    if _ex:
+                        with st.expander(
+                            f"Materias no esperadas ({len(_ex)})",
+                            expanded=False,
+                        ):
+                            for _e in _ex:
+                                st.markdown(
+                                    f"- {_e['nombre']} (`{_e['codigo']}`)"
+                                )
