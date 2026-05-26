@@ -230,6 +230,31 @@ with tab_cronogramas:
         "Seleccioná un ciclo y un cronograma para prevalidar los datos de "
         "horarios. Podés ajustar comisiones y horarios antes de generar un plan."
     )
+
+    # Banner si venimos de un jump desde Cronogramas → Validar
+    _jump_origin = st.session_state.get("_jump_from_validation")
+    if _jump_origin:
+        _jb1, _jb2 = st.columns([3, 1])
+        with _jb1:
+            st.info(
+                f"Estas editando comisiones del cronograma "
+                f"`{_jump_origin['schedule_id'][:8]}\u2026` validado contra "
+                f"ciclo `{_jump_origin['ciclo_id']}`. Al terminar, volve a "
+                f"**\U0001f4c5 Cronogramas \u2192 Validar** para re-validar "
+                f"y refrescar el resumen."
+            )
+        with _jb2:
+            if st.button(
+                "\u2190 Volver a Validar",
+                key="btn_back_to_validation",
+                use_container_width=True,
+            ):
+                st.session_state.pop("_jump_from_validation", None)
+                try:
+                    st.switch_page("pages/6_📅_Cronogramas.py")
+                except Exception:
+                    st.info("Abrir manualmente **\U0001f4c5 Cronogramas** desde el sidebar.")
+
     st.info(
         "\U0001f4cd La validacion estructural del cronograma vs ciclo "
         "(cobertura, laboratorios, particion) tiene su lugar definitivo en "

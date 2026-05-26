@@ -1287,6 +1287,46 @@ with tab_validar:
                             f"(snapshot: {_existing.entry_count_at_validation} entradas)."
                         )
 
+                    # Boton para saltar a la edicion de fase 2 (comisiones)
+                    st.divider()
+                    _jump_c1, _jump_c2 = st.columns([2, 3])
+                    with _jump_c1:
+                        if st.button(
+                            "\U0001f4dd Abrir editor de comisiones \u2192",
+                            type="secondary",
+                            key=f"btn_jump_phase2_{_val_sched_id}_{_val_ciclo_id}",
+                            help=(
+                                "Abre la pagina Planes con este cronograma "
+                                "y ciclo precargados, para ajustar comisiones, "
+                                "horas teoria/lab por materia, agregar/editar "
+                                "horarios y reasignar comisiones."
+                            ),
+                            use_container_width=True,
+                        ):
+                            # Persistir seleccion para que Planes la levante
+                            st.session_state["_persist_planes_ciclo_crono"] = _val_ciclo_id
+                            st.session_state["planes_sel_ciclo_crono"] = _val_ciclo_id
+                            st.session_state["_persist_planes_cronograma"] = _val_sched_id
+                            st.session_state["planes_sel_cronograma"] = _val_sched_id
+                            # Marca el origen para que Planes muestre 'Volver'
+                            st.session_state["_jump_from_validation"] = {
+                                "schedule_id": _val_sched_id,
+                                "ciclo_id": _val_ciclo_id,
+                            }
+                            try:
+                                st.switch_page("pages/5_📊_Planes.py")
+                            except Exception:
+                                st.info(
+                                    "Abrir manualmente la pagina **\U0001f4ca "
+                                    "Planes** desde el sidebar."
+                                )
+                    with _jump_c2:
+                        st.caption(
+                            "Al volver, los cambios pueden dejar la "
+                            "validacion como **modificada**. Al re-validar "
+                            "ac\u00e1 se actualiza el resumen."
+                        )
+
                     # Resumen general
                     st.markdown("### Resumen")
                     _m1, _m2, _m3, _m4, _m5, _m6 = st.columns(6)
