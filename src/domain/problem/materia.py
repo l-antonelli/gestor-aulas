@@ -34,6 +34,14 @@ class Materia(Entity):
     active: bool = Field(default=True, description="Whether the materia is part of the current study plan")
     virtual: bool = Field(default=False, description="Default para el flag virtual del dictado")
     optativa: bool = Field(default=False, description="Si la materia es optativa/electiva")
+    dicta_recursado: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Override del flag de recursado de la carrera. None = usar el "
+            "default de la carrera. True/False fuerza el comportamiento "
+            "para esta materia."
+        ),
+    )
 
     @field_validator("codigo")
     @classmethod

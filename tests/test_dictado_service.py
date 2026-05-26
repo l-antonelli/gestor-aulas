@@ -12,9 +12,12 @@ from src.database.models import (
     PlanCarreraVersionDB, PlanEstudioDB, CicloPlanVersionDB,
 )
 from src.services.dictado_service import (
+    create_dictado_for_materia,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_skipped_materias_for_ciclo,
+    recompute_activo_for_ciclo,
+    set_activo_for_materias_in_ciclo,
     update_dictado,
 )
 
@@ -198,9 +201,10 @@ class TestCreateDictadosForCiclo:
 class TestDictaRecursado:
     """Tests for dicta_recursado logic in dictado creation."""
 
-    def test_exclusive_materia_skipped_when_no_recursado(self, session):
+    def test_exclusive_materia_created_inactive_when_no_recursado(self, session):
         """A cuatrimestral materia exclusive to one carrera with dicta_recursado=False
-        and assigned to 2C should be skipped when creating dictados for 1C."""
+        and assigned to 2C should be created with activo=False when creating
+        dictados for 1C (no longer skipped — registered for on-the-fly editing)."""
         # Carrera that does NOT dicta recursado
         carrera = CarreraDB(
             codigo="LIC", nombre="Licenciatura", duracion_anios=4,
@@ -243,8 +247,14 @@ class TestDictaRecursado:
 
         result = create_dictados_for_ciclo(session, "2025-1C-LIC")
 
-        assert result.created == 0
-        assert result.skipped_recursado == 1
+        # Ahora se crea pero inactivo
+        assert result.created == 1
+        assert result.created_inactive == 1
+        assert result.skipped_recursado == 0  # deprecated
+
+        dictados = get_dictados_for_ciclo(session, "2025-1C-LIC")
+        assert len(dictados) == 1
+        assert dictados[0].activo is False
 
     def test_exclusive_materia_not_skipped_when_same_cuatrimestre(self, session):
         """A materia assigned to 1C should NOT be skipped in 1C even when
@@ -346,6 +356,91 @@ class TestDictaRecursado:
 
         assert result.created == 1
         assert result.skipped_recursado == 0
+
+    def test_materia_override_recursado_true_beats_carrera_false(self, session):
+        """Si MateriaDB.dicta_recursado=True, se crea activo aunque la
+        carrera sea dicta_recursado=False y el cuatri sea opuesto."""
+        carrera = CarreraDB(
+            codigo="OVR1", nombre="Override 1", dicta_recursado=False,
+        )
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="OVR1",
+            nombre="Plan OVR1", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="OVR01", nombre="Override M",
+            periodo="cuatrimestral", active=True,
+            dicta_recursado=True,  # override explicito
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OVR01",
+            carrera_codigo="OVR1", anio_plan=1, cuatrimestre_plan="2C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-OVR1", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+
+        result = create_dictados_for_ciclo(session, "2025-1C-OVR1")
+        assert result.created == 1
+        assert result.created_inactive == 0  # quedo activo por override
+
+        d = get_dictados_for_ciclo(session, "2025-1C-OVR1")[0]
+        assert d.activo is True
+
+    def test_materia_override_recursado_false_beats_carrera_true(self, session):
+        """Si MateriaDB.dicta_recursado=False y el cuatri es opuesto,
+        se crea inactivo aunque la carrera sea dicta_recursado=True."""
+        carrera = CarreraDB(
+            codigo="OVR2", nombre="Override 2", dicta_recursado=True,
+        )
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="OVR2",
+            nombre="Plan OVR2", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="OVR02", nombre="Override M2",
+            periodo="cuatrimestral", active=True,
+            dicta_recursado=False,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OVR02",
+            carrera_codigo="OVR2", anio_plan=1, cuatrimestre_plan="2C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-OVR2", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+
+        result = create_dictados_for_ciclo(session, "2025-1C-OVR2")
+        assert result.created == 1
+        assert result.created_inactive == 1  # inactivo por override
+        d = get_dictados_for_ciclo(session, "2025-1C-OVR2")[0]
+        assert d.activo is False
 
     def test_dicta_recursado_true_never_skips(self, session):
         """When dicta_recursado=True (default), opposite-cuatrimestre materias
@@ -489,8 +584,9 @@ class TestVirtualInheritance:
 class TestGetSkippedMaterias:
     """Tests for get_skipped_materias_for_ciclo."""
 
-    def test_returns_skipped_for_recursado(self, session):
-        """Materias skipped due to dicta_recursado should appear in skipped list."""
+    def test_no_skipped_after_create_creates_all(self, session):
+        """Despues de la nueva logica de creacion, ninguna materia queda
+        sin dictado: las que antes se skipeaban ahora se crean inactivas."""
         carrera = CarreraDB(
             codigo="SKP", nombre="Skip Test", dicta_recursado=False,
         )
@@ -511,11 +607,10 @@ class TestGetSkippedMaterias:
         session.add(mat)
         session.flush()
 
-        pe = PlanEstudioDB(
+        session.add(PlanEstudioDB(
             plan_version_id=pv.id, materia_codigo="SKP01",
             carrera_codigo="SKP", anio_plan=1, cuatrimestre_plan="2C",
-        )
-        session.add(pe)
+        ))
 
         ciclo = CicloDB(
             id="2025-1C-SKP", anio=2025, numero=1,
@@ -526,19 +621,214 @@ class TestGetSkippedMaterias:
         session.add(CicloPlanVersionDB(ciclo_id=ciclo.id, plan_version_id=pv.id))
         session.commit()
 
-        # Create dictados (should skip SKP01)
         create_dictados_for_ciclo(session, "2025-1C-SKP")
 
+        # Ya no se considera "skipped" — quedo creado pero inactivo
         skipped = get_skipped_materias_for_ciclo(session, "2025-1C-SKP")
-        assert len(skipped) == 1
-        assert skipped[0].materia_codigo == "SKP01"
-        assert "recursado" in skipped[0].razon.lower()
+        assert len(skipped) == 0
+        dictados = get_dictados_for_ciclo(session, "2025-1C-SKP")
+        assert len(dictados) == 1
+        assert dictados[0].activo is False
 
     def test_empty_when_all_materias_have_dictados(self, session, ciclo_1c, materias):
         """No skipped materias when all plan materias have dictados."""
         create_dictados_for_ciclo(session, "2025-1C")
         skipped = get_skipped_materias_for_ciclo(session, "2025-1C")
         assert len(skipped) == 0
+
+
+class TestCreateDictadoForMateria:
+    """Tests for the on-demand `create_dictado_for_materia` helper used
+    when the user activates a materia from the UI even though the
+    auto-creator skipped it."""
+
+    def test_creates_dictado_ignoring_recursado_skip(self, session):
+        """Si por algun motivo una materia no tuviera dictado todavia,
+        create_dictado_for_materia lo crea con activo=True (override
+        explicito del usuario, sin importar la regla de recursado)."""
+        carrera = CarreraDB(
+            codigo="LIC", nombre="Licenciatura", dicta_recursado=False,
+        )
+        session.add(carrera)
+        session.flush()
+
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="LIC",
+            nombre="Plan LIC", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+
+        mat = MateriaDB(
+            codigo="QUI201", nombre="Quimica II",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="QUI201",
+            carrera_codigo="LIC", anio_plan=2, cuatrimestre_plan="2C",
+        ))
+
+        ciclo = CicloDB(
+            id="2025-1C-LIC", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+
+        # Manual creation produces an active dictado (sin pasar por auto-creator)
+        d = create_dictado_for_materia(session, "2025-1C-LIC", "QUI201")
+        assert d is not None
+        assert d.materia_codigo == "QUI201"
+        assert d.activo is True
+
+        # Idempotente: segunda llamada devuelve el mismo
+        d2 = create_dictado_for_materia(session, "2025-1C-LIC", "QUI201")
+        assert d2 is not None
+        assert d2.id == d.id
+
+    def test_returns_none_for_invalid_ciclo_or_materia(self, session, ciclo_1c, materias):
+        assert create_dictado_for_materia(session, "NONEXISTENT", "MAT101") is None
+        assert create_dictado_for_materia(session, "2025-1C", "NOPE") is None
+
+
+class TestRecomputeActivo:
+    """Tests for `recompute_activo_for_ciclo`."""
+
+    def test_preview_does_not_persist(self, session):
+        """`apply=False` devuelve diff sin tocar la DB."""
+        carrera = CarreraDB(
+            codigo="REC", nombre="Recompute Test", dicta_recursado=False,
+        )
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="REC",
+            nombre="Plan REC", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="REC01", nombre="Recompute Materia",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="REC01",
+            carrera_codigo="REC", anio_plan=1, cuatrimestre_plan="2C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-REC", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+
+        # Crea inactivo
+        create_dictados_for_ciclo(session, "2025-1C-REC")
+
+        # Cambiar la carrera a dicta_recursado=True
+        carrera.dicta_recursado = True
+        session.add(carrera)
+        session.commit()
+
+        # Preview: debe sugerir activar REC01
+        preview = recompute_activo_for_ciclo(session, "2025-1C-REC", apply=False)
+        assert preview.applied is False
+        assert ("REC01", "REC01-2025-1C") in preview.to_activate
+        assert preview.n_changes == 1
+
+        # DB sin cambios
+        d = get_dictados_for_ciclo(session, "2025-1C-REC")[0]
+        assert d.activo is False
+
+    def test_apply_persists_changes(self, session):
+        """`apply=True` persiste y refleja activo segun reglas."""
+        carrera = CarreraDB(
+            codigo="REC2", nombre="R2", dicta_recursado=False,
+        )
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="REC2",
+            nombre="Plan REC2", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="REC02", nombre="R2 Mat",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="REC02",
+            carrera_codigo="REC2", anio_plan=1, cuatrimestre_plan="2C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-REC2", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+
+        create_dictados_for_ciclo(session, "2025-1C-REC2")
+        carrera.dicta_recursado = True
+        session.add(carrera)
+        session.commit()
+
+        result = recompute_activo_for_ciclo(session, "2025-1C-REC2", apply=True)
+        assert result.applied is True
+        assert result.n_changes == 1
+        d = get_dictados_for_ciclo(session, "2025-1C-REC2")[0]
+        assert d.activo is True
+
+
+class TestSetActivoForMaterias:
+    """Tests for `set_activo_for_materias_in_ciclo`."""
+
+    def test_deactivate_existing(self, session, ciclo_1c, materias):
+        create_dictados_for_ciclo(session, "2025-1C")
+        n = set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101", "FIS101"], activo=False,
+        )
+        assert n == 2
+        ds = get_dictados_for_ciclo(session, "2025-1C")
+        for d in ds:
+            assert d.activo is False
+
+    def test_activate_creates_if_missing(self, session, ciclo_1c, materias):
+        # No corremos create_dictados_for_ciclo a proposito.
+        n = set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"], activo=True,
+        )
+        assert n == 1
+        ds = get_dictados_for_ciclo(session, "2025-1C")
+        assert len(ds) == 1
+        assert ds[0].materia_codigo == "MAT101"
+        assert ds[0].activo is True
+
+    def test_idempotent_when_already_set(self, session, ciclo_1c, materias):
+        create_dictados_for_ciclo(session, "2025-1C")
+        # Ya estan activos por defecto
+        n = set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"], activo=True,
+        )
+        assert n == 0
 
 
 class TestUpdateDictado:

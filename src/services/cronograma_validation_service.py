@@ -33,6 +33,12 @@ from src.database.models import (
     ScheduleValidationDB,
 )
 from src.database.crud import ciclo_crud
+from src.services.dictado_service import (
+    count_active_dictados_for_ciclo,
+    get_dictado_codigos_for_ciclo,
+    get_materias_esperadas_from_dictados,
+    has_dictados_for_ciclo,
+)
 from src.services.validations import validar_factibilidad_particion_horas
 
 
@@ -53,6 +59,14 @@ class CronogramaValidationSummary:
 
     # Snapshot del cronograma
     entry_count_at_validation: int = 0
+    # Snapshot del set de dictados activos (para detectar staleness por cambios
+    # en la pestaña Dictados aunque el cronograma no haya cambiado).
+    dictado_count_at_validation: int = 0
+
+    # Error pre-computo: si el ciclo no tiene dictados creados, la prevalidacion
+    # se aborta y este campo describe la condicion. La UI debe renderear el
+    # mensaje y omitir el resto del summary.
+    error: Optional[str] = None
 
     # Resumen general
     n_materias: int = 0
@@ -99,28 +113,28 @@ class CronogramaValidationSummary:
 # Helpers (originalmente en 5_📊_Planes.py)
 # =============================================================================
 
-def _get_materias_esperadas(session: Session, ciclo_id: str) -> dict[str, str]:
-    """Return {materia_codigo: materia_nombre} para materias en planes del ciclo."""
-    statement = (
-        select(MateriaDB.codigo, MateriaDB.nombre)
-        .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
-        .join(PlanCarreraVersionDB, PlanEstudioDB.plan_version_id == PlanCarreraVersionDB.id)
-        .join(CicloPlanVersionDB, PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id)
-        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
-        .distinct()
-    )
-    rows = session.exec(statement).all()
-    return {codigo: nombre for codigo, nombre in rows}
-
-
 def _get_faltantes_por_carrera(
-    session: Session, ciclo_id: str, materias_en_schedule: set[str],
+    session: Session,
+    ciclo_id: str,
+    esperadas: dict[str, str],
+    materias_en_schedule: set[str],
+    dictado_codigos: dict[str, str],
 ) -> list[dict]:
-    """Return faltantes agrupados por carrera con info de plan y razon."""
+    """Return faltantes agrupados por carrera con info de plan y razon.
+
+    El conjunto de "faltantes" se calcula contra las materias esperadas
+    (provistas via `esperadas`, que vienen de DictadoDB activo). El detalle
+    por carrera se enriquece via PlanEstudioDB para mostrar contexto
+    (anio/cuatri/optativa) — pero la razón se construye en función del
+    dictado: "Dictado activo {dictado_codigo} sin horarios cargados".
+    """
     ciclo = ciclo_crud.get(session, ciclo_id)
     if not ciclo:
         return []
-    cuatri_ciclo = f"{ciclo.numero}C"
+
+    faltantes_set = set(esperadas.keys()) - materias_en_schedule
+    if not faltantes_set:
+        return []
 
     cpv_rows = session.exec(
         select(CicloPlanVersionDB).where(CicloPlanVersionDB.ciclo_id == ciclo_id)
@@ -142,8 +156,7 @@ def _get_faltantes_por_carrera(
         ).all()
 
         faltantes_pe = [
-            pe for pe in pe_rows
-            if pe.materia_codigo not in materias_en_schedule
+            pe for pe in pe_rows if pe.materia_codigo in faltantes_set
         ]
         if not faltantes_pe:
             continue
@@ -160,18 +173,8 @@ def _get_faltantes_por_carrera(
             if not mat:
                 continue
 
-            cuatri = pe.cuatrimestre_plan
-            if cuatri and cuatri == cuatri_ciclo:
-                razon = f"Materia del {cuatri_ciclo}, sin horarios"
-            elif cuatri and cuatri.lower() == "anual":
-                razon = "Materia anual, se espera en ambos cuatrimestres"
-            elif cuatri:
-                if carrera.dicta_recursado:
-                    razon = f"Es de {cuatri}, incluida por recursado"
-                else:
-                    razon = f"Es de {cuatri} (carrera no dicta recursado)"
-            else:
-                razon = "Sin cuatrimestre asignado en el plan"
+            dic_cod = dictado_codigos.get(mat.codigo, "?")
+            razon = f"Dictado activo {dic_cod} sin horarios cargados"
 
             materias_faltantes.append({
                 "codigo": mat.codigo,
@@ -182,6 +185,7 @@ def _get_faltantes_por_carrera(
                 "periodo": mat.periodo,
                 "horas_semanales": mat.horas_semanales,
                 "virtual": mat.virtual,
+                "dictado_codigo": dic_cod,
                 "razon": razon,
             })
 
@@ -260,6 +264,19 @@ def validar_cronograma(
         schedule_id=schedule_id, ciclo_id=ciclo_id,
     )
 
+    # Pre-check: el ciclo debe tener dictados creados. Sin esto la prevalidacion
+    # no tiene contra que comparar las materias del cronograma.
+    if not has_dictados_for_ciclo(session, ciclo_id):
+        summary.error = (
+            "Este ciclo no tiene dictados creados. "
+            "Ir a Ciclos → 📚 Dictados y apretar 'Crear Dictados' antes de prevalidar."
+        )
+        return summary
+
+    summary.dictado_count_at_validation = count_active_dictados_for_ciclo(
+        session, ciclo_id,
+    )
+
     # Entries del schedule
     entries = list(session.exec(
         select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == schedule_id)
@@ -290,8 +307,8 @@ def validar_cronograma(
         ).all()
         summary.mat_map = {cod: nombre for cod, nombre in mat_rows}
 
-    # Cobertura
-    esperadas = _get_materias_esperadas(session, ciclo_id)
+    # Cobertura — esperadas = dictados ACTIVOS linkeados al ciclo.
+    esperadas = get_materias_esperadas_from_dictados(session, ciclo_id)
     summary.esperadas = esperadas
     cubiertas = materias_en_sched & set(esperadas.keys())
     faltantes_set = set(esperadas.keys()) - materias_en_sched
@@ -302,9 +319,12 @@ def validar_cronograma(
     summary.n_faltantes = len(faltantes_set)
     summary.n_extra = len(extra_set)
 
-    # Faltantes por carrera (detalle)
+    # Faltantes por carrera (detalle) — usa el dictado_codigo en la razon.
+    dictado_codigos = get_dictado_codigos_for_ciclo(
+        session, ciclo_id, only_active=True,
+    )
     summary.faltantes_por_carrera = _get_faltantes_por_carrera(
-        session, ciclo_id, materias_en_sched,
+        session, ciclo_id, esperadas, materias_en_sched, dictado_codigos,
     )
 
     # Extras (detalle)
@@ -348,6 +368,7 @@ def persist_validation(
         ciclo_id=summary.ciclo_id,
         validated_at=summary.validated_at,
         entry_count_at_validation=summary.entry_count_at_validation,
+        dictado_count_at_validation=summary.dictado_count_at_validation,
         n_materias=summary.n_materias,
         n_clases=summary.n_clases,
         total_horas=summary.total_horas,
@@ -401,12 +422,23 @@ def get_validation_history(
 def is_validation_stale(
     session: Session, validation: ScheduleValidationDB,
 ) -> bool:
-    """True si el cronograma cambio (entry count) desde la validacion."""
-    current_count = session.exec(
+    """True si cambio el cronograma O el set de dictados activos del ciclo
+    desde que se persistio la validacion.
+    """
+    current_entries = session.exec(
         select(func.count(ScheduleEntryDB.id))
         .where(ScheduleEntryDB.schedule_id == validation.schedule_id)
     ).one()
-    return current_count != validation.entry_count_at_validation
+    if current_entries != validation.entry_count_at_validation:
+        return True
+
+    current_dictados = count_active_dictados_for_ciclo(
+        session, validation.ciclo_id,
+    )
+    if current_dictados != validation.dictado_count_at_validation:
+        return True
+
+    return False
 
 
 def parse_details_json(details_json: str) -> dict:

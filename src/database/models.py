@@ -174,6 +174,10 @@ class MateriaDB(SQLModel, table=True):
     active: bool = Field(default=True)
     virtual: bool = Field(default=False)
     optativa: bool = Field(default=False)
+    # Override del flag de recursado de la carrera. None = usar el de la
+    # carrera (default). True/False fuerza el comportamiento para esta
+    # materia, sin importar lo que diga la carrera.
+    dicta_recursado: Optional[bool] = Field(default=None)
 
     # Relationships
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")
@@ -298,6 +302,9 @@ class ScheduleValidationDB(SQLModel, table=True):
 
     # Snapshot del cronograma al momento de validar (para detectar staleness)
     entry_count_at_validation: int = Field(ge=0)
+    # Snapshot del set de dictados activos del ciclo (para detectar staleness
+    # cuando cambian los dictados sin que cambie el cronograma).
+    dictado_count_at_validation: int = Field(default=0, ge=0)
 
     # Resumen general
     n_materias: int = Field(ge=0)
