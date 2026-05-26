@@ -2,10 +2,10 @@
 
 Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones + tipo_clase y laboratorios).
+> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones + tipo_clase y laboratorios + dictados como fuente de verdad de "esperadas").
 > **Fecha diseño**: 2026-03-09
 > **Fecha implementacion**: 2026-03-09
-> **Ultima actualizacion**: 2026-05-11 (tipo_clase en Entry/Horario/Clase, MateriaLaboratorioDB para compatibilidad M:N)
+> **Ultima actualizacion**: 2026-05-26 (dictados activos como fuente de verdad para prevalidacion, override `dicta_recursado` por materia, eliminacion del estado "sin dictado")
 
 ---
 
@@ -29,12 +29,18 @@ El modelo original (v1) incluia entidades que quedaron fuera de alcance y usaba 
 
 Permitir:
 
-1. **Registrar** que materias se ofrecen en cada ciclo (Dictado)
+1. **Registrar** que materias se ofrecen en cada ciclo via `Dictado` (siempre creado para toda materia del plan; el flag `activo` decide la oferta efectiva)
 2. **Cargar** horarios desde archivos Excel/CSV (Schedule + ScheduleEntry)
-3. **Generar** planes de cursada con comisiones y horarios (PlanificacionCursada)
-4. **Generar** clases individuales con fecha para un ciclo (Clase)
-5. **Comparar** diferentes planes (distintas configuraciones de comisiones, horarios, asignaciones de aula)
-6. **Gestionar** cambios durante el ciclo (reasignar aulas, modificar horarios, regenerar clases futuras)
+3. **Prevalidar** un cronograma contra los **dictados activos** del ciclo (cobertura, faltantes, no-esperadas)
+4. **Generar** planes de cursada con comisiones y horarios (PlanificacionCursada)
+5. **Generar** clases individuales con fecha para un ciclo (Clase)
+6. **Comparar** diferentes planes (distintas configuraciones de comisiones, horarios, asignaciones de aula)
+7. **Gestionar** cambios durante el ciclo (reasignar aulas, modificar horarios, regenerar clases futuras)
+
+> **Cambio importante (2026-05)**: las "materias esperadas" en la prevalidacion
+> de cronograma ya **no** se derivan directamente del `PlanEstudio`, sino de
+> `DictadoDB.activo == True`. Esto permite excluir materias del set esperado
+> sin tocar el plan, simplemente desactivando su dictado. Ver § 6 (RN15).
 
 ---
 
@@ -102,8 +108,13 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 | codigo_guarani | str nullable | Codigo en SIU Guarani (puede diferir del codigo) |
 | cupo | int nullable | Capacidad maxima (nullable para actividades sin cupo) |
 | horas_semanales | **float** nullable | Horas semanales de catedra. Float para permitir valores como 1.5 o 2.5. Nullable para actividades asincronas |
+| horas_teoria | float nullable | Horas semanales de teoria (subset de `horas_semanales`) |
+| horas_laboratorio | float nullable | Horas semanales de laboratorio (subset de `horas_semanales`) |
 | periodo | str | "anual" o "cuatrimestral" |
 | **active** | **bool** | **Campo informativo. NO controla creacion de dictados (ver PlanCarreraVersion)** |
+| virtual | bool | Default para `Dictado.virtual`. Las virtuales no requieren aula |
+| optativa | bool | Si la materia es optativa/electiva |
+| **dicta_recursado** | **bool nullable** | **Override del flag de recursado de la carrera. `None` = usar el de la carrera. `True`/`False` fuerza el comportamiento para esta materia ignorando lo que diga la carrera. Ver RN16** |
 
 > `active` es ahora un campo puramente informativo. La creacion de dictados se controla
 > mediante las versiones de plan asignadas al ciclo (CicloPlanVersion -> PlanCarreraVersion -> PlanEstudio).
@@ -138,7 +149,7 @@ son compatibles con cada materia para dictar clases de lab.
 
 #### Carrera
 
-Sin cambios. Programa academico.
+Programa academico.
 
 | Campo | Tipo | Notas |
 |-------|------|-------|
@@ -147,6 +158,7 @@ Sin cambios. Programa academico.
 | titulo_otorgado | str | |
 | duracion_anios | int | |
 | cantidad_materias | int nullable | |
+| **dicta_recursado** | **bool** | **Si la carrera ofrece materias del cuatrimestre opuesto al ciclo (recursado). Default `True`. Editable on-the-fly desde **Ciclos → Dictados** (cambio global, no por ciclo). Puede ser overrideado por `MateriaDB.dicta_recursado`. Ver RN16** |
 
 #### PlanCarreraVersion (nuevo)
 
@@ -203,7 +215,9 @@ Periodo academico (cuatrimestre).
 
 #### Dictado
 
-Oferta de una materia en un periodo. Existe para TODA materia activa en un ciclo, tenga o no horarios.
+Oferta de una materia en un periodo. **Existe para TODA materia del plan asignado al
+ciclo**, tenga o no horarios cargados. El flag `activo` decide si la materia
+participa de la prevalidacion como "esperada".
 
 | Campo | Tipo | Notas |
 |-------|------|-------|
@@ -212,10 +226,24 @@ Oferta de una materia en un periodo. Existe para TODA materia activa en un ciclo
 | materia_codigo | str FK | -> materias |
 | inicio_dictado | date | Heredado de la fecha_inicio del primer ciclo vinculado |
 | fin_dictado | date nullable | Null para anuales en 1C, se llena cuando se crea el ciclo 2C |
+| **activo** | **bool** | **Si el dictado se ofrece efectivamente este ciclo. Default `True` salvo que la regla de `dicta_recursado` lo dicte inactivo. Las "materias esperadas" en la prevalidacion son los `Dictado.activo == True`** |
+| **virtual** | **bool** | **Default heredado de `MateriaDB.virtual`. Las virtuales no requieren aula y se excluyen del LP de asignacion. Editable por dictado** |
 
 > **Dictados para materias anuales**: Se crean en 1C con fin_dictado = null.
 > Cuando se crea el ciclo 2C, los dictados anuales del mismo anio se vinculan al 2C
 > y su fin_dictado se actualiza con la fecha_fin del ciclo 2C.
+>
+> **No existe el estado "sin dictado"**: en el modelo actual, toda materia del
+> plan asignado al ciclo tiene un `Dictado` linkeado al ciclo. Lo que cambia
+> es `activo`: si una materia no se va a dictar este cuatrimestre, queda
+> registrada como `activo=False` y no aparece como esperada en la
+> prevalidacion. Esto permite alternar la oferta sin tocar el plan de estudio.
+>
+> **Recompute on-the-fly**: el servicio expone `recompute_activo_for_ciclo`
+> que recalcula `activo` para todos los dictados del ciclo segun las reglas
+> vigentes (flags de carrera + materia override). El usuario lo dispara
+> desde **Ciclos → Dictados → 🔄 Recalcular según reglas** despues de
+> cambiar configuracion.
 
 #### DictadoCiclo (bridge)
 
@@ -693,6 +721,8 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | RN12 | Validación de conflictos por comisión | Al validar horarios de un plan, se verifica si existe al menos un par de comisiones compatible (una de cada materia) para cada par de materias del mismo grupo curricular. Si no existe ningún par compatible, es conflicto real. Esto reconoce que un alumno cursa una sola comisión por materia |
 | RN13 | Clases paralelas → mínimo de comisiones | Si una materia tiene `max_clases_paralelas` entries en el mismo slot horario, se fuerza `n_comisiones >= max_clases_paralelas` independientemente de la regla de derivación (optativa, exclusiva, compartida). Flag: `"needs_more_comisiones"` |
 | RN14 | Persistencia de ediciones de preview | Las ediciones que el usuario realiza en el preview de un plan se persisten al ScheduleEntryDB correspondiente, con opción de aplicar al cronograma original o crear una copia |
+| RN15 | Esperadas via dictados activos | Las "materias esperadas" en la prevalidacion de un cronograma contra un ciclo son las que tienen `DictadoDB.activo = True` linkeado al ciclo. Si el ciclo no tiene dictados creados, la prevalidacion se aborta con un error explicito. La staleness del `ScheduleValidationDB` considera tambien el conteo de dictados activos (`dictado_count_at_validation`) |
+| RN16 | Override de recursado por materia | `MateriaDB.dicta_recursado` (nullable) es un override que gana sobre `CarreraDB.dicta_recursado`. `None` = usar el flag de la carrera. `True` = la materia se ofrece (activo=True) siempre, sin importar carrera. `False` = la materia no se ofrece (activo=False) si su cuatrimestre del plan es opuesto al ciclo |
 
 ---
 

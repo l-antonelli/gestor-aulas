@@ -202,13 +202,31 @@ Se ejecutan durante la Phase 2 (preview de comisiones) antes de generar el plan:
 
 | Check | Severidad | Descripcion |
 |-------|-----------|-------------|
-| **Cobertura de materias** | warn | Materias esperadas por el plan de estudio que no estan en el cronograma |
+| **Cobertura de materias** | warn | Materias con `Dictado.activo = True` linkeado al ciclo que **no estan en el cronograma** (faltantes). Las extras son materias del cronograma sin dictado activo |
 | **h/sem × comisiones = total** | warn | Consistencia entre horas semanales declaradas, cantidad de comisiones y horas totales del cronograma |
 | **Horas divisibles** | warn | Que el total de horas se pueda repartir equitativamente entre comisiones |
 | **Comisiones equilibradas** | warn | Que todas las comisiones tengan horas similares asignadas |
 | **Clases paralelas ≤ comisiones** | error | Que no haya mas clases en el mismo slot horario que comisiones disponibles |
 | **Sin comisiones vacias** | warn | Que toda comision tenga al menos una clase |
 | **Horas semanales definidas** | warn | Que la materia tenga `horas_semanales` cargado en el catalogo |
+| **Particion teoria/lab factible** | error | Para cada comision, las clases pueden dividirse en subconjuntos cuyas duraciones sumen `horas_teoria` y `horas_laboratorio` (subset-sum) |
+
+> **Cambio importante (2026-05)**: la cobertura de materias ya **no** se compara
+> contra el `PlanEstudio` directamente, sino contra el set de `DictadoDB.activo = True`
+> linkeado al ciclo (ver `modelo-planificacion-cursada.md` § RN15). Esto implica
+> que el ciclo debe tener dictados creados antes de prevalidar; si no, la
+> prevalidacion se aborta con un mensaje pidiendo ir a **Ciclos → Dictados**.
+>
+> **Edicion on-the-fly desde la prevalidacion**: el resumen de cobertura
+> permite, dentro de cada expander de carrera, **activar dictados** de las
+> materias listadas como "no esperadas" (extras con horarios) o
+> **desactivar dictados** de las materias listadas como "faltantes" (sin
+> horarios pero esperadas). Esto evita ir a otra pestaña a tocar el flag.
+>
+> **Toggle "excluir virtuales y optativas"**: el resumen tiene un toggle que
+> recomputa las metricas excluyendo materias virtuales/optativas (que no
+> requieren aula y se coordinan despues), dando una vision mas realista
+> del bloque a planificar.
 
 ### 4.2 Validacion del plan generado
 
