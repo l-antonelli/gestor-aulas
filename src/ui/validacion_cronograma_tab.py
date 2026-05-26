@@ -41,6 +41,10 @@ from src.services.plan_generation_service import (
 from src.services.validations import (
     validar_factibilidad_particion_horas,
 )
+from src.services.cronograma_validation_service import (
+    get_latest_validation,
+    is_validation_stale,
+)
 from src.domain.types import DIAS_SEMANA
 
 
