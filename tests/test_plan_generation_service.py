@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from src.database.models import (
     CicloDB, MateriaDB, ScheduleDB, ScheduleEntryDB,
     PlanificacionCursadaDB, ComisionDB, HorarioDB,
-    ConfiguracionHoraria,
+    ConfiguracionHoraria, InscripcionForecastDB,
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
@@ -19,6 +19,10 @@ from src.services.plan_generation_service import (
     build_timetable_grid,
     _derive_comisiones,
     apply_horario_edits,
+    normalize_coef_asignacion,
+    update_comision_coef,
+    get_coef_sum_por_materia,
+    get_inscriptos_esperados_por_comision,
 )
 
 
@@ -524,3 +528,93 @@ class TestApplyHorarioEdits:
         assert updated == 1
         assert created == 1
         assert deleted == 1
+
+
+class TestCoefAsignacion:
+    """Tests para coef_asignacion en comisiones."""
+
+    def _setup_plan_con_2_comisiones(self, session, ciclo, materias):
+        """Setup helper: crea schedule con 2 entries paralelas → 2 comisiones."""
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="Test", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        # Dos entries paralelas en mismo slot → 2 comisiones
+        for _ in range(2):
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()), schedule_id=sched.id,
+                codigo_materia="MAT101", dia="Lunes",
+                hora_inicio=time(8, 0), hora_fin=time(11, 0),
+            ))
+        session.commit()
+        plan = generate_plan_from_schedule(session, sched.id, "P1", ciclo.id).plan
+        return plan
+
+    def test_coef_uniforme_al_crear(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        comisiones = list(session.exec(
+            select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)
+        ).all())
+        assert len(comisiones) == 2
+        for c in comisiones:
+            assert abs(c.coef_asignacion - 0.5) < 1e-9
+
+    def test_normalize_reasigna_uniformemente(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        comisiones = list(session.exec(
+            select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)
+        ).all())
+        # Romper la uniformidad
+        comisiones[0].coef_asignacion = 0.7
+        comisiones[1].coef_asignacion = 0.3
+        session.add(comisiones[0])
+        session.add(comisiones[1])
+        session.commit()
+
+        n = normalize_coef_asignacion(session, plan.id, "MAT101")
+        assert n == 2
+
+        for c in session.exec(
+            select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)
+        ).all():
+            assert abs(c.coef_asignacion - 0.5) < 1e-9
+
+    def test_update_coef_clamp(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        c = session.exec(
+            select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)
+        ).first()
+        # Valor fuera de rango → clamp
+        update_comision_coef(session, c.id, 1.5)
+        session.refresh(c)
+        assert c.coef_asignacion == 1.0
+        update_comision_coef(session, c.id, -0.2)
+        session.refresh(c)
+        assert c.coef_asignacion == 0.0
+
+    def test_get_coef_sum_por_materia(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        sums = get_coef_sum_por_materia(session, plan.id)
+        assert "MAT101" in sums
+        assert abs(sums["MAT101"] - 1.0) < 1e-9
+
+    def test_inscriptos_esperados_por_comision(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        # Forecast persistido para MAT101 en el cuatri del ciclo (2C)
+        session.add(InscripcionForecastDB(
+            materia_codigo="MAT101", cuatrimestre="2C",
+            anio_target=2025, metodo="media_movil", valor=200.0,
+        ))
+        session.commit()
+
+        esperados = get_inscriptos_esperados_por_comision(session, plan.id, 2025)
+        assert len(esperados) == 2
+        for v in esperados.values():
+            assert abs(v - 100.0) < 1e-9  # 200 × 0.5
+
+    def test_inscriptos_esperados_sin_forecast(self, session, ciclo, materias):
+        plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
+        esperados = get_inscriptos_esperados_por_comision(session, plan.id, 2025)
+        assert esperados == {}

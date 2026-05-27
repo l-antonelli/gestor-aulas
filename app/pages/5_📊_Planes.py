@@ -713,11 +713,88 @@ with tab_detalle:
                                     st.rerun()
 
                             st.divider()
+
+                            # --- Coef sums + forecast info para esta materia ---
+                            from src.services.plan_generation_service import (
+                                normalize_coef_asignacion as _norm_coef,
+                                update_comision_coef as _upd_coef,
+                                get_inscriptos_esperados_por_comision as _get_esperados,
+                            )
+                            from src.services.forecast_service import (
+                                get_persisted_forecast as _get_fc,
+                            )
+
+                            _coef_sum = sum(c.coef_asignacion for c in mat_coms)
+                            _coef_ok = abs(_coef_sum - 1.0) < 0.01
+                            _coef_color = "🟢" if _coef_ok else "🟡"
+
+                            # Forecast en cuatri del ciclo o anual
+                            _ciclo_obj = next(
+                                (c for c in ciclos if c.id == sel_plan.ciclo_id),
+                                None,
+                            )
+                            _cuatri_ciclo = (
+                                f"{_ciclo_obj.numero}C" if _ciclo_obj else "?"
+                            )
+                            _anio_target_default = (
+                                _ciclo_obj.anio if _ciclo_obj else 2025
+                            )
+                            _anio_target_key = f"plan_anio_target_{sel_plan_id}"
+                            _anio_target = st.session_state.get(
+                                _anio_target_key, _anio_target_default,
+                            )
+
+                            with next(get_session()) as _fc_sess:
+                                _fc_cuatri = _get_fc(
+                                    _fc_sess, mat_codigo, _cuatri_ciclo,
+                                    _anio_target,
+                                )
+                                _fc_anual = _get_fc(
+                                    _fc_sess, mat_codigo, "Anual",
+                                    _anio_target,
+                                )
+                                _esperados_map = _get_esperados(
+                                    _fc_sess, sel_plan_id, _anio_target,
+                                )
+
+                            _fc_value = (
+                                _fc_anual.valor if _fc_anual is not None
+                                else (_fc_cuatri.valor if _fc_cuatri is not None else None)
+                            )
+
+                            _info_c1, _info_c2, _info_c3 = st.columns([2, 2, 1])
+                            _info_c1.markdown(
+                                f"**Coef total:** {_coef_color} {_coef_sum:.2f} "
+                                f"(debe ser ~1.0)"
+                            )
+                            if _fc_value is not None:
+                                _src = "Anual" if _fc_anual else _cuatri_ciclo
+                                _info_c2.markdown(
+                                    f"**Forecast {_src} {_anio_target}:** "
+                                    f"{_fc_value:.0f}"
+                                )
+                            else:
+                                _info_c2.markdown(
+                                    "**Forecast:** — *(sin método persistido en Inscriptos)*"
+                                )
+                            with _info_c3:
+                                if not _coef_ok and st.button(
+                                    "Normalizar",
+                                    key=f"norm_coef_{sel_plan_id}_{mat_codigo}",
+                                    help="Reasigna coef uniformemente (1/n)",
+                                ):
+                                    with next(get_session()) as _norm_s:
+                                        _norm_coef(
+                                            _norm_s, sel_plan_id, mat_codigo,
+                                        )
+                                    st.toast("Coef normalizados.")
+                                    st.rerun()
+
                             for com in mat_coms:
                                 st.markdown(f"##### {com.nombre} (#{com.numero})")
 
                                 # --- Editable comision fields ---
-                                col_name, col_cupo, col_del = st.columns([3, 2, 1])
+                                col_name, col_cupo, col_coef, col_esp, col_del = st.columns([3, 1.5, 1.5, 1.2, 0.6])
                                 with col_name:
                                     new_name = st.text_input(
                                         "Nombre", value=com.nombre,
@@ -729,6 +806,28 @@ with tab_detalle:
                                         "Cupo", value=max(com.cupo, 1), min_value=1,
                                         key=f"com_cupo_{com.id}",
                                     )
+                                with col_coef:
+                                    new_coef = st.number_input(
+                                        "Coef",
+                                        value=float(com.coef_asignacion),
+                                        min_value=0.0, max_value=1.0,
+                                        step=0.05, format="%.2f",
+                                        key=f"com_coef_{com.id}",
+                                        help=(
+                                            "Fracción de inscriptos esperados que "
+                                            "se asignan a esta comisión. La suma "
+                                            "por materia debe ser ≈1.0."
+                                        ),
+                                    )
+                                with col_esp:
+                                    if com.id in _esperados_map:
+                                        st.metric(
+                                            "Esperados",
+                                            f"{_esperados_map[com.id]:.0f}",
+                                            label_visibility="visible",
+                                        )
+                                    else:
+                                        st.caption("Esperados: —")
                                 with col_del:
                                     st.write("")
                                     if st.button("🗑️", key=f"del_com_{com.id}", help="Eliminar comision"):
@@ -746,7 +845,13 @@ with tab_detalle:
                                         st.success(f"Comision '{com.nombre}' eliminada")
                                         st.rerun()
 
-                                # Save comision changes if modified
+                                # Persist coef change immediately (no extra button)
+                                if abs(new_coef - com.coef_asignacion) > 1e-9:
+                                    with next(get_session()) as _coef_s:
+                                        _upd_coef(_coef_s, com.id, new_coef)
+                                    st.rerun()
+
+                                # Save comision changes if modified (name/cupo)
                                 if new_name != com.nombre or new_cupo != com.cupo:
                                     if st.button("💾 Guardar comision", key=f"save_com_{com.id}"):
                                         with next(get_session()) as session:

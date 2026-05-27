@@ -6,6 +6,12 @@ from pathlib import Path
 from sqlmodel import select, col, delete
 from src.database.connection import get_session, init_db
 from src.database.models import InscripcionHistoricaDB, MateriaDB
+from src.services.forecast_service import (
+    get_or_compute_forecasts,
+    get_persisted_forecast,
+    persist_forecast,
+    delete_persisted_forecast,
+)
 from scripts.load_inscriptos import _normalize_code, _build_name_map
 
 init_db()
@@ -173,6 +179,137 @@ def _render_materia_expander(
                     values="Inscriptos", aggfunc="sum",
                 )
                 st.line_chart(pivot)
+
+        # =============================================================
+        # Forecast: por (materia, cuatri)
+        # =============================================================
+        st.divider()
+        st.markdown("**🔮 Forecast de inscriptos**")
+        st.caption(
+            "Estimación del próximo punto de la serie. Se calcula por "
+            "(materia, cuatri) para capturar la diferencia 1C/2C cuando "
+            "aplique. El método elegido queda persistido y se usa como "
+            "input del LP de asignación de aulas."
+        )
+
+        # Cuatris disponibles para esta materia (segun los registros)
+        _cuatris_disponibles = sorted({r.cuatrimestre for r in records})
+        if not _cuatris_disponibles:
+            st.caption("Sin registros para forecast.")
+            return
+
+        _max_anio_hist = max(r.anio for r in records)
+        _anio_target = st.number_input(
+            "Año target",
+            min_value=2020, max_value=2040,
+            value=_max_anio_hist + 1, step=1,
+            key=f"{key_prefix}_fc_anio_{code}",
+            help="Año para el cual se proyecta el valor.",
+        )
+
+        for _cuatri in _cuatris_disponibles:
+            with next(get_session()) as _fc_sess:
+                _results = get_or_compute_forecasts(
+                    _fc_sess, code, _cuatri, _anio_target,
+                )
+                _persisted = get_persisted_forecast(
+                    _fc_sess, code, _cuatri, _anio_target,
+                )
+
+            if not _results:
+                continue
+
+            st.markdown(f"**{_cuatri}**")
+            _cols = st.columns([2, 1, 1, 1])
+            _labels_method = {
+                "media_movil": "Media móvil",
+                "drift": "Drift (lineal)",
+                "ses": "SES (α auto)",
+            }
+
+            # Métricas: una columna por método disponible
+            for _i, (_m, _r) in enumerate(_results.items()):
+                _col = _cols[min(_i + 1, 3)] if _i + 1 < len(_cols) else _cols[-1]
+                _params_str = ""
+                if "alpha" in _r.parametros and _r.parametros["alpha"] is not None:
+                    _params_str = f" α={_r.parametros['alpha']:.2f}"
+                elif "slope" in _r.parametros:
+                    _params_str = f" m={_r.parametros['slope']:.1f}"
+                elif "window" in _r.parametros:
+                    _params_str = f" w={_r.parametros['window']}"
+                _col.metric(
+                    f"{_labels_method.get(_m, _m)}{_params_str}",
+                    f"{_r.valor:.0f}",
+                    help=f"SSE in-sample: {_r.in_sample_sse:.1f}",
+                )
+
+            # Selector de metodo elegido + persistencia
+            _method_options = list(_results.keys())
+            _opts_labels = [_labels_method.get(m, m) for m in _method_options]
+            _opts_labels = [None] + _opts_labels  # None = no elegido
+            _method_keys = [None] + _method_options
+
+            _curr_idx = 0
+            if _persisted is not None:
+                try:
+                    _curr_idx = _method_keys.index(_persisted.metodo)
+                except ValueError:
+                    _curr_idx = 0
+
+            _ml_c1, _ml_c2 = st.columns([2, 2])
+            with _ml_c1:
+                _chosen = st.selectbox(
+                    f"Método elegido ({_cuatri})",
+                    options=list(range(len(_method_keys))),
+                    format_func=lambda i: _opts_labels[i] or "— ninguno —",
+                    index=_curr_idx,
+                    key=f"{key_prefix}_fc_method_{code}_{_cuatri}",
+                    label_visibility="collapsed",
+                )
+            with _ml_c2:
+                _chosen_method = _method_keys[_chosen]
+                if _persisted is not None:
+                    st.caption(
+                        f"Persistido: **{_labels_method.get(_persisted.metodo, _persisted.metodo)}** "
+                        f"= {_persisted.valor:.0f} "
+                        f"({_persisted.fecha_calculo.strftime('%Y-%m-%d')})"
+                    )
+                else:
+                    st.caption("Sin método persistido.")
+
+            # Aplicar cambio de selección
+            _persisted_method = _persisted.metodo if _persisted else None
+            if _chosen_method != _persisted_method:
+                _action_col = st.empty()
+                with _action_col:
+                    if _chosen_method is None:
+                        if st.button(
+                            "Eliminar persistido",
+                            key=f"{key_prefix}_fc_del_{code}_{_cuatri}",
+                        ):
+                            with next(get_session()) as _save_s:
+                                delete_persisted_forecast(
+                                    _save_s, code, _cuatri, _anio_target,
+                                )
+                            st.toast(f"{code} {_cuatri}: forecast eliminado.")
+                            st.rerun()
+                    else:
+                        if st.button(
+                            f"Guardar {_labels_method.get(_chosen_method, _chosen_method)}",
+                            type="primary",
+                            key=f"{key_prefix}_fc_save_{code}_{_cuatri}",
+                        ):
+                            with next(get_session()) as _save_s:
+                                persist_forecast(
+                                    _save_s, code, _cuatri,
+                                    int(_anio_target), _chosen_method,
+                                    _results[_chosen_method],
+                                )
+                            st.toast(
+                                f"{code} {_cuatri}: forecast persistido "
+                                f"({_results[_chosen_method].valor:.0f})."
+                            )
+                            st.rerun()
 
 
 # =============================================================================

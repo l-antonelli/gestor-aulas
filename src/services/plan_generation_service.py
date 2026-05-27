@@ -367,6 +367,11 @@ def generate_plan_from_preview(
         for ep in mp.entries:
             com_entries.setdefault(ep.comision_asignada, []).append(ep)
 
+        # Coeficiente uniforme: 1/n para n comisiones de esta materia.
+        # El usuario puede ajustarlo despues desde Planes -> Detalle.
+        n_comisiones = len(com_entries) or 1
+        coef_uniforme = 1.0 / n_comisiones
+
         for com_num in sorted(com_entries.keys()):
             comision_id = str(uuid.uuid4())
             comision_key = f"{mp.materia_codigo}-{com_num:03d}"
@@ -379,6 +384,7 @@ def generate_plan_from_preview(
                 nombre=f"Comision {com_num}",
                 numero=com_num,
                 cupo=cupo,
+                coef_asignacion=coef_uniforme,
             )
             session.add(comision)
             session.flush()
@@ -510,6 +516,9 @@ def generate_plan_from_schedule(
                 for i in range(n_comisiones)
             ]
 
+        # Coef de asignacion uniforme: 1/n para n comisiones de esta materia
+        coef_uniforme = 1.0 / max(len(groups), 1)
+
         # Create comisiones and horarios
         for com_idx, group in enumerate(groups):
             com_numero = com_idx + 1
@@ -525,6 +534,7 @@ def generate_plan_from_schedule(
                 nombre=comision_nombre,
                 numero=com_numero,
                 cupo=materia.cupo or 0,
+                coef_asignacion=coef_uniforme,
             )
             session.add(comision)
             session.flush()
@@ -845,3 +855,122 @@ def build_timetable_grid(
         grid[day].sort(key=lambda b: b.hora_inicio)
 
     return grid
+
+
+# =============================================================================
+# Coeficientes de asignacion (inscriptos por comision)
+# =============================================================================
+
+def _comisiones_de_materia_en_plan(
+    session: Session, plan_cursada_id: str, materia_codigo: str,
+) -> list[ComisionDB]:
+    return list(session.exec(
+        select(ComisionDB)
+        .where(ComisionDB.plan_cursada_id == plan_cursada_id)
+        .where(ComisionDB.materia_codigo == materia_codigo)
+        .order_by(ComisionDB.numero)
+    ).all())
+
+
+def normalize_coef_asignacion(
+    session: Session, plan_cursada_id: str, materia_codigo: str,
+) -> int:
+    """Reasigna coef_asignacion uniformemente (1/n) entre las comisiones de
+    la materia en el plan. Devuelve la cantidad de comisiones afectadas.
+    """
+    comisiones = _comisiones_de_materia_en_plan(
+        session, plan_cursada_id, materia_codigo,
+    )
+    n = len(comisiones)
+    if n == 0:
+        return 0
+    coef = 1.0 / n
+    for c in comisiones:
+        c.coef_asignacion = coef
+        session.add(c)
+    session.commit()
+    return n
+
+
+def update_comision_coef(
+    session: Session, comision_id: str, new_coef: float,
+) -> Optional[ComisionDB]:
+    """Setea el coef_asignacion de una comision puntual (clamp [0, 1]).
+
+    NO normaliza el resto. La UI muestra la suma por dictado y el usuario
+    decide si ajusta o aprieta "Normalizar".
+    """
+    coef = max(0.0, min(1.0, float(new_coef)))
+    comision = session.get(ComisionDB, comision_id)
+    if comision is None:
+        return None
+    comision.coef_asignacion = coef
+    session.add(comision)
+    session.commit()
+    session.refresh(comision)
+    return comision
+
+
+def get_coef_sum_por_materia(
+    session: Session, plan_cursada_id: str,
+) -> dict[str, float]:
+    """Devuelve {materia_codigo: suma de coef_asignacion} para todas las
+    materias del plan. Para validar que cada suma sea ~1.0.
+    """
+    rows = list(session.exec(
+        select(
+            ComisionDB.materia_codigo,
+            func.sum(ComisionDB.coef_asignacion),
+        )
+        .where(ComisionDB.plan_cursada_id == plan_cursada_id)
+        .group_by(ComisionDB.materia_codigo)
+    ).all())
+    return {mc: float(s or 0.0) for mc, s in rows}
+
+
+def get_inscriptos_esperados_por_comision(
+    session: Session, plan_cursada_id: str, anio_target: int,
+) -> dict[str, float]:
+    """Para cada comision del plan, calcula `forecast(materia, cuatri, anio_target)
+    × coef_asignacion`. Usa el cuatrimestre del ciclo del plan.
+
+    Si una materia no tiene forecast persistido para (cuatri, anio_target),
+    se omite del resultado (caller decide como mostrarlo en UI).
+    """
+    from src.services.forecast_service import get_persisted_forecast
+
+    plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
+    if plan is None or plan.ciclo_id is None:
+        return {}
+
+    from src.database.models import CicloDB
+    ciclo = session.get(CicloDB, plan.ciclo_id)
+    if ciclo is None:
+        return {}
+    cuatri = f"{ciclo.numero}C"
+
+    comisiones = list(session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_cursada_id)
+    ).all())
+    if not comisiones:
+        return {}
+
+    # Forecasts por materia: probar cuatri del ciclo y "Anual"
+    materias = sorted({c.materia_codigo for c in comisiones})
+    forecasts: dict[str, float] = {}
+    for mc in materias:
+        f_cuatri = get_persisted_forecast(session, mc, cuatri, anio_target)
+        f_anual = get_persisted_forecast(session, mc, "Anual", anio_target)
+        # Para anuales tomamos el de "Anual"; sino el de cuatri.
+        if f_anual is not None:
+            forecasts[mc] = f_anual.valor
+        elif f_cuatri is not None:
+            forecasts[mc] = f_cuatri.valor
+
+    result: dict[str, float] = {}
+    for c in comisiones:
+        if c.materia_codigo not in forecasts:
+            continue
+        result[c.id] = forecasts[c.materia_codigo] * c.coef_asignacion
+    return result
+
