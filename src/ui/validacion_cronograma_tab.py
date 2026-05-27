@@ -385,6 +385,20 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 "particion_message": _part_result.message,
                 "particion_details": list(_part_result.details or []),
             }
+            # Persistir snapshot de la validacion en ScheduleValidationDB.
+            # Esto es lo que usa la UI de Cronogramas (lista) y el wizard
+            # de Generar Plan para mostrar el badge "validado y vigente".
+            from src.services.cronograma_validation_service import (
+                validar_cronograma as _val_svc,
+                persist_validation as _persist_val,
+            )
+            with next(get_session()) as _persist_sess:
+                _summary = _val_svc(
+                    _persist_sess, _sel_sched_id, sel_ciclo_crono,
+                )
+                if _summary.error is None:
+                    _persist_val(_persist_sess, _summary)
+
             # Clear any previous preview when re-prevalidating
             st.session_state.pop(_preview_key, None)
             st.rerun()
