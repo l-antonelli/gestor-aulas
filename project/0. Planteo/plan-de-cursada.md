@@ -280,6 +280,61 @@ cambian los horarios sin tener que recrear todo el plan.
 
 ---
 
+## 5.5 Inscriptos esperados — Forecasting + Coeficientes
+
+Para que el LP de asignacion de aulas pueda decidir qué aula corresponde a cada
+clase necesita un input clave: **cantidad esperada de alumnos por comisión**.
+Ese número se construye en dos pasos:
+
+### Paso 1 — Forecast por (materia, cuatri)
+
+A partir de `InscripcionHistoricaDB` (datos por `(materia, anio, cuatri)`)
+proyectamos el próximo punto de la serie temporal. Con datos disponibles
+limitados (2022–2025, 3-4 puntos por serie) usamos métodos simples:
+
+- **Media móvil**: promedio de los últimos N puntos (default = todos).
+- **Drift**: extrapolación lineal entre primer y último punto (`y_last + slope`).
+- **SES** (suavizado exponencial simple): nivel exponencial con `α` auto-calibrado
+  por minimización de SSE in-sample.
+
+Las series son por `(materia, cuatri)`: 1C y 2C separadas para cuatrimestrales,
+"Anual" como serie propia para anuales (que no tienen 1C/2C). Los métodos
+generan en paralelo y el usuario elige el que mejor le parezca; la elección se
+persiste en `InscripcionForecastDB` con `(materia_codigo, cuatri, anio_target,
+metodo, valor, fecha_calculo)`.
+
+**UI**: pestaña **📈 Inscriptos** → expander de cada materia → sección "🔮 Forecast".
+Muestra los métodos disponibles como métricas y un selectbox para elegir el
+persistido. Si la serie tiene menos de 2 puntos, solo aparece "media móvil".
+
+### Paso 2 — Coeficiente de asignación por comisión
+
+`ComisionDB.coef_asignacion: float` define qué fracción del forecast total de la
+materia le toca a esa comisión. Default uniforme: `1/n` con n comisiones del
+mismo dictado en el plan. La suma por materia debe ser ≈1.0 (validación a nivel
+service, tolerancia 0.01 por floating point).
+
+**Inscriptos esperados por comisión** = `forecast(materia, cuatri_ciclo, anio) × coef_asignacion`.
+
+Si la materia es anual, se prefiere el forecast con `cuatri='Anual'` por encima
+del cuatri del ciclo.
+
+**UI**: pestaña **📊 Planes → 🔍 Detalle** → editor de comisiones. Cada comisión
+muestra **Cupo** (capacidad pretendida, legacy), **Coef** (editable, persiste
+on-the-fly) y **Esperados** (read-only, calculado). Banner arriba con
+"Coef total: X.XX" + botón "Normalizar" cuando la suma no es ≈1.
+
+### Paso 3 — El LP usa `Esperados`
+
+El próximo módulo (asignación de aulas) consume `get_inscriptos_esperados_por_comision(plan_id, anio_target)`
+que devuelve `{comision_id: forecast × coef}`. Ese diccionario es el input
+"esperados" del LP. Las penalizaciones de sobre/sub-ocupación se calculan contra
+estos valores y la `cap[a]` del aula candidata.
+
+Ver formulación completa en `project/1. Diseño/asignacion-aulas-LP.md`.
+
+---
+
 ## 6. Tipos de Clase y Laboratorios
 
 Una clase puede ser **teorica** o **de laboratorio**. Esta distincion es relevante
