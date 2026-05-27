@@ -929,15 +929,21 @@ def get_coef_sum_por_materia(
 
 
 def get_inscriptos_esperados_por_comision(
-    session: Session, plan_cursada_id: str, anio_target: int,
+    session: Session, plan_cursada_id: str,
 ) -> dict[str, float]:
-    """Para cada comision del plan, calcula `forecast(materia, cuatri, anio_target)
-    × coef_asignacion`. Usa el cuatrimestre del ciclo del plan.
+    """Para cada comision del plan, calcula `forecast(materia, cuatri) × coef_asignacion`.
 
-    Si una materia no tiene forecast persistido para (cuatri, anio_target),
-    se omite del resultado (caller decide como mostrarlo en UI).
+    Usa el cuatrimestre del ciclo del plan. Para materias anuales (que
+    tienen serie con cuatri='Anual') prioriza esa serie sobre la del cuatri
+    del ciclo.
+
+    El metodo de forecast se resuelve via `forecast_service.resolve_metodo`
+    (override por materia > default del plan). El valor se computa al vuelo,
+    no se persiste.
+
+    Si la materia no tiene serie historica, se omite del resultado.
     """
-    from src.services.forecast_service import get_persisted_forecast
+    from src.services.forecast_service import get_forecast_for_materia
 
     plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
     if plan is None or plan.ciclo_id is None:
@@ -955,13 +961,13 @@ def get_inscriptos_esperados_por_comision(
     if not comisiones:
         return {}
 
-    # Forecasts por materia: probar cuatri del ciclo y "Anual"
+    # Forecasts por materia: probar "Anual" primero (para materias anuales),
+    # sino el del cuatri del ciclo.
     materias = sorted({c.materia_codigo for c in comisiones})
     forecasts: dict[str, float] = {}
     for mc in materias:
-        f_cuatri = get_persisted_forecast(session, mc, cuatri, anio_target)
-        f_anual = get_persisted_forecast(session, mc, "Anual", anio_target)
-        # Para anuales tomamos el de "Anual"; sino el de cuatri.
+        f_anual = get_forecast_for_materia(session, plan_cursada_id, mc, "Anual")
+        f_cuatri = get_forecast_for_materia(session, plan_cursada_id, mc, cuatri)
         if f_anual is not None:
             forecasts[mc] = f_anual.valor
         elif f_cuatri is not None:

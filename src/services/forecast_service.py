@@ -5,26 +5,36 @@ Implementa tres metodos simples adecuados a series cortas (3-4 puntos):
 - `drift`: extrapolacion lineal entre primer y ultimo punto
 - `ses`: suavizado exponencial simple, alpha auto-calibrado por SSE in-sample
 
-El service expone:
-- `forecast_*`: funciones puras que toman una serie y devuelven `ForecastResult`
-- `get_serie`: arma la serie historica para una (materia, cuatri)
-- `get_or_compute_forecasts`: arma todos los forecasts para una (materia, cuatri, anio)
-- `persist_forecast`/`get_persisted_forecast`: persistencia del metodo elegido
+Resolucion del metodo a usar (desde un Plan):
+1. Si existe `MateriaForecastConfigDB` para (plan, materia, cuatri) → usa override.
+2. Sino → usa `PlanificacionCursadaDB.forecast_metodo_default`.
+
+El **valor del forecast NO se persiste**. Se recomputa al vuelo cada vez que se
+necesita (servicio puro, sin cache). Si la serie historica cambia, el valor
+queda actualizado automaticamente.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
 from sqlmodel import Session, select
 
 from src.database.models import (
-    InscripcionForecastDB,
     InscripcionHistoricaDB,
+    MateriaForecastConfigDB,
+    PlanificacionCursadaDB,
 )
+
+
+# Metodos disponibles, exportados como constantes para que la UI los use.
+METODOS_DISPONIBLES: list[str] = ["media_movil", "drift", "ses"]
+METODO_LABELS: dict[str, str] = {
+    "media_movil": "Media móvil",
+    "drift": "Drift (lineal)",
+    "ses": "SES (α auto)",
+}
 
 
 # =============================================================================
@@ -169,7 +179,7 @@ def forecast_ses(
     else:
         best_alpha = alpha
 
-    levels, forecast_value = _ses_predict(valores, best_alpha)
+    _, forecast_value = _ses_predict(valores, best_alpha)
     sse = _sse_for_alpha(best_alpha)
 
     return ForecastResult(
@@ -182,7 +192,32 @@ def forecast_ses(
 
 
 # =============================================================================
-# Acceso a datos / orquestacion
+# Despachador por nombre de metodo
+# =============================================================================
+
+def compute_forecast(
+    serie: list[tuple[int, int]], metodo: str,
+) -> ForecastResult:
+    """Computa el forecast aplicando el metodo indicado. Si la serie tiene
+    <2 puntos, drift y SES degeneran a media_movil para evitar resultados
+    sin sentido.
+    """
+    if metodo not in METODOS_DISPONIBLES:
+        raise ValueError(
+            f"Metodo desconocido '{metodo}'. Disponibles: {METODOS_DISPONIBLES}"
+        )
+    if len(serie) < 2 and metodo != "media_movil":
+        # Degenerar a media_movil para series cortas
+        return forecast_media_movil(serie)
+    if metodo == "media_movil":
+        return forecast_media_movil(serie)
+    if metodo == "drift":
+        return forecast_drift(serie)
+    return forecast_ses(serie)
+
+
+# =============================================================================
+# Acceso a datos
 # =============================================================================
 
 def get_serie(
@@ -198,24 +233,18 @@ def get_serie(
     return [(r.anio, r.inscriptos) for r in rows]
 
 
-def get_or_compute_forecasts(
-    session: Session,
-    materia_codigo: str,
-    cuatrimestre: str,
-    anio_target: int,
-    media_movil_window: Optional[int] = None,
+def get_all_forecasts(
+    serie: list[tuple[int, int]],
 ) -> dict[str, ForecastResult]:
     """Devuelve {metodo: ForecastResult} para todos los metodos disponibles.
 
     Si la serie tiene <2 puntos, devuelve solo `media_movil` (drift y SES
     degeneran sin tendencia).
     """
-    serie = get_serie(session, materia_codigo, cuatrimestre)
     if not serie:
         return {}
-
     results: dict[str, ForecastResult] = {
-        "media_movil": forecast_media_movil(serie, window=media_movil_window),
+        "media_movil": forecast_media_movil(serie),
     }
     if len(serie) >= 2:
         results["drift"] = forecast_drift(serie)
@@ -223,64 +252,90 @@ def get_or_compute_forecasts(
     return results
 
 
-def persist_forecast(
+# =============================================================================
+# Resolucion del metodo a usar (override por materia > default de plan)
+# =============================================================================
+
+def get_metodo_override(
     session: Session,
+    plan_cursada_id: str,
     materia_codigo: str,
     cuatrimestre: str,
-    anio_target: int,
-    metodo: str,
-    result: ForecastResult,
-) -> InscripcionForecastDB:
-    """Insert or update del forecast persistido para esa (materia, cuatri, anio)."""
-    record = session.get(
-        InscripcionForecastDB,
-        (materia_codigo, cuatrimestre, anio_target),
+) -> Optional[str]:
+    """Devuelve el metodo overrideado para (plan, materia, cuatri) o None."""
+    rec = session.get(
+        MateriaForecastConfigDB,
+        (plan_cursada_id, materia_codigo, cuatrimestre),
     )
-    if record is None:
-        record = InscripcionForecastDB(
+    return rec.metodo if rec is not None else None
+
+
+def resolve_metodo(
+    session: Session,
+    plan_cursada_id: str,
+    materia_codigo: str,
+    cuatrimestre: str,
+) -> str:
+    """Devuelve el metodo a usar: override si existe, sino default del plan."""
+    override = get_metodo_override(
+        session, plan_cursada_id, materia_codigo, cuatrimestre,
+    )
+    if override is not None:
+        return override
+    plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
+    if plan is None:
+        return "media_movil"
+    return plan.forecast_metodo_default
+
+
+def set_metodo_override(
+    session: Session,
+    plan_cursada_id: str,
+    materia_codigo: str,
+    cuatrimestre: str,
+    metodo: Optional[str],
+) -> None:
+    """Setea o elimina un override por materia.
+
+    Si `metodo` es None, elimina el override existente (vuelve al default).
+    """
+    rec = session.get(
+        MateriaForecastConfigDB,
+        (plan_cursada_id, materia_codigo, cuatrimestre),
+    )
+    if metodo is None:
+        if rec is not None:
+            session.delete(rec)
+            session.commit()
+        return
+    if metodo not in METODOS_DISPONIBLES:
+        raise ValueError(f"Metodo desconocido '{metodo}'")
+    if rec is None:
+        rec = MateriaForecastConfigDB(
+            plan_cursada_id=plan_cursada_id,
             materia_codigo=materia_codigo,
             cuatrimestre=cuatrimestre,
-            anio_target=anio_target,
             metodo=metodo,
-            valor=result.valor,
-            parametros_json=json.dumps(result.parametros),
         )
     else:
-        record.metodo = metodo
-        record.valor = result.valor
-        record.fecha_calculo = datetime.utcnow()
-        record.parametros_json = json.dumps(result.parametros)
-    session.add(record)
+        rec.metodo = metodo
+    session.add(rec)
     session.commit()
-    session.refresh(record)
-    return record
 
 
-def get_persisted_forecast(
+def get_forecast_for_materia(
     session: Session,
+    plan_cursada_id: str,
     materia_codigo: str,
     cuatrimestre: str,
-    anio_target: int,
-) -> Optional[InscripcionForecastDB]:
-    """Devuelve el forecast persistido o None si no existe."""
-    return session.get(
-        InscripcionForecastDB,
-        (materia_codigo, cuatrimestre, anio_target),
+) -> Optional[ForecastResult]:
+    """Computa el forecast para (plan, materia, cuatri) usando el metodo
+    resuelto (override > default plan). Devuelve None si no hay serie.
+    """
+    serie = get_serie(session, materia_codigo, cuatrimestre)
+    if not serie:
+        return None
+    metodo = resolve_metodo(
+        session, plan_cursada_id, materia_codigo, cuatrimestre,
     )
-
-
-def delete_persisted_forecast(
-    session: Session,
-    materia_codigo: str,
-    cuatrimestre: str,
-    anio_target: int,
-) -> bool:
-    """Elimina el forecast persistido. True si habia algo para borrar."""
-    record = get_persisted_forecast(
-        session, materia_codigo, cuatrimestre, anio_target,
-    )
-    if record is None:
-        return False
-    session.delete(record)
-    session.commit()
-    return True
+    return compute_forecast(serie, metodo)

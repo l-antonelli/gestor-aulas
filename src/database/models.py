@@ -346,6 +346,10 @@ class PlanificacionCursadaDB(SQLModel, table=True):
     ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
     activo: bool = Field(default=False)
     schedule_id: Optional[str] = Field(default=None, foreign_key="schedules.id")
+    # Metodo de forecast por defecto que se aplica a todas las materias del
+    # plan, salvo override en `MateriaForecastConfigDB`. Valores:
+    # "media_movil" | "drift" | "ses".
+    forecast_metodo_default: str = Field(default="media_movil")
 
     # Relationships
     ciclo: Optional[CicloDB] = Relationship(back_populates="planificaciones")
@@ -394,21 +398,22 @@ class InscripcionHistoricaDB(SQLModel, table=True):
     inscriptos: int = Field(ge=0)
 
 
-class InscripcionForecastDB(SQLModel, table=True):
-    """Forecast persistido de inscriptos para una (materia, cuatri, anio_target).
+class MateriaForecastConfigDB(SQLModel, table=True):
+    """Override del metodo de forecast por (plan, materia, cuatri).
 
-    Guarda el metodo elegido por el usuario y el valor predicho. Se usa como
-    input del LP de asignacion de aulas (multiplicado por
-    `ComisionDB.coef_asignacion`) para obtener inscriptos esperados por
-    comision. La PK compuesta garantiza un solo forecast persistido por
-    (materia, cuatri, anio_target); al cambiar el metodo se sobrescribe.
+    El default por plan vive en `PlanificacionCursadaDB.forecast_metodo_default`.
+    Esta tabla solo guarda overrides puntuales para materias cuyo
+    comportamiento no encaja con el default. La resolucion final del metodo
+    a usar es: override si existe, sino default de plan.
+
+    El valor del forecast NO se persiste — se recomputa on-demand desde la
+    serie historica al consultar (via `forecast_service.get_forecast_for_materia`).
     """
-    __tablename__ = "inscripcion_forecasts"
+    __tablename__ = "materia_forecast_config"
 
+    plan_cursada_id: str = Field(
+        foreign_key="planificaciones_cursada.id", primary_key=True,
+    )
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     cuatrimestre: str = Field(primary_key=True)  # "1C" | "2C" | "Anual"
-    anio_target: int = Field(primary_key=True)
     metodo: str  # "media_movil" | "drift" | "ses"
-    valor: float = Field(ge=0)
-    fecha_calculo: datetime = Field(default_factory=datetime.utcnow)
-    parametros_json: str = Field(default="{}")  # ej: {"window": 3} o {"alpha": 0.5}

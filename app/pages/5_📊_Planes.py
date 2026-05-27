@@ -340,6 +340,28 @@ with tab_detalle:
                 with st.form(f"edit_plan_{sel_plan_id}"):
                     nuevo_nombre = st.text_input("Nombre", value=sel_plan.nombre)
                     nueva_desc = st.text_area("Descripcion", value=sel_plan.descripcion or "")
+
+                    # Selector de método de forecast default del plan
+                    from src.services.forecast_service import (
+                        METODO_LABELS as _PM_LABELS,
+                        METODOS_DISPONIBLES as _PM_AVAIL,
+                    )
+                    _curr_metodo = sel_plan.forecast_metodo_default or "media_movil"
+                    _curr_idx = (
+                        _PM_AVAIL.index(_curr_metodo)
+                        if _curr_metodo in _PM_AVAIL else 0
+                    )
+                    nuevo_metodo = st.selectbox(
+                        "Método de forecast (default del plan)",
+                        options=list(_PM_AVAIL),
+                        index=_curr_idx,
+                        format_func=lambda m: _PM_LABELS.get(m, m),
+                        help=(
+                            "Método aplicado por defecto a todas las materias "
+                            "del plan al calcular inscriptos esperados. "
+                            "Editable por materia más abajo (override)."
+                        ),
+                    )
                     save_meta = st.form_submit_button("Guardar", type="primary")
 
                     if save_meta:
@@ -348,6 +370,7 @@ with tab_detalle:
                             if db_plan:
                                 db_plan.nombre = nuevo_nombre
                                 db_plan.descripcion = nueva_desc
+                                db_plan.forecast_metodo_default = nuevo_metodo
                                 session.add(db_plan)
                                 session.commit()
                                 st.success("Metadata actualizada")
@@ -721,14 +744,19 @@ with tab_detalle:
                                 get_inscriptos_esperados_por_comision as _get_esperados,
                             )
                             from src.services.forecast_service import (
-                                get_persisted_forecast as _get_fc,
+                                METODO_LABELS as _M_LABELS,
+                                METODOS_DISPONIBLES as _M_AVAIL,
+                                get_forecast_for_materia as _get_fc,
+                                get_metodo_override as _get_ov,
+                                resolve_metodo as _resolve_metodo,
+                                set_metodo_override as _set_ov,
                             )
 
                             _coef_sum = sum(c.coef_asignacion for c in mat_coms)
                             _coef_ok = abs(_coef_sum - 1.0) < 0.01
                             _coef_color = "🟢" if _coef_ok else "🟡"
 
-                            # Forecast en cuatri del ciclo o anual
+                            # Forecast en cuatri del ciclo o anual (segun materia)
                             _ciclo_obj = next(
                                 (c for c in ciclos if c.id == sel_plan.ciclo_id),
                                 None,
@@ -736,46 +764,46 @@ with tab_detalle:
                             _cuatri_ciclo = (
                                 f"{_ciclo_obj.numero}C" if _ciclo_obj else "?"
                             )
-                            _anio_target_default = (
-                                _ciclo_obj.anio if _ciclo_obj else 2025
-                            )
-                            _anio_target_key = f"plan_anio_target_{sel_plan_id}"
-                            _anio_target = st.session_state.get(
-                                _anio_target_key, _anio_target_default,
-                            )
 
                             with next(get_session()) as _fc_sess:
-                                _fc_cuatri = _get_fc(
-                                    _fc_sess, mat_codigo, _cuatri_ciclo,
-                                    _anio_target,
+                                _fc_cuatri_res = _get_fc(
+                                    _fc_sess, sel_plan_id, mat_codigo, _cuatri_ciclo,
                                 )
-                                _fc_anual = _get_fc(
-                                    _fc_sess, mat_codigo, "Anual",
-                                    _anio_target,
+                                _fc_anual_res = _get_fc(
+                                    _fc_sess, sel_plan_id, mat_codigo, "Anual",
                                 )
                                 _esperados_map = _get_esperados(
-                                    _fc_sess, sel_plan_id, _anio_target,
+                                    _fc_sess, sel_plan_id,
+                                )
+                                # Override actual (si existe) — buscamos en el cuatri
+                                # que aplica para esta materia
+                                _ov_cuatri = (
+                                    "Anual" if _fc_anual_res else _cuatri_ciclo
+                                )
+                                _ov_actual = _get_ov(
+                                    _fc_sess, sel_plan_id, mat_codigo, _ov_cuatri,
                                 )
 
-                            _fc_value = (
-                                _fc_anual.valor if _fc_anual is not None
-                                else (_fc_cuatri.valor if _fc_cuatri is not None else None)
+                            _fc_used = (
+                                _fc_anual_res if _fc_anual_res is not None
+                                else _fc_cuatri_res
                             )
 
-                            _info_c1, _info_c2, _info_c3 = st.columns([2, 2, 1])
+                            _info_c1, _info_c2, _info_c3 = st.columns([2, 3, 1])
                             _info_c1.markdown(
                                 f"**Coef total:** {_coef_color} {_coef_sum:.2f} "
                                 f"(debe ser ~1.0)"
                             )
-                            if _fc_value is not None:
-                                _src = "Anual" if _fc_anual else _cuatri_ciclo
+                            if _fc_used is not None:
+                                _src = "Anual" if _fc_anual_res else _cuatri_ciclo
                                 _info_c2.markdown(
-                                    f"**Forecast {_src} {_anio_target}:** "
-                                    f"{_fc_value:.0f}"
+                                    f"**Forecast {_src}:** {_fc_used.valor:.0f} "
+                                    f"·  método: {_M_LABELS.get(_fc_used.metodo, _fc_used.metodo)}"
+                                    f"{' (override)' if _ov_actual else ' (default plan)'}"
                                 )
                             else:
                                 _info_c2.markdown(
-                                    "**Forecast:** — *(sin método persistido en Inscriptos)*"
+                                    "**Forecast:** — *(sin serie histórica en Inscriptos)*"
                                 )
                             with _info_c3:
                                 if not _coef_ok and st.button(
@@ -788,6 +816,36 @@ with tab_detalle:
                                             _norm_s, sel_plan_id, mat_codigo,
                                         )
                                     st.toast("Coef normalizados.")
+                                    st.rerun()
+
+                            # Override del metodo de forecast (3 estados)
+                            if _fc_used is not None:
+                                _ov_options = ["Default plan"] + [
+                                    _M_LABELS[m] for m in _M_AVAIL
+                                ]
+                                _ov_keys: list[str | None] = [None] + list(_M_AVAIL)
+                                _ov_idx = 0
+                                if _ov_actual in _M_AVAIL:
+                                    _ov_idx = _ov_keys.index(_ov_actual)
+                                _ov_choice = st.selectbox(
+                                    "Método de forecast (override)",
+                                    options=list(range(len(_ov_keys))),
+                                    format_func=lambda i: _ov_options[i],
+                                    index=_ov_idx,
+                                    key=f"fc_ov_{sel_plan_id}_{mat_codigo}",
+                                    help=(
+                                        "Override del método de forecast para "
+                                        "esta materia. 'Default plan' usa el "
+                                        "método configurado a nivel plan."
+                                    ),
+                                )
+                                _ov_new = _ov_keys[_ov_choice]
+                                if _ov_new != _ov_actual:
+                                    with next(get_session()) as _ov_s:
+                                        _set_ov(
+                                            _ov_s, sel_plan_id, mat_codigo,
+                                            _ov_cuatri, _ov_new,
+                                        )
                                     st.rerun()
 
                             for com in mat_coms:

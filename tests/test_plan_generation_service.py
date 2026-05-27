@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from src.database.models import (
     CicloDB, MateriaDB, ScheduleDB, ScheduleEntryDB,
     PlanificacionCursadaDB, ComisionDB, HorarioDB,
-    ConfiguracionHoraria, InscripcionForecastDB,
+    ConfiguracionHoraria, InscripcionHistoricaDB,
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
@@ -602,19 +602,21 @@ class TestCoefAsignacion:
 
     def test_inscriptos_esperados_por_comision(self, session, ciclo, materias):
         plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
-        # Forecast persistido para MAT101 en el cuatri del ciclo (2C)
-        session.add(InscripcionForecastDB(
-            materia_codigo="MAT101", cuatrimestre="2C",
-            anio_target=2025, metodo="media_movil", valor=200.0,
-        ))
+        # Cargar serie historica para MAT101 cuatri "2C" (igual al ciclo)
+        for anio, v in [(2022, 180), (2023, 200), (2024, 220)]:
+            session.add(InscripcionHistoricaDB(
+                materia_codigo="MAT101", anio=anio,
+                cuatrimestre="2C", inscriptos=v,
+            ))
         session.commit()
 
-        esperados = get_inscriptos_esperados_por_comision(session, plan.id, 2025)
+        # forecast_metodo_default del plan = "media_movil" → media = 200
+        esperados = get_inscriptos_esperados_por_comision(session, plan.id)
         assert len(esperados) == 2
         for v in esperados.values():
             assert abs(v - 100.0) < 1e-9  # 200 × 0.5
 
-    def test_inscriptos_esperados_sin_forecast(self, session, ciclo, materias):
+    def test_inscriptos_esperados_sin_serie(self, session, ciclo, materias):
         plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
-        esperados = get_inscriptos_esperados_por_comision(session, plan.id, 2025)
+        esperados = get_inscriptos_esperados_por_comision(session, plan.id)
         assert esperados == {}
