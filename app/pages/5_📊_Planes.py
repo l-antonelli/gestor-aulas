@@ -221,7 +221,7 @@ def _render_plan_editor(
     
     # --- Editable metadata ---
     st.markdown("#### Metadata")
-    with st.form(f"edit_plan_{sel_plan_id}"):
+    with st.form(f"edit_plan_{key_ns}_{sel_plan_id}"):
         nuevo_nombre = st.text_input("Nombre", value=sel_plan.nombre)
         nueva_desc = st.text_area("Descripcion", value=sel_plan.descripcion or "")
     
@@ -302,7 +302,7 @@ def _render_plan_editor(
     
     has_blocker = False
     
-    if st.button("Validar plan", key=f"btn_validate_{sel_plan_id}"):
+    if st.button("Validar plan", key=f"{key_ns}_btn_validate_{sel_plan_id}"):
         with next(get_session()) as session:
             v_conflicts = validar_conflictos_horarios_plan(session, sel_plan_id)
             v_coverage = validar_cobertura_plan(session, sel_plan_id, sel_ciclo_detalle)
@@ -360,7 +360,7 @@ def _render_plan_editor(
             if st.button(
                 "Activar plan",
                 type="primary",
-                key=f"btn_activate_validated_{sel_plan_id}",
+                key=f"{key_ns}_btn_activate_validated_{sel_plan_id}",
             ):
                 with next(get_session()) as session:
                     activate_plan(session, sel_plan_id)
@@ -647,7 +647,7 @@ def _render_plan_editor(
                     num_rows="dynamic",
                     use_container_width=True,
                     hide_index=True,
-                    key=f"de_horarios_{sel_plan_id}_{mat_codigo}",
+                    key=f"{key_ns}_de_horarios_{sel_plan_id}_{mat_codigo}",
                 )
     
                 # Detect changes
@@ -661,7 +661,7 @@ def _render_plan_editor(
                 if _de_has_changes:
                     if st.button(
                         "💾 Guardar cambios de horarios",
-                        key=f"de_save_{sel_plan_id}_{mat_codigo}",
+                        key=f"{key_ns}_de_save_{sel_plan_id}_{mat_codigo}",
                         type="primary",
                     ):
                         # Build edited rows for apply_horario_edits
@@ -771,7 +771,7 @@ def _render_plan_editor(
                 with _info_c3:
                     if not _coef_ok and st.button(
                         "Normalizar",
-                        key=f"norm_coef_{sel_plan_id}_{mat_codigo}",
+                        key=f"{key_ns}_norm_coef_{sel_plan_id}_{mat_codigo}",
                         help="Reasigna coef uniformemente (1/n)",
                     ):
                         with next(get_session()) as _norm_s:
@@ -795,7 +795,7 @@ def _render_plan_editor(
                         options=list(range(len(_ov_keys))),
                         format_func=lambda i: _ov_options[i],
                         index=_ov_idx,
-                        key=f"fc_ov_{sel_plan_id}_{mat_codigo}",
+                        key=f"{key_ns}_fc_ov_{sel_plan_id}_{mat_codigo}",
                         help=(
                             "Override del método de forecast para "
                             "esta materia. 'Default plan' usa el "
@@ -826,13 +826,13 @@ def _render_plan_editor(
                     with col_name:
                         new_name = st.text_input(
                             "Nombre", value=com.nombre,
-                            key=f"com_name_{com.id}",
+                            key=f"{key_ns}_com_name_{com.id}",
                             label_visibility="collapsed",
                         )
                     with col_cupo:
                         new_cupo = st.number_input(
                             "Cupo", value=max(com.cupo, 1), min_value=1,
-                            key=f"com_cupo_{com.id}",
+                            key=f"{key_ns}_com_cupo_{com.id}",
                         )
                     with col_coef:
                         new_coef = st.number_input(
@@ -840,7 +840,7 @@ def _render_plan_editor(
                             value=float(com.coef_asignacion),
                             min_value=0.0, max_value=1.0,
                             step=0.05, format="%.2f",
-                            key=f"com_coef_{com.id}",
+                            key=f"{key_ns}_com_coef_{com.id}",
                             help=(
                                 "Fracción de inscriptos esperados que "
                                 "se asignan a esta comisión. La suma "
@@ -858,7 +858,7 @@ def _render_plan_editor(
                             st.caption("Esperados: —")
                     with col_del:
                         st.write("")
-                        if st.button("🗑️", key=f"del_com_{com.id}", help="Eliminar comision"):
+                        if st.button("🗑️", key=f"{key_ns}_del_com_{com.id}", help="Eliminar comision"):
                             with next(get_session()) as session:
                                 # Delete horarios first, then comision
                                 hs = session.exec(
@@ -881,7 +881,7 @@ def _render_plan_editor(
     
                     # Save comision changes if modified (name/cupo)
                     if new_name != com.nombre or new_cupo != com.cupo:
-                        if st.button("💾 Guardar comision", key=f"save_com_{com.id}"):
+                        if st.button("💾 Guardar comision", key=f"{key_ns}_save_com_{com.id}"):
                             with next(get_session()) as session:
                                 db_com = session.get(ComisionDB, com.id)
                                 if db_com:
@@ -904,7 +904,7 @@ def _render_plan_editor(
                                     f"{h.hora_fin.strftime('%H:%M')}"
                                 )
                             with col_h_del:
-                                if st.button("✕", key=f"del_h_{h.id}", help="Eliminar horario"):
+                                if st.button("✕", key=f"{key_ns}_del_h_{h.id}", help="Eliminar horario"):
                                     with next(get_session()) as session:
                                         db_h = session.get(HorarioDB, h.id)
                                         if db_h:
@@ -919,7 +919,7 @@ def _render_plan_editor(
                     with st.popover("➕ Agregar horario"):
                         add_dia = st.selectbox(
                             "Dia", options=dias_list,
-                            key=f"add_h_dia_{com.id}",
+                            key=f"{key_ns}_add_h_dia_{com.id}",
                         )
     
                         # Build time options from config slots
@@ -932,17 +932,17 @@ def _render_plan_editor(
                             "Hora inicio",
                             options=time_options,
                             format_func=lambda t: time_labels[t],
-                            key=f"add_h_ini_{com.id}",
+                            key=f"{key_ns}_add_h_ini_{com.id}",
                         )
                         add_fin = st.selectbox(
                             "Hora fin",
                             options=time_options,
                             format_func=lambda t: time_labels[t],
                             index=min(1, len(time_options) - 1),
-                            key=f"add_h_fin_{com.id}",
+                            key=f"{key_ns}_add_h_fin_{com.id}",
                         )
     
-                        if st.button("Agregar", key=f"btn_add_h_{com.id}", type="primary"):
+                        if st.button("Agregar", key=f"{key_ns}_btn_add_h_{com.id}", type="primary"):
                             if add_fin <= add_inicio:
                                 st.error("La hora de fin debe ser posterior a la de inicio")
                             else:
@@ -965,7 +965,7 @@ def _render_plan_editor(
     
                 # --- Add comision button ---
                 st.divider()
-                if st.button(f"➕ Agregar comision", key=f"add_com_{mat_codigo}"):
+                if st.button(f"➕ Agregar comision", key=f"{key_ns}_add_com_{mat_codigo}"):
                     with next(get_session()) as session:
                         # Determine next numero
                         max_num = max(c.numero for c in mat_coms) if mat_coms else 0
