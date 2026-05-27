@@ -14,6 +14,8 @@ from src.database.models import (
 )
 from src.services.plan_generation_service import (
     generate_plan_from_schedule,
+    generate_plan_from_preview,
+    preview_plan_from_schedule,
     activate_plan,
     generate_time_slots,
     build_timetable_grid,
@@ -620,3 +622,122 @@ class TestCoefAsignacion:
         plan = self._setup_plan_con_2_comisiones(session, ciclo, materias)
         esperados = get_inscriptos_esperados_por_comision(session, plan.id)
         assert esperados == {}
+
+
+class TestPreviewOverrides:
+    """Tests del wizard: overrides en preview_plan_from_schedule."""
+
+    def _make_schedule(self, session, ciclo, mat_codigo: str, n_entries: int = 4):
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="Test", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        # n_entries en distintos slots → no son paralelas
+        for i in range(n_entries):
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()), schedule_id=sched.id,
+                codigo_materia=mat_codigo, dia="Lunes",
+                hora_inicio=time(8 + i, 0), hora_fin=time(9 + i, 0),
+            ))
+        session.commit()
+        return sched
+
+    def test_override_n_comisiones_subido(self, session, ciclo, materias):
+        sched = self._make_schedule(session, ciclo, "MAT101", n_entries=4)
+        # Sin override: deriva 1 (exclusiva 1 carrera)
+        prev = preview_plan_from_schedule(session, sched.id)
+        mp = prev.materias[0]
+        assert mp.materia_codigo == "MAT101"
+        baseline = mp.n_comisiones
+
+        # Override a 3
+        overrides = {"MAT101": {"n_comisiones": 3}}
+        prev2 = preview_plan_from_schedule(session, sched.id, overrides=overrides)
+        mp2 = prev2.materias[0]
+        assert mp2.n_comisiones == 3
+        assert baseline != 3
+
+    def test_override_n_comisiones_no_baja_de_paralelas(self, session, ciclo, materias):
+        # Schedule con 2 entries en mismo slot → max_paralelas = 2
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="T", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        for _ in range(2):
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()), schedule_id=sched.id,
+                codigo_materia="MAT101", dia="Lunes",
+                hora_inicio=time(8, 0), hora_fin=time(11, 0),
+            ))
+        session.commit()
+
+        # Override a 1 → debería respetar el piso de 2 paralelas
+        overrides = {"MAT101": {"n_comisiones": 1}}
+        prev = preview_plan_from_schedule(session, sched.id, overrides=overrides)
+        mp = prev.materias[0]
+        assert mp.n_comisiones == 2
+        assert mp.flag == "needs_more_comisiones"
+
+    def test_override_horas_semanales_no_persiste(self, session, ciclo, materias):
+        sched = self._make_schedule(session, ciclo, "MAT101", n_entries=4)
+        # Override
+        overrides = {"MAT101": {"horas_semanales": 99.0}}
+        prev = preview_plan_from_schedule(session, sched.id, overrides=overrides)
+        mp = prev.materias[0]
+        # En el preview el override aparece
+        assert mp.horas_semanales == 99.0
+
+        # Verificar que MateriaDB NO se modificó
+        m = session.get(MateriaDB, "MAT101")
+        assert m.horas_semanales != 99.0
+
+
+class TestGenerateFromPreviewExtended:
+    """Tests del wizard: descripcion + forecast_metodo_default al generar."""
+
+    def test_setea_forecast_metodo_default(self, session, ciclo, materias):
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="T", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.commit()
+
+        prev = preview_plan_from_schedule(session, sched.id)
+        result = generate_plan_from_preview(
+            session, sched.id, "Plan X", ciclo.id, prev.materias,
+            descripcion="Desc test", forecast_metodo_default="ses",
+        )
+        assert result.plan is not None
+        assert result.plan.forecast_metodo_default == "ses"
+        assert result.plan.descripcion == "Desc test"
+
+    def test_default_forecast_es_media_movil(self, session, ciclo, materias):
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="T", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.commit()
+
+        prev = preview_plan_from_schedule(session, sched.id)
+        result = generate_plan_from_preview(
+            session, sched.id, "Plan", ciclo.id, prev.materias,
+        )
+        assert result.plan.forecast_metodo_default == "media_movil"
