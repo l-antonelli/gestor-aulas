@@ -196,16 +196,666 @@ def _get_faltantes_por_carrera(
 
 
 # =============================================================================
-# Tab 1: Generar Plan (placeholder — task 12)
+# Tab 1: Generar Plan (wizard de 4 pasos)
 # =============================================================================
+
+# Labels en castellano para los flags del preview (no exponer "exact" etc).
+_FLAG_LABELS = {
+    "exact": "Confirmado",
+    "uncertain": "Incierto",
+    "no_data": "Sin datos",
+    "needs_more_comisiones": "Faltan comisiones",
+    "duplicates": "Duplicados",
+}
+_FLAG_ICONS = {
+    "exact": "🟢",
+    "uncertain": "🟡",
+    "no_data": "⚪",
+    "needs_more_comisiones": "🔴",
+    "duplicates": "🟠",
+}
+
+
+def _wizard_reset() -> None:
+    """Limpia las keys del wizard. Usado al cancelar o al terminar."""
+    for k in list(st.session_state.keys()):
+        if isinstance(k, str) and k.startswith("wizard_"):
+            del st.session_state[k]
+
+
+def _wizard_step() -> int:
+    return st.session_state.get("wizard_step", 1)
+
+
+def _wizard_progress_bar() -> None:
+    """Barra de progreso visual para el wizard."""
+    step = _wizard_step()
+    cols = st.columns(4)
+    labels = ["1. Selección", "2. Vista previa", "3. Editar", "4. Confirmar"]
+    for i, (col, lbl) in enumerate(zip(cols, labels), start=1):
+        with col:
+            if i < step:
+                st.markdown(f"✅ **{lbl}**")
+            elif i == step:
+                st.markdown(f"➡️ **{lbl}**")
+            else:
+                st.markdown(f"⚪ {lbl}")
+
+
 with tab_generar:
     st.subheader("Generar Plan de Cursada")
-    st.info(
-        "Antes de generar un plan, validá el cronograma desde "
-        "**📅 Cronogramas → ✅ Validar**. Una vez prevalidado, volvé acá "
-        "para generar el plan a partir del cronograma."
-    )
-    st.caption("Funcionalidad en desarrollo.")
+
+    _wizard_progress_bar()
+    st.divider()
+
+    _step = _wizard_step()
+
+    # Top bar: cancelar wizard
+    if _step > 1 or any(
+        k.startswith("wizard_") and k != "wizard_step"
+        for k in st.session_state.keys()
+    ):
+        if st.button("✖ Cancelar wizard", key="wizard_cancel"):
+            _wizard_reset()
+            st.rerun()
+
+    # =========================================================
+    # Paso 1: Seleccion de schedule + metadata
+    # =========================================================
+    if _step == 1:
+        st.markdown(
+            "### Paso 1: Seleccionar cronograma y configurar el plan"
+        )
+        st.caption(
+            "Solo se pueden usar cronogramas **validados y vigentes** "
+            "(sin cambios desde la última validación)."
+        )
+
+        sel_ciclo_w = st.selectbox(
+            "Ciclo",
+            options=ciclo_ids,
+            key="wizard_sel_ciclo",
+            help="Ciclo lectivo para el que se va a generar el plan.",
+        )
+
+        # Fetch schedules + validaciones del ciclo
+        from src.services.cronograma_validation_service import (
+            get_latest_validation,
+            is_validation_stale,
+        )
+        from src.services.schedule_service import get_schedules_for_ciclo
+
+        with next(get_session()) as _ws:
+            _w_scheds = get_schedules_for_ciclo(_ws, sel_ciclo_w)
+            _w_sched_status: dict[str, dict] = {}
+            for s in _w_scheds:
+                _val = get_latest_validation(_ws, s.id, sel_ciclo_w)
+                _stale = (
+                    is_validation_stale(_ws, _val) if _val is not None else False
+                )
+                if _val is None:
+                    _badge = "⚪ Sin validar"
+                    _ok = False
+                elif _stale:
+                    _badge = "🟡 Validado pero desactualizado"
+                    _ok = False
+                else:
+                    _badge = "🟢 Validado y vigente"
+                    _ok = True
+                _w_sched_status[s.id] = {
+                    "schedule": s,
+                    "badge": _badge,
+                    "ok": _ok,
+                }
+
+        if not _w_scheds:
+            st.info(
+                "No hay cronogramas cargados para este ciclo. "
+                "Cargá uno desde **📅 Cronogramas**."
+            )
+        else:
+            _w_valid_ids = [
+                sid for sid, st_info in _w_sched_status.items()
+                if st_info["ok"]
+            ]
+            if not _w_valid_ids:
+                st.warning(
+                    "Ningún cronograma del ciclo está validado y vigente. "
+                    "Andá a **📅 Cronogramas → ✅ Validar** para habilitar uno."
+                )
+                # Mostrar lista informativa
+                for sid, st_info in _w_sched_status.items():
+                    s = st_info["schedule"]
+                    st.markdown(f"- {st_info['badge']} — **{s.nombre}**")
+            else:
+                _sel_sched_w = st.selectbox(
+                    "Cronograma (solo se listan los validados y vigentes)",
+                    options=_w_valid_ids,
+                    format_func=lambda sid: (
+                        f"{_w_sched_status[sid]['badge']} — "
+                        f"{_w_sched_status[sid]['schedule'].nombre}"
+                    ),
+                    key="wizard_sel_sched",
+                )
+
+                # Mostrar también los no-vigentes en caption
+                _no_validos = [
+                    (sid, st_info)
+                    for sid, st_info in _w_sched_status.items()
+                    if not st_info["ok"]
+                ]
+                if _no_validos:
+                    with st.expander(
+                        f"Cronogramas no disponibles ({len(_no_validos)})",
+                        expanded=False,
+                    ):
+                        for sid, st_info in _no_validos:
+                            s = st_info["schedule"]
+                            st.markdown(
+                                f"- {st_info['badge']} — **{s.nombre}**"
+                            )
+
+                # Metadata
+                st.divider()
+                st.markdown("**Datos del plan**")
+                _w_nombre = st.text_input(
+                    "Nombre del plan",
+                    value=st.session_state.get(
+                        "wizard_nombre",
+                        f"Plan {sel_ciclo_w} ({_w_sched_status[_sel_sched_w]['schedule'].nombre})",
+                    ),
+                    key="wizard_nombre_input",
+                )
+                _w_descripcion = st.text_area(
+                    "Descripción (opcional)",
+                    value=st.session_state.get("wizard_descripcion", ""),
+                    key="wizard_descripcion_input",
+                    height=80,
+                )
+
+                from src.services.forecast_service import (
+                    METODOS_DISPONIBLES as _W_METODOS,
+                    METODO_LABELS as _W_M_LABELS,
+                )
+                _w_metodo = st.selectbox(
+                    "Método de forecast por defecto",
+                    options=list(_W_METODOS),
+                    index=_W_METODOS.index(
+                        st.session_state.get(
+                            "wizard_metodo", "media_movil",
+                        )
+                    ) if st.session_state.get(
+                        "wizard_metodo", "media_movil",
+                    ) in _W_METODOS else 0,
+                    format_func=lambda m: _W_M_LABELS.get(m, m),
+                    key="wizard_metodo_input",
+                    help=(
+                        "Se aplica a todas las materias del plan al calcular "
+                        "inscriptos esperados. Editable por materia después."
+                    ),
+                )
+
+                if st.button(
+                    "Siguiente →",
+                    type="primary",
+                    key="wizard_to_step2",
+                    disabled=not _w_nombre.strip(),
+                ):
+                    st.session_state["wizard_ciclo_id"] = sel_ciclo_w
+                    st.session_state["wizard_schedule_id"] = _sel_sched_w
+                    st.session_state["wizard_nombre"] = _w_nombre.strip()
+                    st.session_state["wizard_descripcion"] = _w_descripcion
+                    st.session_state["wizard_metodo"] = _w_metodo
+                    st.session_state["wizard_overrides"] = {}
+                    st.session_state["wizard_step"] = 2
+                    st.rerun()
+
+    # =========================================================
+    # Paso 2: Vista previa (read-only) de comisiones derivadas
+    # =========================================================
+    elif _step == 2:
+        st.markdown("### Paso 2: Vista previa de comisiones")
+        st.caption(
+            "Revisá las comisiones que se van a crear. Las **🟢 Confirmado** "
+            "están listas. Las **🟡 Incierto** o **🔴 Faltan comisiones** "
+            "tal vez requieran ajustar `n_comisiones` o `horas_semanales` "
+            "en el paso siguiente."
+        )
+
+        _w_sched_id = st.session_state.get("wizard_schedule_id")
+        _w_overrides = st.session_state.get("wizard_overrides", {})
+
+        with next(get_session()) as _ws:
+            from src.services.plan_generation_service import (
+                preview_plan_from_schedule,
+            )
+            _w_preview = preview_plan_from_schedule(
+                _ws, _w_sched_id, overrides=_w_overrides,
+            )
+            # Detectar origen pre-asignado vs derivado por materia
+            _w_pre_asignadas: set[str] = set()
+            from src.database.models import ScheduleEntryDB as _SEDB
+            _w_entries_all = list(_ws.exec(
+                select(_SEDB).where(_SEDB.schedule_id == _w_sched_id)
+            ).all())
+            _w_by_mat: dict[str, list] = {}
+            for _e in _w_entries_all:
+                _w_by_mat.setdefault(_e.codigo_materia, []).append(_e)
+            for _mc, _ents in _w_by_mat.items():
+                if _ents and all(
+                    e.comision is not None and e.comision >= 1 for e in _ents
+                ):
+                    _w_pre_asignadas.add(_mc)
+
+        if _w_preview.errors:
+            for err in _w_preview.errors:
+                st.error(err)
+        else:
+            # Resumen agregado
+            _n_total = len(_w_preview.materias)
+            _n_com_total = sum(m.n_comisiones for m in _w_preview.materias)
+            _n_horarios = sum(len(m.entries) for m in _w_preview.materias)
+            from collections import Counter as _C
+            _flag_counts = _C(m.flag for m in _w_preview.materias)
+
+            _ms1, _ms2, _ms3 = st.columns(3)
+            _ms1.metric("Materias", _n_total)
+            _ms2.metric("Comisiones", _n_com_total)
+            _ms3.metric("Horarios", _n_horarios)
+
+            _bdg_cols = st.columns(4)
+            _bdg_cols[0].metric(
+                f"{_FLAG_ICONS['exact']} Confirmado",
+                _flag_counts.get("exact", 0),
+            )
+            _bdg_cols[1].metric(
+                f"{_FLAG_ICONS['uncertain']} Incierto",
+                _flag_counts.get("uncertain", 0),
+            )
+            _bdg_cols[2].metric(
+                f"{_FLAG_ICONS['no_data']} Sin datos",
+                _flag_counts.get("no_data", 0),
+            )
+            _bdg_cols[3].metric(
+                f"{_FLAG_ICONS['needs_more_comisiones']} Faltan com.",
+                _flag_counts.get("needs_more_comisiones", 0),
+            )
+
+            st.divider()
+
+            # Filtros
+            _f1, _f2, _f3 = st.columns([2, 2, 2])
+            with _f1:
+                _q = st.text_input(
+                    "🔎 Buscar (código o nombre)",
+                    key="wizard_p2_search",
+                )
+            with _f2:
+                _flag_filt = st.multiselect(
+                    "Estado",
+                    options=list(_FLAG_LABELS.keys()),
+                    default=list(_FLAG_LABELS.keys()),
+                    format_func=lambda f: f"{_FLAG_ICONS.get(f, '?')} {_FLAG_LABELS.get(f, f)}",
+                    key="wizard_p2_flag",
+                )
+            with _f3:
+                _origen_filt = st.multiselect(
+                    "Origen",
+                    options=["Pre-asignado", "Derivado"],
+                    default=["Pre-asignado", "Derivado"],
+                    key="wizard_p2_origen",
+                    help=(
+                        "Pre-asignado: el cronograma ya traía la columna "
+                        "'comision' completa. Derivado: se calculó "
+                        "automáticamente con las reglas."
+                    ),
+                )
+
+            def _matches_p2(mp) -> bool:
+                if _q:
+                    qn = _q.strip().lower()
+                    if (
+                        qn not in mp.materia_codigo.lower()
+                        and qn not in mp.materia_nombre.lower()
+                    ):
+                        return False
+                if mp.flag not in _flag_filt:
+                    return False
+                _origen = (
+                    "Pre-asignado"
+                    if mp.materia_codigo in _w_pre_asignadas
+                    else "Derivado"
+                )
+                if _origen not in _origen_filt:
+                    return False
+                return True
+
+            _filtered = [m for m in _w_preview.materias if _matches_p2(m)]
+
+            if not _filtered:
+                st.caption("Sin materias que cumplan los filtros.")
+            else:
+                st.caption(f"{len(_filtered)} materia(s) en la vista filtrada.")
+                for mp in _filtered:
+                    _icon = _FLAG_ICONS.get(mp.flag, "?")
+                    _lbl = _FLAG_LABELS.get(mp.flag, mp.flag)
+                    _origen = (
+                        "Pre-asignado"
+                        if mp.materia_codigo in _w_pre_asignadas
+                        else "Derivado"
+                    )
+                    _hdr = (
+                        f"{_icon} **{mp.materia_codigo}** — {mp.materia_nombre} "
+                        f"→ {mp.n_comisiones} comision(es) · {_lbl} · {_origen}"
+                    )
+                    with st.expander(_hdr, expanded=False):
+                        st.markdown(f"**Detalle**: {mp.flag_detail}")
+                        st.caption(
+                            f"Horas semanales catálogo: "
+                            f"{mp.horas_semanales or '—'} · "
+                            f"Horas en cronograma: {mp.total_horas_schedule:g}h · "
+                            f"Clases paralelas máximas: {mp.max_clases_paralelas}"
+                        )
+                        # Entries por comisión
+                        _by_com: dict[int, list] = {}
+                        for e in mp.entries:
+                            _by_com.setdefault(e.comision_asignada, []).append(e)
+                        for com_num in sorted(_by_com.keys()):
+                            st.markdown(f"**Comisión {com_num}**")
+                            _rows = []
+                            for e in _by_com[com_num]:
+                                _rows.append({
+                                    "Día": e.dia,
+                                    "Inicio": e.hora_inicio.strftime("%H:%M"),
+                                    "Fin": e.hora_fin.strftime("%H:%M"),
+                                    "Tipo": e.tipo_clase or "—",
+                                })
+                            st.dataframe(
+                                _rows,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+        st.divider()
+        _b1, _b2, _ = st.columns([1, 1, 4])
+        with _b1:
+            if st.button("← Atrás", key="wizard_p2_back"):
+                st.session_state["wizard_step"] = 1
+                st.rerun()
+        with _b2:
+            if st.button(
+                "Siguiente →",
+                type="primary",
+                key="wizard_to_step3",
+            ):
+                st.session_state["wizard_step"] = 3
+                st.rerun()
+
+    # =========================================================
+    # Paso 3: Editar n_comisiones / horas_semanales (opcional)
+    # =========================================================
+    elif _step == 3:
+        st.markdown("### Paso 3: Ajustes opcionales")
+        st.caption(
+            "Podés ajustar `n_comisiones` y `horas_semanales` para materias "
+            "que necesiten corrección. Los cambios **no afectan al catálogo "
+            "ni al cronograma**, solo al plan que se va a generar. Apretá "
+            "**Recalcular preview** para ver el efecto."
+        )
+
+        _w_sched_id = st.session_state.get("wizard_schedule_id")
+        _w_overrides = st.session_state.get("wizard_overrides", {})
+
+        with next(get_session()) as _ws:
+            from src.services.plan_generation_service import (
+                preview_plan_from_schedule,
+            )
+            _w_preview = preview_plan_from_schedule(
+                _ws, _w_sched_id, overrides=_w_overrides,
+            )
+
+        # Mostrar primero las flagged
+        _flag_priority = {
+            "no_data": 0, "needs_more_comisiones": 1,
+            "uncertain": 2, "duplicates": 3, "exact": 4,
+        }
+        _sorted = sorted(
+            _w_preview.materias,
+            key=lambda m: (_flag_priority.get(m.flag, 9), m.materia_codigo),
+        )
+
+        # Toggle: solo materias con flag para editar
+        _show_only_flagged = st.toggle(
+            "Mostrar solo materias con observaciones",
+            value=True,
+            key="wizard_p3_only_flagged",
+        )
+        if _show_only_flagged:
+            _sorted = [m for m in _sorted if m.flag != "exact"]
+
+        if not _sorted:
+            st.success(
+                "No hay materias con observaciones. Podés avanzar al paso final."
+            )
+        else:
+            st.caption(f"{len(_sorted)} materia(s) en la lista.")
+
+        # Buffer de edits acumulados (para el form de Recalcular)
+        if "wizard_edits_buffer" not in st.session_state:
+            st.session_state["wizard_edits_buffer"] = dict(_w_overrides)
+        _buffer = st.session_state["wizard_edits_buffer"]
+
+        for mp in _sorted:
+            _icon = _FLAG_ICONS.get(mp.flag, "?")
+            _lbl = _FLAG_LABELS.get(mp.flag, mp.flag)
+            with st.expander(
+                f"{_icon} **{mp.materia_codigo}** — {mp.materia_nombre} "
+                f"→ {mp.n_comisiones} com · {_lbl}",
+                expanded=mp.flag != "exact",
+            ):
+                st.caption(mp.flag_detail)
+
+                _curr = _buffer.get(mp.materia_codigo, {})
+                _ec1, _ec2, _ec3 = st.columns([1.5, 1.5, 2])
+                with _ec1:
+                    _new_n = st.number_input(
+                        "n_comisiones",
+                        min_value=1, max_value=20,
+                        value=int(_curr.get("n_comisiones", mp.n_comisiones)),
+                        step=1,
+                        key=f"w_n_{mp.materia_codigo}",
+                    )
+                with _ec2:
+                    _curr_hs = (
+                        _curr.get("horas_semanales")
+                        if "horas_semanales" in _curr
+                        else (mp.horas_semanales or 0.0)
+                    )
+                    _new_hs = st.number_input(
+                        "horas_semanales",
+                        min_value=0.0, max_value=40.0,
+                        value=float(_curr_hs or 0.0),
+                        step=0.5, format="%.2f",
+                        key=f"w_hs_{mp.materia_codigo}",
+                        help="0 = sin override (usa el del catálogo).",
+                    )
+                with _ec3:
+                    st.caption(
+                        f"Catálogo: hs/sem = {mp.horas_semanales or '—'} · "
+                        f"Cronograma: {mp.total_horas_schedule:g}h · "
+                        f"Paralelas: {mp.max_clases_paralelas}"
+                    )
+
+                # Acumular edits en el buffer si difieren del baseline
+                _new_dict = {}
+                if _new_n != mp.n_comisiones:
+                    _new_dict["n_comisiones"] = int(_new_n)
+                if _new_hs > 0 and _new_hs != (mp.horas_semanales or 0):
+                    _new_dict["horas_semanales"] = float(_new_hs)
+                if _new_dict:
+                    _buffer[mp.materia_codigo] = _new_dict
+                elif mp.materia_codigo in _buffer:
+                    del _buffer[mp.materia_codigo]
+
+        st.session_state["wizard_edits_buffer"] = _buffer
+
+        st.divider()
+        _bc1, _bc2, _bc3, _ = st.columns([1, 1.5, 1, 3])
+        with _bc1:
+            if st.button("← Atrás", key="wizard_p3_back"):
+                st.session_state["wizard_step"] = 2
+                st.rerun()
+        with _bc2:
+            if st.button(
+                "🔄 Recalcular preview",
+                key="wizard_p3_recalc",
+                disabled=_buffer == _w_overrides,
+            ):
+                st.session_state["wizard_overrides"] = dict(_buffer)
+                st.toast(f"Preview recalculado con {len(_buffer)} override(s).")
+                st.rerun()
+        with _bc3:
+            if st.button(
+                "Siguiente →",
+                type="primary",
+                key="wizard_to_step4",
+            ):
+                st.session_state["wizard_overrides"] = dict(_buffer)
+                st.session_state["wizard_step"] = 4
+                st.rerun()
+
+    # =========================================================
+    # Paso 4: Confirmar y generar
+    # =========================================================
+    elif _step == 4:
+        st.markdown("### Paso 4: Confirmar y generar")
+
+        _w_ciclo_id = st.session_state.get("wizard_ciclo_id")
+        _w_sched_id = st.session_state.get("wizard_schedule_id")
+        _w_nombre = st.session_state.get("wizard_nombre", "")
+        _w_desc = st.session_state.get("wizard_descripcion", "")
+        _w_metodo = st.session_state.get("wizard_metodo", "media_movil")
+        _w_overrides = st.session_state.get("wizard_overrides", {})
+
+        with next(get_session()) as _ws:
+            from src.services.plan_generation_service import (
+                preview_plan_from_schedule,
+            )
+            from src.services.validations import (
+                validar_factibilidad_particion_horas,
+            )
+            _w_preview = preview_plan_from_schedule(
+                _ws, _w_sched_id, overrides=_w_overrides,
+            )
+            _w_part = validar_factibilidad_particion_horas(
+                _ws, schedule_id=_w_sched_id,
+            )
+            _sched_obj = _ws.get(ScheduleDB, _w_sched_id)
+
+        # Resumen final
+        from src.services.forecast_service import METODO_LABELS as _W_M_LABELS
+        st.markdown("**Resumen del plan a generar**")
+        _r1, _r2 = st.columns(2)
+        with _r1:
+            st.markdown(f"- **Ciclo**: {_w_ciclo_id}")
+            st.markdown(
+                f"- **Cronograma**: "
+                f"{_sched_obj.nombre if _sched_obj else '?'}"
+            )
+            st.markdown(f"- **Nombre**: {_w_nombre}")
+            if _w_desc:
+                st.markdown(f"- **Descripción**: {_w_desc}")
+            st.markdown(
+                f"- **Método de forecast**: "
+                f"{_W_M_LABELS.get(_w_metodo, _w_metodo)}"
+            )
+            if _w_overrides:
+                st.markdown(
+                    f"- **Overrides aplicados**: {len(_w_overrides)} materia(s)"
+                )
+
+        with _r2:
+            _n_mat = len(_w_preview.materias)
+            _n_com = sum(m.n_comisiones for m in _w_preview.materias)
+            _n_h = sum(len(m.entries) for m in _w_preview.materias)
+            st.metric("Materias", _n_mat)
+            st.metric("Comisiones a crear", _n_com)
+            st.metric("Horarios a crear", _n_h)
+
+        st.divider()
+
+        # Validacion de particion teoria/lab
+        if not _w_part.valid:
+            st.error(
+                f"⚠️ Validación de partición teoría/lab: {_w_part.message}"
+            )
+            with st.expander(
+                f"Detalle de problemas ({len(_w_part.details or [])})",
+                expanded=False,
+            ):
+                for d in (_w_part.details or []):
+                    st.markdown(f"- {d}")
+            st.caption(
+                "Podés generar el plan igual, pero el LP de asignación de "
+                "aulas no podrá resolver la partición. Convendría volver a "
+                "Cronogramas → Validar para ajustar tipos antes."
+            )
+        else:
+            st.success(
+                f"✅ Validación de partición teoría/lab: {_w_part.message}"
+            )
+
+        st.caption(
+            "El plan se va a crear como **inactivo** (borrador). "
+            "Activalo después desde **Vista General** o **Detalle del Plan** "
+            "cuando esté listo."
+        )
+
+        st.divider()
+        _bc1, _bc2, _ = st.columns([1, 2, 4])
+        with _bc1:
+            if st.button("← Atrás", key="wizard_p4_back"):
+                st.session_state["wizard_step"] = 3
+                st.rerun()
+        with _bc2:
+            if st.button(
+                "✅ Generar plan",
+                type="primary",
+                key="wizard_generate",
+            ):
+                from src.services.plan_generation_service import (
+                    generate_plan_from_preview,
+                )
+                with next(get_session()) as _gs:
+                    _gen_preview = preview_plan_from_schedule(
+                        _gs, _w_sched_id, overrides=_w_overrides,
+                    )
+                    _result = generate_plan_from_preview(
+                        _gs,
+                        _w_sched_id,
+                        _w_nombre,
+                        _w_ciclo_id,
+                        _gen_preview.materias,
+                        descripcion=_w_desc,
+                        forecast_metodo_default=_w_metodo,
+                    )
+                if _result.errors:
+                    for err in _result.errors:
+                        st.error(err)
+                else:
+                    _new_plan_id = _result.plan.id if _result.plan else "?"
+                    st.toast(
+                        f"Plan generado: {_result.comisiones_created} comision(es), "
+                        f"{_result.horarios_created} horario(s)."
+                    )
+                    # Pre-seleccionar el plan en Detalle
+                    st.session_state["planes_sel_plan"] = _new_plan_id
+                    _wizard_reset()
+                    st.success(
+                        "Plan creado. Andá a **🔍 Detalle del Plan** para "
+                        "revisar/ajustar comisiones, coeficientes y horarios."
+                    )
+                    st.rerun()
 
 
 # =============================================================================
