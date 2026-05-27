@@ -217,6 +217,7 @@ def _render_plan_editor(
             evitar colisiones si ambas pestañas se renderean en el mismo run.
     """
     sel_plan = next(p for p in planes_detalle if p.id == sel_plan_id)
+    sel_ciclo_detalle = sel_plan.ciclo_id
     
     # --- Editable metadata ---
     st.markdown("#### Metadata")
