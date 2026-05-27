@@ -269,25 +269,12 @@ def _assign_entries_to_comisiones(
 def preview_plan_from_schedule(
     session: Session,
     schedule_id: str,
-    overrides: Optional[dict[str, dict]] = None,
 ) -> SchedulePreviewResult:
     """Preview how a plan would be generated from a schedule, without creating anything.
 
     Returns analysis per materia: proposed comision count, flags, entry assignments.
-
-    Args:
-        session: DB session.
-        schedule_id: el cronograma fuente.
-        overrides: dict opcional `{materia_codigo: {"n_comisiones": int,
-            "horas_semanales": float}}` para forzar valores en el preview.
-            - `horas_semanales` afecta la regla de derivación (recalcula ratio).
-            - `n_comisiones` se aplica AL FINAL: si es mayor que el derivado,
-              se respeta el override; si es menor pero hay clases paralelas
-              que requieren más, queda el constraint de paralelas.
-            Los valores no persisten en MateriaDB ni ScheduleEntryDB.
     """
     result = SchedulePreviewResult()
-    overrides = overrides or {}
 
     schedule = schedule_crud.get(session, schedule_id)
     if schedule is None:
@@ -314,37 +301,11 @@ def preview_plan_from_schedule(
         optativa = materia.optativa if materia else False
         n_carreras = _count_carreras_for_materia(session, materia_codigo)
 
-        # Override de horas_semanales en memoria (no persiste).
-        ovr = overrides.get(materia_codigo, {})
-        if "horas_semanales" in ovr and ovr["horas_semanales"] is not None:
-            h_sem = float(ovr["horas_semanales"])
-
         total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in mat_entries)
 
         n_comisiones, max_paralelas, flag, flag_detail = _derive_comisiones(
             mat_entries, h_sem, optativa, n_carreras
         )
-
-        # Override de n_comisiones (respeta el piso de paralelas).
-        if "n_comisiones" in ovr and ovr["n_comisiones"] is not None:
-            requested = int(ovr["n_comisiones"])
-            if requested >= 1:
-                if requested < max_paralelas:
-                    # No bajamos del piso de paralelas. Lo dejamos en
-                    # max_paralelas con flag de needs_more.
-                    n_comisiones = max_paralelas
-                    flag = "needs_more_comisiones"
-                    flag_detail = (
-                        f"Override solicito {requested} comisiones pero hay "
-                        f"{max_paralelas} clases paralelas que requieren mas. "
-                        f"Forzado a {max_paralelas}."
-                    )
-                else:
-                    n_comisiones = requested
-                    flag = "exact"
-                    flag_detail = (
-                        f"Override manual: {n_comisiones} comision(es)."
-                    )
 
         entry_previews = _assign_entries_to_comisiones(mat_entries, n_comisiones)
 
@@ -973,6 +934,40 @@ def get_coef_sum_por_materia(
         .group_by(ComisionDB.materia_codigo)
     ).all())
     return {mc: float(s or 0.0) for mc, s in rows}
+
+
+def delete_plan_cascade(session: Session, plan_cursada_id: str) -> bool:
+    """Borra un plan y todas sus dependencias en orden FK seguro:
+    clases -> horarios -> comisiones -> plan.
+
+    Devuelve True si el plan existia y se borro. False si no existia.
+    """
+    plan = session.get(PlanificacionCursadaDB, plan_cursada_id)
+    if plan is None:
+        return False
+
+    # Clases (depende de horario, comision, plan)
+    clases = list(session.exec(
+        select(ClaseDB).where(ClaseDB.plan_cursada_id == plan_cursada_id)
+    ).all())
+    for c in clases:
+        session.delete(c)
+
+    # Horarios -> comisiones
+    comisiones = list(session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_cursada_id)
+    ).all())
+    for com in comisiones:
+        horarios = list(session.exec(
+            select(HorarioDB).where(HorarioDB.comision_id == com.id)
+        ).all())
+        for h in horarios:
+            session.delete(h)
+        session.delete(com)
+
+    session.delete(plan)
+    session.commit()
+    return True
 
 
 def get_inscriptos_esperados_por_comision(
