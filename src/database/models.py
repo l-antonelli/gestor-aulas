@@ -201,6 +201,11 @@ class ComisionDB(SQLModel, table=True):
     numero: int = Field(ge=1, default=1)
     cupo: int = Field(gt=0)
     descripcion: str = Field(default="")
+    # Coeficiente de distribucion de inscriptos esperados entre comisiones
+    # del mismo dictado. La suma de coef de comisiones de un mismo dictado
+    # deberia ser ~1.0 (validacion en service layer, no constraint de DB).
+    # Default 1.0 para que sea consistente cuando hay una sola comision.
+    coef_asignacion: float = Field(default=1.0, ge=0, le=1)
 
     # Relationships
     materia: Optional[MateriaDB] = Relationship(back_populates="comisiones")
@@ -387,3 +392,23 @@ class InscripcionHistoricaDB(SQLModel, table=True):
     anio: int = Field(primary_key=True)
     cuatrimestre: str = Field(primary_key=True)  # "1C", "2C", "Anual"
     inscriptos: int = Field(ge=0)
+
+
+class InscripcionForecastDB(SQLModel, table=True):
+    """Forecast persistido de inscriptos para una (materia, cuatri, anio_target).
+
+    Guarda el metodo elegido por el usuario y el valor predicho. Se usa como
+    input del LP de asignacion de aulas (multiplicado por
+    `ComisionDB.coef_asignacion`) para obtener inscriptos esperados por
+    comision. La PK compuesta garantiza un solo forecast persistido por
+    (materia, cuatri, anio_target); al cambiar el metodo se sobrescribe.
+    """
+    __tablename__ = "inscripcion_forecasts"
+
+    materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
+    cuatrimestre: str = Field(primary_key=True)  # "1C" | "2C" | "Anual"
+    anio_target: int = Field(primary_key=True)
+    metodo: str  # "media_movil" | "drift" | "ses"
+    valor: float = Field(ge=0)
+    fecha_calculo: datetime = Field(default_factory=datetime.utcnow)
+    parametros_json: str = Field(default="{}")  # ej: {"window": 3} o {"alpha": 0.5}
