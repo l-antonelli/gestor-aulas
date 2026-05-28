@@ -202,42 +202,55 @@ class TestFaltantes:
             assert "sin horarios" in mf["razon"].lower()
 
 
-class TestExcluirVirtOpt:
-    def test_validar_cronograma_excluir_virt_opt(
+class TestExcluirOptativas:
+    def test_validar_cronograma_excluir_optativas(
         self, session, setup_basic,
     ):
-        """Toggle exclude_virt_opt filtra materias virtuales/optativas
-        del set esperado en la cobertura."""
+        """Toggle exclude_optativas filtra SOLO optativas; las virtuales
+        siguen contando en la cobertura."""
         ciclo = setup_basic["ciclo"]
-        # Marcar FIS101 como virtual
+        pv = setup_basic["pv"]
+
+        # Marcar FIS101 como virtual (sigue contando)
         fis = setup_basic["m2"]
         fis.virtual = True
         session.add(fis)
+        # Agregar materia OPTATIVA
+        opt = MateriaDB(
+            codigo="OPT101", nombre="Optativa I",
+            periodo="cuatrimestral", active=True, horas_semanales=3,
+        )
+        session.add(opt)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OPT101",
+            carrera_codigo="ING", anio_plan=4, cuatrimestre_plan="1C",
+            optativa=True,
+        ))
         session.commit()
 
         create_dictados_for_ciclo(session, ciclo.id)
-
-        # Cronograma cubre solo MAT101
         sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
 
-        # Sin toggle: ambas esperadas, FIS101 falta
+        # Sin toggle: 3 esperadas (MAT, FIS virtual, OPT)
         s_off = validar_cronograma(
-            session, sched.id, ciclo.id, exclude_virt_opt=False,
+            session, sched.id, ciclo.id, exclude_optativas=False,
         )
         assert s_off.error is None
-        assert s_off.n_esperadas == 2
-        assert s_off.n_faltantes == 1
-        assert s_off.excluir_virtuales_optativas is False
+        assert s_off.n_esperadas == 3
+        assert s_off.excluir_optativas is False
+        assert "OPT101" in s_off.esperadas
+        assert "FIS101" in s_off.esperadas
 
-        # Con toggle: FIS101 (virtual) sale del set; cobertura completa
+        # Con toggle: OPT101 sale; FIS101 (virtual) sigue
         s_on = validar_cronograma(
-            session, sched.id, ciclo.id, exclude_virt_opt=True,
+            session, sched.id, ciclo.id, exclude_optativas=True,
         )
         assert s_on.error is None
-        assert s_on.n_esperadas == 1
-        assert s_on.n_faltantes == 0
-        assert s_on.excluir_virtuales_optativas is True
-        assert "FIS101" not in s_on.esperadas
+        assert s_on.n_esperadas == 2
+        assert s_on.excluir_optativas is True
+        assert "OPT101" not in s_on.esperadas
+        assert "FIS101" in s_on.esperadas
 
 
 class TestStaleness:

@@ -113,19 +113,20 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         return
 
     # Toggle + boton
-    _toggle_key = f"{key_ns}_exclude_vo"
+    _toggle_key = f"{key_ns}_exclude_optativas"
     _validation_key = f"{key_ns}_validation_summary"
 
     _col_t, _col_b = st.columns([3, 1])
     with _col_t:
-        exclude_vo = st.toggle(
-            "Excluir virtuales y optativas del cómputo",
+        exclude_optativas = st.toggle(
+            "Excluir optativas del cómputo",
             value=st.session_state.get(_toggle_key, False),
             key=_toggle_key,
             help=(
-                "Las materias virtuales y optativas no requieren asignación "
-                "de aula. Excluirlas del set esperado da una cobertura más "
-                "realista del bloque a planificar."
+                "Las materias optativas no se cuentan en el set esperado. "
+                "Las virtuales SÍ cuentan: estructuralmente sus comisiones "
+                "y horarios deben ser consistentes (aunque no se les asigna "
+                "aula al planificar)."
             ),
         )
     with _col_b:
@@ -140,19 +141,19 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     _toggle_changed = (
         _validation_key in st.session_state
         and st.session_state.get(_last_toggle_key) is not None
-        and st.session_state[_last_toggle_key] != exclude_vo
+        and st.session_state[_last_toggle_key] != exclude_optativas
     )
 
     if _run_button or _toggle_changed:
         with next(get_session()) as session:
             summary = validar_plan(
-                session, plan_id, exclude_virt_opt=exclude_vo,
+                session, plan_id, exclude_optativas=exclude_optativas,
             )
             if summary.error is None:
                 # Persistir snapshot en cada validacion
                 persist_validation(session, summary)
         st.session_state[_validation_key] = summary
-        st.session_state[_last_toggle_key] = exclude_vo
+        st.session_state[_last_toggle_key] = exclude_optativas
 
     # Si no hay summary aun, intentar recuperar el ultimo persistido
     if _validation_key not in st.session_state:
@@ -167,6 +168,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     comision_count_at_validation=_last.comision_count_at_validation,
                     horario_count_at_validation=_last.horario_count_at_validation,
                     dictado_count_at_validation=_last.dictado_count_at_validation,
+                    excluir_optativas=_last.excluir_optativas,
                     excluir_virtuales_optativas=_last.excluir_virtuales_optativas,
                     n_materias=_last.n_materias,
                     n_clases=_last.n_clases,
@@ -189,9 +191,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     mat_map=_details.get("mat_map", {}),
                 )
                 st.session_state[_validation_key] = summary
-                st.session_state[_last_toggle_key] = (
-                    _last.excluir_virtuales_optativas
-                )
+                st.session_state[_last_toggle_key] = _last.excluir_optativas
 
     if _validation_key not in st.session_state:
         st.info(
@@ -212,7 +212,8 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         _latest = get_latest_validation(session, plan_id)
         if _latest is not None:
             _stale = _plan_validation_stale(
-                session, _latest, current_exclude_virt_opt=exclude_vo,
+                session, _latest,
+                current_exclude_optativas=exclude_optativas,
             )
         else:
             _stale = False
@@ -235,8 +236,8 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         "Esperadas",
         summary.n_esperadas,
         delta=(
-            None if not summary.excluir_virtuales_optativas
-            else "(virt/opt excluidas)"
+            None if not summary.excluir_optativas
+            else "(optativas excluidas)"
         ),
         delta_color="off",
     )

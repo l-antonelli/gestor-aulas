@@ -42,6 +42,11 @@ def _run_migrations(eng):
         "ALTER TABLE schedule_validations ADD COLUMN dictado_count_at_validation INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE schedule_validations ADD COLUMN n_conflictos_horarios INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE schedule_validations ADD COLUMN excluir_virtuales_optativas BOOLEAN NOT NULL DEFAULT 0",
+        # B.2.1: el toggle paso a ser solo optativas (las virtuales si cuentan
+        # para cobertura/conflictos). La columna nueva convive con la vieja
+        # para no perder snapshots historicos; la lectura usa la nueva.
+        "ALTER TABLE schedule_validations ADD COLUMN excluir_optativas BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE plan_validations ADD COLUMN excluir_optativas BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE materias ADD COLUMN dicta_recursado BOOLEAN DEFAULT NULL",
         "ALTER TABLE comisiones ADD COLUMN coef_asignacion REAL NOT NULL DEFAULT 1.0",
         "ALTER TABLE planificaciones_cursada ADD COLUMN forecast_metodo_default VARCHAR NOT NULL DEFAULT 'media_movil'",

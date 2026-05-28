@@ -97,8 +97,12 @@ class CronogramaValidationSummary:
     # Conflictos de horarios (con comisiones auto-derivadas)
     n_conflictos_horarios: int = 0
 
-    # Config aplicada (toggle "excluir virtuales y optativas")
-    excluir_virtuales_optativas: bool = False
+    # Config aplicada (toggle "excluir optativas"). Las virtuales SI se
+    # validan (estructuralmente deben ser consistentes); solo las optativas
+    # se descartan del set esperado cuando el toggle esta ON.
+    # `excluir_virtuales_optativas` queda como alias retro-compatible.
+    excluir_optativas: bool = False
+    excluir_virtuales_optativas: bool = False  # legacy
 
     # Detalle (para reconstruir la UI sin recomputar)
     faltantes_por_carrera: list[dict] = field(default_factory=list)
@@ -267,20 +271,23 @@ def _compute_lab_breakdown(
 
 def validar_cronograma(
     session: Session, schedule_id: str, ciclo_id: str,
-    exclude_virt_opt: bool = False,
+    exclude_optativas: bool = False,
 ) -> CronogramaValidationSummary:
     """Computa el resumen completo de validacion de un cronograma vs un ciclo.
 
     Args:
-        exclude_virt_opt: si True, el set de "esperadas" descarta materias
-            virtuales y optativas del computo de cobertura/faltantes/extras.
-            Es config de la validacion: cambiar el toggle invalida el snapshot.
+        exclude_optativas: si True, el set de "esperadas" descarta materias
+            optativas del computo de cobertura/faltantes/extras. Las
+            virtuales SI cuentan (no necesitan aula pero estructuralmente
+            deben ser consistentes). Es config de la validacion: cambiar
+            el toggle invalida el snapshot.
 
     No persiste el resultado (usar `persist_validation()` para eso).
     """
     summary = CronogramaValidationSummary(
         schedule_id=schedule_id, ciclo_id=ciclo_id,
-        excluir_virtuales_optativas=exclude_virt_opt,
+        excluir_optativas=exclude_optativas,
+        excluir_virtuales_optativas=exclude_optativas,  # legacy mirror
     )
 
     # Pre-check: el ciclo debe tener dictados creados. Sin esto la prevalidacion
@@ -328,15 +335,11 @@ def validar_cronograma(
 
     # Cobertura — esperadas = dictados ACTIVOS linkeados al ciclo.
     esperadas = get_materias_esperadas_from_dictados(session, ciclo_id)
-    if exclude_virt_opt and esperadas:
-        # Aplicar filtro: descartar materias virtuales/optativas del set
-        # esperado. La definicion de "virtual" y "optativa" sale de
-        # MateriaDB.virtual y PlanEstudioDB.optativa (cualquier registro).
+    if exclude_optativas and esperadas:
+        # Filtro: descartar SOLO materias optativas. Las virtuales se
+        # mantienen porque sus horarios y comisiones tambien deben ser
+        # consistentes (pero no van a precisar aula al asignar).
         _esp_codes = list(esperadas.keys())
-        _mats_full = list(session.exec(
-            select(MateriaDB).where(col(MateriaDB.codigo).in_(_esp_codes))
-        ).all())
-        _virtuales = {m.codigo for m in _mats_full if m.virtual}
         from src.database.models import PlanEstudioDB as _PE
         _opt_rows = list(session.exec(
             select(_PE.materia_codigo)
@@ -345,10 +348,9 @@ def validar_cronograma(
             .distinct()
         ).all())
         _optativas = set(_opt_rows)
-        _excluir = _virtuales | _optativas
         esperadas = {
             mc: nom for mc, nom in esperadas.items()
-            if mc not in _excluir
+            if mc not in _optativas
         }
     summary.esperadas = esperadas
     cubiertas = materias_en_sched & set(esperadas.keys())
@@ -445,6 +447,7 @@ def persist_validation(
         particion_valid=summary.particion_valid,
         particion_n_infactibles=summary.particion_n_infactibles,
         n_conflictos_horarios=summary.n_conflictos_horarios,
+        excluir_optativas=summary.excluir_optativas,
         excluir_virtuales_optativas=summary.excluir_virtuales_optativas,
         details_json=summary.to_details_json(),
     )

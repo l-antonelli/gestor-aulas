@@ -337,9 +337,15 @@ class ScheduleValidationDB(SQLModel, table=True):
     # Detalle. El detalle estructurado va en `details_json["conflictos"]`.
     n_conflictos_horarios: int = Field(default=0, ge=0)
 
-    # Config aplicada a la validacion (toggle "excluir virtuales/optativas").
+    # Config aplicada a la validacion (toggle "excluir optativas").
     # Si cambia entre runs, la validacion queda stale.
+    # Las virtuales SI cuentan para cobertura/conflictos (no necesitan aula
+    # pero estructuralmente deben ser consistentes); solo las optativas
+    # se excluyen completamente del computo cuando esta activo.
+    # `excluir_virtuales_optativas` queda como columna legacy (snapshots
+    # historicos); el campo activo es `excluir_optativas`.
     excluir_virtuales_optativas: bool = Field(default=False)
+    excluir_optativas: bool = Field(default=False)
 
     # Snapshot de detalle (JSON-serialized para reconstruccion de la UI)
     details_json: str = Field(default="{}")
@@ -369,8 +375,11 @@ class PlanValidationDB(SQLModel, table=True):
     horario_count_at_validation: int = Field(ge=0)
     dictado_count_at_validation: int = Field(default=0, ge=0)
 
-    # Config aplicada
+    # Config aplicada (toggle "excluir optativas"). Las virtuales cuentan;
+    # solo optativas se descartan cuando esta activo. El campo viejo
+    # `excluir_virtuales_optativas` queda como legacy.
     excluir_virtuales_optativas: bool = Field(default=False)
+    excluir_optativas: bool = Field(default=False)
 
     # Resumen general (espejo de ScheduleValidationDB, sin lab breakdown
     # porque los labs viven a nivel cronograma)

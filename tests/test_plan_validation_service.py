@@ -152,18 +152,31 @@ class TestSinComisiones:
 
 
 class TestCoberturaConToggle:
-    def test_cobertura_excluye_virtuales_optativas(
+    def test_cobertura_excluye_solo_optativas(
         self, session, setup_basic,
     ):
-        """Toggle exclude_virt_opt filtra esperadas (virtuales+optativas)
-        del cómputo de cobertura."""
+        """Toggle exclude_optativas filtra SOLO optativas; las virtuales
+        siguen contando para cobertura."""
         ciclo = setup_basic["ciclo"]
         plan = setup_basic["plan"]
+        pv = setup_basic["pv"]
 
-        # Marcar FIS101 como virtual
+        # Marcar FIS101 como virtual (debe seguir contando)
         fis = setup_basic["m2"]
         fis.virtual = True
         session.add(fis)
+        # Agregar una nueva materia OPTATIVA
+        opt = MateriaDB(
+            codigo="OPT101", nombre="Seminario Optativo",
+            periodo="cuatrimestral", active=True, horas_semanales=3,
+        )
+        session.add(opt)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OPT101",
+            carrera_codigo="ING", anio_plan=4, cuatrimestre_plan="1C",
+            optativa=True,
+        ))
         session.commit()
 
         create_dictados_for_ciclo(session, ciclo.id)
@@ -174,19 +187,20 @@ class TestCoberturaConToggle:
             "Lunes", time(8, 0), time(10, 0),
         )
 
-        # Sin toggle: esperadas=2 (MAT101 + FIS101), faltantes=1 (FIS101)
-        s_off = validar_plan(session, plan.id, exclude_virt_opt=False)
+        # Sin toggle: esperadas=3 (MAT101 + FIS101 virtual + OPT101)
+        s_off = validar_plan(session, plan.id, exclude_optativas=False)
         assert s_off.error is None
-        assert s_off.n_esperadas == 2
-        assert s_off.n_faltantes == 1
-        assert "FIS101" in s_off.esperadas
+        assert s_off.n_esperadas == 3
+        assert "MAT101" in s_off.esperadas
+        assert "FIS101" in s_off.esperadas  # virtual: cuenta
+        assert "OPT101" in s_off.esperadas
 
-        # Con toggle: FIS101 (virtual) sale del set esperado
-        s_on = validar_plan(session, plan.id, exclude_virt_opt=True)
+        # Con toggle: OPT101 sale, FIS101 sigue (virtual no es optativa)
+        s_on = validar_plan(session, plan.id, exclude_optativas=True)
         assert s_on.error is None
-        assert s_on.n_esperadas == 1
-        assert s_on.n_faltantes == 0
-        assert "FIS101" not in s_on.esperadas
+        assert s_on.n_esperadas == 2
+        assert "OPT101" not in s_on.esperadas
+        assert "FIS101" in s_on.esperadas  # virtual: sigue contando
         assert "MAT101" in s_on.esperadas
 
 
@@ -244,7 +258,7 @@ class TestPersistencia:
         assert record.plan_cursada_id == plan.id
         assert record.n_materias == summary.n_materias
         assert record.n_esperadas == summary.n_esperadas
-        assert record.excluir_virtuales_optativas == summary.excluir_virtuales_optativas
+        assert record.excluir_optativas == summary.excluir_optativas
 
         latest = get_latest_validation(session, plan.id)
         assert latest is not None
@@ -283,7 +297,7 @@ class TestStaleness:
     def test_is_validation_stale_por_cambio_de_toggle(
         self, session, setup_basic,
     ):
-        """Cambiar el toggle exclude_virt_opt invalida la validacion."""
+        """Cambiar el toggle exclude_optativas invalida la validacion."""
         ciclo = setup_basic["ciclo"]
         plan = setup_basic["plan"]
         create_dictados_for_ciclo(session, ciclo.id)
@@ -294,7 +308,7 @@ class TestStaleness:
         )
 
         # Persistir validacion con toggle OFF
-        summary = validar_plan(session, plan.id, exclude_virt_opt=False)
+        summary = validar_plan(session, plan.id, exclude_optativas=False)
         record = persist_validation(session, summary)
 
         # Sin pasar toggle, no es stale (snapshot stable)
@@ -302,10 +316,10 @@ class TestStaleness:
 
         # Pasando el mismo toggle, no es stale
         assert is_validation_stale(
-            session, record, current_exclude_virt_opt=False,
+            session, record, current_exclude_optativas=False,
         ) is False
 
         # Pasando toggle distinto, es stale
         assert is_validation_stale(
-            session, record, current_exclude_virt_opt=True,
+            session, record, current_exclude_optativas=True,
         ) is True

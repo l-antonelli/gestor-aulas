@@ -58,8 +58,11 @@ class PlanValidationSummary:
     horario_count_at_validation: int = 0
     dictado_count_at_validation: int = 0
 
-    # Config aplicada
-    excluir_virtuales_optativas: bool = False
+    # Config aplicada (toggle "excluir optativas"). Las virtuales SI cuentan
+    # para cobertura/conflictos (no precisan aula pero si consistencia
+    # estructural). `excluir_virtuales_optativas` queda como alias legacy.
+    excluir_optativas: bool = False
+    excluir_virtuales_optativas: bool = False  # legacy
 
     # Error pre-computo (ej. plan sin comisiones, ciclo sin dictados)
     error: Optional[str] = None
@@ -275,12 +278,19 @@ def _extras_por_carrera(
 # =============================================================================
 
 def validar_plan(
-    session: Session, plan_id: str, exclude_virt_opt: bool = False,
+    session: Session, plan_id: str, exclude_optativas: bool = False,
 ) -> PlanValidationSummary:
-    """Computa el resumen completo de validacion de un plan."""
+    """Computa el resumen completo de validacion de un plan.
+
+    Args:
+        exclude_optativas: si True, descarta materias optativas del set
+            esperado. Las virtuales SI cuentan (no precisan aula pero
+            estructuralmente deben ser consistentes).
+    """
     summary = PlanValidationSummary(
         plan_cursada_id=plan_id,
-        excluir_virtuales_optativas=exclude_virt_opt,
+        excluir_optativas=exclude_optativas,
+        excluir_virtuales_optativas=exclude_optativas,  # legacy mirror
     )
 
     plan = session.get(PlanificacionCursadaDB, plan_id)
@@ -342,22 +352,18 @@ def validar_plan(
         ).all())
         summary.mat_map = {cod: nombre for cod, nombre in mat_rows}
 
-    # Cobertura — esperadas = dictados activos del ciclo (con filtro virt/opt)
+    # Cobertura — esperadas = dictados activos del ciclo. Si se pidio
+    # excluir optativas, salen del set; las virtuales se mantienen.
     esperadas = get_materias_esperadas_from_dictados(session, plan.ciclo_id)
-    if exclude_virt_opt and esperadas:
+    if exclude_optativas and esperadas:
         _esp_codes = list(esperadas.keys())
-        _mats_full = list(session.exec(
-            select(MateriaDB).where(col(MateriaDB.codigo).in_(_esp_codes))
-        ).all())
-        _virtuales = {m.codigo for m in _mats_full if m.virtual}
         _opt_rows = list(session.exec(
             select(PlanEstudioDB.materia_codigo)
             .where(col(PlanEstudioDB.materia_codigo).in_(_esp_codes))
             .where(PlanEstudioDB.optativa == True)  # noqa: E712
             .distinct()
         ).all())
-        _optativas = set(_opt_rows)
-        _excluir = _virtuales | _optativas
+        _excluir = set(_opt_rows)
         esperadas = {
             mc: nom for mc, nom in esperadas.items()
             if mc not in _excluir
@@ -450,6 +456,7 @@ def persist_validation(
         comision_count_at_validation=summary.comision_count_at_validation,
         horario_count_at_validation=summary.horario_count_at_validation,
         dictado_count_at_validation=summary.dictado_count_at_validation,
+        excluir_optativas=summary.excluir_optativas,
         excluir_virtuales_optativas=summary.excluir_virtuales_optativas,
         n_materias=summary.n_materias,
         n_clases=summary.n_clases,
@@ -484,13 +491,13 @@ def get_latest_validation(
 
 def is_validation_stale(
     session: Session, validation: PlanValidationDB,
-    current_exclude_virt_opt: Optional[bool] = None,
+    current_exclude_optativas: Optional[bool] = None,
 ) -> bool:
     """True si el plan, sus dictados o el toggle aplicado cambiaron desde
     que se persistio la validacion.
 
     Args:
-        current_exclude_virt_opt: si se provee, compara contra el toggle
+        current_exclude_optativas: si se provee, compara contra el toggle
             persistido. None = ignorar este check.
     """
     plan = session.get(PlanificacionCursadaDB, validation.plan_cursada_id)
@@ -520,8 +527,8 @@ def is_validation_stale(
             return True
 
     if (
-        current_exclude_virt_opt is not None
-        and current_exclude_virt_opt != validation.excluir_virtuales_optativas
+        current_exclude_optativas is not None
+        and current_exclude_optativas != validation.excluir_optativas
     ):
         return True
 
