@@ -30,11 +30,6 @@ from src.services.plan_generation_service import (
     SchedulePreviewResult,
 )
 from src.services.clase_generation_service import generate_clases_for_plan
-from src.services.validations import (
-    validar_conflictos_horarios_plan,
-    validar_cobertura_plan,
-    identificar_virtuales_plan,
-)
 from src.ui.calendar_render import render_timetable_calendar
 from src.domain.types import DIAS_SEMANA
 
@@ -299,74 +294,13 @@ def _render_plan_editor(
     
     # --- Validations panel ---
     st.markdown("#### Validaciones")
-    
-    has_blocker = False
-    
-    if st.button("Validar plan", key=f"{key_ns}_btn_validate_{sel_plan_id}"):
-        with next(get_session()) as session:
-            v_conflicts = validar_conflictos_horarios_plan(session, sel_plan_id)
-            v_coverage = validar_cobertura_plan(session, sel_plan_id, sel_ciclo_detalle)
-            v_virtual = identificar_virtuales_plan(session, sel_plan_id)
-    
-        st.session_state[f"validation_results_{sel_plan_id}"] = {
-            "conflicts": v_conflicts,
-            "coverage": v_coverage,
-            "virtual": v_virtual,
-        }
-    
-    # Display stored results
-    vr_key = f"validation_results_{sel_plan_id}"
-    if vr_key in st.session_state:
-        vr = st.session_state[vr_key]
-    
-        # BLOCKER: Conflictos de horarios
-        v_conflicts = vr["conflicts"]
-        if not v_conflicts.valid:
-            has_blocker = True
-            st.error(f"BLOQUEANTE: {v_conflicts.message}")
-            with st.expander("Detalles de conflictos", expanded=False):
-                for d in v_conflicts.details:
-                    st.text(f"  - {d}")
-        else:
-            st.success(v_conflicts.message)
-    
-        # WARNING: Cobertura
-        v_coverage = vr["coverage"]
-        if not v_coverage.valid:
-            st.warning(f"ADVERTENCIA: {v_coverage.message}")
-            with st.expander("Materias sin cobertura", expanded=False):
-                for d in v_coverage.details:
-                    st.text(f"  - {d}")
-        else:
-            st.success(v_coverage.message)
-    
-        # INFO: Virtuales
-        v_virtual = vr["virtual"]
-        if v_virtual.details:
-            st.info(f"INFO: {v_virtual.message}")
-            with st.expander("Materias virtuales", expanded=False):
-                for d in v_virtual.details:
-                    st.text(f"  - {d}")
-        else:
-            st.info(v_virtual.message)
-    
-        # Activation gate
-        if has_blocker:
-            st.error(
-                "No se puede activar el plan: hay conflictos bloqueantes. "
-                "Resuelva los conflictos y vuelva a validar."
-            )
-        elif not sel_plan.activo:
-            if st.button(
-                "Activar plan",
-                type="primary",
-                key=f"{key_ns}_btn_activate_validated_{sel_plan_id}",
-            ):
-                with next(get_session()) as session:
-                    activate_plan(session, sel_plan_id)
-                st.success(f"Plan '{sel_plan.nombre}' activado")
-                st.rerun()
-    
+    from src.ui.validation_ui import render_validation
+    render_validation(
+        source="plan",
+        plan_id=sel_plan_id,
+        key_ns=f"plan_val_{key_ns}_{sel_plan_id}",
+    )
+
     st.divider()
     
     # --- Filters ---
