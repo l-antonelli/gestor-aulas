@@ -34,7 +34,10 @@ from src.services.schedule_service import (
     get_all_schedules,
     duplicate_schedule,
     sync_preview_edits_to_schedule,
+    build_schedule_grid,
 )
+from src.database.crud import get_or_create_config
+from src.ui.calendar_render import render_schedule_calendar
 from src.services.plan_generation_service import (
     preview_plan_from_schedule,
 )
@@ -807,30 +810,60 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                             )
 
                             # Botón "Editar en Cronogramas"
-                            # La pestaña Validar es una sub-tab de la misma
-                            # pagina Cronogramas (st.tabs), asi que
-                            # st.switch_page no aplica. Indicamos al usuario
-                            # que vaya manualmente al tab Editar; el
-                            # cronograma queda pre-seleccionado via buffer
-                            # `_pending_edit_schedule_id` (consumido al
-                            # instanciar el selectbox de Editar).
-                            if st.button(
-                                "✏️ Pre-seleccionar en Editar",
-                                key=f"prev_conf_edit_{_sel_sched_id}_{_cc}",
-                                help=(
-                                    "Marca este cronograma como pre-seleccionado "
-                                    "en la pestaña 'Editar'. Apretá esta pestaña "
-                                    "arriba para corregir los horarios "
-                                    "conflictivos."
-                                ),
-                            ):
-                                st.session_state[
-                                    "_pending_edit_schedule_id"
-                                ] = _sel_sched_id
-                                st.success(
-                                    "✅ Cronograma pre-seleccionado. "
-                                    "Andá al tab **✏️ Editar** arriba "
-                                    "para corregir los horarios."
+                            # Calendario embebido (read-only) filtrado a las
+                            # materias del conflicto seleccionado. El usuario
+                            # puede ver el solapamiento visualmente; la
+                            # edicion fina vive en la pestaña Editar.
+                            st.markdown("**🗓️ Vista calendario del conflicto**")
+                            _conf_pair_options = {
+                                f"{c['materia_a']} vs {c['materia_b']} · "
+                                f"{c['dia']} {c['hora_inicio_a']}-{c['hora_fin_a']}": (
+                                    c["materia_a"], c["materia_b"]
+                                )
+                                for c in _conf_filt
+                            }
+                            if _conf_pair_options:
+                                _selected_pair_lbl = st.selectbox(
+                                    "Conflicto a visualizar",
+                                    options=list(_conf_pair_options.keys()),
+                                    key=f"prev_conf_pair_{_sel_sched_id}_{_cc}",
+                                )
+                                _mat_a, _mat_b = _conf_pair_options[
+                                    _selected_pair_lbl
+                                ]
+                                with next(get_session()) as _cal_sess:
+                                    _grid_full = build_schedule_grid(
+                                        _cal_sess, _sel_sched_id,
+                                    )
+                                    _cal_config = get_or_create_config(_cal_sess)
+                                # Filtrar a las dos materias del conflicto
+                                _grid_filt = {
+                                    dia: [
+                                        b for b in blocks
+                                        if b.materia_codigo in (_mat_a, _mat_b)
+                                    ]
+                                    for dia, blocks in _grid_full.items()
+                                }
+                                _grid_filt = {
+                                    d: bs for d, bs in _grid_filt.items() if bs
+                                }
+                                if _grid_filt:
+                                    render_schedule_calendar(
+                                        _grid_filt, _cal_config,
+                                        key=(
+                                            f"prev_conf_cal_{_sel_sched_id}"
+                                            f"_{_cc}_{_mat_a}_{_mat_b}"
+                                        ),
+                                    )
+                                else:
+                                    st.caption(
+                                        "Sin entradas en el cronograma para "
+                                        "esas materias (raro — reportá si lo ves)."
+                                    )
+                                st.caption(
+                                    "Vista de solo lectura. Para editar los "
+                                    "horarios, andá a **✏️ Editar** arriba y "
+                                    "buscá la materia en modo *Por materia*."
                                 )
 
         # --- Particion de horas (teoria/laboratorio) ---
