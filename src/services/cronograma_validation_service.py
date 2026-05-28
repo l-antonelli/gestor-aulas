@@ -334,28 +334,33 @@ def validar_cronograma(
         summary.mat_map = {cod: nombre for cod, nombre in mat_rows}
 
     # Cobertura — esperadas = dictados ACTIVOS linkeados al ciclo.
+    # Si exclude_optativas=True, las optativas salen tanto del set
+    # esperado como del set de extras (simetria: el toggle dice "no me
+    # importan las optativas", aplica a ambos lados).
     esperadas = get_materias_esperadas_from_dictados(session, ciclo_id)
-    if exclude_optativas and esperadas:
-        # Filtro: descartar SOLO materias optativas. Las virtuales se
-        # mantienen porque sus horarios y comisiones tambien deben ser
-        # consistentes (pero no van a precisar aula al asignar).
-        _esp_codes = list(esperadas.keys())
+    optativas_excluidas: set[str] = set()
+    if exclude_optativas:
         from src.database.models import PlanEstudioDB as _PE
-        _opt_rows = list(session.exec(
-            select(_PE.materia_codigo)
-            .where(col(_PE.materia_codigo).in_(_esp_codes))
-            .where(_PE.optativa == True)  # noqa: E712
-            .distinct()
-        ).all())
-        _optativas = set(_opt_rows)
-        esperadas = {
-            mc: nom for mc, nom in esperadas.items()
-            if mc not in _optativas
-        }
+        _univ = list(set(esperadas.keys()) | materias_en_sched)
+        if _univ:
+            _opt_rows = list(session.exec(
+                select(_PE.materia_codigo)
+                .where(col(_PE.materia_codigo).in_(_univ))
+                .where(_PE.optativa == True)  # noqa: E712
+                .distinct()
+            ).all())
+            optativas_excluidas = set(_opt_rows)
+        if optativas_excluidas:
+            esperadas = {
+                mc: nom for mc, nom in esperadas.items()
+                if mc not in optativas_excluidas
+            }
     summary.esperadas = esperadas
-    cubiertas = materias_en_sched & set(esperadas.keys())
-    faltantes_set = set(esperadas.keys()) - materias_en_sched
-    extra_set = materias_en_sched - set(esperadas.keys())
+
+    materias_en_sched_filt = materias_en_sched - optativas_excluidas
+    cubiertas = materias_en_sched_filt & set(esperadas.keys())
+    faltantes_set = set(esperadas.keys()) - materias_en_sched_filt
+    extra_set = materias_en_sched_filt - set(esperadas.keys())
 
     summary.n_esperadas = len(esperadas)
     summary.n_cubiertas = len(cubiertas)
@@ -367,7 +372,7 @@ def validar_cronograma(
         session, ciclo_id, only_active=True,
     )
     summary.faltantes_por_carrera = _get_faltantes_por_carrera(
-        session, ciclo_id, esperadas, materias_en_sched, dictado_codigos,
+        session, ciclo_id, esperadas, materias_en_sched_filt, dictado_codigos,
     )
 
     # Extras (detalle)

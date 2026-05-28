@@ -353,26 +353,33 @@ def validar_plan(
         summary.mat_map = {cod: nombre for cod, nombre in mat_rows}
 
     # Cobertura — esperadas = dictados activos del ciclo. Si se pidio
-    # excluir optativas, salen del set; las virtuales se mantienen.
+    # excluir optativas, salen tanto del set esperado como del de extras
+    # (simetria: "no me importan las optativas" se aplica a ambos lados).
     esperadas = get_materias_esperadas_from_dictados(session, plan.ciclo_id)
-    if exclude_optativas and esperadas:
-        _esp_codes = list(esperadas.keys())
-        _opt_rows = list(session.exec(
-            select(PlanEstudioDB.materia_codigo)
-            .where(col(PlanEstudioDB.materia_codigo).in_(_esp_codes))
-            .where(PlanEstudioDB.optativa == True)  # noqa: E712
-            .distinct()
-        ).all())
-        _excluir = set(_opt_rows)
-        esperadas = {
-            mc: nom for mc, nom in esperadas.items()
-            if mc not in _excluir
-        }
+    optativas_excluidas: set[str] = set()
+    if exclude_optativas:
+        # Universo de materias a chequear: union de esperadas + plan
+        _univ = list(set(esperadas.keys()) | materias_en_plan)
+        if _univ:
+            _opt_rows = list(session.exec(
+                select(PlanEstudioDB.materia_codigo)
+                .where(col(PlanEstudioDB.materia_codigo).in_(_univ))
+                .where(PlanEstudioDB.optativa == True)  # noqa: E712
+                .distinct()
+            ).all())
+            optativas_excluidas = set(_opt_rows)
+        if optativas_excluidas:
+            esperadas = {
+                mc: nom for mc, nom in esperadas.items()
+                if mc not in optativas_excluidas
+            }
     summary.esperadas = esperadas
 
-    cubiertas = materias_en_plan & set(esperadas.keys())
-    faltantes_set = set(esperadas.keys()) - materias_en_plan
-    extra_set = materias_en_plan - set(esperadas.keys())
+    # Para extras tambien filtramos optativas si el toggle esta ON.
+    materias_en_plan_filt = materias_en_plan - optativas_excluidas
+    cubiertas = materias_en_plan_filt & set(esperadas.keys())
+    faltantes_set = set(esperadas.keys()) - materias_en_plan_filt
+    extra_set = materias_en_plan_filt - set(esperadas.keys())
 
     summary.n_esperadas = len(esperadas)
     summary.n_cubiertas = len(cubiertas)
@@ -384,7 +391,7 @@ def validar_plan(
         session, plan.ciclo_id, only_active=True,
     )
     summary.faltantes_por_carrera = _faltantes_por_carrera(
-        session, plan, esperadas, materias_en_plan, dictado_codigos,
+        session, plan, esperadas, materias_en_plan_filt, dictado_codigos,
     )
     summary.extras = [
         {"codigo": cod, "nombre": summary.mat_map.get(cod, "?")}
