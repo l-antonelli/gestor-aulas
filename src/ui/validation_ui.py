@@ -263,6 +263,9 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     # Detalle por carrera
     # =====================================================================
     _grupos = _build_grupos_por_carrera(summary, plan_id)
+    # Mapa global codigo→nombre que cubre TODAS las materias mencionadas
+    # (faltantes + extras + conflictos + materias del plan + esperadas).
+    _full_mat_map = _build_full_mat_map(summary, _grupos)
     _has_issues = any(
         len(g["faltantes"]) > 0 or len(g["extras"]) > 0 or len(g["conflictos"]) > 0
         for g in _grupos.values()
@@ -286,6 +289,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     continue
                 _render_carrera_subexpander(
                     _g, plan_id=plan_id, key_ns=key_ns,
+                    mat_map=_full_mat_map,
                 )
 
     # =====================================================================
@@ -317,6 +321,35 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
             st.rerun()
     else:
         st.success(f"Plan '{plan.nombre}' está activo.")
+
+
+# =============================================================================
+# Helpers — formato y mapas
+# =============================================================================
+
+def _label_codnom(codigo: str, mat_map: dict[str, str]) -> str:
+    """Devuelve 'CÓD — Nombre' si hay nombre, sino solo el código."""
+    nom = mat_map.get(codigo)
+    if nom and nom != "?":
+        return f"{codigo} — {nom}"
+    return codigo
+
+
+def _build_full_mat_map(
+    summary: PlanValidationSummary, grupos: dict[str, dict],
+) -> dict[str, str]:
+    """Mapa global código→nombre que cubre faltantes, extras, conflictos
+    y materias del plan / esperadas. Usado para mostrar nombres junto a
+    códigos en todas las tablas y selectboxes."""
+    m = dict(summary.mat_map)  # materias del plan
+    for code, name in summary.esperadas.items():
+        m.setdefault(code, name)
+    for g in grupos.values():
+        for f in g["faltantes"]:
+            m.setdefault(f["codigo"], f.get("nombre") or "?")
+        for e in g["extras"]:
+            m.setdefault(e["codigo"], e.get("nombre") or "?")
+    return m
 
 
 # =============================================================================
@@ -479,6 +512,7 @@ def _render_resumen_carreras(grupos: dict[str, dict]) -> None:
 
 def _render_carrera_subexpander(
     g: dict, plan_id: str, key_ns: str,
+    mat_map: dict[str, str],
 ) -> None:
     """Sub-expander por carrera con discrepancias + conflictos."""
     _cc = g["carrera_codigo"]
@@ -561,12 +595,14 @@ def _render_carrera_subexpander(
             ):
                 _render_conflictos_carrera(
                     g["conflictos"], _cc, plan_id=plan_id, key_ns=key_ns,
+                    mat_map=mat_map,
                 )
 
 
 def _render_conflictos_carrera(
     conflictos: list[dict], carrera_codigo: str,
     plan_id: str, key_ns: str,
+    mat_map: dict[str, str],
 ) -> None:
     """Tabla de conflictos + UI para ignorarlos."""
     st.caption(
@@ -594,8 +630,8 @@ def _render_conflictos_carrera(
         {
             "Año": f"{c['anio_plan']}°",
             "Cuatri": c["cuatrimestre_plan"],
-            "Materia A": c["materia_a"],
-            "Materia B": c["materia_b"],
+            "Materia A": _label_codnom(c["materia_a"], mat_map),
+            "Materia B": _label_codnom(c["materia_b"], mat_map),
             "Día": c["dia"],
             "Horario A": f"{c['hora_inicio_a']}-{c['hora_fin_a']}",
             "Horario B": f"{c['hora_inicio_b']}-{c['hora_fin_b']}",
@@ -611,7 +647,8 @@ def _render_conflictos_carrera(
     # Ignorar conflicto
     st.markdown("**Ignorar conflicto**")
     _pair_options = {
-        f"{c['materia_a']} vs {c['materia_b']} · "
+        f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
+        f"{_label_codnom(c['materia_b'], mat_map)} · "
         f"{c['dia']} {c['hora_inicio_a']}-{c['hora_fin_a']}": (
             c["materia_a"], c["materia_b"]
         )
