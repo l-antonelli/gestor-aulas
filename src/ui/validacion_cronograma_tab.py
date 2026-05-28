@@ -807,29 +807,31 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                             )
 
                             # Botón "Editar en Cronogramas"
+                            # La pestaña Validar es una sub-tab de la misma
+                            # pagina Cronogramas (st.tabs), asi que
+                            # st.switch_page no aplica. Indicamos al usuario
+                            # que vaya manualmente al tab Editar; el
+                            # cronograma queda pre-seleccionado via buffer
+                            # `_pending_edit_schedule_id` (consumido al
+                            # instanciar el selectbox de Editar).
                             if st.button(
-                                "✏️ Editar en Cronogramas →",
+                                "✏️ Pre-seleccionar en Editar",
                                 key=f"prev_conf_edit_{_sel_sched_id}_{_cc}",
                                 help=(
-                                    "Pre-selecciona este cronograma en la "
-                                    "pestaña 'Editar' de Cronogramas para "
-                                    "corregir los horarios conflictivos."
+                                    "Marca este cronograma como pre-seleccionado "
+                                    "en la pestaña 'Editar'. Apretá esta pestaña "
+                                    "arriba para corregir los horarios "
+                                    "conflictivos."
                                 ),
                             ):
-                                # Buffer: la pagina Cronogramas la consume al
-                                # instanciar el selectbox (no podemos escribir
-                                # `edit_schedule` directamente porque ya esta
-                                # ligado al widget en este mismo run).
-                                st.session_state["_pending_edit_schedule_id"] = _sel_sched_id
-                                try:
-                                    st.switch_page(
-                                        "pages/6_📅_Cronogramas.py"
-                                    )
-                                except Exception:
-                                    st.info(
-                                        "Andá a **📅 Cronogramas → ✏️ Editar**. "
-                                        "El cronograma quedó pre-seleccionado."
-                                    )
+                                st.session_state[
+                                    "_pending_edit_schedule_id"
+                                ] = _sel_sched_id
+                                st.success(
+                                    "✅ Cronograma pre-seleccionado. "
+                                    "Andá al tab **✏️ Editar** arriba "
+                                    "para corregir los horarios."
+                                )
 
         # --- Particion de horas (teoria/laboratorio) ---
         _part_valid = _pv.get("particion_valid")
