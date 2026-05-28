@@ -360,6 +360,29 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     session, schedule_id=_sel_sched_id,
                 )
 
+                # Conflictos de horario con comisiones auto-derivadas
+                from src.services.validations import (
+                    validar_conflictos_horarios_cronograma as _val_conflictos,
+                )
+                _conflictos_raw = _val_conflictos(
+                    session, _sel_sched_id, sel_ciclo_crono,
+                )
+                _conflictos_horarios = [
+                    {
+                        "carrera_codigo": c.carrera_codigo,
+                        "anio_plan": c.anio_plan,
+                        "cuatrimestre_plan": c.cuatrimestre_plan,
+                        "materia_a": c.materia_a,
+                        "materia_b": c.materia_b,
+                        "dia": c.dia,
+                        "hora_inicio_a": c.hora_inicio_a,
+                        "hora_fin_a": c.hora_fin_a,
+                        "hora_inicio_b": c.hora_inicio_b,
+                        "hora_fin_b": c.hora_fin_b,
+                    }
+                    for c in _conflictos_raw
+                ]
+
                 _dictado_count = len(_dictado_codigos)
 
             st.session_state[_prevalidation_key] = {
@@ -384,6 +407,8 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 "particion_valid": _part_result.valid,
                 "particion_message": _part_result.message,
                 "particion_details": list(_part_result.details or []),
+                "conflictos_horarios": _conflictos_horarios,
+                "n_conflictos_horarios": len(_conflictos_horarios),
             }
             # Persistir snapshot de la validacion en ScheduleValidationDB.
             # Esto es lo que usa la UI de Cronogramas (lista) y el wizard
