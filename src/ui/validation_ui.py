@@ -55,6 +55,7 @@ from src.services.plan_validation_service import (
     is_validation_stale as _plan_validation_stale,
     parse_details_json as _plan_parse_details,
     persist_validation,
+    remove_ignored_pair,
     validar_plan,
 )
 
@@ -113,12 +114,14 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         st.error("El plan no tiene ciclo asignado.")
         return
 
-    # Toggle + boton
+    # Toggles + boton
     _toggle_key = f"{key_ns}_exclude_optativas"
+    _autoval_key = f"{key_ns}_auto_validate"
     _validation_key = f"{key_ns}_validation_summary"
+    _pending_revalidate_key = f"{key_ns}_pending_revalidate"
 
-    _col_t, _col_b = st.columns([3, 1])
-    with _col_t:
+    _col_t1, _col_t2, _col_b = st.columns([3, 2, 2])
+    with _col_t1:
         exclude_optativas = st.toggle(
             "Excluir optativas del cómputo",
             value=st.session_state.get(_toggle_key, False),
@@ -128,6 +131,18 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                 "Las virtuales SÍ cuentan: estructuralmente sus comisiones "
                 "y horarios deben ser consistentes (aunque no se les asigna "
                 "aula al planificar)."
+            ),
+        )
+    with _col_t2:
+        auto_validate = st.toggle(
+            "Auto-revalidar al cambiar",
+            value=st.session_state.get(_autoval_key, True),
+            key=_autoval_key,
+            help=(
+                "Si está ON, cualquier acción del panel (activar/desactivar "
+                "dictados, ignorar conflictos, etc) re-corre la validación "
+                "automáticamente. Si está OFF, vas a ver un warning de "
+                "'stale' hasta que apretes Validar plan."
             ),
         )
     with _col_b:
@@ -145,7 +160,16 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         and st.session_state[_last_toggle_key] != exclude_optativas
     )
 
-    if _run_button or _toggle_changed:
+    # Auto-revalidar pendiente: alguna accion del panel marco que hay
+    # cambios pendientes; si auto_validate=True corremos ya. Si OFF,
+    # dejamos la flag para mostrar el warning de stale hasta que el
+    # usuario apriete el boton manualmente.
+    _pending_auto = (
+        auto_validate
+        and st.session_state.pop(_pending_revalidate_key, False)
+    )
+
+    if _run_button or _toggle_changed or _pending_auto:
         with next(get_session()) as session:
             summary = validar_plan(
                 session, plan_id, exclude_optativas=exclude_optativas,
@@ -155,6 +179,8 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                 persist_validation(session, summary)
         st.session_state[_validation_key] = summary
         st.session_state[_last_toggle_key] = exclude_optativas
+        if _pending_auto:
+            st.toast("✓ Plan revalidado tras cambios.")
 
     # Si no hay summary aun, intentar recuperar el ultimo persistido
     if _validation_key not in st.session_state:
@@ -268,7 +294,9 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     # (faltantes + extras + conflictos + materias del plan + esperadas).
     _full_mat_map = _build_full_mat_map(summary, _grupos)
     _has_issues = any(
-        len(g["faltantes"]) > 0 or len(g["extras"]) > 0 or len(g["conflictos"]) > 0
+        len(g["faltantes"]) > 0 or len(g["extras"]) > 0
+        or len(g["conflictos"]) > 0
+        or len(g.get("conflictos_ignorados", [])) > 0
         for g in _grupos.values()
     )
 
@@ -286,6 +314,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     len(_g["faltantes"]) == 0
                     and len(_g["extras"]) == 0
                     and len(_g["conflictos"]) == 0
+                    and len(_g.get("conflictos_ignorados", [])) == 0
                 ):
                     continue
                 _render_carrera_subexpander(
@@ -294,6 +323,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     invalidate_cache_keys=[
                         _validation_key, _last_toggle_key,
                     ],
+                    pending_revalidate_key=_pending_revalidate_key,
                 )
 
     # =====================================================================
@@ -380,6 +410,7 @@ def _build_grupos_por_carrera(
             "faltantes": fp["materias"],
             "extras": [],
             "conflictos": [],
+            "conflictos_ignorados": [],
         }
 
     # Extras: pedir PE rows para asociarlos a carrera
@@ -437,6 +468,7 @@ def _build_grupos_por_carrera(
                             "faltantes": [],
                             "extras": _ms,
                             "conflictos": [],
+                            "conflictos_ignorados": [],
                         }
 
                 # Sin carrera asignada
@@ -464,24 +496,34 @@ def _build_grupos_por_carrera(
                         "faltantes": [],
                         "extras": _np_list,
                         "conflictos": [],
+                        "conflictos_ignorados": [],
                     }
 
-    # Conflictos por carrera
-    for c in summary.conflictos_horarios:
-        _cc = c["carrera_codigo"]
-        if _cc not in grupos:
-            with next(get_session()) as session:
-                _carr = session.get(CarreraDB, _cc)
-            grupos[_cc] = {
-                "carrera_codigo": _cc,
-                "carrera_nombre": _carr.nombre if _carr else _cc,
+    # Conflictos (activos e ignorados) por carrera
+    def _ensure_grupo(cc: str) -> None:
+        if cc not in grupos:
+            with next(get_session()) as _s:
+                _carr = _s.get(CarreraDB, cc)
+            grupos[cc] = {
+                "carrera_codigo": cc,
+                "carrera_nombre": _carr.nombre if _carr else cc,
                 "plan_version_nombre": "",
                 "dicta_recursado": False,
                 "faltantes": [],
                 "extras": [],
                 "conflictos": [],
+                "conflictos_ignorados": [],
             }
+
+    for c in summary.conflictos_horarios:
+        _cc = c["carrera_codigo"]
+        _ensure_grupo(_cc)
         grupos[_cc]["conflictos"].append(c)
+
+    for c in summary.conflictos_ignorados:
+        _cc = c["carrera_codigo"]
+        _ensure_grupo(_cc)
+        grupos[_cc]["conflictos_ignorados"].append(c)
 
     return grupos
 
@@ -518,18 +560,21 @@ def _render_carrera_subexpander(
     g: dict, plan_id: str, ciclo_id: str, key_ns: str,
     mat_map: dict[str, str],
     invalidate_cache_keys: list[str],
+    pending_revalidate_key: str,
 ) -> None:
     """Sub-expander por carrera con discrepancias + conflictos."""
     _cc = g["carrera_codigo"]
     _n_fc = len(g["faltantes"])
     _n_ec = len(g["extras"])
     _n_conf = len(g["conflictos"])
+    _n_ign = len(g.get("conflictos_ignorados", []))
 
     _conf_part = f" · ⚠️ {_n_conf} conflicto(s)" if _n_conf else ""
+    _ign_part = f" · 🙈 {_n_ign} ignorado(s)" if _n_ign else ""
     _exp_lbl = (
         f"{g['carrera_nombre']} ({_cc}) — "
         f"📭 {_n_fc} faltante(s) · 📥 {_n_ec} no esperada(s)"
-        f"{_conf_part}"
+        f"{_conf_part}{_ign_part}"
     )
     with st.expander(_exp_lbl, expanded=False):
         # Discrepancias de dictado
@@ -569,6 +614,7 @@ def _render_carrera_subexpander(
                         action="deactivate", carrera_codigo=_cc,
                         ciclo_id=ciclo_id, key_ns=key_ns,
                         invalidate_cache_keys=invalidate_cache_keys,
+                        pending_revalidate_key=pending_revalidate_key,
                         mat_map=mat_map,
                     )
 
@@ -604,24 +650,33 @@ def _render_carrera_subexpander(
                         action="activate", carrera_codigo=_cc,
                         ciclo_id=ciclo_id, key_ns=key_ns,
                         invalidate_cache_keys=invalidate_cache_keys,
+                        pending_revalidate_key=pending_revalidate_key,
                         mat_map=mat_map,
                     )
 
-        # Conflictos de horarios
-        if g["conflictos"]:
-            with st.expander(
-                f"⚠️ Conflictos de horarios ({_n_conf})", expanded=True,
-            ):
+        # Conflictos de horarios (activos + ignorados)
+        if g["conflictos"] or g.get("conflictos_ignorados"):
+            _hdr = f"⚠️ Conflictos de horarios ({_n_conf}"
+            if _n_ign:
+                _hdr += f" · 🙈 {_n_ign} ignorado(s)"
+            _hdr += ")"
+            with st.expander(_hdr, expanded=bool(g["conflictos"])):
                 _render_conflictos_carrera(
-                    g["conflictos"], _cc, plan_id=plan_id, key_ns=key_ns,
+                    activos=g["conflictos"],
+                    ignorados=g.get("conflictos_ignorados", []),
+                    carrera_codigo=_cc, plan_id=plan_id, key_ns=key_ns,
                     mat_map=mat_map,
+                    invalidate_cache_keys=invalidate_cache_keys,
+                    pending_revalidate_key=pending_revalidate_key,
                 )
 
 
 def _render_dictado_action_selector(
     *, materias: list[dict], action: Literal["activate", "deactivate"],
     carrera_codigo: str, ciclo_id: str, key_ns: str,
-    invalidate_cache_keys: list[str], mat_map: dict[str, str],
+    invalidate_cache_keys: list[str],
+    pending_revalidate_key: str,
+    mat_map: dict[str, str],
 ) -> None:
     """Selector multi + boton para activar o desactivar dictados en bulk.
 
@@ -648,19 +703,31 @@ def _render_dictado_action_selector(
              "no existe). Pasan a contarse como esperadas."
     )
 
-    _all_key = f"{key_ns}_dict_all_{_prefix}_{carrera_codigo}"
     _sel_key = f"{key_ns}_dict_sel_{_prefix}_{carrera_codigo}"
     _btn_key = f"{key_ns}_dict_btn_{_prefix}_{carrera_codigo}"
+    _all_btn_key = f"{key_ns}_dict_all_{_prefix}_{carrera_codigo}"
+    _clr_btn_key = f"{key_ns}_dict_clr_{_prefix}_{carrera_codigo}"
 
-    _select_all = st.checkbox(
-        f"Seleccionar todas ({len(_all_labels)})",
-        key=_all_key, value=False,
-    )
-    _default = _all_labels if _select_all else []
+    # Botones para tildar/destildar TODAS, antes de instanciar el multiselect
+    # (no podemos modificar `_sel_key` despues de que el widget se instancie).
+    _bcol1, _bcol2, _bcol3 = st.columns([1, 1, 3])
+    with _bcol1:
+        if st.button(
+            f"☑️ Todas ({len(_all_labels)})",
+            key=_all_btn_key, use_container_width=True,
+        ):
+            st.session_state[_sel_key] = list(_all_labels)
+            st.rerun()
+    with _bcol2:
+        if st.button(
+            "🚫 Ninguna", key=_clr_btn_key, use_container_width=True,
+        ):
+            st.session_state[_sel_key] = []
+            st.rerun()
+
     _sel_labels = st.multiselect(
         f"{_verbo} dictados de:",
         options=_all_labels,
-        default=_default if _select_all else None,
         key=_sel_key,
         help=_help,
     )
@@ -669,6 +736,7 @@ def _render_dictado_action_selector(
         f"{'⚪' if action == 'deactivate' else '🟢'} "
         f"{_verbo} {len(_sel_labels)} dictado(s)",
         key=_btn_key,
+        type="primary",
     ):
         _codes = [_options[lbl] for lbl in _sel_labels]
         _activo = action == "activate"
@@ -676,9 +744,10 @@ def _render_dictado_action_selector(
             _n = set_activo_for_materias_in_ciclo(
                 _ds, ciclo_id, _codes, activo=_activo,
             )
-        # Invalidar caches de validacion
+        # Invalidar caches de validacion + marcar para auto-revalidar
         for _k in invalidate_cache_keys:
             st.session_state.pop(_k, None)
+        st.session_state[pending_revalidate_key] = True
         st.toast(
             f"{_n} dictado(s) {'activado(s)' if _activo else 'desactivado(s)'}."
         )
@@ -686,84 +755,155 @@ def _render_dictado_action_selector(
 
 
 def _render_conflictos_carrera(
-    conflictos: list[dict], carrera_codigo: str,
+    *, activos: list[dict], ignorados: list[dict],
+    carrera_codigo: str,
     plan_id: str, key_ns: str,
     mat_map: dict[str, str],
+    invalidate_cache_keys: list[str],
+    pending_revalidate_key: str,
 ) -> None:
-    """Tabla de conflictos + UI para ignorarlos."""
-    st.caption(
-        "Conflictos detectados con las **comisiones reales del plan**. "
-        "Si sabés que un par no es un conflicto real (ej: misma materia "
-        "con docente diferente), podés marcarlo como ignorado."
-    )
+    """Conflictos activos + ignorados de una carrera."""
+    if activos:
+        st.caption(
+            "Conflictos detectados con las **comisiones reales del plan**. "
+            "Si sabés que un par no es un conflicto real (ej: docentes "
+            "distintos, materia virtual con misma aula), podés marcarlo "
+            "como ignorado."
+        )
 
-    # Resumen por (anio, cuatri)
-    _resumen = Counter()
-    for c in conflictos:
-        _resumen[(c["anio_plan"], c["cuatrimestre_plan"])] += 1
-    _rs_rows = [
-        {"Año": f"{a}°", "Cuatri": cu, "Conflictos": n}
-        for (a, cu), n in sorted(_resumen.items())
-    ]
-    st.markdown("**Resumen por año y cuatri**")
-    st.dataframe(
-        pd.DataFrame(_rs_rows),
-        use_container_width=True, hide_index=True,
-    )
+        # Resumen por (anio, cuatri)
+        _resumen = Counter()
+        for c in activos:
+            _resumen[(c["anio_plan"], c["cuatrimestre_plan"])] += 1
+        _rs_rows = [
+            {"Año": f"{a}°", "Cuatri": cu, "Conflictos": n}
+            for (a, cu), n in sorted(_resumen.items())
+        ]
+        st.markdown("**Resumen por año y cuatri**")
+        st.dataframe(
+            pd.DataFrame(_rs_rows),
+            use_container_width=True, hide_index=True,
+        )
 
-    # Detalle
-    _conf_rows = [
-        {
-            "Año": f"{c['anio_plan']}°",
-            "Cuatri": c["cuatrimestre_plan"],
-            "Materia A": _label_codnom(c["materia_a"], mat_map),
-            "Materia B": _label_codnom(c["materia_b"], mat_map),
-            "Día": c["dia"],
-            "Horario A": f"{c['hora_inicio_a']}-{c['hora_fin_a']}",
-            "Horario B": f"{c['hora_inicio_b']}-{c['hora_fin_b']}",
+        # Detalle
+        _conf_rows = [
+            {
+                "Año": f"{c['anio_plan']}°",
+                "Cuatri": c["cuatrimestre_plan"],
+                "Materia A": _label_codnom(c["materia_a"], mat_map),
+                "Materia B": _label_codnom(c["materia_b"], mat_map),
+                "Día": c["dia"],
+                "Horario A": f"{c['hora_inicio_a']}-{c['hora_fin_a']}",
+                "Horario B": f"{c['hora_inicio_b']}-{c['hora_fin_b']}",
+            }
+            for c in activos
+        ]
+        st.markdown(f"**Detalle ({len(activos)})**")
+        st.dataframe(
+            pd.DataFrame(_conf_rows),
+            use_container_width=True, hide_index=True,
+        )
+
+        # Ignorar conflicto
+        st.markdown("**Ignorar conflicto**")
+        _pair_options = {
+            f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
+            f"{_label_codnom(c['materia_b'], mat_map)} · "
+            f"{c['dia']} {c['hora_inicio_a']}-{c['hora_fin_a']}": (
+                c["materia_a"], c["materia_b"]
+            )
+            for c in activos
         }
-        for c in conflictos
-    ]
-    st.markdown(f"**Detalle ({len(conflictos)})**")
-    st.dataframe(
-        pd.DataFrame(_conf_rows),
-        use_container_width=True, hide_index=True,
-    )
+        _ig_col1, _ig_col2 = st.columns([3, 2])
+        with _ig_col1:
+            _selected_lbl = st.selectbox(
+                "Conflicto",
+                options=list(_pair_options.keys()),
+                key=f"{key_ns}_ign_pair_{carrera_codigo}",
+            )
+        with _ig_col2:
+            _razon = st.text_input(
+                "Razón (opcional)",
+                key=f"{key_ns}_ign_razon_{carrera_codigo}",
+                placeholder="ej: docentes distintos, mismo aula virtual",
+            )
+        if st.button(
+            "Marcar como ignorado",
+            key=f"{key_ns}_ign_btn_{carrera_codigo}",
+        ):
+            _mat_a, _mat_b = _pair_options[_selected_lbl]
+            with next(get_session()) as _is:
+                add_ignored_pair(_is, plan_id, _mat_a, _mat_b, razon=_razon)
+            for _k in invalidate_cache_keys:
+                st.session_state.pop(_k, None)
+            st.session_state[pending_revalidate_key] = True
+            st.toast(
+                f"Conflicto {_mat_a} vs {_mat_b} marcado como ignorado."
+            )
+            st.rerun()
 
-    # Ignorar conflicto
-    st.markdown("**Ignorar conflicto**")
-    _pair_options = {
-        f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
-        f"{_label_codnom(c['materia_b'], mat_map)} · "
-        f"{c['dia']} {c['hora_inicio_a']}-{c['hora_fin_a']}": (
-            c["materia_a"], c["materia_b"]
+    # Bloque de IGNORADOS — permite ver y quitar
+    if ignorados:
+        if activos:
+            st.divider()
+        st.markdown(f"**🙈 Conflictos ignorados ({len(ignorados)})**")
+        st.caption(
+            "Estos conflictos fueron marcados como ignorados. No bloquean "
+            "la activación del plan, pero acá podés ver el detalle y "
+            "quitarlos de la lista si querés que vuelvan a contarse."
         )
-        for c in conflictos
-    }
-    _ig_col1, _ig_col2 = st.columns([3, 2])
-    with _ig_col1:
-        _selected_lbl = st.selectbox(
-            "Conflicto",
-            options=list(_pair_options.keys()),
-            key=f"{key_ns}_ign_pair_{carrera_codigo}",
+
+        # Tabla detalle
+        _ign_rows = [
+            {
+                "Año": f"{c['anio_plan']}°",
+                "Cuatri": c["cuatrimestre_plan"],
+                "Materia A": _label_codnom(c["materia_a"], mat_map),
+                "Materia B": _label_codnom(c["materia_b"], mat_map),
+                "Día": c["dia"],
+                "Horario A": f"{c['hora_inicio_a']}-{c['hora_fin_a']}",
+                "Horario B": f"{c['hora_inicio_b']}-{c['hora_fin_b']}",
+            }
+            for c in ignorados
+        ]
+        st.dataframe(
+            pd.DataFrame(_ign_rows),
+            use_container_width=True, hide_index=True,
         )
-    with _ig_col2:
-        _razon = st.text_input(
-            "Razón (opcional)",
-            key=f"{key_ns}_ign_razon_{carrera_codigo}",
-            placeholder="ej: docentes distintos, mismo aula virtual",
+
+        # Selector + boton para quitar de ignorados (deduplicado por par)
+        _seen_pairs: set[tuple[str, str]] = set()
+        _unign_options: dict[str, tuple[str, str]] = {}
+        for c in ignorados:
+            _pair = (c["materia_a"], c["materia_b"])
+            if _pair in _seen_pairs:
+                continue
+            _seen_pairs.add(_pair)
+            _lbl = (
+                f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
+                f"{_label_codnom(c['materia_b'], mat_map)}"
+            )
+            _unign_options[_lbl] = _pair
+
+        _unign_lbl = st.selectbox(
+            "Quitar de ignorados",
+            options=list(_unign_options.keys()),
+            key=f"{key_ns}_unign_pair_{carrera_codigo}",
         )
-    if st.button(
-        "Marcar como ignorado",
-        key=f"{key_ns}_ign_btn_{carrera_codigo}",
-    ):
-        _mat_a, _mat_b = _pair_options[_selected_lbl]
-        with next(get_session()) as _is:
-            add_ignored_pair(_is, plan_id, _mat_a, _mat_b, razon=_razon)
-        # Invalidar summary cacheado para forzar re-validacion
-        st.session_state.pop(f"{key_ns}_validation_summary", None)
-        st.toast(f"Conflicto {_mat_a} vs {_mat_b} marcado como ignorado.")
-        st.rerun()
+        if st.button(
+            "Dejar de ignorar",
+            key=f"{key_ns}_unign_btn_{carrera_codigo}",
+        ):
+            _mat_a, _mat_b = _unign_options[_unign_lbl]
+            with next(get_session()) as _us:
+                remove_ignored_pair(_us, plan_id, _mat_a, _mat_b)
+            for _k in invalidate_cache_keys:
+                st.session_state.pop(_k, None)
+            st.session_state[pending_revalidate_key] = True
+            st.toast(
+                f"Conflicto {_mat_a} vs {_mat_b} quitado de ignorados."
+            )
+            st.rerun()
 
 
 # =============================================================================
