@@ -738,9 +738,9 @@ def _render_detalle_por_materia(
         _m = _mat_map.get(_code)
         _pes = _pe_map.get(_code, [])
         # Tomar primera carrera/anio/cuatri (mas comun: una sola) para filtros.
-        _carrera = _pes[0].carrera_codigo if _pes else "—"
+        _carrera = (_pes[0].carrera_codigo if _pes else None) or "—"
         _anio = _pes[0].anio_plan if _pes else None
-        _cuatri = _pes[0].cuatrimestre_plan if _pes else "—"
+        _cuatri = (_pes[0].cuatrimestre_plan if _pes else None) or "—"
         _optativa = any(bool(_pe.optativa) for _pe in _pes)
 
         _coms_de_m = _coms_por_mat.get(_code, [])
