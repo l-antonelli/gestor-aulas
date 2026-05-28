@@ -47,6 +47,7 @@ from src.database.models import (
     PlanEstudioDB,
     PlanificacionCursadaDB,
 )
+from src.services.dictado_service import set_activo_for_materias_in_ciclo
 from src.services.plan_validation_service import (
     PlanValidationSummary,
     add_ignored_pair,
@@ -288,8 +289,11 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                 ):
                     continue
                 _render_carrera_subexpander(
-                    _g, plan_id=plan_id, key_ns=key_ns,
-                    mat_map=_full_mat_map,
+                    _g, plan_id=plan_id, ciclo_id=plan.ciclo_id,
+                    key_ns=key_ns, mat_map=_full_mat_map,
+                    invalidate_cache_keys=[
+                        _validation_key, _last_toggle_key,
+                    ],
                 )
 
     # =====================================================================
@@ -511,8 +515,9 @@ def _render_resumen_carreras(grupos: dict[str, dict]) -> None:
 
 
 def _render_carrera_subexpander(
-    g: dict, plan_id: str, key_ns: str,
+    g: dict, plan_id: str, ciclo_id: str, key_ns: str,
     mat_map: dict[str, str],
+    invalidate_cache_keys: list[str],
 ) -> None:
     """Sub-expander por carrera con discrepancias + conflictos."""
     _cc = g["carrera_codigo"]
@@ -559,6 +564,13 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ft_rows),
                         use_container_width=True, hide_index=True,
                     )
+                    _render_dictado_action_selector(
+                        materias=g["faltantes"],
+                        action="deactivate", carrera_codigo=_cc,
+                        ciclo_id=ciclo_id, key_ns=key_ns,
+                        invalidate_cache_keys=invalidate_cache_keys,
+                        mat_map=mat_map,
+                    )
 
                 if g["extras"]:
                     st.markdown(
@@ -587,6 +599,13 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ex_rows),
                         use_container_width=True, hide_index=True,
                     )
+                    _render_dictado_action_selector(
+                        materias=g["extras"],
+                        action="activate", carrera_codigo=_cc,
+                        ciclo_id=ciclo_id, key_ns=key_ns,
+                        invalidate_cache_keys=invalidate_cache_keys,
+                        mat_map=mat_map,
+                    )
 
         # Conflictos de horarios
         if g["conflictos"]:
@@ -597,6 +616,73 @@ def _render_carrera_subexpander(
                     g["conflictos"], _cc, plan_id=plan_id, key_ns=key_ns,
                     mat_map=mat_map,
                 )
+
+
+def _render_dictado_action_selector(
+    *, materias: list[dict], action: Literal["activate", "deactivate"],
+    carrera_codigo: str, ciclo_id: str, key_ns: str,
+    invalidate_cache_keys: list[str], mat_map: dict[str, str],
+) -> None:
+    """Selector multi + boton para activar o desactivar dictados en bulk.
+
+    `action='deactivate'` aplica a faltantes (sacarlas del set esperado);
+    `action='activate'` aplica a extras (incorporarlas como esperadas).
+    El selector ofrece tildar todas con un toggle previo.
+    """
+    if not materias:
+        return
+
+    _options = {
+        _label_codnom(_m["codigo"], mat_map): _m["codigo"]
+        for _m in materias
+    }
+    _all_labels = list(_options.keys())
+
+    _verbo = "Desactivar" if action == "deactivate" else "Activar"
+    _prefix = "deact" if action == "deactivate" else "act"
+    _help = (
+        "Marca como Inactivo el dictado de las materias elegidas. "
+        "Salen del set de esperadas (no aparecen mas como faltantes)."
+        if action == "deactivate"
+        else "Activa el dictado de las materias elegidas (creandolo si "
+             "no existe). Pasan a contarse como esperadas."
+    )
+
+    _all_key = f"{key_ns}_dict_all_{_prefix}_{carrera_codigo}"
+    _sel_key = f"{key_ns}_dict_sel_{_prefix}_{carrera_codigo}"
+    _btn_key = f"{key_ns}_dict_btn_{_prefix}_{carrera_codigo}"
+
+    _select_all = st.checkbox(
+        f"Seleccionar todas ({len(_all_labels)})",
+        key=_all_key, value=False,
+    )
+    _default = _all_labels if _select_all else []
+    _sel_labels = st.multiselect(
+        f"{_verbo} dictados de:",
+        options=_all_labels,
+        default=_default if _select_all else None,
+        key=_sel_key,
+        help=_help,
+    )
+
+    if _sel_labels and st.button(
+        f"{'⚪' if action == 'deactivate' else '🟢'} "
+        f"{_verbo} {len(_sel_labels)} dictado(s)",
+        key=_btn_key,
+    ):
+        _codes = [_options[lbl] for lbl in _sel_labels]
+        _activo = action == "activate"
+        with next(get_session()) as _ds:
+            _n = set_activo_for_materias_in_ciclo(
+                _ds, ciclo_id, _codes, activo=_activo,
+            )
+        # Invalidar caches de validacion
+        for _k in invalidate_cache_keys:
+            st.session_state.pop(_k, None)
+        st.toast(
+            f"{_n} dictado(s) {'activado(s)' if _activo else 'desactivado(s)'}."
+        )
+        st.rerun()
 
 
 def _render_conflictos_carrera(
