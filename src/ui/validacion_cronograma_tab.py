@@ -816,7 +816,11 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                                     "corregir los horarios conflictivos."
                                 ),
                             ):
-                                st.session_state["edit_schedule"] = _sel_sched_id
+                                # Buffer: la pagina Cronogramas la consume al
+                                # instanciar el selectbox (no podemos escribir
+                                # `edit_schedule` directamente porque ya esta
+                                # ligado al widget en este mismo run).
+                                st.session_state["_pending_edit_schedule_id"] = _sel_sched_id
                                 try:
                                     st.switch_page(
                                         "pages/6_📅_Cronogramas.py"

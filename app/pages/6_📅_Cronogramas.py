@@ -679,6 +679,11 @@ with tab_editar:
         schedule_options_edit = {
             s.id: f"{s.nombre} ({s.fecha_upload})" for s in all_schedules
         }
+        # Consumir buffer de pre-seleccion (viene de Validacion → Editar).
+        # Setear `edit_schedule` ANTES de instanciar el widget.
+        _pending = st.session_state.pop("_pending_edit_schedule_id", None)
+        if _pending and _pending in schedule_options_edit:
+            st.session_state["edit_schedule"] = _pending
         sel_edit_id = st.selectbox(
             "Seleccionar cronograma",
             options=list(schedule_options_edit.keys()),
