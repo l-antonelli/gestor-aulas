@@ -97,6 +97,9 @@ class CronogramaValidationSummary:
     # Conflictos de horarios (con comisiones auto-derivadas)
     n_conflictos_horarios: int = 0
 
+    # Config aplicada (toggle "excluir virtuales y optativas")
+    excluir_virtuales_optativas: bool = False
+
     # Detalle (para reconstruir la UI sin recomputar)
     faltantes_por_carrera: list[dict] = field(default_factory=list)
     extras: list[dict] = field(default_factory=list)
@@ -264,13 +267,20 @@ def _compute_lab_breakdown(
 
 def validar_cronograma(
     session: Session, schedule_id: str, ciclo_id: str,
+    exclude_virt_opt: bool = False,
 ) -> CronogramaValidationSummary:
     """Computa el resumen completo de validacion de un cronograma vs un ciclo.
+
+    Args:
+        exclude_virt_opt: si True, el set de "esperadas" descarta materias
+            virtuales y optativas del computo de cobertura/faltantes/extras.
+            Es config de la validacion: cambiar el toggle invalida el snapshot.
 
     No persiste el resultado (usar `persist_validation()` para eso).
     """
     summary = CronogramaValidationSummary(
         schedule_id=schedule_id, ciclo_id=ciclo_id,
+        excluir_virtuales_optativas=exclude_virt_opt,
     )
 
     # Pre-check: el ciclo debe tener dictados creados. Sin esto la prevalidacion
@@ -318,6 +328,28 @@ def validar_cronograma(
 
     # Cobertura — esperadas = dictados ACTIVOS linkeados al ciclo.
     esperadas = get_materias_esperadas_from_dictados(session, ciclo_id)
+    if exclude_virt_opt and esperadas:
+        # Aplicar filtro: descartar materias virtuales/optativas del set
+        # esperado. La definicion de "virtual" y "optativa" sale de
+        # MateriaDB.virtual y PlanEstudioDB.optativa (cualquier registro).
+        _esp_codes = list(esperadas.keys())
+        _mats_full = list(session.exec(
+            select(MateriaDB).where(col(MateriaDB.codigo).in_(_esp_codes))
+        ).all())
+        _virtuales = {m.codigo for m in _mats_full if m.virtual}
+        from src.database.models import PlanEstudioDB as _PE
+        _opt_rows = list(session.exec(
+            select(_PE.materia_codigo)
+            .where(col(_PE.materia_codigo).in_(_esp_codes))
+            .where(_PE.optativa == True)  # noqa: E712
+            .distinct()
+        ).all())
+        _optativas = set(_opt_rows)
+        _excluir = _virtuales | _optativas
+        esperadas = {
+            mc: nom for mc, nom in esperadas.items()
+            if mc not in _excluir
+        }
     summary.esperadas = esperadas
     cubiertas = materias_en_sched & set(esperadas.keys())
     faltantes_set = set(esperadas.keys()) - materias_en_sched
@@ -413,6 +445,7 @@ def persist_validation(
         particion_valid=summary.particion_valid,
         particion_n_infactibles=summary.particion_n_infactibles,
         n_conflictos_horarios=summary.n_conflictos_horarios,
+        excluir_virtuales_optativas=summary.excluir_virtuales_optativas,
         details_json=summary.to_details_json(),
     )
     session.add(record)

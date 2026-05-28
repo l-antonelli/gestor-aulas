@@ -267,6 +267,7 @@ def _comisiones_son_compatibles(
 def validar_conflictos_horarios_plan(
     session: Session,
     plan_id: str,
+    ignored_pairs: Optional[set[tuple[str, str]]] = None,
 ) -> ValidationResult:
     """
     Verifica que no haya conflictos de horarios dentro de un plan de cursada.
@@ -280,7 +281,13 @@ def validar_conflictos_horarios_plan(
       ningún par compatible → conflicto real.
 
     Severity: BLOCKER — debe resolverse antes de activar el plan.
+
+    Args:
+        ignored_pairs: set de tuplas (materia_a, materia_b) ordenadas
+            lexicograficamente que se descartan (no se reportan como
+            conflicto). Provistas por la UI desde IgnoredConflictDB.
     """
+    ignored_pairs = ignored_pairs or set()
     plan = session.get(PlanificacionCursadaDB, plan_id)
     if plan is None:
         return ValidationResult(
@@ -376,6 +383,10 @@ def validar_conflictos_horarios_plan(
 
         for i, mat1 in enumerate(relevant):
             for mat2 in relevant[i + 1:]:
+                # Skip si el par esta ignorado (ordenamos lexicograficamente)
+                _pair = (mat1, mat2) if mat1 < mat2 else (mat2, mat1)
+                if _pair in ignored_pairs:
+                    continue
                 # Check if at least one pair of comisiones is compatible
                 com_ids_1 = [
                     cid for cid in comisiones_por_materia[mat1]
@@ -423,6 +434,143 @@ def validar_conflictos_horarios_plan(
         valid=True,
         message="Sin conflictos de horario en el plan",
     )
+
+
+def validar_conflictos_horarios_plan_estructurados(
+    session: Session,
+    plan_id: str,
+    ignored_pairs: Optional[set[tuple[str, str]]] = None,
+) -> list[ConflictoHorario]:
+    """Espejo de `validar_conflictos_horarios_cronograma` pero sobre las
+    comisiones REALES del plan (no auto-derivadas).
+
+    Devuelve list[ConflictoHorario] estructurado para que la UI agrupe
+    por (carrera, año, cuatri) y muestre tabla resumen + detalle. Los
+    pares ignorados se descartan.
+    """
+    ignored_pairs = ignored_pairs or set()
+
+    plan = session.get(PlanificacionCursadaDB, plan_id)
+    if plan is None:
+        return []
+
+    plan_version_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
+    ).all())
+    if not plan_version_ids:
+        return []
+
+    from src.database.models import CicloDB
+    ciclo = session.get(CicloDB, plan.ciclo_id)
+    if ciclo is None:
+        return []
+    cuatri_ciclo = f"{ciclo.numero}C"
+
+    comisiones = list(session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
+    ).all())
+    comision_ids = [c.id for c in comisiones]
+    if not comision_ids:
+        return []
+
+    all_horarios = list(session.exec(
+        select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
+    ).all())
+    horarios_por_comision: dict[str, list[HorarioDB]] = {}
+    for h in all_horarios:
+        horarios_por_comision.setdefault(h.comision_id, []).append(h)
+
+    comisiones_por_materia: dict[str, list[str]] = {}
+    for c in comisiones:
+        comisiones_por_materia.setdefault(c.materia_codigo, []).append(c.id)
+
+    plan_entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(col(PlanEstudioDB.plan_version_id).in_(plan_version_ids))
+    ).all())
+
+    groups: dict[tuple[str, int, str], set[str]] = {}
+    for pe in plan_entries:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        groups.setdefault(key, set()).add(pe.materia_codigo)
+
+    enriched: dict[tuple[str, int, str], set[str]] = {}
+    for (carrera, anio, cuatri), mats in groups.items():
+        if cuatri != cuatri_ciclo:
+            continue
+        s = set(mats)
+        anual_k = (carrera, anio, "Anual")
+        if anual_k in groups:
+            s |= groups[anual_k]
+        enriched[(carrera, anio, cuatri)] = s
+
+    conflictos: list[ConflictoHorario] = []
+    seen: set[tuple[str, int, str, str, str]] = set()
+
+    for (carrera, anio, cuatri), mats in enriched.items():
+        relevant = [
+            m for m in mats
+            if m in comisiones_por_materia
+            and any(cid in horarios_por_comision for cid in comisiones_por_materia[m])
+        ]
+        for i, mat1 in enumerate(sorted(relevant)):
+            for mat2 in sorted(relevant)[i + 1:]:
+                # Skip ignorados
+                _pair = (mat1, mat2) if mat1 < mat2 else (mat2, mat1)
+                if _pair in ignored_pairs:
+                    continue
+                _seen_key = (carrera, anio, cuatri, mat1, mat2)
+                if _seen_key in seen:
+                    continue
+                seen.add(_seen_key)
+
+                com_ids_1 = [
+                    cid for cid in comisiones_por_materia[mat1]
+                    if cid in horarios_por_comision
+                ]
+                com_ids_2 = [
+                    cid for cid in comisiones_por_materia[mat2]
+                    if cid in horarios_por_comision
+                ]
+
+                found_compatible = False
+                for cid1 in com_ids_1:
+                    for cid2 in com_ids_2:
+                        if _comisiones_son_compatibles(
+                            horarios_por_comision[cid1],
+                            horarios_por_comision[cid2],
+                        ):
+                            found_compatible = True
+                            break
+                    if found_compatible:
+                        break
+                if found_compatible:
+                    continue
+
+                # Reportar todos los pares (h1, h2) solapados de la primera
+                # combinacion (com1=primera, com2=primera)
+                first_com_1 = horarios_por_comision[com_ids_1[0]]
+                first_com_2 = horarios_por_comision[com_ids_2[0]]
+                for h1 in first_com_1:
+                    for h2 in first_com_2:
+                        if horarios_se_superponen(h1, h2):
+                            conflictos.append(ConflictoHorario(
+                                carrera_codigo=carrera,
+                                anio_plan=anio,
+                                cuatrimestre_plan=cuatri,
+                                materia_a=mat1,
+                                materia_b=mat2,
+                                dia=h1.dia,
+                                hora_inicio_a=h1.hora_inicio.strftime("%H:%M"),
+                                hora_fin_a=h1.hora_fin.strftime("%H:%M"),
+                                hora_inicio_b=h2.hora_inicio.strftime("%H:%M"),
+                                hora_fin_b=h2.hora_fin.strftime("%H:%M"),
+                            ))
+
+    return conflictos
 
 
 # =============================================================================

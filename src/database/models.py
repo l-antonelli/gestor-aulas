@@ -337,8 +337,79 @@ class ScheduleValidationDB(SQLModel, table=True):
     # Detalle. El detalle estructurado va en `details_json["conflictos"]`.
     n_conflictos_horarios: int = Field(default=0, ge=0)
 
+    # Config aplicada a la validacion (toggle "excluir virtuales/optativas").
+    # Si cambia entre runs, la validacion queda stale.
+    excluir_virtuales_optativas: bool = Field(default=False)
+
     # Snapshot de detalle (JSON-serialized para reconstruccion de la UI)
     details_json: str = Field(default="{}")
+
+
+class PlanValidationDB(SQLModel, table=True):
+    """Snapshot historico de una validacion de un plan de cursada.
+
+    Espejo de ScheduleValidationDB pero sobre PlanificacionCursadaDB. Las
+    "materias del set" salen de ComisionDB del plan; los conflictos usan
+    `validar_conflictos_horarios_plan` con los pares ignorados de
+    IgnoredConflictDB filtrados.
+
+    Cada vez que el usuario corre "Validar plan" se inserta una fila. La UI
+    por defecto muestra la mas reciente; se mantienen todas para auditoria.
+    """
+    __tablename__ = "plan_validations"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    plan_cursada_id: str = Field(
+        foreign_key="planificaciones_cursada.id", index=True,
+    )
+    validated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Snapshots para staleness
+    comision_count_at_validation: int = Field(ge=0)
+    horario_count_at_validation: int = Field(ge=0)
+    dictado_count_at_validation: int = Field(default=0, ge=0)
+
+    # Config aplicada
+    excluir_virtuales_optativas: bool = Field(default=False)
+
+    # Resumen general (espejo de ScheduleValidationDB, sin lab breakdown
+    # porque los labs viven a nivel cronograma)
+    n_materias: int = Field(ge=0)
+    n_clases: int = Field(ge=0)
+    total_horas: float = Field(ge=0)
+    n_esperadas: int = Field(ge=0)
+    n_cubiertas: int = Field(ge=0)
+    n_faltantes: int = Field(ge=0)
+    n_extra: int = Field(default=0, ge=0)
+
+    # Particion teoria/lab
+    particion_valid: bool = Field(default=True)
+    particion_n_infactibles: int = Field(default=0, ge=0)
+
+    # Conflictos
+    n_conflictos_horarios: int = Field(default=0, ge=0)
+    n_conflictos_ignorados: int = Field(default=0, ge=0)
+
+    # Snapshot detalle JSON
+    details_json: str = Field(default="{}")
+
+
+class IgnoredConflictDB(SQLModel, table=True):
+    """Par de materias cuyo conflicto de horarios el usuario decidio ignorar.
+
+    Granularidad por par (no por slot horario): si una vez se ignoro,
+    queda ignorado aunque cambien los horarios. Se almacena con
+    materia_a < materia_b lexicograficamente para deduplicacion.
+    """
+    __tablename__ = "ignored_conflicts"
+
+    plan_cursada_id: str = Field(
+        foreign_key="planificaciones_cursada.id", primary_key=True,
+    )
+    materia_a: str = Field(primary_key=True)  # ordenado lexicograficamente
+    materia_b: str = Field(primary_key=True)  # > materia_a
+    razon: str = Field(default="")
+    fecha_creacion: datetime = Field(default_factory=datetime.utcnow)
 
 
 class PlanificacionCursadaDB(SQLModel, table=True):

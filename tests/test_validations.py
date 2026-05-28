@@ -484,6 +484,67 @@ class TestValidarConflictosHorariosPlan:
         result = validar_conflictos_horarios_plan(session, plan.id)
         assert result.valid is False
 
+    def test_validar_conflictos_horarios_plan_con_ignorados(
+        self, session, base_data,
+    ):
+        """Pares en `ignored_pairs` se descartan: el conflicto no aparece."""
+        pv = base_data["pv"]
+        ciclo = base_data["ciclo"]
+
+        m1 = MateriaDB(codigo="IG1", nombre="Ign 1", periodo="cuatrimestral")
+        m2 = MateriaDB(codigo="IG2", nombre="Ign 2", periodo="cuatrimestral")
+        session.add_all([m1, m2])
+        session.flush()
+
+        for m in [m1, m2]:
+            session.add(PlanEstudioDB(
+                plan_version_id=pv.id, materia_codigo=m.codigo,
+                carrera_codigo="ING", anio_plan=1, cuatrimestre_plan="1C",
+            ))
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="IgnoredPair",
+            ciclo_id=ciclo.id, activo=False,
+        )
+        session.add(plan)
+        session.flush()
+
+        com1 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="IG1",
+            plan_cursada_id=plan.id, comision_key="IG1-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        com2 = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="IG2",
+            plan_cursada_id=plan.id, comision_key="IG2-001",
+            nombre="Com 1", numero=1, cupo=30,
+        )
+        session.add_all([com1, com2])
+        session.flush()
+
+        # Misma franja → conflicto natural
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com1.id,
+            codigo_materia="IG1", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com2.id,
+            codigo_materia="IG2", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        # Sin ignorados: hay conflicto
+        r1 = validar_conflictos_horarios_plan(session, plan.id)
+        assert r1.valid is False
+
+        # Con el par ignorado (orden lexicografico): conflicto desaparece
+        r2 = validar_conflictos_horarios_plan(
+            session, plan.id, ignored_pairs={("IG1", "IG2")},
+        )
+        assert r2.valid is True
+
     def test_single_comision_no_overlap(self, session, base_data):
         """1 comision each, no overlap → valid=True (regression)."""
         pv = base_data["pv"]

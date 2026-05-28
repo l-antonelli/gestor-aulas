@@ -202,6 +202,44 @@ class TestFaltantes:
             assert "sin horarios" in mf["razon"].lower()
 
 
+class TestExcluirVirtOpt:
+    def test_validar_cronograma_excluir_virt_opt(
+        self, session, setup_basic,
+    ):
+        """Toggle exclude_virt_opt filtra materias virtuales/optativas
+        del set esperado en la cobertura."""
+        ciclo = setup_basic["ciclo"]
+        # Marcar FIS101 como virtual
+        fis = setup_basic["m2"]
+        fis.virtual = True
+        session.add(fis)
+        session.commit()
+
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        # Cronograma cubre solo MAT101
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+
+        # Sin toggle: ambas esperadas, FIS101 falta
+        s_off = validar_cronograma(
+            session, sched.id, ciclo.id, exclude_virt_opt=False,
+        )
+        assert s_off.error is None
+        assert s_off.n_esperadas == 2
+        assert s_off.n_faltantes == 1
+        assert s_off.excluir_virtuales_optativas is False
+
+        # Con toggle: FIS101 (virtual) sale del set; cobertura completa
+        s_on = validar_cronograma(
+            session, sched.id, ciclo.id, exclude_virt_opt=True,
+        )
+        assert s_on.error is None
+        assert s_on.n_esperadas == 1
+        assert s_on.n_faltantes == 0
+        assert s_on.excluir_virtuales_optativas is True
+        assert "FIS101" not in s_on.esperadas
+
+
 class TestStaleness:
     def test_is_validation_stale_por_cambio_de_dictados(
         self, session, setup_basic,
