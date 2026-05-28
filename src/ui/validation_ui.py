@@ -1128,6 +1128,79 @@ def _render_detalle_por_materia(
         use_container_width=True, hide_index=True,
     )
 
+    # =========================================================================
+    # Selector de materia + editor inline + calendario embebido
+    # =========================================================================
+    st.divider()
+    st.markdown("##### 🛠️ Editar materia")
+
+    # Default: primera materia que requiere revisión (estado != OK)
+    _default_idx = 0
+    for _i, _r in enumerate(_filtered):
+        if _r["estado"] != "OK":
+            _default_idx = _i
+            break
+
+    _sel_options = {
+        f"{_estado_badge(_r['estado'])} · "
+        f"{_label_codnom(_r['codigo'], summary.mat_map | summary.esperadas)} "
+        f"· {_r['carrera']}": _r["codigo"]
+        for _r in _filtered
+    }
+    _sel_keys = list(_sel_options.keys())
+
+    if not _sel_keys:
+        st.caption("Sin materias para editar.")
+        return
+
+    _sel_lbl = st.selectbox(
+        "Materia activa",
+        options=_sel_keys,
+        index=min(_default_idx, len(_sel_keys) - 1),
+        key=f"{key_ns}_dpm_active",
+        help=(
+            "Elegí una materia de la tabla para editar sus comisiones, "
+            "horarios, cupo, coeficientes y método de forecast. Por "
+            "default se posiciona en la primera que requiere revisión."
+        ),
+    )
+    _active_codigo = _sel_options[_sel_lbl]
+
+    # Calendario embebido de la materia activa (si tiene horarios)
+    with next(get_session()) as _cal_sess:
+        _cal_plan = _cal_sess.get(PlanificacionCursadaDB, plan_id)
+        if _cal_plan and _cal_plan.ciclo_id:
+            from src.database.crud import get_or_create_config as _gc
+            from src.services.plan_generation_service import (
+                build_timetable_grid as _btg,
+            )
+            _cal_config = _gc(_cal_sess)
+            _grid = _btg(
+                _cal_sess, plan_id, _cal_config,
+                filtered_materia_codigos={_active_codigo},
+                ciclo_id=_cal_plan.ciclo_id,
+            )
+        else:
+            _grid = {}
+            _cal_config = None
+
+    if _grid and _cal_config is not None:
+        from src.ui.calendar_render import render_timetable_calendar
+        st.markdown("**🗓️ Vista calendario**")
+        render_timetable_calendar(
+            _grid, _cal_config,
+            key=f"{key_ns}_dpm_cal_{_active_codigo}",
+        )
+
+    # Editor inline
+    st.markdown("**✏️ Editor**")
+    from src.ui.plan_materia_editor import render_plan_materia_detail
+    render_plan_materia_detail(
+        plan_id=plan_id,
+        materia_codigo=_active_codigo,
+        key_ns=f"{key_ns}_dpm_edit",
+    )
+
 
 def _estado_badge(estado: str) -> str:
     """Emoji + etiqueta corta del estado."""
