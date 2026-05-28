@@ -35,9 +35,14 @@ from src.services.schedule_service import (
     duplicate_schedule,
     sync_preview_edits_to_schedule,
     build_schedule_grid,
+    add_schedule_entry,
+    update_schedule_entry,
+    delete_schedule_entry,
 )
-from src.database.crud import get_or_create_config
-from src.ui.calendar_render import render_schedule_calendar
+from src.ui.calendar_render import (
+    render_schedule_calendar,
+    render_editable_schedule_calendar,
+)
 from src.services.plan_generation_service import (
     preview_plan_from_schedule,
 )
@@ -54,6 +59,115 @@ from src.services.validations import (
     validar_factibilidad_particion_horas,
 )
 from src.domain.types import DIAS_SEMANA
+
+
+# ---------------------------------------------------------------------------
+# Dialogs para edicion en el calendario embebido del sub-expander de
+# conflictos (replica los del tab Editar pero con keys propias para no chocar).
+# ---------------------------------------------------------------------------
+
+@st.dialog("Editar entrada (desde Validar)", width="large")
+def _pcv_dialog_edit_entry():
+    pending = st.session_state.get("_pcv_pending_click")
+    if not pending:
+        st.rerun()
+        return
+
+    # Cargar materias para el selector
+    from src.database.models import MateriaDB as _MDB
+    with next(get_session()) as _ms:
+        _all_mats = list(_ms.exec(select(_MDB).order_by(col(_MDB.codigo))).all())
+    _mat_map = {m.codigo: m.nombre for m in _all_mats}
+    _all_codes = sorted(_mat_map.keys())
+    _dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+    _busc = st.text_input(
+        "🔍 Buscar materia",
+        key="_pcv_dlg_busc",
+        placeholder="Nombre o código...",
+    )
+    if _busc.strip():
+        _t = _busc.strip().lower()
+        _opts = [
+            c for c in _all_codes
+            if _t in c.lower() or _t in _mat_map[c].lower()
+        ]
+    else:
+        _opts = _all_codes
+    if not _opts:
+        _opts = _all_codes
+
+    _idx = (
+        _opts.index(pending["materia"])
+        if pending["materia"] in _opts else 0
+    )
+    new_mat = st.selectbox(
+        "Materia",
+        options=_opts,
+        index=_idx,
+        format_func=lambda x: f"{_mat_map[x]} — {x}",
+        key="_pcv_dlg_mat",
+    )
+
+    cdc, cic, cfc = st.columns(3)
+    with cdc:
+        new_dia = st.selectbox(
+            "Día", options=_dias,
+            index=_dias.index(pending["dia"]) if pending["dia"] in _dias else 0,
+            key="_pcv_dlg_dia",
+        )
+    with cic:
+        new_inicio = st.time_input(
+            "Inicio", value=pending["hora_inicio"], key="_pcv_dlg_ini",
+        )
+    with cfc:
+        new_fin = st.time_input(
+            "Fin", value=pending["hora_fin"], key="_pcv_dlg_fin",
+        )
+
+    new_com = st.number_input(
+        "Comisión (0 = sin asignar)",
+        min_value=0, max_value=20,
+        value=pending.get("comision") or 0,
+        key="_pcv_dlg_com",
+    )
+
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Guardar", type="primary", use_container_width=True):
+            cambios = {}
+            if new_mat != pending["materia"]:
+                cambios["codigo_materia"] = new_mat
+            if new_dia != pending["dia"]:
+                cambios["dia"] = new_dia
+            if new_inicio != pending["hora_inicio"]:
+                cambios["hora_inicio"] = new_inicio
+            if new_fin != pending["hora_fin"]:
+                cambios["hora_fin"] = new_fin
+            _new_com_val = new_com if new_com > 0 else None
+            if _new_com_val != (pending.get("comision") or None):
+                cambios["comision"] = _new_com_val
+            if cambios:
+                with next(get_session()) as _us:
+                    update_schedule_entry(_us, pending["entry_id"], **cambios)
+                st.toast("Entrada actualizada")
+            st.session_state["_pcv_processed_click"] = pending["_key"]
+            del st.session_state["_pcv_pending_click"]
+            st.rerun()
+    with c2:
+        if st.button("Eliminar", use_container_width=True):
+            with next(get_session()) as _ds:
+                delete_schedule_entry(_ds, pending["entry_id"])
+            st.toast("Entrada eliminada")
+            st.session_state["_pcv_processed_click"] = pending["_key"]
+            del st.session_state["_pcv_pending_click"]
+            st.rerun()
+    with c3:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_pcv_processed_click"] = pending["_key"]
+            del st.session_state["_pcv_pending_click"]
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +500,19 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     for c in _conflictos_raw
                 ]
 
+                # Mapa de comisiones auto-derivadas (para mostrar en modo
+                # read-only del calendario embebido en el sub-expander de
+                # conflictos): {materia: {entry_id: com_num}}
+                _preview_for_map = preview_plan_from_schedule(
+                    session, _sel_sched_id,
+                )
+                _preview_com_assignment: dict[str, dict[str, int]] = {}
+                for _mp in _preview_for_map.materias:
+                    _inner: dict[str, int] = {}
+                    for _ep in _mp.entries:
+                        _inner[_ep.entry_id] = _ep.comision_asignada
+                    _preview_com_assignment[_mp.materia_codigo] = _inner
+
                 _dictado_count = len(_dictado_codigos)
 
             st.session_state[_prevalidation_key] = {
@@ -412,6 +539,7 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 "particion_details": list(_part_result.details or []),
                 "conflictos_horarios": _conflictos_horarios,
                 "n_conflictos_horarios": len(_conflictos_horarios),
+                "preview_com_assignment": _preview_com_assignment,
             }
             # Persistir snapshot de la validacion en ScheduleValidationDB.
             # Esto es lo que usa la UI de Cronogramas (lista) y el wizard
@@ -632,7 +760,10 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                                     "Nombre": _mf["nombre"],
                                     "Año": _anio,
                                     "Cuatri": _cuatri,
-                                    "h/sem": _mf["horas_semanales"] or "—",
+                                    "h/sem": (
+                                        f"{_mf['horas_semanales']:g}"
+                                        if _mf["horas_semanales"] else "—"
+                                    ),
                                     "Optativa": "Sí" if _mf.get("optativa") else "—",
                                     "Virtual": "Sí" if _mf.get("virtual") else "—",
                                     "Anual": "Sí" if _mf.get("periodo") == "anual" else "—",
@@ -810,10 +941,14 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                             )
 
                             # Botón "Editar en Cronogramas"
-                            # Calendario embebido (read-only) filtrado a las
-                            # materias del conflicto seleccionado. El usuario
-                            # puede ver el solapamiento visualmente; la
-                            # edicion fina vive en la pestaña Editar.
+                            # Calendario embebido del conflicto. Dos modos:
+                            # - ON (default): read-only mostrando como quedo
+                            #   la asignacion con comisiones AUTO-DERIVADAS
+                            #   (con las que se calculo el conflicto). Sirve
+                            #   para entender por que aparece como conflicto.
+                            # - OFF: editable con drag/click sobre los datos
+                            #   crudos del cronograma. Permite mover/borrar/
+                            #   editar y reasignar comisiones explicitas.
                             st.markdown("**🗓️ Vista calendario del conflicto**")
                             _conf_pair_options = {
                                 f"{c['materia_a']} vs {c['materia_b']} · "
@@ -831,11 +966,30 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                                 _mat_a, _mat_b = _conf_pair_options[
                                     _selected_pair_lbl
                                 ]
+
+                                _show_derived = st.toggle(
+                                    "Ver con comisiones auto-derivadas (read-only)",
+                                    value=True,
+                                    key=f"prev_conf_toggle_{_sel_sched_id}_{_cc}",
+                                    help=(
+                                        "ON: muestra cómo quedaron asignadas "
+                                        "las comisiones automáticamente (con "
+                                        "las que se detectó el conflicto). "
+                                        "Read-only.\n\n"
+                                        "OFF: editable. Vés los datos crudos "
+                                        "del cronograma; podés arrastrar, "
+                                        "redimensionar, hacer click para "
+                                        "editar/borrar, o seleccionar un "
+                                        "rango para agregar."
+                                    ),
+                                )
+
                                 with next(get_session()) as _cal_sess:
                                     _grid_full = build_schedule_grid(
                                         _cal_sess, _sel_sched_id,
                                     )
                                     _cal_config = get_or_create_config(_cal_sess)
+
                                 # Filtrar a las dos materias del conflicto
                                 _grid_filt = {
                                     dia: [
@@ -847,24 +1001,108 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                                 _grid_filt = {
                                     d: bs for d, bs in _grid_filt.items() if bs
                                 }
-                                if _grid_filt:
-                                    render_schedule_calendar(
-                                        _grid_filt, _cal_config,
-                                        key=(
-                                            f"prev_conf_cal_{_sel_sched_id}"
-                                            f"_{_cc}_{_mat_a}_{_mat_b}"
-                                        ),
-                                    )
-                                else:
+
+                                if not _grid_filt:
                                     st.caption(
                                         "Sin entradas en el cronograma para "
                                         "esas materias (raro — reportá si lo ves)."
                                     )
-                                st.caption(
-                                    "Vista de solo lectura. Para editar los "
-                                    "horarios, andá a **✏️ Editar** arriba y "
-                                    "buscá la materia en modo *Por materia*."
-                                )
+                                elif _show_derived:
+                                    # Modo ON: read-only, color por comision
+                                    # auto-derivada (del preview)
+                                    _preview_map = _pv.get(
+                                        "preview_com_assignment", {}
+                                    )
+                                    # Sobreescribir la comision de cada block
+                                    # con la derivada (si esta).
+                                    for dia, blocks in _grid_filt.items():
+                                        for b in blocks:
+                                            _per_mat = _preview_map.get(
+                                                b.materia_codigo, {}
+                                            )
+                                            if b.entry_id in _per_mat:
+                                                b.comision = _per_mat[b.entry_id]
+                                    render_schedule_calendar(
+                                        _grid_filt, _cal_config,
+                                        key=(
+                                            f"prev_conf_cal_ro_{_sel_sched_id}"
+                                            f"_{_cc}_{_mat_a}_{_mat_b}"
+                                        ),
+                                        color_by_comision=True,
+                                    )
+                                    st.caption(
+                                        "ℹ️ Vista read-only. Para editar los "
+                                        "horarios o asignar comisiones manuales, "
+                                        "apagá el toggle de arriba."
+                                    )
+                                else:
+                                    # Modo OFF: editable con datos crudos
+                                    _action = render_editable_schedule_calendar(
+                                        _grid_filt, _cal_config,
+                                        key=(
+                                            f"prev_conf_cal_edit_{_sel_sched_id}"
+                                            f"_{_cc}_{_mat_a}_{_mat_b}"
+                                        ),
+                                        allow_empty=False,
+                                        color_by_comision=True,
+                                    )
+                                    st.caption(
+                                        "✏️ Editable. Arrastrá bloques para "
+                                        "cambiar día/hora. Hacé click para "
+                                        "editar o eliminar. Para agregar "
+                                        "nuevas entradas usá la pestaña "
+                                        "Editar (modo Por materia)."
+                                    )
+
+                                    # Procesar acciones del calendario
+                                    if _action is not None:
+                                        if _action.action == "move":
+                                            _move_key = (
+                                                f"{_action.entry_id}|{_action.dia}|"
+                                                f"{_action.hora_inicio}|{_action.hora_fin}"
+                                            )
+                                            if st.session_state.get(
+                                                "_pcv_processed_move"
+                                            ) != _move_key:
+                                                with next(get_session()) as _us:
+                                                    update_schedule_entry(
+                                                        _us,
+                                                        _action.entry_id,
+                                                        dia=_action.dia,
+                                                        hora_inicio=_action.hora_inicio,
+                                                        hora_fin=_action.hora_fin,
+                                                    )
+                                                st.session_state[
+                                                    "_pcv_processed_move"
+                                                ] = _move_key
+                                                # Invalidar prevalidacion: el
+                                                # cronograma cambio, los conflictos
+                                                # tambien podrian cambiar.
+                                                st.session_state.pop(
+                                                    _prevalidation_key, None,
+                                                )
+                                                st.toast("Entrada movida.")
+                                                st.rerun()
+                                        elif _action.action == "click":
+                                            _click_key = (
+                                                f"{_action.entry_id}|{_action.dia}|"
+                                                f"{_action.hora_inicio}"
+                                            )
+                                            if st.session_state.get(
+                                                "_pcv_processed_click"
+                                            ) != _click_key:
+                                                st.session_state[
+                                                    "_pcv_pending_click"
+                                                ] = {
+                                                    "entry_id": _action.entry_id,
+                                                    "materia": _action.materia_codigo,
+                                                    "dia": _action.dia,
+                                                    "hora_inicio": _action.hora_inicio,
+                                                    "hora_fin": _action.hora_fin,
+                                                    "comision": _action.comision,
+                                                    "_key": _click_key,
+                                                }
+                                                _pcv_dialog_edit_entry()
 
         # --- Particion de horas (teoria/laboratorio) ---
         _part_valid = _pv.get("particion_valid")

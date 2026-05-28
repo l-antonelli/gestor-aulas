@@ -334,6 +334,16 @@ def validar_conflictos_horarios_plan(
         .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))
     ).all()
 
+    # Solo nos interesan grupos del cuatri del ciclo + Anual: las materias
+    # del cuatri opuesto no se cursan en este ciclo.
+    from src.database.models import CicloDB
+    ciclo = session.get(CicloDB, plan.ciclo_id)
+    if ciclo is None:
+        return ValidationResult(
+            valid=True, message="Ciclo del plan no encontrado",
+        )
+    cuatri_ciclo = f"{ciclo.numero}C"
+
     # Build groups: (carrera_codigo, anio_plan, cuatrimestre_plan) → set of materia_codigos
     groups: dict[tuple[str, int, str], set[str]] = {}
     for pe in plan_entries:
@@ -342,15 +352,16 @@ def validar_conflictos_horarios_plan(
         key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
         groups.setdefault(key, set()).add(pe.materia_codigo)
 
-    # For each cuatrimestre group, also include anuales from the same carrera+year
+    # Enrich: solo grupos del cuatri del ciclo (incluyen anuales del mismo
+    # carrera+año). Los grupos del cuatri opuesto se descartan.
     enriched_groups: dict[tuple[str, int, str], set[str]] = {}
     for (carrera, anio, cuatri), mat_codes in groups.items():
+        if cuatri != cuatri_ciclo:
+            continue
         enriched = set(mat_codes)
-        if cuatri in ("1C", "2C"):
-            # Include anuales from same carrera+year
-            anual_key = (carrera, anio, "Anual")
-            if anual_key in groups:
-                enriched |= groups[anual_key]
+        anual_key = (carrera, anio, "Anual")
+        if anual_key in groups:
+            enriched |= groups[anual_key]
         enriched_groups[(carrera, anio, cuatri)] = enriched
 
     # Check for conflicts within each group using pairwise comision compatibility
@@ -838,6 +849,15 @@ def validar_conflictos_horarios_cronograma(
         comisiones_por_materia[mp.materia_codigo] = com_dict
 
     # 3) Grupos curriculares: (carrera, anio, cuatri) -> set[materia]
+    # Solo nos interesan grupos del cuatri del ciclo + Anual: las materias
+    # del cuatri opuesto no se cursan en este ciclo, asi que sus posibles
+    # solapamientos no son problema actual.
+    from src.database.models import CicloDB
+    ciclo = session.get(CicloDB, ciclo_id)
+    if ciclo is None:
+        return []
+    cuatri_ciclo = f"{ciclo.numero}C"
+
     plan_version_ids = list(session.exec(
         select(CicloPlanVersionDB.plan_version_id)
         .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
@@ -857,14 +877,16 @@ def validar_conflictos_horarios_cronograma(
         key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
         groups.setdefault(key, set()).add(pe.materia_codigo)
 
-    # Enrich: 1C/2C tambien incluyen Anual del mismo carrera/anio
+    # Enrich: el cuatri del ciclo incluye tambien las anuales. Los grupos
+    # del cuatri opuesto se descartan completamente (no se cursan en este ciclo).
     enriched: dict[tuple[str, int, str], set[str]] = {}
     for (carrera, anio, cuatri), mats in groups.items():
+        if cuatri != cuatri_ciclo:
+            continue
         s = set(mats)
-        if cuatri in ("1C", "2C"):
-            anual_k = (carrera, anio, "Anual")
-            if anual_k in groups:
-                s |= groups[anual_k]
+        anual_k = (carrera, anio, "Anual")
+        if anual_k in groups:
+            s |= groups[anual_k]
         enriched[(carrera, anio, cuatri)] = s
 
     # 4) Pairwise compatibility por grupo
