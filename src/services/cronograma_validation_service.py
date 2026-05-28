@@ -39,7 +39,11 @@ from src.services.dictado_service import (
     get_materias_esperadas_from_dictados,
     has_dictados_for_ciclo,
 )
-from src.services.validations import validar_factibilidad_particion_horas
+from src.services.validations import (
+    validar_conflictos_horarios_cronograma,
+    validar_factibilidad_particion_horas,
+    ConflictoHorario,
+)
 
 
 # =============================================================================
@@ -90,10 +94,14 @@ class CronogramaValidationSummary:
     particion_n_infactibles: int = 0
     particion_message: str = ""
 
+    # Conflictos de horarios (con comisiones auto-derivadas)
+    n_conflictos_horarios: int = 0
+
     # Detalle (para reconstruir la UI sin recomputar)
     faltantes_por_carrera: list[dict] = field(default_factory=list)
     extras: list[dict] = field(default_factory=list)
     particion_details: list[str] = field(default_factory=list)
+    conflictos_horarios: list[dict] = field(default_factory=list)
     esperadas: dict[str, str] = field(default_factory=dict)
     mat_map: dict[str, str] = field(default_factory=dict)
 
@@ -103,6 +111,7 @@ class CronogramaValidationSummary:
             "faltantes_por_carrera": self.faltantes_por_carrera,
             "extras": self.extras,
             "particion_details": self.particion_details,
+            "conflictos_horarios": self.conflictos_horarios,
             "esperadas": self.esperadas,
             "mat_map": self.mat_map,
             "particion_message": self.particion_message,
@@ -352,6 +361,27 @@ def validar_cronograma(
         len(summary.particion_details) if not part_result.valid else 0
     )
 
+    # Conflictos de horarios (con comisiones auto-derivadas del cronograma)
+    conflictos = validar_conflictos_horarios_cronograma(
+        session, schedule_id, ciclo_id,
+    )
+    summary.n_conflictos_horarios = len(conflictos)
+    summary.conflictos_horarios = [
+        {
+            "carrera_codigo": c.carrera_codigo,
+            "anio_plan": c.anio_plan,
+            "cuatrimestre_plan": c.cuatrimestre_plan,
+            "materia_a": c.materia_a,
+            "materia_b": c.materia_b,
+            "dia": c.dia,
+            "hora_inicio_a": c.hora_inicio_a,
+            "hora_fin_a": c.hora_fin_a,
+            "hora_inicio_b": c.hora_inicio_b,
+            "hora_fin_b": c.hora_fin_b,
+        }
+        for c in conflictos
+    ]
+
     return summary
 
 
@@ -382,6 +412,7 @@ def persist_validation(
         n_lab_pendiente=summary.n_lab_pendiente,
         particion_valid=summary.particion_valid,
         particion_n_infactibles=summary.particion_n_infactibles,
+        n_conflictos_horarios=summary.n_conflictos_horarios,
         details_json=summary.to_details_json(),
     )
     session.add(record)

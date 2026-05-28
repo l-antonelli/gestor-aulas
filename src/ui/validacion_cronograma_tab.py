@@ -505,8 +505,9 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
             _fpc = []
 
         _epc = _pv.get("extras_por_carrera") or []
+        _conflicts = _pv.get("conflictos_horarios") or []
 
-        # Mapa por código de carrera para combinar faltantes + extras
+        # Mapa por código de carrera para combinar faltantes + extras + conflictos
         _grupos: dict[str, dict] = {}
         for _ci in _fpc:
             _grupos[_ci["carrera_codigo"]] = {
@@ -516,6 +517,7 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                 "dicta_recursado": _ci.get("dicta_recursado", False),
                 "faltantes": _ci["materias"],
                 "extras": [],
+                "conflictos": [],
             }
         for _ei in _epc:
             _cc = _ei["carrera_codigo"]
@@ -529,7 +531,24 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     "dicta_recursado": False,
                     "faltantes": [],
                     "extras": _ei["materias"],
+                    "conflictos": [],
                 }
+        # Distribuir conflictos por carrera
+        _carrera_codes_ya_visibles = set(_grupos.keys())
+        for _conf in _conflicts:
+            _cc = _conf["carrera_codigo"]
+            if _cc not in _grupos:
+                # Si la carrera no aparecía en faltantes/extras, crear entrada
+                _grupos[_cc] = {
+                    "carrera_codigo": _cc,
+                    "carrera_nombre": _cc,
+                    "plan_version_nombre": "",
+                    "dicta_recursado": False,
+                    "faltantes": [],
+                    "extras": [],
+                    "conflictos": [],
+                }
+            _grupos[_cc]["conflictos"].append(_conf)
 
         if _grupos:
             st.markdown("**Detalle por carrera**")
@@ -543,124 +562,245 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
                     )
                 ]
                 _ext_list = _g["extras"]
+                _conf_list = _g.get("conflictos", [])
                 _n_fc = len(_fal_filt)
                 _n_ec = len(_ext_list)
-                if _n_fc == 0 and _n_ec == 0:
+                _n_conf = len(_conf_list)
+                if _n_fc == 0 and _n_ec == 0 and _n_conf == 0:
                     continue
                 _rec_tag = " · dicta recursado" if _g["dicta_recursado"] else ""
                 _plan_tag = (
                     f" · Plan: {_g['plan_version_nombre']}"
                     if _g["plan_version_nombre"] else ""
                 )
+                _conf_part = (
+                    f" · ⚠️ {_n_conf} conflicto(s)" if _n_conf else ""
+                )
                 _exp_lbl = (
                     f"{_g['carrera_nombre']} ({_g['carrera_codigo']})"
                     f"{_plan_tag} — "
                     f"📭 {_n_fc} faltante(s) · 📥 {_n_ec} no esperada(s)"
+                    f"{_conf_part}"
                     f"{_rec_tag}"
                 )
                 with st.expander(_exp_lbl, expanded=False):
-                    if _fal_filt:
-                        st.markdown(f"**Faltantes ({_n_fc})**")
-                        _ft_rows = []
-                        for _mf in _fal_filt:
-                            _anio = f"{_mf['anio_plan']}°" if _mf["anio_plan"] else "—"
-                            _cuatri = _mf["cuatrimestre_plan"] or "—"
-                            _ft_rows.append({
-                                "Código": _mf["codigo"],
-                                "Nombre": _mf["nombre"],
-                                "Año": _anio,
-                                "Cuatri": _cuatri,
-                                "h/sem": _mf["horas_semanales"] or "—",
-                                "Optativa": "Sí" if _mf.get("optativa") else "—",
-                                "Virtual": "Sí" if _mf.get("virtual") else "—",
-                                "Anual": "Sí" if _mf.get("periodo") == "anual" else "—",
-                                "Dictado": _mf.get("dictado_codigo", "—"),
-                            })
-                        st.dataframe(
-                            pd.DataFrame(_ft_rows),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                        # Action: desactivar dictados de faltantes seleccionadas
-                        _fal_options = {
-                            f"{_mf['codigo']} — {_mf['nombre']}": _mf["codigo"]
-                            for _mf in _fal_filt
-                        }
-                        _fal_sel_labels = st.multiselect(
-                            "Desactivar dictados de:",
-                            options=list(_fal_options.keys()),
-                            key=f"prev_falt_sel_{_sel_sched_id}_{_cc}",
-                            help=(
-                                "Marca como Inactivo el dictado de las materias "
-                                "elegidas. Útil para sacarlas del set de esperadas "
-                                "sin tener que cargar horarios."
-                            ),
-                        )
-                        if _fal_sel_labels:
-                            if st.button(
-                                f"⚪ Desactivar {len(_fal_sel_labels)} dictado(s)",
-                                key=f"prev_falt_btn_{_sel_sched_id}_{_cc}",
-                            ):
-                                _codes = [_fal_options[l] for l in _fal_sel_labels]
-                                with next(get_session()) as _ds:
-                                    _n = set_activo_for_materias_in_ciclo(
-                                        _ds, sel_ciclo_crono, _codes, activo=False,
-                                    )
-                                st.session_state.pop(_prevalidation_key, None)
-                                st.toast(f"{_n} dictado(s) desactivado(s).")
-                                st.rerun()
+                    # ---------- Sub-expander 1: Discrepancias de dictado ----------
+                    _dict_open = (_n_fc > 0 or _n_ec > 0)
+                    with st.expander(
+                        f"📋 Discrepancias de dictado "
+                        f"(📭 {_n_fc} · 📥 {_n_ec})",
+                        expanded=_dict_open,
+                    ):
+                        if _n_fc == 0 and _n_ec == 0:
+                            st.caption("Sin discrepancias.")
+                        if _fal_filt:
+                            st.markdown(f"**Faltantes ({_n_fc})**")
+                            _ft_rows = []
+                            for _mf in _fal_filt:
+                                _anio = f"{_mf['anio_plan']}°" if _mf["anio_plan"] else "—"
+                                _cuatri = _mf["cuatrimestre_plan"] or "—"
+                                _ft_rows.append({
+                                    "Código": _mf["codigo"],
+                                    "Nombre": _mf["nombre"],
+                                    "Año": _anio,
+                                    "Cuatri": _cuatri,
+                                    "h/sem": _mf["horas_semanales"] or "—",
+                                    "Optativa": "Sí" if _mf.get("optativa") else "—",
+                                    "Virtual": "Sí" if _mf.get("virtual") else "—",
+                                    "Anual": "Sí" if _mf.get("periodo") == "anual" else "—",
+                                    "Dictado": _mf.get("dictado_codigo", "—"),
+                                })
+                            st.dataframe(
+                                pd.DataFrame(_ft_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                            # Action: desactivar dictados de faltantes seleccionadas
+                            _fal_options = {
+                                f"{_mf['codigo']} — {_mf['nombre']}": _mf["codigo"]
+                                for _mf in _fal_filt
+                            }
+                            _fal_sel_labels = st.multiselect(
+                                "Desactivar dictados de:",
+                                options=list(_fal_options.keys()),
+                                key=f"prev_falt_sel_{_sel_sched_id}_{_cc}",
+                                help=(
+                                    "Marca como Inactivo el dictado de las materias "
+                                    "elegidas. Útil para sacarlas del set de esperadas "
+                                    "sin tener que cargar horarios."
+                                ),
+                            )
+                            if _fal_sel_labels:
+                                if st.button(
+                                    f"⚪ Desactivar {len(_fal_sel_labels)} dictado(s)",
+                                    key=f"prev_falt_btn_{_sel_sched_id}_{_cc}",
+                                ):
+                                    _codes = [_fal_options[l] for l in _fal_sel_labels]
+                                    with next(get_session()) as _ds:
+                                        _n = set_activo_for_materias_in_ciclo(
+                                            _ds, sel_ciclo_crono, _codes, activo=False,
+                                        )
+                                    st.session_state.pop(_prevalidation_key, None)
+                                    st.toast(f"{_n} dictado(s) desactivado(s).")
+                                    st.rerun()
 
-                    if _ext_list:
-                        st.markdown(
-                            f"**No esperadas — con horarios pero sin dictado activo "
-                            f"({_n_ec})**"
-                        )
-                        _ex_rows = []
-                        for _ex in _ext_list:
-                            _anio = f"{_ex['anio_plan']}°" if _ex.get("anio_plan") else "—"
-                            _cuatri = _ex.get("cuatrimestre_plan") or "—"
-                            _ex_rows.append({
-                                "Código": _ex["codigo"],
-                                "Nombre": _ex["nombre"],
-                                "Año": _anio,
-                                "Cuatri": _cuatri,
-                                "Optativa": "Sí" if _ex.get("optativa") else "—",
-                                "Virtual": "Sí" if _ex.get("virtual") else "—",
-                                "Anual": "Sí" if _ex.get("periodo") == "anual" else "—",
+                        if _ext_list:
+                            st.markdown(
+                                f"**No esperadas — con horarios pero sin dictado activo "
+                                f"({_n_ec})**"
+                            )
+                            _ex_rows = []
+                            for _ex in _ext_list:
+                                _anio = f"{_ex['anio_plan']}°" if _ex.get("anio_plan") else "—"
+                                _cuatri = _ex.get("cuatrimestre_plan") or "—"
+                                _ex_rows.append({
+                                    "Código": _ex["codigo"],
+                                    "Nombre": _ex["nombre"],
+                                    "Año": _anio,
+                                    "Cuatri": _cuatri,
+                                    "Optativa": "Sí" if _ex.get("optativa") else "—",
+                                    "Virtual": "Sí" if _ex.get("virtual") else "—",
+                                    "Anual": "Sí" if _ex.get("periodo") == "anual" else "—",
+                                })
+                            st.dataframe(
+                                pd.DataFrame(_ex_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                            # Action: activar dictados de extras seleccionadas
+                            _ex_options = {
+                                f"{_ex['codigo']} — {_ex['nombre']}": _ex["codigo"]
+                                for _ex in _ext_list
+                            }
+                            _ex_sel_labels = st.multiselect(
+                                "Activar dictados de:",
+                                options=list(_ex_options.keys()),
+                                key=f"prev_ext_sel_{_sel_sched_id}_{_cc}",
+                                help=(
+                                    "Pone Activo el dictado de las materias seleccionadas "
+                                    "(creándolo si no existía). Pasan a contarse como "
+                                    "esperadas y dejan de aparecer como 'no esperadas'."
+                                ),
+                            )
+                            if _ex_sel_labels:
+                                if st.button(
+                                    f"🟢 Activar {len(_ex_sel_labels)} dictado(s)",
+                                    key=f"prev_ext_btn_{_sel_sched_id}_{_cc}",
+                                ):
+                                    _codes = [_ex_options[l] for l in _ex_sel_labels]
+                                    with next(get_session()) as _ds:
+                                        _n = set_activo_for_materias_in_ciclo(
+                                            _ds, sel_ciclo_crono, _codes, activo=True,
+                                        )
+                                    st.session_state.pop(_prevalidation_key, None)
+                                    st.toast(f"{_n} dictado(s) activado(s).")
+                                    st.rerun()
+
+                    # ---------- Sub-expander 2: Conflictos de horarios ----------
+                    if _conf_list:
+                        with st.expander(
+                            f"⚠️ Conflictos de horarios ({_n_conf})",
+                            expanded=True,
+                        ):
+                            st.caption(
+                                "Conflictos detectados con comisiones "
+                                "**auto-derivadas** del cronograma "
+                                "(reglas: optativa=1, exclusiva=1, "
+                                "compartida=horas_totales/h_sem). Cuando se "
+                                "genere el plan, estas comisiones quedarán "
+                                "creadas; podés ajustarlas manualmente desde "
+                                "Detalle del Plan si la derivación no coincide."
+                            )
+
+                            # Tabla resumen por (anio, cuatri)
+                            from collections import Counter as _CntC
+                            _resumen = _CntC()
+                            for _c in _conf_list:
+                                _resumen[(_c["anio_plan"], _c["cuatrimestre_plan"])] += 1
+                            _resumen_rows = [
+                                {
+                                    "Año": f"{a}°",
+                                    "Cuatri": cu,
+                                    "Conflictos": n,
+                                }
+                                for (a, cu), n in sorted(_resumen.items())
+                            ]
+                            st.markdown("**Resumen por año y cuatri**")
+                            st.dataframe(
+                                pd.DataFrame(_resumen_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                            # Filtros para navegar al detalle
+                            _all_anios_conf = sorted({
+                                f"{c['anio_plan']}°" for c in _conf_list
                             })
-                        st.dataframe(
-                            pd.DataFrame(_ex_rows),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                        # Action: activar dictados de extras seleccionadas
-                        _ex_options = {
-                            f"{_ex['codigo']} — {_ex['nombre']}": _ex["codigo"]
-                            for _ex in _ext_list
-                        }
-                        _ex_sel_labels = st.multiselect(
-                            "Activar dictados de:",
-                            options=list(_ex_options.keys()),
-                            key=f"prev_ext_sel_{_sel_sched_id}_{_cc}",
-                            help=(
-                                "Pone Activo el dictado de las materias seleccionadas "
-                                "(creándolo si no existía). Pasan a contarse como "
-                                "esperadas y dejan de aparecer como 'no esperadas'."
-                            ),
-                        )
-                        if _ex_sel_labels:
+                            _all_cuatris_conf = sorted({
+                                c["cuatrimestre_plan"] for c in _conf_list
+                            })
+                            _fc_a, _fc_b = st.columns(2)
+                            with _fc_a:
+                                _conf_anios_sel = st.multiselect(
+                                    "Filtrar año",
+                                    options=_all_anios_conf,
+                                    default=_all_anios_conf,
+                                    key=f"prev_conf_anio_{_sel_sched_id}_{_cc}",
+                                )
+                            with _fc_b:
+                                _conf_cuatris_sel = st.multiselect(
+                                    "Filtrar cuatri",
+                                    options=_all_cuatris_conf,
+                                    default=_all_cuatris_conf,
+                                    key=f"prev_conf_cuatri_{_sel_sched_id}_{_cc}",
+                                )
+
+                            _conf_filt = [
+                                c for c in _conf_list
+                                if f"{c['anio_plan']}°" in _conf_anios_sel
+                                and c["cuatrimestre_plan"] in _conf_cuatris_sel
+                            ]
+                            st.markdown(
+                                f"**Detalle ({len(_conf_filt)} de {_n_conf})**"
+                            )
+                            _conf_rows = [
+                                {
+                                    "Año": f"{c['anio_plan']}°",
+                                    "Cuatri": c["cuatrimestre_plan"],
+                                    "Materia A": c["materia_a"],
+                                    "Materia B": c["materia_b"],
+                                    "Día": c["dia"],
+                                    "Horario A": f"{c['hora_inicio_a']}-{c['hora_fin_a']}",
+                                    "Horario B": f"{c['hora_inicio_b']}-{c['hora_fin_b']}",
+                                }
+                                for c in _conf_filt
+                            ]
+                            st.dataframe(
+                                pd.DataFrame(_conf_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                            # Botón "Editar en Cronogramas"
                             if st.button(
-                                f"🟢 Activar {len(_ex_sel_labels)} dictado(s)",
-                                key=f"prev_ext_btn_{_sel_sched_id}_{_cc}",
+                                "✏️ Editar en Cronogramas →",
+                                key=f"prev_conf_edit_{_sel_sched_id}_{_cc}",
+                                help=(
+                                    "Pre-selecciona este cronograma en la "
+                                    "pestaña 'Editar' de Cronogramas para "
+                                    "corregir los horarios conflictivos."
+                                ),
                             ):
-                                _codes = [_ex_options[l] for l in _ex_sel_labels]
-                                with next(get_session()) as _ds:
-                                    _n = set_activo_for_materias_in_ciclo(
-                                        _ds, sel_ciclo_crono, _codes, activo=True,
+                                st.session_state["edit_schedule"] = _sel_sched_id
+                                try:
+                                    st.switch_page(
+                                        "pages/6_📅_Cronogramas.py"
                                     )
-                                st.session_state.pop(_prevalidation_key, None)
-                                st.toast(f"{_n} dictado(s) activado(s).")
-                                st.rerun()
+                                except Exception:
+                                    st.info(
+                                        "Andá a **📅 Cronogramas → ✏️ Editar**. "
+                                        "El cronograma quedó pre-seleccionado."
+                                    )
 
         # --- Particion de horas (teoria/laboratorio) ---
         _part_valid = _pv.get("particion_valid")

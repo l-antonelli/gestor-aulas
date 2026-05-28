@@ -40,6 +40,7 @@ def _run_migrations(eng):
         "ALTER TABLE materias ADD COLUMN horas_teoria REAL DEFAULT NULL",
         "ALTER TABLE materias ADD COLUMN horas_laboratorio REAL DEFAULT NULL",
         "ALTER TABLE schedule_validations ADD COLUMN dictado_count_at_validation INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE schedule_validations ADD COLUMN n_conflictos_horarios INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE materias ADD COLUMN dicta_recursado BOOLEAN DEFAULT NULL",
         "ALTER TABLE comisiones ADD COLUMN coef_asignacion REAL NOT NULL DEFAULT 1.0",
         "ALTER TABLE planificaciones_cursada ADD COLUMN forecast_metodo_default VARCHAR NOT NULL DEFAULT 'media_movil'",

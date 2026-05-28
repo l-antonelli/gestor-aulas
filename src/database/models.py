@@ -331,6 +331,11 @@ class ScheduleValidationDB(SQLModel, table=True):
     # Particion teoria/lab
     particion_valid: bool = Field(default=True)
     particion_n_infactibles: int = Field(default=0, ge=0)
+    # Conflictos de horario detectados con comisiones auto-derivadas del
+    # cronograma (mismas reglas que `preview_plan_from_schedule`). Si > 0,
+    # generar el plan probablemente arroje los mismos conflictos en el tab
+    # Detalle. El detalle estructurado va en `details_json["conflictos"]`.
+    n_conflictos_horarios: int = Field(default=0, ge=0)
 
     # Snapshot de detalle (JSON-serialized para reconstruccion de la UI)
     details_json: str = Field(default="{}")

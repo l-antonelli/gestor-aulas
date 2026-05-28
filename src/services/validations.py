@@ -28,6 +28,25 @@ class ValidationResult:
             self.details = []
 
 
+@dataclass
+class ConflictoHorario:
+    """Conflicto de horario entre dos materias dentro de un grupo curricular.
+
+    Estructurado para que la UI pueda agrupar por (carrera, año, cuatri) y
+    mostrar tabla resumen + detalle.
+    """
+    carrera_codigo: str
+    anio_plan: int
+    cuatrimestre_plan: str  # "1C" | "2C" | "Anual"
+    materia_a: str
+    materia_b: str
+    dia: str
+    hora_inicio_a: str  # "HH:MM"
+    hora_fin_a: str
+    hora_inicio_b: str
+    hora_fin_b: str
+
+
 # =============================================================================
 # Validacion 1: Toda materia debe pertenecer a al menos una carrera
 # =============================================================================
@@ -763,3 +782,151 @@ def ejecutar_todas_validaciones(session: Session) -> dict[str, ValidationResult]
     # Use validar_conflictos_aula_plan(session, plan_cursada_id) directly when needed
 
     return results
+
+
+# =============================================================================
+# Validacion: conflictos de horarios sobre el cronograma (sin plan creado)
+# =============================================================================
+
+def validar_conflictos_horarios_cronograma(
+    session: Session,
+    schedule_id: str,
+    ciclo_id: str,
+) -> list[ConflictoHorario]:
+    """Detecta conflictos de horario en un cronograma usando comisiones
+    auto-derivadas (mismo flujo que `preview_plan_from_schedule`).
+
+    Algoritmo:
+    1. Corre el preview de generacion de plan -> deriva comisiones por materia
+       segun reglas (optativa, exclusiva, compartida, paralelas).
+    2. Convierte EntryPreview -> "horarios virtuales" agrupados por
+       (materia, comision_asignada).
+    3. Para cada grupo curricular (carrera, anio, cuatri) presente en los
+       planes asignados al ciclo, aplica el chequeo pairwise: dos materias
+       son compatibles si EXISTE al menos un par de comisiones cuyos
+       horarios no se solapan.
+    4. Si NO existe ningun par compatible, registra un ConflictoHorario por
+       cada par (h1, h2) que se solapa.
+
+    Devuelve la lista (vacia si no hay conflictos).
+    """
+    from src.services.plan_generation_service import preview_plan_from_schedule
+    from src.database.models import ScheduleEntryDB
+
+    # 1) Preview con comisiones derivadas
+    preview = preview_plan_from_schedule(session, schedule_id)
+    if preview.errors or not preview.materias:
+        return []
+
+    # 2) Por cada (materia, comision_asignada) armamos lista de "horarios virtuales".
+    #    Reusamos HorarioDB como un struct con dia/hora_inicio/hora_fin (no se persiste).
+    class _VHorario:
+        __slots__ = ("dia", "hora_inicio", "hora_fin")
+        def __init__(self, dia, hora_inicio, hora_fin):
+            self.dia = dia
+            self.hora_inicio = hora_inicio
+            self.hora_fin = hora_fin
+
+    # comisiones_por_materia: { materia: { com_num: [vhorario, ...] } }
+    comisiones_por_materia: dict[str, dict[int, list[_VHorario]]] = {}
+    for mp in preview.materias:
+        com_dict: dict[int, list[_VHorario]] = {}
+        for ep in mp.entries:
+            com_dict.setdefault(ep.comision_asignada, []).append(
+                _VHorario(ep.dia, ep.hora_inicio, ep.hora_fin)
+            )
+        comisiones_por_materia[mp.materia_codigo] = com_dict
+
+    # 3) Grupos curriculares: (carrera, anio, cuatri) -> set[materia]
+    plan_version_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all())
+    if not plan_version_ids:
+        return []
+
+    plan_entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(col(PlanEstudioDB.plan_version_id).in_(plan_version_ids))
+    ).all())
+
+    groups: dict[tuple[str, int, str], set[str]] = {}
+    for pe in plan_entries:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        groups.setdefault(key, set()).add(pe.materia_codigo)
+
+    # Enrich: 1C/2C tambien incluyen Anual del mismo carrera/anio
+    enriched: dict[tuple[str, int, str], set[str]] = {}
+    for (carrera, anio, cuatri), mats in groups.items():
+        s = set(mats)
+        if cuatri in ("1C", "2C"):
+            anual_k = (carrera, anio, "Anual")
+            if anual_k in groups:
+                s |= groups[anual_k]
+        enriched[(carrera, anio, cuatri)] = s
+
+    # 4) Pairwise compatibility por grupo
+    def _solapa(h1: _VHorario, h2: _VHorario) -> bool:
+        if h1.dia != h2.dia:
+            return False
+        return h1.hora_inicio < h2.hora_fin and h2.hora_inicio < h1.hora_fin
+
+    def _coms_compatibles(hs_a: list[_VHorario], hs_b: list[_VHorario]) -> bool:
+        for h1 in hs_a:
+            for h2 in hs_b:
+                if _solapa(h1, h2):
+                    return False
+        return True
+
+    conflictos: list[ConflictoHorario] = []
+    seen_pairs: set[tuple[str, int, str, str, str]] = set()
+
+    for (carrera, anio, cuatri), mats in enriched.items():
+        relevant = [m for m in mats if m in comisiones_por_materia and comisiones_por_materia[m]]
+        for i, mat1 in enumerate(sorted(relevant)):
+            for mat2 in sorted(relevant)[i + 1:]:
+                # Dedupe: el mismo par puede aparecer en grupos enriquecidos distintos
+                pair_key = (carrera, anio, cuatri, mat1, mat2)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                coms_1 = comisiones_por_materia[mat1]
+                coms_2 = comisiones_por_materia[mat2]
+
+                found_compatible = False
+                for hs_a in coms_1.values():
+                    for hs_b in coms_2.values():
+                        if _coms_compatibles(hs_a, hs_b):
+                            found_compatible = True
+                            break
+                    if found_compatible:
+                        break
+
+                if found_compatible:
+                    continue
+
+                # Reportar todos los pares (h1, h2) solapados de la primer
+                # combinacion (com1=primera, com2=primera) — alcanza para
+                # ilustrar el problema sin inflar la lista.
+                first_com_1 = next(iter(coms_1.values()))
+                first_com_2 = next(iter(coms_2.values()))
+                for h1 in first_com_1:
+                    for h2 in first_com_2:
+                        if _solapa(h1, h2):
+                            conflictos.append(ConflictoHorario(
+                                carrera_codigo=carrera,
+                                anio_plan=anio,
+                                cuatrimestre_plan=cuatri,
+                                materia_a=mat1,
+                                materia_b=mat2,
+                                dia=h1.dia,
+                                hora_inicio_a=h1.hora_inicio.strftime("%H:%M"),
+                                hora_fin_a=h1.hora_fin.strftime("%H:%M"),
+                                hora_inicio_b=h2.hora_inicio.strftime("%H:%M"),
+                                hora_fin_b=h2.hora_fin.strftime("%H:%M"),
+                            ))
+
+    return conflictos
