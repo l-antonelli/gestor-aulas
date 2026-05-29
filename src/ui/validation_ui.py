@@ -361,6 +361,18 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
 # Helpers — formato y mapas
 # =============================================================================
 
+def _request_edit_materia(key_ns: str, codigo: str) -> None:
+    """Marca una materia como 'pre-seleccionada' para el editor inline
+    del bloque "Detalle por materia". Lo consume el selectbox al
+    re-renderear la pagina (debe ir seguido de st.rerun()).
+
+    El `key_ns` debe ser el mismo que recibe `_render_plan` (no el de
+    los sub-renderers de discrepancias/conflictos, que tienen prefijos
+    propios).
+    """
+    st.session_state[f"{key_ns}_dpm_pending_codigo"] = codigo
+
+
 def _label_codnom(codigo: str, mat_map: dict[str, str]) -> str:
     """Devuelve 'CÓD — Nombre' si hay nombre, sino solo el código."""
     nom = mat_map.get(codigo)
@@ -609,6 +621,11 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ft_rows),
                         use_container_width=True, hide_index=True,
                     )
+                    _render_edit_materia_selector(
+                        materias=g["faltantes"], carrera_codigo=_cc,
+                        slot="faltantes", key_ns=key_ns,
+                        mat_map=mat_map,
+                    )
                     _render_dictado_action_selector(
                         materias=g["faltantes"],
                         action="deactivate", carrera_codigo=_cc,
@@ -645,6 +662,11 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ex_rows),
                         use_container_width=True, hide_index=True,
                     )
+                    _render_edit_materia_selector(
+                        materias=g["extras"], carrera_codigo=_cc,
+                        slot="extras", key_ns=key_ns,
+                        mat_map=mat_map,
+                    )
                     _render_dictado_action_selector(
                         materias=g["extras"],
                         action="activate", carrera_codigo=_cc,
@@ -669,6 +691,50 @@ def _render_carrera_subexpander(
                     invalidate_cache_keys=invalidate_cache_keys,
                     pending_revalidate_key=pending_revalidate_key,
                 )
+
+
+def _render_edit_materia_selector(
+    *, materias: list[dict], carrera_codigo: str, slot: str, key_ns: str,
+    mat_map: dict[str, str],
+) -> None:
+    """Selector + boton "Editar materia" que pre-popula el detalle inline.
+
+    Al apretar, setea el buffer key consumido por el selector "Materia
+    activa" en `_render_detalle_por_materia` y dispara rerun. La materia
+    se abre en el editor inline (incluyendo calendario) aunque no
+    matchee los filtros vigentes.
+
+    Args:
+        slot: identificador para evitar colisiones de keys cuando hay
+            multiples selectores en la misma carrera ('faltantes',
+            'extras', 'conflicto-A', 'conflicto-B').
+    """
+    if not materias:
+        return
+
+    _options = {
+        _label_codnom(_m["codigo"], mat_map): _m["codigo"]
+        for _m in materias
+    }
+    _all_labels = list(_options.keys())
+
+    _sel_key = f"{key_ns}_em_sel_{slot}_{carrera_codigo}"
+    _btn_key = f"{key_ns}_em_btn_{slot}_{carrera_codigo}"
+
+    _ec1, _ec2 = st.columns([3, 1])
+    with _ec1:
+        _lbl = st.selectbox(
+            "Editar materia (abre el editor inline abajo)",
+            options=_all_labels,
+            key=_sel_key,
+            label_visibility="collapsed",
+        )
+    with _ec2:
+        if st.button(
+            "✏️ Editar materia", key=_btn_key, use_container_width=True,
+        ):
+            _request_edit_materia(key_ns, _options[_lbl])
+            st.rerun()
 
 
 def _render_dictado_action_selector(
@@ -754,6 +820,93 @@ def _render_dictado_action_selector(
         st.rerun()
 
 
+def _render_resolve_conflicto(
+    *, activos: list[dict], carrera_codigo: str,
+    plan_id: str, key_ns: str, mat_map: dict[str, str],
+) -> None:
+    """Para conflictos activos: selector de par + 2 botones (Editar A /
+    Editar B) + calendario read-only del par seleccionado.
+
+    Foco: que el usuario pueda saltar al editor inline (B.2.6.2) de una
+    de las dos materias en conflicto sin perder contexto, y vea cómo se
+    superponen graficamente.
+    """
+    if not activos:
+        return
+
+    st.markdown("**🛠️ Resolver conflicto**")
+    st.caption(
+        "Elegí un par y abrí el editor de una de las dos materias. "
+        "El editor inline aparece más abajo en 'Detalle por materia'."
+    )
+
+    _pair_options: dict[str, dict] = {}
+    for c in activos:
+        _lbl = (
+            f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
+            f"{_label_codnom(c['materia_b'], mat_map)} · "
+            f"{c['dia']} {c['hora_inicio_a']}-{c['hora_fin_a']}"
+        )
+        _pair_options[_lbl] = c
+
+    _sel_key = f"{key_ns}_resolve_pair_{carrera_codigo}"
+    _selected_lbl = st.selectbox(
+        "Conflicto",
+        options=list(_pair_options.keys()),
+        key=_sel_key,
+    )
+    _conf = _pair_options[_selected_lbl]
+    _mat_a, _mat_b = _conf["materia_a"], _conf["materia_b"]
+
+    _ca, _cb = st.columns(2)
+    with _ca:
+        if st.button(
+            f"✏️ Editar {_label_codnom(_mat_a, mat_map)}",
+            key=f"{key_ns}_resolve_edit_a_{carrera_codigo}",
+            use_container_width=True,
+        ):
+            _request_edit_materia(key_ns, _mat_a)
+            st.rerun()
+    with _cb:
+        if st.button(
+            f"✏️ Editar {_label_codnom(_mat_b, mat_map)}",
+            key=f"{key_ns}_resolve_edit_b_{carrera_codigo}",
+            use_container_width=True,
+        ):
+            _request_edit_materia(key_ns, _mat_b)
+            st.rerun()
+
+    # Calendario read-only del par
+    with next(get_session()) as _cal_sess:
+        _cal_plan = _cal_sess.get(PlanificacionCursadaDB, plan_id)
+        if _cal_plan and _cal_plan.ciclo_id:
+            from src.database.crud import get_or_create_config as _gc
+            from src.services.plan_generation_service import (
+                build_timetable_grid as _btg,
+            )
+            _cal_config = _gc(_cal_sess)
+            _grid = _btg(
+                _cal_sess, plan_id, _cal_config,
+                filtered_materia_codigos={_mat_a, _mat_b},
+                ciclo_id=_cal_plan.ciclo_id,
+            )
+        else:
+            _grid = {}
+            _cal_config = None
+    if _grid and _cal_config is not None:
+        from src.ui.calendar_render import render_timetable_calendar
+        st.markdown("**🗓️ Vista calendario del conflicto (read-only)**")
+        render_timetable_calendar(
+            _grid, _cal_config,
+            key=f"{key_ns}_resolve_cal_{carrera_codigo}_{_mat_a}_{_mat_b}",
+        )
+        st.caption(
+            "Para editar los horarios de cualquiera de las dos materias, "
+            "apretá uno de los botones de arriba. El editor inline aparece "
+            "abajo en **🔎 Detalle por materia**."
+        )
+
+
 def _render_conflictos_carrera(
     *, activos: list[dict], ignorados: list[dict],
     carrera_codigo: str,
@@ -802,6 +955,12 @@ def _render_conflictos_carrera(
         st.dataframe(
             pd.DataFrame(_conf_rows),
             use_container_width=True, hide_index=True,
+        )
+
+        # Resolver conflicto: editar A o B + ver calendario read-only
+        _render_resolve_conflicto(
+            activos=activos, carrera_codigo=carrera_codigo,
+            plan_id=plan_id, key_ns=key_ns, mat_map=mat_map,
         )
 
         # Ignorar conflicto
@@ -1134,18 +1293,32 @@ def _render_detalle_por_materia(
     st.divider()
     st.markdown("##### 🛠️ Editar materia")
 
-    # Default: primera materia que requiere revisión (estado != OK)
-    _default_idx = 0
-    for _i, _r in enumerate(_filtered):
-        if _r["estado"] != "OK":
-            _default_idx = _i
-            break
+    # Si las tablas de discrepancias/conflictos pidieron pre-seleccionar
+    # una materia (boton "Editar materia"), lo consumimos antes de
+    # instanciar el selectbox. Si la materia no esta entre las filtradas,
+    # ampliamos limpiando los filtros — no es ideal pero evita el caso
+    # silencioso "aprete editar y no paso nada".
+    _pending_key = f"{key_ns}_dpm_pending_codigo"
+    _pending_codigo: Optional[str] = st.session_state.pop(_pending_key, None)
+
+    # Si lo pedido no esta entre las filtradas, sumamos su row al final
+    # (sin tocar los filtros visibles). Asi el editor abre la materia
+    # solicitada aunque no matchee los filtros.
+    _sel_rows = list(_filtered)
+    if _pending_codigo and not any(
+        r["codigo"] == _pending_codigo for r in _sel_rows
+    ):
+        _extra = next(
+            (r for r in _rows if r["codigo"] == _pending_codigo), None
+        )
+        if _extra:
+            _sel_rows.append(_extra)
 
     _sel_options = {
         f"{_estado_badge(_r['estado'])} · "
         f"{_label_codnom(_r['codigo'], summary.mat_map | summary.esperadas)} "
         f"· {_r['carrera']}": _r["codigo"]
-        for _r in _filtered
+        for _r in _sel_rows
     }
     _sel_keys = list(_sel_options.keys())
 
@@ -1153,15 +1326,38 @@ def _render_detalle_por_materia(
         st.caption("Sin materias para editar.")
         return
 
+    # Default: si hay pending, ese; sino primera materia que requiere
+    # revisión (estado != OK).
+    _default_idx = 0
+    if _pending_codigo:
+        for _i, _r in enumerate(_sel_rows):
+            if _r["codigo"] == _pending_codigo:
+                _default_idx = _i
+                break
+    else:
+        for _i, _r in enumerate(_sel_rows):
+            if _r["estado"] != "OK":
+                _default_idx = _i
+                break
+
+    # Si tenemos pending, forzamos el valor del selectbox para que se
+    # posicione en esa materia (sin importar lo que el usuario eligio
+    # antes). Lo seteamos ANTES de instanciar el widget.
+    _selbox_key = f"{key_ns}_dpm_active"
+    if _pending_codigo:
+        st.session_state[_selbox_key] = _sel_keys[_default_idx]
+
     _sel_lbl = st.selectbox(
         "Materia activa",
         options=_sel_keys,
         index=min(_default_idx, len(_sel_keys) - 1),
-        key=f"{key_ns}_dpm_active",
+        key=_selbox_key,
         help=(
             "Elegí una materia de la tabla para editar sus comisiones, "
             "horarios, cupo, coeficientes y método de forecast. Por "
-            "default se posiciona en la primera que requiere revisión."
+            "default se posiciona en la primera que requiere revisión. "
+            "Los botones 'Editar materia' de las tablas de arriba "
+            "saltan acá pre-seleccionando la materia elegida."
         ),
     )
     _active_codigo = _sel_options[_sel_lbl]
