@@ -47,6 +47,14 @@ from src.database.models import (
     PlanEstudioDB,
     PlanificacionCursadaDB,
 )
+from src.services.cronograma_validation_service import (
+    CronogramaValidationSummary,
+    get_latest_validation as _crono_get_latest,
+    is_validation_stale as _crono_validation_stale,
+    parse_details_json as _crono_parse_details,
+    persist_validation as _crono_persist_validation,
+    validar_cronograma,
+)
 from src.services.dictado_service import set_activo_for_materias_in_ciclo
 from src.services.plan_validation_service import (
     PlanValidationSummary,
@@ -87,11 +95,11 @@ def render_validation(
             return
         _render_plan(plan_id=plan_id, key_ns=key_ns)
     elif source == "schedule":
-        # B.3: pendiente. Por ahora se sigue usando
-        # `validacion_cronograma_tab.render_tab` directamente.
-        st.error(
-            "render_validation(source='schedule') aun no implementado. "
-            "Usar `validacion_cronograma_tab.render_tab` por ahora."
+        if not schedule_id or not ciclo_id:
+            st.error("schedule_id + ciclo_id requeridos para source='schedule'.")
+            return
+        _render_schedule(
+            schedule_id=schedule_id, ciclo_id=ciclo_id, key_ns=key_ns,
         )
     else:
         st.error(f"source desconocido: {source!r}")
@@ -289,7 +297,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     # =====================================================================
     # Detalle por carrera
     # =====================================================================
-    _grupos = _build_grupos_por_carrera(summary, plan_id)
+    _grupos = _build_grupos_por_carrera(summary, plan.ciclo_id)
     # Mapa global codigo→nombre que cubre TODAS las materias mencionadas
     # (faltantes + extras + conflictos + materias del plan + esperadas).
     _full_mat_map = _build_full_mat_map(summary, _grupos)
@@ -318,19 +326,23 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                 ):
                     continue
                 _render_carrera_subexpander(
-                    _g, plan_id=plan_id, ciclo_id=plan.ciclo_id,
+                    _g, ciclo_id=plan.ciclo_id,
                     key_ns=key_ns, mat_map=_full_mat_map,
                     invalidate_cache_keys=[
                         _validation_key, _last_toggle_key,
                     ],
                     pending_revalidate_key=_pending_revalidate_key,
+                    source="plan", plan_id=plan_id,
                 )
 
     # =====================================================================
     # Detalle por materia
     # =====================================================================
     with st.expander("🔎 Detalle por materia", expanded=False):
-        _render_detalle_por_materia(summary, plan_id, key_ns=key_ns)
+        _render_detalle_por_materia(
+            summary=summary, key_ns=key_ns,
+            source="plan", plan_id=plan_id, ciclo_id=plan.ciclo_id,
+        )
 
     # =====================================================================
     # Activacion gate
@@ -382,11 +394,14 @@ def _label_codnom(codigo: str, mat_map: dict[str, str]) -> str:
 
 
 def _build_full_mat_map(
-    summary: PlanValidationSummary, grupos: dict[str, dict],
+    summary, grupos: dict[str, dict],
 ) -> dict[str, str]:
     """Mapa global código→nombre que cubre faltantes, extras, conflictos
     y materias del plan / esperadas. Usado para mostrar nombres junto a
-    códigos en todas las tablas y selectboxes."""
+    códigos en todas las tablas y selectboxes.
+
+    Acepta tanto `PlanValidationSummary` como `CronogramaValidationSummary`.
+    """
     m = dict(summary.mat_map)  # materias del plan
     for code, name in summary.esperadas.items():
         m.setdefault(code, name)
@@ -403,9 +418,15 @@ def _build_full_mat_map(
 # =============================================================================
 
 def _build_grupos_por_carrera(
-    summary: PlanValidationSummary, plan_id: str,
+    summary, ciclo_id: Optional[str],
 ) -> dict[str, dict]:
     """Construye dict por carrera con faltantes + extras + conflictos.
+
+    Funciona tanto para `PlanValidationSummary` como para
+    `CronogramaValidationSummary`: ambos tienen los mismos campos
+    relevantes (faltantes_por_carrera, extras, conflictos_horarios,
+    mat_map). El de cronograma no tiene `conflictos_ignorados`; lo
+    tratamos como lista vacia.
 
     Las extras llegan como lista plana en summary.extras (sin carrera).
     Para ubicarlas por carrera consultamos PlanEstudioDB del ciclo.
@@ -426,11 +447,10 @@ def _build_grupos_por_carrera(
         }
 
     # Extras: pedir PE rows para asociarlos a carrera
-    if summary.extras:
+    if summary.extras and ciclo_id:
         _extra_codes = [e["codigo"] for e in summary.extras]
         with next(get_session()) as session:
-            _plan = session.get(PlanificacionCursadaDB, plan_id)
-            if _plan and _plan.ciclo_id:
+            if True:
                 _mats_full = list(session.exec(
                     select(MateriaDB).where(col(MateriaDB.codigo).in_(_extra_codes))
                 ).all())
@@ -445,7 +465,7 @@ def _build_grupos_por_carrera(
                         CicloPlanVersionDB,
                         PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id,  # type: ignore[arg-type]
                     )
-                    .where(CicloPlanVersionDB.ciclo_id == _plan.ciclo_id)
+                    .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
                     .where(col(PlanEstudioDB.materia_codigo).in_(_extra_codes))
                 ).all())
 
@@ -532,7 +552,9 @@ def _build_grupos_por_carrera(
         _ensure_grupo(_cc)
         grupos[_cc]["conflictos"].append(c)
 
-    for c in summary.conflictos_ignorados:
+    # CronogramaValidationSummary no tiene conflictos_ignorados (no aplica
+    # acá: no hay IgnoredConflictDB para cronograma).
+    for c in getattr(summary, "conflictos_ignorados", []):
         _cc = c["carrera_codigo"]
         _ensure_grupo(_cc)
         grupos[_cc]["conflictos_ignorados"].append(c)
@@ -569,12 +591,20 @@ def _render_resumen_carreras(grupos: dict[str, dict]) -> None:
 
 
 def _render_carrera_subexpander(
-    g: dict, plan_id: str, ciclo_id: str, key_ns: str,
+    g: dict, ciclo_id: str, key_ns: str,
     mat_map: dict[str, str],
     invalidate_cache_keys: list[str],
     pending_revalidate_key: str,
+    source: Literal["plan", "schedule"] = "plan",
+    plan_id: Optional[str] = None,
 ) -> None:
-    """Sub-expander por carrera con discrepancias + conflictos."""
+    """Sub-expander por carrera con discrepancias + conflictos.
+
+    Si source='schedule', omite el shortcut "Editar materia" (el editor
+    real vive en el tab Editar de la pagina de Cronogramas) y la opcion
+    de "Ignorar conflicto" (no hay IgnoredConflictDB para cronograma:
+    los conflictos del cronograma se resuelven editando los entries).
+    """
     _cc = g["carrera_codigo"]
     _n_fc = len(g["faltantes"])
     _n_ec = len(g["extras"])
@@ -621,11 +651,12 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ft_rows),
                         use_container_width=True, hide_index=True,
                     )
-                    _render_edit_materia_selector(
-                        materias=g["faltantes"], carrera_codigo=_cc,
-                        slot="faltantes", key_ns=key_ns,
-                        mat_map=mat_map,
-                    )
+                    if source == "plan":
+                        _render_edit_materia_selector(
+                            materias=g["faltantes"], carrera_codigo=_cc,
+                            slot="faltantes", key_ns=key_ns,
+                            mat_map=mat_map,
+                        )
                     _render_dictado_action_selector(
                         materias=g["faltantes"],
                         action="deactivate", carrera_codigo=_cc,
@@ -662,11 +693,12 @@ def _render_carrera_subexpander(
                         pd.DataFrame(_ex_rows),
                         use_container_width=True, hide_index=True,
                     )
-                    _render_edit_materia_selector(
-                        materias=g["extras"], carrera_codigo=_cc,
-                        slot="extras", key_ns=key_ns,
-                        mat_map=mat_map,
-                    )
+                    if source == "plan":
+                        _render_edit_materia_selector(
+                            materias=g["extras"], carrera_codigo=_cc,
+                            slot="extras", key_ns=key_ns,
+                            mat_map=mat_map,
+                        )
                     _render_dictado_action_selector(
                         materias=g["extras"],
                         action="activate", carrera_codigo=_cc,
@@ -690,6 +722,7 @@ def _render_carrera_subexpander(
                     mat_map=mat_map,
                     invalidate_cache_keys=invalidate_cache_keys,
                     pending_revalidate_key=pending_revalidate_key,
+                    source=source,
                 )
 
 
@@ -910,19 +943,32 @@ def _render_resolve_conflicto(
 def _render_conflictos_carrera(
     *, activos: list[dict], ignorados: list[dict],
     carrera_codigo: str,
-    plan_id: str, key_ns: str,
+    plan_id: Optional[str], key_ns: str,
     mat_map: dict[str, str],
     invalidate_cache_keys: list[str],
     pending_revalidate_key: str,
+    source: Literal["plan", "schedule"] = "plan",
 ) -> None:
-    """Conflictos activos + ignorados de una carrera."""
+    """Conflictos activos + ignorados de una carrera.
+
+    Para `source='schedule'`: omite el bloque "Resolver conflicto"
+    (shortcut al editor inline) y "Ignorar conflicto" (no aplica:
+    los conflictos del cronograma se resuelven editando los entries).
+    """
     if activos:
-        st.caption(
-            "Conflictos detectados con las **comisiones reales del plan**. "
-            "Si sabés que un par no es un conflicto real (ej: docentes "
-            "distintos, materia virtual con misma aula), podés marcarlo "
-            "como ignorado."
-        )
+        if source == "plan":
+            st.caption(
+                "Conflictos detectados con las **comisiones reales del plan**. "
+                "Si sabés que un par no es un conflicto real (ej: docentes "
+                "distintos, materia virtual con misma aula), podés marcarlo "
+                "como ignorado."
+            )
+        else:
+            st.caption(
+                "Conflictos detectados con las **comisiones auto-derivadas** "
+                "del cronograma. Para resolverlos, editar los horarios "
+                "afectados desde el tab **Editar** de Cronogramas."
+            )
 
         # Resumen por (anio, cuatri)
         _resumen = Counter()
@@ -957,13 +1003,14 @@ def _render_conflictos_carrera(
             use_container_width=True, hide_index=True,
         )
 
-        # Resolver conflicto: editar A o B + ver calendario read-only
+        # Resolver conflicto + Ignorar: solo aplica para plan.
+        if source != "plan" or not plan_id:
+            return  # schedule no soporta resolver ni ignorar
         _render_resolve_conflicto(
             activos=activos, carrera_codigo=carrera_codigo,
             plan_id=plan_id, key_ns=key_ns, mat_map=mat_map,
         )
 
-        # Ignorar conflicto
         st.markdown("**Ignorar conflicto**")
         _pair_options = {
             f"{_label_codnom(c['materia_a'], mat_map)}  vs  "
@@ -1001,8 +1048,8 @@ def _render_conflictos_carrera(
             )
             st.rerun()
 
-    # Bloque de IGNORADOS — permite ver y quitar
-    if ignorados:
+    # Bloque de IGNORADOS — solo para plan (schedule no tiene ignorados)
+    if ignorados and source == "plan" and plan_id:
         if activos:
             st.divider()
         st.markdown(f"**🙈 Conflictos ignorados ({len(ignorados)})**")
@@ -1091,9 +1138,20 @@ def _estado_de_materia(data: dict) -> str:
 
 
 def _render_detalle_por_materia(
-    summary: PlanValidationSummary, plan_id: str, key_ns: str,
+    summary, key_ns: str,
+    *,
+    source: Literal["plan", "schedule"] = "plan",
+    plan_id: Optional[str] = None,
+    schedule_id: Optional[str] = None,
+    ciclo_id: Optional[str] = None,
 ) -> None:
-    """Lista filtrada de materias del plan + esperadas con su estado."""
+    """Lista filtrada de materias + esperadas con su estado.
+
+    Sirve tanto para `source='plan'` (con editor inline + calendario) como
+    para `source='schedule'` (solo lista, sin editor). En el caso del
+    cronograma las "comisiones" se cuentan a nivel de `ScheduleEntryDB`
+    (cantidad de entries únicas por materia).
+    """
     # Construir dataset unificado: union de esperadas + materias del plan
     _esperadas_set = set(summary.esperadas.keys())
     _en_plan_set = set(summary.mat_map.keys())
@@ -1119,12 +1177,11 @@ def _render_detalle_por_materia(
         _mat_map = {m.codigo: m for m in _mats}
 
         # PE rows para carrera/anio/cuatri (cualquiera del ciclo)
-        _plan = session.get(PlanificacionCursadaDB, plan_id)
         _pe_map: dict[str, list[PlanEstudioDB]] = {}
-        if _plan and _plan.ciclo_id:
+        if ciclo_id:
             _pv_ids = list(session.exec(
                 select(CicloPlanVersionDB.plan_version_id)
-                .where(CicloPlanVersionDB.ciclo_id == _plan.ciclo_id)
+                .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
             ).all())
             if _pv_ids:
                 _pes = list(session.exec(
@@ -1135,25 +1192,45 @@ def _render_detalle_por_materia(
                 for _pe in _pes:
                     _pe_map.setdefault(_pe.materia_codigo, []).append(_pe)
 
-        # Conteo de comisiones + horarios por materia
-        _coms = list(session.exec(
-            select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
-        ).all())
+        # Conteo de comisiones + horarios por materia.
         _coms_por_mat: dict[str, list[ComisionDB]] = {}
-        for c in _coms:
-            _coms_por_mat.setdefault(c.materia_codigo, []).append(c)
-        _com_ids = [c.id for c in _coms]
         _h_count_per_com: dict[str, int] = {}
-        if _com_ids:
-            _h_rows = list(session.exec(
-                select(
-                    HorarioDB.comision_id,  # type: ignore[arg-type]
-                    func.count(HorarioDB.id),  # type: ignore[arg-type]
-                )
-                .where(col(HorarioDB.comision_id).in_(_com_ids))
-                .group_by(HorarioDB.comision_id)  # type: ignore[arg-type]
+        _com_count_sched: dict[str, int] = {}
+        _entry_count_sched: dict[str, int] = {}
+        if source == "plan" and plan_id:
+            _coms = list(session.exec(
+                select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
             ).all())
-            _h_count_per_com = {cid: n for cid, n in _h_rows}
+            for c in _coms:
+                _coms_por_mat.setdefault(c.materia_codigo, []).append(c)
+            _com_ids = [c.id for c in _coms]
+            if _com_ids:
+                _h_rows = list(session.exec(
+                    select(
+                        HorarioDB.comision_id,  # type: ignore[arg-type]
+                        func.count(HorarioDB.id),  # type: ignore[arg-type]
+                    )
+                    .where(col(HorarioDB.comision_id).in_(_com_ids))
+                    .group_by(HorarioDB.comision_id)  # type: ignore[arg-type]
+                ).all())
+                _h_count_per_com = {cid: n for cid, n in _h_rows}
+        elif source == "schedule" and schedule_id:
+            from src.database.models import ScheduleEntryDB as _SE
+            _entries = list(session.exec(
+                select(_SE).where(_SE.schedule_id == schedule_id)
+            ).all())
+            for e in _entries:
+                _entry_count_sched[e.codigo_materia] = (
+                    _entry_count_sched.get(e.codigo_materia, 0) + 1
+                )
+                # comisiones distintas por materia (tomando ScheduleEntryDB.comision)
+                pass
+            # Distinct comisiones por materia
+            _by_mat: dict[str, set[int]] = {}
+            for e in _entries:
+                if e.comision is not None:
+                    _by_mat.setdefault(e.codigo_materia, set()).add(e.comision)
+            _com_count_sched = {mc: len(s) for mc, s in _by_mat.items()}
 
     # Construir filas
     _rows: list[dict] = []
@@ -1166,11 +1243,15 @@ def _render_detalle_por_materia(
         _cuatri = (_pes[0].cuatrimestre_plan if _pes else None) or "—"
         _optativa = any(bool(_pe.optativa) for _pe in _pes)
 
-        _coms_de_m = _coms_por_mat.get(_code, [])
-        _n_coms = len(_coms_de_m)
-        _n_horarios = sum(
-            _h_count_per_com.get(c.id, 0) for c in _coms_de_m
-        )
+        if source == "plan":
+            _coms_de_m = _coms_por_mat.get(_code, [])
+            _n_coms = len(_coms_de_m)
+            _n_horarios = sum(
+                _h_count_per_com.get(c.id, 0) for c in _coms_de_m
+            )
+        else:  # schedule
+            _n_coms = _com_count_sched.get(_code, 0)
+            _n_horarios = _entry_count_sched.get(_code, 0)
         _hsem = _m.horas_semanales if _m else None
         _virtual = bool(_m.virtual) if _m else False
 
@@ -1288,10 +1369,13 @@ def _render_detalle_por_materia(
     )
 
     # =========================================================================
-    # Selector de materia + editor inline + calendario embebido
+    # Selector de materia + (editor inline + calendario solo para plan)
     # =========================================================================
     st.divider()
-    st.markdown("##### 🛠️ Editar materia")
+    if source == "plan":
+        st.markdown("##### 🛠️ Editar materia")
+    else:
+        st.markdown("##### 🔍 Ver detalle de materia")
 
     # Si las tablas de discrepancias/conflictos pidieron pre-seleccionar
     # una materia (boton "Editar materia"), lo consumimos antes de
@@ -1362,10 +1446,11 @@ def _render_detalle_por_materia(
     )
     _active_codigo = _sel_options[_sel_lbl]
 
-    # Calendario embebido de la materia activa (si tiene horarios)
-    with next(get_session()) as _cal_sess:
-        _cal_plan = _cal_sess.get(PlanificacionCursadaDB, plan_id)
-        if _cal_plan and _cal_plan.ciclo_id:
+    # Calendario embebido de la materia activa.
+    # - Plan: usar build_timetable_grid sobre ComisionDB+HorarioDB.
+    # - Schedule: usar build_schedule_grid sobre ScheduleEntryDB.
+    if source == "plan" and plan_id:
+        with next(get_session()) as _cal_sess:
             from src.database.crud import get_or_create_config as _gc
             from src.services.plan_generation_service import (
                 build_timetable_grid as _btg,
@@ -1374,28 +1459,53 @@ def _render_detalle_por_materia(
             _grid = _btg(
                 _cal_sess, plan_id, _cal_config,
                 filtered_materia_codigos={_active_codigo},
-                ciclo_id=_cal_plan.ciclo_id,
+                ciclo_id=ciclo_id,
             )
-        else:
-            _grid = {}
-            _cal_config = None
+        if _grid:
+            from src.ui.calendar_render import render_timetable_calendar
+            st.markdown("**🗓️ Vista calendario**")
+            render_timetable_calendar(
+                _grid, _cal_config,
+                key=f"{key_ns}_dpm_cal_{_active_codigo}",
+            )
+    elif source == "schedule" and schedule_id:
+        with next(get_session()) as _cal_sess:
+            from src.database.crud import get_or_create_config as _gc
+            from src.services.schedule_service import (
+                build_schedule_grid as _bsg,
+            )
+            _cal_config = _gc(_cal_sess)
+            _grid_full = _bsg(_cal_sess, schedule_id)
+        # Filtrar a la materia activa
+        _grid = {
+            dia: [b for b in blocks if b.materia_codigo == _active_codigo]
+            for dia, blocks in _grid_full.items()
+        }
+        _grid = {d: bs for d, bs in _grid.items() if bs}
+        if _grid:
+            from src.ui.calendar_render import render_schedule_calendar
+            st.markdown("**🗓️ Vista calendario**")
+            render_schedule_calendar(
+                _grid, _cal_config,
+                key=f"{key_ns}_dpm_cal_{_active_codigo}",
+                color_by_comision=True,
+            )
 
-    if _grid and _cal_config is not None:
-        from src.ui.calendar_render import render_timetable_calendar
-        st.markdown("**🗓️ Vista calendario**")
-        render_timetable_calendar(
-            _grid, _cal_config,
-            key=f"{key_ns}_dpm_cal_{_active_codigo}",
+    # Editor inline solo para plan; en schedule el editor real vive en
+    # la pestaña Editar de Cronogramas.
+    if source == "plan" and plan_id:
+        st.markdown("**✏️ Editor**")
+        from src.ui.plan_materia_editor import render_plan_materia_detail
+        render_plan_materia_detail(
+            plan_id=plan_id,
+            materia_codigo=_active_codigo,
+            key_ns=f"{key_ns}_dpm_edit",
         )
-
-    # Editor inline
-    st.markdown("**✏️ Editor**")
-    from src.ui.plan_materia_editor import render_plan_materia_detail
-    render_plan_materia_detail(
-        plan_id=plan_id,
-        materia_codigo=_active_codigo,
-        key_ns=f"{key_ns}_dpm_edit",
-    )
+    elif source == "schedule":
+        st.caption(
+            "Para editar horarios o comisiones de esta materia, ir al tab "
+            "**Editar** de la página de Cronogramas."
+        )
 
 
 def _estado_badge(estado: str) -> str:
@@ -1407,3 +1517,254 @@ def _estado_badge(estado: str) -> str:
         "Conflictiva": "⚠️ Conflicto",
         "Sin datos": "❓ Sin datos",
     }.get(estado, estado)
+
+
+# =============================================================================
+# SCHEDULE — entrypoint
+# =============================================================================
+
+def _render_schedule(
+    schedule_id: str, ciclo_id: str, key_ns: str,
+) -> None:
+    """Render del panel para un cronograma vs ciclo.
+
+    Espejo de `_render_plan` con tres diferencias:
+    - Sin `ignored_pairs` (cronograma no tiene IgnoredConflictDB).
+    - Sin editor inline (los conflictos se resuelven editando los
+      entries del cronograma desde el tab Editar).
+    - Bloque "Resumen de laboratorios" con n_con_lab_asignado, lab_fijo,
+      lab_reserva, lab_pendiente.
+    - Sin gate de activación (el cronograma no se "activa").
+    """
+    # Toggles + boton
+    _toggle_key = f"{key_ns}_exclude_optativas"
+    _autoval_key = f"{key_ns}_auto_validate"
+    _validation_key = f"{key_ns}_validation_summary"
+    _pending_revalidate_key = f"{key_ns}_pending_revalidate"
+
+    _col_t1, _col_t2, _col_b = st.columns([3, 2, 2])
+    with _col_t1:
+        exclude_optativas = st.toggle(
+            "Excluir optativas del cómputo",
+            value=st.session_state.get(_toggle_key, False),
+            key=_toggle_key,
+            help=(
+                "Las materias optativas no se cuentan en el set esperado. "
+                "Las virtuales SÍ cuentan: estructuralmente sus comisiones "
+                "y horarios deben ser consistentes."
+            ),
+        )
+    with _col_t2:
+        auto_validate = st.toggle(
+            "Auto-revalidar al cambiar",
+            value=st.session_state.get(_autoval_key, True),
+            key=_autoval_key,
+            help=(
+                "Si está ON, cualquier acción del panel re-corre la "
+                "validación automáticamente."
+            ),
+        )
+    with _col_b:
+        _run_button = st.button(
+            "Validar cronograma", type="primary",
+            key=f"{key_ns}_btn_validate",
+            use_container_width=True,
+        )
+
+    _last_toggle_key = f"{key_ns}_last_toggle"
+    _toggle_changed = (
+        _validation_key in st.session_state
+        and st.session_state.get(_last_toggle_key) is not None
+        and st.session_state[_last_toggle_key] != exclude_optativas
+    )
+
+    _pending_auto = (
+        auto_validate
+        and st.session_state.pop(_pending_revalidate_key, False)
+    )
+
+    if _run_button or _toggle_changed or _pending_auto:
+        with next(get_session()) as session:
+            summary = validar_cronograma(
+                session, schedule_id, ciclo_id,
+                exclude_optativas=exclude_optativas,
+            )
+            if summary.error is None:
+                _crono_persist_validation(session, summary)
+        st.session_state[_validation_key] = summary
+        st.session_state[_last_toggle_key] = exclude_optativas
+        if _pending_auto:
+            st.toast("✓ Cronograma revalidado tras cambios.")
+
+    # Si no hay summary aun, intentar recuperar el ultimo persistido
+    if _validation_key not in st.session_state:
+        with next(get_session()) as session:
+            _last = _crono_get_latest(session, schedule_id, ciclo_id)
+            if _last is not None:
+                _details = _crono_parse_details(_last.details_json)
+                summary = CronogramaValidationSummary(
+                    schedule_id=_last.schedule_id,
+                    ciclo_id=_last.ciclo_id,
+                    validated_at=_last.validated_at,
+                    entry_count_at_validation=_last.entry_count_at_validation,
+                    dictado_count_at_validation=_last.dictado_count_at_validation,
+                    n_materias=_last.n_materias,
+                    n_clases=_last.n_clases,
+                    total_horas=_last.total_horas,
+                    n_esperadas=_last.n_esperadas,
+                    n_cubiertas=_last.n_cubiertas,
+                    n_faltantes=_last.n_faltantes,
+                    n_extra=_last.n_extra,
+                    n_con_lab_asignado=_last.n_con_lab_asignado,
+                    n_lab_fijo=_last.n_lab_fijo,
+                    n_lab_reserva=_last.n_lab_reserva,
+                    n_lab_pendiente=_last.n_lab_pendiente,
+                    particion_valid=_last.particion_valid,
+                    particion_n_infactibles=_last.particion_n_infactibles,
+                    particion_message=_details.get("particion_message", ""),
+                    n_conflictos_horarios=_last.n_conflictos_horarios,
+                    excluir_optativas=_last.excluir_optativas,
+                    excluir_virtuales_optativas=_last.excluir_virtuales_optativas,
+                    faltantes_por_carrera=_details.get(
+                        "faltantes_por_carrera", []
+                    ),
+                    extras=_details.get("extras", []),
+                    particion_details=_details.get("particion_details", []),
+                    conflictos_horarios=_details.get(
+                        "conflictos_horarios", []
+                    ),
+                    esperadas=_details.get("esperadas", {}),
+                    mat_map=_details.get("mat_map", {}),
+                )
+                st.session_state[_validation_key] = summary
+                st.session_state[_last_toggle_key] = _last.excluir_optativas
+
+    if _validation_key not in st.session_state:
+        st.info(
+            "Apretá **Validar cronograma** para correr la validación "
+            "completa (cobertura, conflictos, partición teoría/lab)."
+        )
+        return
+
+    summary: CronogramaValidationSummary = st.session_state[_validation_key]
+
+    if summary.error:
+        st.error(summary.error)
+        return
+
+    # Staleness
+    with next(get_session()) as session:
+        _latest = _crono_get_latest(session, schedule_id, ciclo_id)
+        if _latest is not None:
+            _stale = _crono_validation_stale(session, _latest)
+            # Tambien comparar toggle aplicado
+            if _latest.excluir_optativas != exclude_optativas:
+                _stale = True
+        else:
+            _stale = False
+    if _stale:
+        st.warning(
+            "El cronograma, sus dictados o el toggle cambiaron desde la "
+            "última validación. Apretá **Validar cronograma** para "
+            "actualizar."
+        )
+
+    # =========================================================================
+    # Resumen de cobertura
+    # =========================================================================
+    st.divider()
+    st.markdown("### Resumen de cobertura")
+    _c1, _c2, _c3, _c4, _c5, _c6 = st.columns(6)
+    _c1.metric("Materias", summary.n_materias)
+    _c2.metric("Clases", summary.n_clases)
+    _c3.metric("Horas cronograma", f"{summary.total_horas:.1f}")
+    _c4.metric(
+        "Esperadas",
+        summary.n_esperadas,
+        delta=(
+            None if not summary.excluir_optativas
+            else "(optativas excluidas)"
+        ),
+        delta_color="off",
+    )
+    _c5.metric("Cubiertas", f"{summary.n_cubiertas}/{summary.n_esperadas}")
+    _c6.metric("Faltantes", summary.n_faltantes)
+
+    # =========================================================================
+    # Resumen de laboratorios
+    # =========================================================================
+    if summary.n_con_lab_asignado > 0:
+        st.markdown("##### 🧪 Resumen de laboratorios")
+        _lc1, _lc2, _lc3, _lc4 = st.columns(4)
+        _lc1.metric("Con lab asignado", summary.n_con_lab_asignado)
+        _lc2.metric("Lab fijo (h>0)", summary.n_lab_fijo)
+        _lc3.metric("Reserva ad-hoc (h=0)", summary.n_lab_reserva)
+        _lc4.metric(
+            "Pendiente (sin h)", summary.n_lab_pendiente,
+            delta=(
+                "⚠️ bloqueante" if summary.n_lab_pendiente else None
+            ),
+            delta_color="inverse",
+        )
+
+    # =========================================================================
+    # Particion teoria/lab
+    # =========================================================================
+    if summary.particion_valid:
+        st.success(summary.particion_message or "Partición teoría/lab OK.")
+    else:
+        st.error(summary.particion_message or "Partición teoría/lab inválida.")
+        if summary.particion_details:
+            with st.expander(
+                f"Detalles de partición ({summary.particion_n_infactibles})",
+                expanded=False,
+            ):
+                for d in summary.particion_details:
+                    st.text(f"  - {d}")
+
+    # =========================================================================
+    # Detalle por carrera
+    # =========================================================================
+    _grupos = _build_grupos_por_carrera(summary, ciclo_id)
+    _full_mat_map = _build_full_mat_map(summary, _grupos)
+    _has_issues = any(
+        len(g["faltantes"]) > 0 or len(g["extras"]) > 0
+        or len(g["conflictos"]) > 0
+        for g in _grupos.values()
+    )
+
+    with st.expander(
+        f"📋 Detalle por carrera ({len(_grupos)} grupo(s))",
+        expanded=_has_issues,
+    ):
+        if not _grupos:
+            st.caption("Sin discrepancias por carrera.")
+        else:
+            _render_resumen_carreras(_grupos)
+            for _cc in sorted(_grupos.keys()):
+                _g = _grupos[_cc]
+                if (
+                    len(_g["faltantes"]) == 0
+                    and len(_g["extras"]) == 0
+                    and len(_g["conflictos"]) == 0
+                ):
+                    continue
+                _render_carrera_subexpander(
+                    _g, ciclo_id=ciclo_id,
+                    key_ns=key_ns, mat_map=_full_mat_map,
+                    invalidate_cache_keys=[
+                        _validation_key, _last_toggle_key,
+                    ],
+                    pending_revalidate_key=_pending_revalidate_key,
+                    source="schedule",
+                )
+
+    # =========================================================================
+    # Detalle por materia (sin editor inline)
+    # =========================================================================
+    with st.expander("🔎 Detalle por materia", expanded=False):
+        _render_detalle_por_materia(
+            summary=summary, key_ns=key_ns,
+            source="schedule",
+            schedule_id=schedule_id, ciclo_id=ciclo_id,
+        )
