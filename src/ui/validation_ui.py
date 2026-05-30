@@ -1279,6 +1279,12 @@ def _render_detalle_por_materia(
         ).all())
         _labs_set: set[str] = set(_lab_rows)
 
+        # Mapa codigo→nombre de carrera (para mostrar nombres en filtro)
+        _carrera_rows = list(session.exec(select(CarreraDB)).all())
+        _carrera_nombre_map: dict[str, str] = {
+            c.codigo: c.nombre for c in _carrera_rows
+        }
+
         # PE rows para carrera/anio/cuatri (cualquiera del ciclo)
         _pe_map: dict[str, list[PlanEstudioDB]] = {}
         if ciclo_id:
@@ -1358,6 +1364,8 @@ def _render_detalle_por_materia(
         _hsem = _m.horas_semanales if _m else None
         _hlab = _m.horas_laboratorio if _m else None
         _virtual = bool(_m.virtual) if _m else False
+        _periodo = _m.periodo if _m else "cuatrimestral"
+        _anual = _periodo == "anual"
         # Carreras distintas que comparten esta materia (Comunes/Exclusivas)
         _n_carreras = len({_pe.carrera_codigo for _pe in _pes})
 
@@ -1369,6 +1377,8 @@ def _render_detalle_por_materia(
             "cuatri": _cuatri,
             "optativa": _optativa,
             "virtual": _virtual,
+            "anual": _anual,
+            "periodo": _periodo,
             "tiene_lab": _code in _labs_set,
             "horas_lab": _hlab,
             "n_carreras": _n_carreras,
@@ -1400,6 +1410,23 @@ def _render_detalle_por_materia(
     _cuatris_opts = sorted({r["cuatri"] for r in _rows if r["cuatri"] != "—"})
     _estados_opts = ["OK", "Faltante", "No esperada", "Conflictiva", "Sin datos"]
     _tipo_opts = ["Todas", "Comunes", "Exclusivas"]
+    # Atributos de materia: cada uno es un multi-state (sí/no/cualquiera)
+    # representado como dos opciones por atributo.
+    _attr_opts = [
+        "Optativa",
+        "No optativa",
+        "Virtual",
+        "No virtual",
+        "Anual",
+        "Cuatrimestral",
+        "Con lab asignado",
+        "Sin lab asignado",
+    ]
+
+    _carrera_label = lambda cc: (
+        f"{cc} — {_carrera_nombre_map[cc]}"
+        if cc in _carrera_nombre_map else cc
+    )
 
     _f1, _f2, _f3, _f4, _f5 = st.columns(5)
     with _f1:
@@ -1410,11 +1437,13 @@ def _render_detalle_por_materia(
     with _f2:
         _f_carr = st.multiselect(
             "Carrera", options=_carreras_opts, default=[],
+            format_func=_carrera_label,
             key=f"{key_ns}_dpm_carrera",
         )
     with _f3:
         _f_anio = st.multiselect(
             "Año", options=_anios_opts, default=[],
+            format_func=lambda a: f"{a}°",
             key=f"{key_ns}_dpm_anio",
         )
     with _f4:
@@ -1431,7 +1460,7 @@ def _render_detalle_por_materia(
     _g1, _g2, _g3 = st.columns(3)
     with _g1:
         _f_tipo = st.selectbox(
-            "Tipo",
+            "Tipo (carreras)",
             options=_tipo_opts, index=0,
             key=f"{key_ns}_dpm_tipo",
             help=(
@@ -1440,13 +1469,14 @@ def _render_detalle_por_materia(
             ),
         )
     with _g2:
-        _only_lab = st.toggle(
-            "Solo con lab asignado",
-            value=False,
-            key=f"{key_ns}_dpm_only_lab",
+        _f_attrs = st.multiselect(
+            "Atributos",
+            options=_attr_opts, default=[],
+            key=f"{key_ns}_dpm_attrs",
             help=(
-                "Mostrar únicamente materias que tienen al menos un "
-                "laboratorio compatible asignado en MateriaLaboratorioDB."
+                "Filtros por atributo de la materia. Si elegís un par "
+                "contradictorio (ej. Optativa + No optativa) no queda "
+                "ninguna materia. Combinable con los demás filtros."
             ),
         )
     with _g3:
@@ -1478,8 +1508,23 @@ def _render_detalle_por_materia(
             return False
         if _f_tipo == "Exclusivas" and r["n_carreras"] != 1:
             return False
-        if _only_lab and not r["tiene_lab"]:
-            return False
+        if _f_attrs:
+            if "Optativa" in _f_attrs and not r["optativa"]:
+                return False
+            if "No optativa" in _f_attrs and r["optativa"]:
+                return False
+            if "Virtual" in _f_attrs and not r["virtual"]:
+                return False
+            if "No virtual" in _f_attrs and r["virtual"]:
+                return False
+            if "Anual" in _f_attrs and not r["anual"]:
+                return False
+            if "Cuatrimestral" in _f_attrs and r["anual"]:
+                return False
+            if "Con lab asignado" in _f_attrs and not r["tiene_lab"]:
+                return False
+            if "Sin lab asignado" in _f_attrs and r["tiene_lab"]:
+                return False
         if _only_issues and r["estado"] == "OK":
             return False
         return True
