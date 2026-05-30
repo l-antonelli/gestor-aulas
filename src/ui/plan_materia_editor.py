@@ -29,12 +29,13 @@ import streamlit as st
 from sqlmodel import col, select
 
 from src.database.connection import get_session
-from src.database.crud import get_or_create_config
+from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
     CicloDB,
     ComisionDB,
     HorarioDB,
     MateriaDB,
+    MateriaLaboratorioDB,
     PlanificacionCursadaDB,
 )
 from src.domain.types import DIAS_SEMANA
@@ -496,6 +497,196 @@ def _render_plan_calendar_readonly(
         )
 
 
+def _editar_horas_materia(
+    mat_db: MateriaDB, kp: str, ciclo: Optional[CicloDB],
+) -> None:
+    """Controles editables de hs/sem, hs teoría, hs lab + validación
+    cruzada (auto-save al cambiar). Mismos controles que el editor del
+    cronograma — se aplican al catálogo de la materia (afecta a todos
+    los planes y cronogramas que la referencien)."""
+    db_hsem = float(mat_db.horas_semanales or 0.0)
+    db_hteo = mat_db.horas_teoria
+    db_hlab = mat_db.horas_laboratorio
+
+    # ¿Tiene laboratorio asignado? Para decidir si mostramos hteo/hlab.
+    with next(get_session()) as session:
+        has_lab = session.exec(
+            select(MateriaLaboratorioDB)
+            .where(MateriaLaboratorioDB.materia_codigo == mat_db.codigo)
+            .limit(1)
+        ).first() is not None
+
+    ic1, ic2, ic3, ic4 = st.columns(4)
+    ic1.markdown("**Horas semanales:**")
+    new_hsem = ic2.number_input(
+        "h/sem", value=db_hsem, min_value=0.0, step=0.25, format="%.2f",
+        key=f"{kp}_hsem", label_visibility="collapsed",
+    )
+    if new_hsem != db_hsem:
+        with next(get_session()) as _s:
+            _m = materia_crud.get(_s, mat_db.codigo)
+            if _m:
+                _m.horas_semanales = new_hsem if new_hsem > 0 else None
+                _s.add(_m)
+                _s.commit()
+                db_hsem = new_hsem
+                st.toast(
+                    f"{mat_db.codigo}: hs/sem actualizadas a {new_hsem:g}h."
+                )
+
+    if has_lab or db_hteo is not None or db_hlab is not None:
+        hl_c1, hl_c2, hl_c3, hl_c4 = st.columns(4)
+        hl_c1.markdown("**Hs teoría:**")
+        new_hteo = hl_c2.number_input(
+            "h_teo",
+            value=float(db_hteo) if db_hteo is not None else 0.0,
+            min_value=0.0, step=0.25, format="%.2f",
+            key=f"{kp}_hteo", label_visibility="collapsed",
+            help="Horas semanales de teoría. Junto con Hs lab debe sumar Hs semanales.",
+        )
+        hl_c3.markdown("**Hs laboratorio:**")
+        new_hlab = hl_c4.number_input(
+            "h_lab",
+            value=float(db_hlab) if db_hlab is not None else 0.0,
+            min_value=0.0, step=0.25, format="%.2f",
+            key=f"{kp}_hlab", label_visibility="collapsed",
+            help=(
+                "Horas semanales fijas como laboratorio. Si tiene lab "
+                "asignado pero Hs lab = 0, se asume reserva ad-hoc "
+                "(decide el docente fuera del LP)."
+            ),
+        )
+
+        sum_thl = round(new_hteo + new_hlab, 2)
+        sum_ok = abs(sum_thl - round(db_hsem, 2)) < 0.01
+        if not sum_ok:
+            st.warning(
+                f"Hs teoría ({new_hteo:g}) + Hs lab ({new_hlab:g}) = "
+                f"{sum_thl:g} ≠ Hs semanales ({db_hsem:g}). Ajustá los valores."
+            )
+        if has_lab and new_hlab == 0 and sum_ok:
+            st.caption(
+                "ℹ️ Tiene laboratorios asignados con **Hs lab = 0** → "
+                "reserva ad-hoc: el LP no fija lab; los docentes lo "
+                "reservan caso por caso."
+            )
+
+        # Auto-save si suma OK y hay cambios
+        hteo_changed = db_hteo is None or abs(new_hteo - db_hteo) > 0.001
+        hlab_changed = db_hlab is None or abs(new_hlab - db_hlab) > 0.001
+        if sum_ok and (hteo_changed or hlab_changed):
+            with next(get_session()) as _s:
+                _m = materia_crud.get(_s, mat_db.codigo)
+                if _m:
+                    _m.horas_teoria = new_hteo
+                    _m.horas_laboratorio = new_hlab
+                    _s.add(_m)
+                    _s.commit()
+                    st.toast(
+                        f"{mat_db.codigo}: Hs teoría/lab actualizadas a "
+                        f"{new_hteo:g}/{new_hlab:g}."
+                    )
+
+
+def _render_plan_checks(
+    plan_id: str, materia_codigo: str,
+    mat_coms: list[ComisionDB],
+    horarios_by_comision: dict[str, list[HorarioDB]],
+    mat_db: Optional[MateriaDB],
+) -> str:
+    """Renderiza los 10 chequeos estructurados del editor de materia,
+    espejados del schedule_materia_editor pero sobre comisiones reales
+    + horarios del plan. Retorna worst status (`ok`/`warn`/`error`/`info`)
+    para que el caller lo cachee y el header del expander lo muestre.
+    """
+    import pandas as pd
+    from src.ui.schedule_materia_editor import _compute_checks
+
+    if not mat_db:
+        return "info"
+
+    db_hsem = float(mat_db.horas_semanales or 0.0)
+    db_hteo = mat_db.horas_teoria
+    db_hlab = mat_db.horas_laboratorio
+
+    with next(get_session()) as session:
+        has_lab = session.exec(
+            select(MateriaLaboratorioDB)
+            .where(MateriaLaboratorioDB.materia_codigo == materia_codigo)
+            .limit(1)
+        ).first() is not None
+
+    n_com = len(mat_coms)
+    com_options = [c.numero for c in mat_coms]
+
+    # Construir DataFrame compatible con _compute_checks: columnas
+    # Día, Inicio, Fin, Comisión (numero), Tipo, Hs.
+    rows = []
+    for c in mat_coms:
+        for h in horarios_by_comision.get(c.id, []):
+            dur = (
+                h.hora_fin.hour * 60 + h.hora_fin.minute
+                - h.hora_inicio.hour * 60 - h.hora_inicio.minute
+            ) / 60.0
+            rows.append({
+                "Día": h.dia,
+                "Inicio": h.hora_inicio.strftime("%H:%M"),
+                "Fin": h.hora_fin.strftime("%H:%M"),
+                "Comisión": c.numero,
+                "Tipo": h.tipo_clase or "sin determinar",
+                "Hs": round(max(0.0, dur), 2),
+            })
+    valid_df = pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["Día", "Inicio", "Fin", "Comisión", "Tipo", "Hs"],
+    )
+
+    total = float(valid_df["Hs"].sum()) if not valid_df.empty else 0.0
+
+    # Max paralelas (mismo slot)
+    paralelas = 0
+    if not valid_df.empty:
+        slots: dict[tuple, int] = {}
+        for _, r in valid_df.iterrows():
+            key = (str(r["Día"]), str(r["Inicio"])[:5], str(r["Fin"])[:5])
+            slots[key] = slots.get(key, 0) + 1
+        paralelas = max(slots.values()) if slots else 0
+
+    # Horas por comision
+    hours_by_com: dict[int, float] = {c.numero: 0.0 for c in mat_coms}
+    if not valid_df.empty:
+        for _, r in valid_df.iterrows():
+            cn = r.get("Comisión")
+            if cn in hours_by_com:
+                hours_by_com[cn] += float(r["Hs"])
+    hours_by_com = {c: round(h, 2) for c, h in hours_by_com.items()}
+
+    checks = _compute_checks(
+        h_sem=db_hsem, n_com=n_com, total=total,
+        paralelas=paralelas, hours_by_com=hours_by_com,
+        has_lab=has_lab, h_teo=db_hteo, h_lab=db_hlab,
+        valid_df=valid_df, com_options=com_options,
+    )
+
+    # Worst status
+    worst = "ok"
+    for ck in checks:
+        if ck["status"] == "error":
+            worst = "error"
+            break
+        if ck["status"] == "warn" and worst != "error":
+            worst = "warn"
+    if worst == "ok" and not any(c["status"] == "ok" for c in checks):
+        worst = "info"
+
+    # Render
+    icon_map = {"ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️"}
+    for ck in checks:
+        ico = icon_map.get(ck["status"], "•")
+        st.markdown(f"{ico} **{ck['label']}:** {ck['detail']}")
+
+    return worst
+
+
 def render_plan_materia_detail(
     plan_id: str, materia_codigo: str, key_ns: str,
     *,
@@ -561,17 +752,10 @@ def render_plan_materia_detail(
         "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"
     ].index(d))
 
-    # --- Datos del catálogo (read-only) ---
+    # --- Controles de horas (editables, auto-save) ---
     if mat_db is not None:
-        _cat1, _cat2, _cat3, _cat4 = st.columns(4)
-        _cat1.markdown(f"**hs/sem**: {mat_db.horas_semanales or '—'}")
-        _cat2.markdown(f"**hs teoría**: {mat_db.horas_teoria or '—'}")
-        _cat3.markdown(f"**hs lab**: {mat_db.horas_laboratorio or '—'}")
-        _cat4.markdown(f"**período**: {mat_db.periodo}")
-        st.caption(
-            "Datos del catálogo (read-only). Para modificarlos, ir a "
-            "**📚 Materias**."
-        )
+        _editar_horas_materia(mat_db, _kp, ciclo)
+        st.caption(f"**Período**: {mat_db.periodo} (catálogo, read-only).")
 
     # --- Calendario editable (drag/click/select + dialogs) ---
     _render_plan_editable_calendar(
@@ -629,6 +813,17 @@ def render_plan_materia_detail(
     # --- Add comision button ---
     st.divider()
     _render_add_comision_button(plan_id, materia_codigo, mat_coms, key_ns)
+
+    # --- 10 chequeos estructurados (idem cronograma) ---
+    st.divider()
+    st.markdown("##### ✅ Validaciones de la materia")
+    _worst = _render_plan_checks(
+        plan_id, materia_codigo, mat_coms, horarios_by_comision, mat_db,
+    )
+    # Cachear worst para que el header del expander del caller (en
+    # validation_ui._render_detalle_por_materia) muestre el icono al
+    # proximo render.
+    st.session_state[f"{_kp}_chk_worst"] = _worst
 
 
 # =============================================================================

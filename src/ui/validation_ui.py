@@ -1652,11 +1652,16 @@ def _render_detalle_por_materia(
 
         # Worst icon cacheado por el editor en el render anterior. Si
         # no hay cache, usar el estado del row.
-        # Para schedule, la key incluye schedule_id+materia_codigo (ver
-        # schedule_materia_editor: `_kp = f"{key_ns}_{schedule_id}_{mat}"`).
+        # La key del editor incluye {schedule_id|plan_id}+materia_codigo
+        # (ver schedule_materia_editor / plan_materia_editor:
+        # `_kp = f"{key_ns}_{schedule_id|plan_id}_{mat}"`).
         if source == "schedule" and schedule_id:
             _worst_key_s = (
                 f"{key_ns}_dpm_edit_{schedule_id}_{_code}_chk_worst"
+            )
+        elif source == "plan" and plan_id:
+            _worst_key_s = (
+                f"{key_ns}_dpm_edit_{plan_id}_{_code}_chk_worst"
             )
         else:
             _worst_key_s = f"{key_ns}_dpm_edit_chk_worst_{_code}"
