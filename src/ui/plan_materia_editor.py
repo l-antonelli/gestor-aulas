@@ -40,9 +40,460 @@ from src.database.models import (
 from src.domain.types import DIAS_SEMANA
 from src.services.plan_generation_service import (
     apply_horario_edits,
+    build_timetable_grid,
     generate_time_slots,
 )
 from src.services.validations import validar_factibilidad_particion_horas
+from src.services.schedule_service import ScheduleBlock
+from src.ui.calendar_render import render_editable_schedule_calendar
+
+
+_DIA_ORD = {
+    "Lunes": 0, "Martes": 1, "Miércoles": 2,
+    "Jueves": 3, "Viernes": 4, "Sábado": 5,
+}
+
+
+# =============================================================================
+# Dialogs para editar/agregar HorarioDB via calendario embebido
+# =============================================================================
+
+@st.dialog("Editar horario", width="large")
+def _dialog_edit_horario():
+    """Dialog para editar un HorarioDB del plan desde el calendario.
+
+    Diferencias respecto al de cronograma:
+    - Selector de comisión existente (opciones: comisiones de la materia
+      en el plan).
+    - Comisión es obligatoria (HorarioDB.comision_id es FK no nullable).
+    """
+    pending = st.session_state.get("_pme_pending_click")
+    if not pending:
+        st.rerun()
+        return
+
+    _plan_id = pending["plan_id"]
+    _materia_codigo = pending["materia_codigo"]
+    _dias_list = list(_DIA_ORD.keys())
+
+    # Comisiones existentes para esta materia en el plan
+    with next(get_session()) as session:
+        _coms = list(session.exec(
+            select(ComisionDB)
+            .where(ComisionDB.plan_cursada_id == _plan_id)
+            .where(ComisionDB.materia_codigo == _materia_codigo)
+            .order_by(ComisionDB.numero)  # type: ignore[arg-type]
+        ).all())
+    if not _coms:
+        st.error("La materia no tiene comisiones. Cancelá y agregá una primero.")
+        if st.button("Cerrar"):
+            del st.session_state["_pme_pending_click"]
+            st.rerun()
+        return
+
+    _com_options = {f"C{c.numero} — {c.nombre}": c.id for c in _coms}
+    _com_keys = list(_com_options.keys())
+    _current_com_id = pending.get("comision_id")
+    _current_idx = 0
+    if _current_com_id:
+        for _i, (_lbl, _cid) in enumerate(_com_options.items()):
+            if _cid == _current_com_id:
+                _current_idx = _i
+                break
+
+    st.markdown(f"**Materia**: `{_materia_codigo}`")
+
+    col_dia, col_ini, col_fin = st.columns(3)
+    with col_dia:
+        new_dia = st.selectbox(
+            "Día",
+            options=_dias_list,
+            index=(
+                _dias_list.index(pending["dia"])
+                if pending["dia"] in _dias_list else 0
+            ),
+            key="_pme_dlg_dia",
+        )
+    with col_ini:
+        new_inicio = st.time_input(
+            "Inicio", value=pending["hora_inicio"], key="_pme_dlg_ini",
+        )
+    with col_fin:
+        new_fin = st.time_input(
+            "Fin", value=pending["hora_fin"], key="_pme_dlg_fin",
+        )
+
+    col_com, col_tipo = st.columns(2)
+    with col_com:
+        new_com_lbl = st.selectbox(
+            "Comisión",
+            options=_com_keys,
+            index=_current_idx,
+            key="_pme_dlg_com",
+        )
+        new_com_id = _com_options[new_com_lbl]
+    with col_tipo:
+        _tipo_options = ["sin determinar", "teorica", "laboratorio"]
+        _pending_tipo = pending.get("tipo_clase") or "sin determinar"
+        new_tipo = st.selectbox(
+            "Tipo de clase",
+            options=_tipo_options,
+            index=(
+                _tipo_options.index(_pending_tipo)
+                if _pending_tipo in _tipo_options else 0
+            ),
+            key="_pme_dlg_tipo",
+            help=(
+                "Sin determinar: el LP elige cuál de los bloques con "
+                "horas suficientes será de laboratorio. "
+                "Teórica/Laboratorio: forzar el tipo."
+            ),
+        )
+
+    st.divider()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Guardar", type="primary", use_container_width=True):
+            # Comparar contra baseline (DB) para detectar cambios reales
+            _base_dia = pending.get("_baseline_dia", pending["dia"])
+            _base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
+            _base_hf = pending.get("_baseline_hf", pending["hora_fin"])
+
+            cambios: dict = {}
+            if new_dia != _base_dia:
+                cambios["dia"] = new_dia
+            if new_inicio != _base_hi:
+                cambios["hora_inicio"] = new_inicio
+            if new_fin != _base_hf:
+                cambios["hora_fin"] = new_fin
+            if new_com_id != pending.get("comision_id"):
+                cambios["comision_id"] = new_com_id
+            _new_tipo_val = (
+                None if new_tipo == "sin determinar" else new_tipo
+            )
+            if _new_tipo_val != (pending.get("tipo_clase") or None):
+                cambios["tipo_clase"] = _new_tipo_val
+
+            if cambios:
+                with next(get_session()) as session:
+                    _h = session.get(HorarioDB, pending["horario_id"])
+                    if _h is not None:
+                        for _k, _v in cambios.items():
+                            setattr(_h, _k, _v)
+                        session.add(_h)
+                        session.commit()
+                st.session_state["_pme_toast"] = (
+                    f"{_materia_codigo} actualizada"
+                )
+            else:
+                st.session_state["_pme_toast"] = "Sin cambios"
+            st.session_state["_pme_processed_click"] = pending["_key"]
+            _pme_invalidate_caches(pending)
+            del st.session_state["_pme_pending_click"]
+            st.rerun()
+    with col2:
+        if st.button("Eliminar", use_container_width=True):
+            with next(get_session()) as session:
+                _h = session.get(HorarioDB, pending["horario_id"])
+                if _h is not None:
+                    session.delete(_h)
+                    session.commit()
+            st.session_state["_pme_toast"] = (
+                f"{_materia_codigo} eliminada"
+            )
+            st.session_state["_pme_processed_click"] = pending["_key"]
+            _pme_invalidate_caches(pending)
+            del st.session_state["_pme_pending_click"]
+            st.rerun()
+    with col3:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_pme_processed_click"] = pending["_key"]
+            del st.session_state["_pme_pending_click"]
+            st.rerun()
+
+
+@st.dialog("Agregar horario", width="large")
+def _dialog_add_horario():
+    """Dialog para crear un HorarioDB nuevo cuando el usuario seleccionó
+    un rango vacío en el calendario."""
+    import uuid as _uuid
+    pending = st.session_state.get("_pme_pending_select")
+    if not pending:
+        st.rerun()
+        return
+
+    _plan_id = pending["plan_id"]
+    _materia_codigo = pending["materia_codigo"]
+
+    # Comisiones existentes para esta materia en el plan
+    with next(get_session()) as session:
+        _coms = list(session.exec(
+            select(ComisionDB)
+            .where(ComisionDB.plan_cursada_id == _plan_id)
+            .where(ComisionDB.materia_codigo == _materia_codigo)
+            .order_by(ComisionDB.numero)  # type: ignore[arg-type]
+        ).all())
+        # Default cupo si hay que crear comision nueva
+        _mat_db = session.get(MateriaDB, _materia_codigo)
+        _default_cupo = (_mat_db.cupo if (_mat_db and _mat_db.cupo) else 30)
+
+    _NEW_COM_LABEL = "➕ Nueva comisión"
+    _com_options: dict[str, Optional[str]] = {
+        f"C{c.numero} — {c.nombre}": c.id for c in _coms
+    }
+    _com_options[_NEW_COM_LABEL] = None
+    _com_keys = list(_com_options.keys())
+
+    st.markdown(f"**Materia**: `{_materia_codigo}`")
+    st.markdown(
+        f"**{pending['dia']}** · "
+        f"{pending['hora_inicio'].strftime('%H:%M')} - "
+        f"{pending['hora_fin'].strftime('%H:%M')}"
+    )
+
+    col_com, col_tipo = st.columns(2)
+    with col_com:
+        new_com_lbl = st.selectbox(
+            "Comisión",
+            options=_com_keys, index=0,
+            key="_pme_dlg_add_com",
+            help="Elegí una comisión existente o creá una nueva.",
+        )
+    with col_tipo:
+        _tipo_options = ["sin determinar", "teorica", "laboratorio"]
+        new_tipo = st.selectbox(
+            "Tipo de clase",
+            options=_tipo_options, index=0,
+            key="_pme_dlg_add_tipo",
+        )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Confirmar", type="primary", use_container_width=True):
+            _tipo_val = None if new_tipo == "sin determinar" else new_tipo
+            with next(get_session()) as session:
+                _target_com_id = _com_options[new_com_lbl]
+                if _target_com_id is None:
+                    # Crear comision nueva
+                    _max_num = max(
+                        (c.numero for c in _coms), default=0,
+                    )
+                    _new_num = _max_num + 1
+                    _new_com = ComisionDB(
+                        id=str(_uuid.uuid4()),
+                        materia_codigo=_materia_codigo,
+                        plan_cursada_id=_plan_id,
+                        comision_key=f"{_materia_codigo}-{_new_num:03d}",
+                        nombre=f"Comision {_new_num}",
+                        numero=_new_num,
+                        cupo=_default_cupo,
+                    )
+                    session.add(_new_com)
+                    session.flush()
+                    _target_com_id = _new_com.id
+
+                _new_h = HorarioDB(
+                    id=str(_uuid.uuid4()),
+                    comision_id=_target_com_id,
+                    codigo_materia=_materia_codigo,
+                    dia=pending["dia"],
+                    hora_inicio=pending["hora_inicio"],
+                    hora_fin=pending["hora_fin"],
+                    tipo_clase=_tipo_val,
+                )
+                session.add(_new_h)
+                session.commit()
+            st.session_state["_pme_toast"] = (
+                f"{_materia_codigo} agregada"
+            )
+            st.session_state["_pme_processed_select"] = pending["_key"]
+            _pme_invalidate_caches(pending)
+            del st.session_state["_pme_pending_select"]
+            st.rerun()
+    with col2:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_pme_processed_select"] = pending["_key"]
+            del st.session_state["_pme_pending_select"]
+            st.rerun()
+
+
+def _pme_invalidate_caches(pending: dict) -> None:
+    """Limpia los caches del editor para forzar recarga desde DB."""
+    _kp = pending.get("_kp")
+    if not _kp:
+        return
+    for _k in list(st.session_state.keys()):
+        if isinstance(_k, str) and _k.startswith(_kp):
+            del st.session_state[_k]
+
+
+def _render_plan_editable_calendar(
+    *, plan_id: str, materia_codigo: str, kp: str,
+) -> None:
+    """Renderiza el calendario semanal editable filtrado a la materia.
+
+    Soporta drag/resize/click/select. Las mutaciones pasan por dialogs
+    de confirmación (`_dialog_edit_horario`, `_dialog_add_horario`).
+    Si hay un dialog pendiente, se muestra read-only para evitar
+    callbacks replayados.
+    """
+    # Si hay dialog activo, render read-only
+    if (
+        "_pme_pending_click" in st.session_state
+        or "_pme_pending_select" in st.session_state
+    ):
+        _render_plan_calendar_readonly(plan_id, materia_codigo, kp)
+        return
+
+    # Cargar grid: convertimos HorarioDB → ScheduleBlock para reusar el
+    # calendario editable (que requiere entry_id por bloque).
+    with next(get_session()) as session:
+        config = get_or_create_config(session)
+        _coms = list(session.exec(
+            select(ComisionDB)
+            .where(ComisionDB.plan_cursada_id == plan_id)
+            .where(ComisionDB.materia_codigo == materia_codigo)
+        ).all())
+        _com_by_id = {c.id: c for c in _coms}
+        _com_ids = list(_com_by_id.keys())
+        _hs: list[HorarioDB] = []
+        if _com_ids:
+            _hs = list(session.exec(
+                select(HorarioDB).where(col(HorarioDB.comision_id).in_(_com_ids))
+            ).all())
+        _mat_db = session.get(MateriaDB, materia_codigo)
+        _mat_nombre = _mat_db.nombre if _mat_db else materia_codigo
+
+    grid_filt: dict[str, list[ScheduleBlock]] = {}
+    for h in _hs:
+        com = _com_by_id.get(h.comision_id)
+        block = ScheduleBlock(
+            entry_id=h.id,
+            materia_codigo=materia_codigo,
+            materia_nombre=_mat_nombre,
+            hora_inicio=h.hora_inicio,
+            hora_fin=h.hora_fin,
+            comision=com.numero if com else None,
+        )
+        grid_filt.setdefault(h.dia, []).append(block)
+
+    st.markdown(
+        "**🗓️ Calendario** — drag para mover/redimensionar, click "
+        "para editar, drag sobre celdas vacías para agregar"
+    )
+    action = render_editable_schedule_calendar(
+        grid_filt, config,
+        key=f"{kp}_cal_edit",
+        allow_empty=True,
+        color_by_comision=True,
+    )
+
+    if action is None:
+        return
+
+    _key_str = (
+        f"{action.action}|{getattr(action, 'entry_id', '') or ''}|"
+        f"{action.dia}|{action.hora_inicio}|{action.hora_fin}"
+    )
+
+    # Cache global de actions procesadas (cap 200, FIFO)
+    _processed_set: set = st.session_state.setdefault(
+        "_pme_processed_actions", set(),
+    )
+    _processed_list: list = st.session_state.setdefault(
+        "_pme_processed_actions_order", [],
+    )
+    if _key_str in _processed_set:
+        return
+    _processed_set.add(_key_str)
+    _processed_list.append(_key_str)
+    while len(_processed_list) > 200:
+        _evicted = _processed_list.pop(0)
+        _processed_set.discard(_evicted)
+
+    if action.action == "move":
+        if not action.entry_id:
+            return
+        with next(get_session()) as session:
+            _h = session.get(HorarioDB, action.entry_id)
+            if _h is None:
+                return
+            _baseline_dia = _h.dia
+            _baseline_hi = _h.hora_inicio
+            _baseline_hf = _h.hora_fin
+            _tipo = _h.tipo_clase
+            _com_id = _h.comision_id
+        st.session_state["_pme_pending_click"] = {
+            "plan_id": plan_id,
+            "horario_id": action.entry_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "comision_id": _com_id,
+            "tipo_clase": _tipo,
+            "_baseline_dia": _baseline_dia,
+            "_baseline_hi": _baseline_hi,
+            "_baseline_hf": _baseline_hf,
+            "_kp": kp,
+            "_key": _key_str,
+        }
+        _dialog_edit_horario()
+
+    elif action.action == "click":
+        if not action.entry_id:
+            return
+        with next(get_session()) as session:
+            _h = session.get(HorarioDB, action.entry_id)
+            _tipo = _h.tipo_clase if _h else None
+            _com_id = _h.comision_id if _h else None
+        st.session_state["_pme_pending_click"] = {
+            "plan_id": plan_id,
+            "horario_id": action.entry_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "comision_id": _com_id,
+            "tipo_clase": _tipo,
+            "_kp": kp,
+            "_key": _key_str,
+        }
+        _dialog_edit_horario()
+
+    elif action.action == "select":
+        st.session_state["_pme_pending_select"] = {
+            "plan_id": plan_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "_kp": kp,
+            "_key": _key_str,
+        }
+        _dialog_add_horario()
+
+
+def _render_plan_calendar_readonly(
+    plan_id: str, materia_codigo: str, kp: str,
+) -> None:
+    """Calendario read-only (usado mientras hay un dialog abierto)."""
+    from src.ui.calendar_render import render_timetable_calendar
+    with next(get_session()) as session:
+        plan = session.get(PlanificacionCursadaDB, plan_id)
+        if plan is None or not plan.ciclo_id:
+            return
+        config = get_or_create_config(session)
+        grid = build_timetable_grid(
+            session, plan_id, config,
+            filtered_materia_codigos={materia_codigo},
+            ciclo_id=plan.ciclo_id,
+        )
+    if grid:
+        render_timetable_calendar(
+            grid, config, key=f"{kp}_cal_ro_dialog",
+        )
 
 
 def render_plan_materia_detail(
@@ -67,6 +518,14 @@ def render_plan_materia_detail(
         invalidate_cache_keys: keys de session_state a popear cuando se
             detecta cambio (para invalidar el summary cacheado).
     """
+    # Toast de confirmacion despues de un dialog (rerun no permite
+    # st.toast directo desde el handler).
+    _toast_msg = st.session_state.pop("_pme_toast", None)
+    if _toast_msg:
+        st.toast(_toast_msg)
+
+    # Key prefix para todos los caches del editor
+    _kp = f"{key_ns}_{plan_id}_{materia_codigo}"
     # Carga inicial: plan, ciclo, materia, comisiones, horarios.
     with next(get_session()) as session:
         plan = session.get(PlanificacionCursadaDB, plan_id)
@@ -113,6 +572,11 @@ def render_plan_materia_detail(
             "Datos del catálogo (read-only). Para modificarlos, ir a "
             "**📚 Materias**."
         )
+
+    # --- Calendario editable (drag/click/select + dialogs) ---
+    _render_plan_editable_calendar(
+        plan_id=plan_id, materia_codigo=materia_codigo, kp=_kp,
+    )
 
     # --- Particion teoria/lab a nivel materia (solo flags por comision) ---
     with next(get_session()) as _part_sess:

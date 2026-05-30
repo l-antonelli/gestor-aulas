@@ -1731,31 +1731,16 @@ def _render_materia_inner(
     _code = row["codigo"]
 
     if source == "plan" and plan_id:
-        # Plan: calendario read-only + editor inline (plan_materia_editor
-        # no tiene calendario editable propio todavia).
-        with next(get_session()) as _cal_sess:
-            from src.database.crud import get_or_create_config as _gc
-            from src.services.plan_generation_service import (
-                build_timetable_grid as _btg,
-            )
-            _cal_config = _gc(_cal_sess)
-            _grid = _btg(
-                _cal_sess, plan_id, _cal_config,
-                filtered_materia_codigos={_code},
-                ciclo_id=ciclo_id,
-            )
-        if _grid:
-            from src.ui.calendar_render import render_timetable_calendar
-            st.markdown("**🗓️ Vista calendario**")
-            render_timetable_calendar(
-                _grid, _cal_config,
-                key=f"{key_ns}_cal_{_code}",
-            )
+        # Plan: el editor renderea su propio calendario editable
+        # (drag/click/select + dialogs). No agregamos calendario
+        # read-only previo (seria redundante).
         from src.ui.plan_materia_editor import render_plan_materia_detail
         render_plan_materia_detail(
             plan_id=plan_id,
             materia_codigo=_code,
             key_ns=key_ns,
+            pending_revalidate_key=pending_revalidate_key,
+            invalidate_cache_keys=invalidate_cache_keys,
         )
     elif source == "schedule" and schedule_id:
         # Schedule: el editor renderea su propio calendario editable
