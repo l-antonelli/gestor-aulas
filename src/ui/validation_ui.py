@@ -1176,6 +1176,15 @@ def _render_detalle_por_materia(
         ).all())
         _mat_map = {m.codigo: m for m in _mats}
 
+        # Materias con laboratorio asignado (para filtro "Solo con lab")
+        from src.database.models import MateriaLaboratorioDB as _MLB
+        _lab_rows = list(session.exec(
+            select(_MLB.materia_codigo)
+            .where(col(_MLB.materia_codigo).in_(_all_codes))
+            .distinct()
+        ).all())
+        _labs_set: set[str] = set(_lab_rows)
+
         # PE rows para carrera/anio/cuatri (cualquiera del ciclo)
         _pe_map: dict[str, list[PlanEstudioDB]] = {}
         if ciclo_id:
@@ -1254,6 +1263,8 @@ def _render_detalle_por_materia(
             _n_horarios = _entry_count_sched.get(_code, 0)
         _hsem = _m.horas_semanales if _m else None
         _virtual = bool(_m.virtual) if _m else False
+        # Carreras distintas que comparten esta materia (Comunes/Exclusivas)
+        _n_carreras = len({_pe.carrera_codigo for _pe in _pes})
 
         _data = {
             "codigo": _code,
@@ -1263,6 +1274,8 @@ def _render_detalle_por_materia(
             "cuatri": _cuatri,
             "optativa": _optativa,
             "virtual": _virtual,
+            "tiene_lab": _code in _labs_set,
+            "n_carreras": _n_carreras,
             "horas_semanales": _hsem,
             "n_comisiones": _n_coms,
             "n_horarios": _n_horarios,
@@ -1283,11 +1296,14 @@ def _render_detalle_por_materia(
     _mt2.metric("OK", _n_ok)
     _mt3.metric("Requieren revisión", _n_revision)
 
+    # =========================================================================
     # Filtros
+    # =========================================================================
     _carreras_opts = sorted({r["carrera"] for r in _rows if r["carrera"] != "—"})
     _anios_opts = sorted({r["anio"] for r in _rows if r["anio"] is not None})
     _cuatris_opts = sorted({r["cuatri"] for r in _rows if r["cuatri"] != "—"})
     _estados_opts = ["OK", "Faltante", "No esperada", "Conflictiva", "Sin datos"]
+    _tipo_opts = ["Todas", "Comunes", "Exclusivas"]
 
     _f1, _f2, _f3, _f4, _f5 = st.columns(5)
     with _f1:
@@ -1316,7 +1332,39 @@ def _render_detalle_por_materia(
             key=f"{key_ns}_dpm_estado",
         )
 
-    # Aplicar filtros
+    _g1, _g2, _g3 = st.columns(3)
+    with _g1:
+        _f_tipo = st.selectbox(
+            "Tipo",
+            options=_tipo_opts, index=0,
+            key=f"{key_ns}_dpm_tipo",
+            help=(
+                "Comunes: materias compartidas entre 2+ carreras. "
+                "Exclusivas: materias de una sola carrera."
+            ),
+        )
+    with _g2:
+        _only_lab = st.toggle(
+            "Solo con lab asignado",
+            value=False,
+            key=f"{key_ns}_dpm_only_lab",
+            help=(
+                "Mostrar únicamente materias que tienen al menos un "
+                "laboratorio compatible asignado en MateriaLaboratorioDB."
+            ),
+        )
+    with _g3:
+        _only_issues = st.toggle(
+            "Solo con issues",
+            value=False,
+            key=f"{key_ns}_dpm_only_issues",
+            help=(
+                "Mostrar solo materias cuyo estado no es OK (faltantes, "
+                "no esperadas, conflictivas o sin datos)."
+            ),
+        )
+
+    # --- Aplicar filtros ---
     def _passes(r: dict) -> bool:
         if _busc.strip():
             _t = _busc.strip().lower()
@@ -1330,6 +1378,14 @@ def _render_detalle_por_materia(
             return False
         if _f_estado and r["estado"] not in _f_estado:
             return False
+        if _f_tipo == "Comunes" and r["n_carreras"] < 2:
+            return False
+        if _f_tipo == "Exclusivas" and r["n_carreras"] != 1:
+            return False
+        if _only_lab and not r["tiene_lab"]:
+            return False
+        if _only_issues and r["estado"] == "OK":
+            return False
         return True
 
     _filtered = [r for r in _rows if _passes(r)]
@@ -1337,14 +1393,15 @@ def _render_detalle_por_materia(
 
     if not _filtered:
         st.caption(
-            "Ninguna materia matchea los filtros. "
-            "Probá ajustar la búsqueda."
+            "Ninguna materia matchea los filtros. Ajustá los filtros."
         )
         return
 
     st.caption(f"Mostrando {len(_filtered)} de {_n_total} materias.")
 
-    # Tabla compacta
+    # =========================================================================
+    # Tabla resumen (siempre visible, con todas las filtradas)
+    # =========================================================================
     _disp_rows = []
     for r in _filtered:
         _disp_rows.append({
@@ -1362,6 +1419,7 @@ def _render_detalle_por_materia(
             ),
             "Optativa": "Sí" if r["optativa"] else "—",
             "Virtual": "Sí" if r["virtual"] else "—",
+            "Lab": "Sí" if r["tiene_lab"] else "—",
         })
     st.dataframe(
         pd.DataFrame(_disp_rows),
@@ -1369,86 +1427,146 @@ def _render_detalle_por_materia(
     )
 
     # =========================================================================
-    # Selector de materia + (editor inline + calendario solo para plan)
+    # Loop paginado de expanders por materia (con editor inline + calendario)
     # =========================================================================
-    st.divider()
-    if source == "plan":
-        st.markdown("##### 🛠️ Editar materia")
-    else:
-        st.markdown("##### 🔍 Ver detalle de materia")
-
-    # Si las tablas de discrepancias/conflictos pidieron pre-seleccionar
-    # una materia (boton "Editar materia"), lo consumimos antes de
-    # instanciar el selectbox. Si la materia no esta entre las filtradas,
-    # ampliamos limpiando los filtros — no es ideal pero evita el caso
-    # silencioso "aprete editar y no paso nada".
     _pending_key = f"{key_ns}_dpm_pending_codigo"
     _pending_codigo: Optional[str] = st.session_state.pop(_pending_key, None)
 
-    # Si lo pedido no esta entre las filtradas, sumamos su row al final
-    # (sin tocar los filtros visibles). Asi el editor abre la materia
-    # solicitada aunque no matchee los filtros.
-    _sel_rows = list(_filtered)
+    # Si lo pedido no está entre las filtradas, lo agregamos al final
+    # del set para que aparezca en la página actual del loop.
+    _loop_rows = list(_filtered)
     if _pending_codigo and not any(
-        r["codigo"] == _pending_codigo for r in _sel_rows
+        r["codigo"] == _pending_codigo for r in _loop_rows
     ):
         _extra = next(
             (r for r in _rows if r["codigo"] == _pending_codigo), None
         )
         if _extra:
-            _sel_rows.append(_extra)
+            _loop_rows.append(_extra)
 
-    _sel_options = {
-        f"{_estado_badge(_r['estado'])} · "
-        f"{_label_codnom(_r['codigo'], summary.mat_map | summary.esperadas)} "
-        f"· {_r['carrera']}": _r["codigo"]
-        for _r in _sel_rows
-    }
-    _sel_keys = list(_sel_options.keys())
+    # --- Paginación ---
+    _PAGE_SIZE = 10
+    _total_pages = max(1, (len(_loop_rows) + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
-    if not _sel_keys:
-        st.caption("Sin materias para editar.")
-        return
-
-    # Default: si hay pending, ese; sino primera materia que requiere
-    # revisión (estado != OK).
-    _default_idx = 0
+    # Si hay pending, forzar la página donde está esa materia
+    _page_key = f"{key_ns}_dpm_page"
     if _pending_codigo:
-        for _i, _r in enumerate(_sel_rows):
+        for _i, _r in enumerate(_loop_rows):
             if _r["codigo"] == _pending_codigo:
-                _default_idx = _i
-                break
-    else:
-        for _i, _r in enumerate(_sel_rows):
-            if _r["estado"] != "OK":
-                _default_idx = _i
+                st.session_state[_page_key] = (_i // _PAGE_SIZE) + 1
                 break
 
-    # Si tenemos pending, forzamos el valor del selectbox para que se
-    # posicione en esa materia (sin importar lo que el usuario eligio
-    # antes). Lo seteamos ANTES de instanciar el widget.
-    _selbox_key = f"{key_ns}_dpm_active"
-    if _pending_codigo:
-        st.session_state[_selbox_key] = _sel_keys[_default_idx]
-
-    _sel_lbl = st.selectbox(
-        "Materia activa",
-        options=_sel_keys,
-        index=min(_default_idx, len(_sel_keys) - 1),
-        key=_selbox_key,
-        help=(
-            "Elegí una materia de la tabla para editar sus comisiones, "
-            "horarios, cupo, coeficientes y método de forecast. Por "
-            "default se posiciona en la primera que requiere revisión. "
-            "Los botones 'Editar materia' de las tablas de arriba "
-            "saltan acá pre-seleccionando la materia elegida."
-        ),
+    st.divider()
+    st.markdown(
+        f"##### 🛠️ Detalle por materia ({len(_loop_rows)} resultado(s))"
     )
-    _active_codigo = _sel_options[_sel_lbl]
 
-    # Calendario embebido de la materia activa.
-    # - Plan: usar build_timetable_grid sobre ComisionDB+HorarioDB.
-    # - Schedule: usar build_schedule_grid sobre ScheduleEntryDB.
+    # Botones globales y selector de página
+    _bc1, _bc2, _bc3, _bc4 = st.columns([1, 1, 1, 3])
+    with _bc1:
+        if st.button(
+            "Abrir todas",
+            key=f"{key_ns}_dpm_btn_open_all",
+            help="Expandir todas las materias visibles en la página actual.",
+            use_container_width=True,
+        ):
+            st.session_state[f"{key_ns}_dpm_force_expand"] = "open"
+            st.rerun()
+    with _bc2:
+        if st.button(
+            "Cerrar todas",
+            key=f"{key_ns}_dpm_btn_close_all",
+            help="Colapsar todas las materias de la página actual.",
+            use_container_width=True,
+        ):
+            st.session_state[f"{key_ns}_dpm_force_expand"] = "close"
+            st.rerun()
+    with _bc3:
+        _page = st.number_input(
+            f"Página (de {_total_pages})",
+            min_value=1, max_value=_total_pages,
+            value=min(
+                st.session_state.get(_page_key, 1), _total_pages
+            ),
+            step=1,
+            key=_page_key,
+            label_visibility="collapsed",
+        )
+    with _bc4:
+        st.caption(
+            f"Página {int(_page)} de {_total_pages} · "
+            f"{_PAGE_SIZE} materias/página · "
+            f"total {len(_loop_rows)}"
+        )
+
+    _force_expand = st.session_state.pop(
+        f"{key_ns}_dpm_force_expand", None
+    )
+
+    # Slice de la página
+    _start = (int(_page) - 1) * _PAGE_SIZE
+    _end = _start + _PAGE_SIZE
+    _page_rows = _loop_rows[_start:_end]
+
+    # Render expanders
+    _icon_map = {"ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️"}
+    for _r in _page_rows:
+        _code = _r["codigo"]
+        _is_pending = _pending_codigo == _code
+
+        # Worst icon cacheado por el editor en el render anterior. Si
+        # no hay cache, usar el estado del row.
+        _worst_key_s = f"{key_ns}_dpm_edit_chk_worst_{_code}"
+        _worst_cached = st.session_state.get(_worst_key_s)
+        if _worst_cached:
+            _worst_icon = _icon_map.get(_worst_cached, "•")
+        else:
+            _worst_icon = _estado_badge(_r["estado"]).split(" ")[0]
+
+        _hsem_disp = (
+            f"{_r['horas_semanales']:g}h/sem"
+            if _r["horas_semanales"] is not None else "h/sem ?"
+        )
+        _hdr = (
+            f"{_worst_icon} {_code} — "
+            f"{_r['nombre']} | {_r['n_comisiones']} com · "
+            f"{_r['n_horarios']} clases · {_hsem_disp}"
+        )
+
+        # Política de expansión:
+        # - Si hubo "Abrir todas" / "Cerrar todas" en este rerun, override.
+        # - Si la materia es la pre-seleccionada, abrir.
+        # - Default: cerrado.
+        if _force_expand == "open":
+            _eff_expand = True
+        elif _force_expand == "close":
+            _eff_expand = False
+        elif _is_pending:
+            _eff_expand = True
+        else:
+            _eff_expand = False
+
+        with st.expander(_hdr, expanded=_eff_expand):
+            _render_materia_inner(
+                row=_r,
+                source=source,
+                plan_id=plan_id,
+                schedule_id=schedule_id,
+                ciclo_id=ciclo_id,
+                key_ns=f"{key_ns}_dpm_edit",
+            )
+
+
+def _render_materia_inner(
+    *, row: dict, source: Literal["plan", "schedule"],
+    plan_id: Optional[str], schedule_id: Optional[str],
+    ciclo_id: Optional[str], key_ns: str,
+) -> None:
+    """Cuerpo de un expander del loop "Detalle por materia": calendario
+    embebido + editor inline (plan o schedule)."""
+    _code = row["codigo"]
+
+    # --- Calendario embebido ---
     if source == "plan" and plan_id:
         with next(get_session()) as _cal_sess:
             from src.database.crud import get_or_create_config as _gc
@@ -1458,7 +1576,7 @@ def _render_detalle_por_materia(
             _cal_config = _gc(_cal_sess)
             _grid = _btg(
                 _cal_sess, plan_id, _cal_config,
-                filtered_materia_codigos={_active_codigo},
+                filtered_materia_codigos={_code},
                 ciclo_id=ciclo_id,
             )
         if _grid:
@@ -1466,7 +1584,7 @@ def _render_detalle_por_materia(
             st.markdown("**🗓️ Vista calendario**")
             render_timetable_calendar(
                 _grid, _cal_config,
-                key=f"{key_ns}_dpm_cal_{_active_codigo}",
+                key=f"{key_ns}_cal_{_code}",
             )
     elif source == "schedule" and schedule_id:
         with next(get_session()) as _cal_sess:
@@ -1476,9 +1594,8 @@ def _render_detalle_por_materia(
             )
             _cal_config = _gc(_cal_sess)
             _grid_full = _bsg(_cal_sess, schedule_id)
-        # Filtrar a la materia activa
         _grid = {
-            dia: [b for b in blocks if b.materia_codigo == _active_codigo]
+            dia: [b for b in blocks if b.materia_codigo == _code]
             for dia, blocks in _grid_full.items()
         }
         _grid = {d: bs for d, bs in _grid.items() if bs}
@@ -1487,25 +1604,30 @@ def _render_detalle_por_materia(
             st.markdown("**🗓️ Vista calendario**")
             render_schedule_calendar(
                 _grid, _cal_config,
-                key=f"{key_ns}_dpm_cal_{_active_codigo}",
+                key=f"{key_ns}_cal_{_code}",
                 color_by_comision=True,
             )
 
-    # Editor inline solo para plan; en schedule el editor real vive en
-    # la pestaña Editar de Cronogramas.
+    st.markdown("**✏️ Editor**")
     if source == "plan" and plan_id:
-        st.markdown("**✏️ Editor**")
         from src.ui.plan_materia_editor import render_plan_materia_detail
         render_plan_materia_detail(
             plan_id=plan_id,
-            materia_codigo=_active_codigo,
-            key_ns=f"{key_ns}_dpm_edit",
+            materia_codigo=_code,
+            key_ns=key_ns,
         )
-    elif source == "schedule":
-        st.caption(
-            "Para editar horarios o comisiones de esta materia, ir al tab "
-            "**Editar** de la página de Cronogramas."
+    elif source == "schedule" and schedule_id:
+        from src.ui.schedule_materia_editor import (
+            render_schedule_materia_detail,
         )
+        _worst = render_schedule_materia_detail(
+            schedule_id=schedule_id,
+            materia_codigo=_code,
+            key_ns=key_ns,
+        )
+        # Cache worst para que el header del expander en el siguiente
+        # render muestre el icono apropiado.
+        st.session_state[f"{key_ns}_chk_worst_{_code}"] = _worst
 
 
 def _estado_badge(estado: str) -> str:
