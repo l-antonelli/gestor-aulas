@@ -1262,6 +1262,7 @@ def _render_detalle_por_materia(
             _n_coms = _com_count_sched.get(_code, 0)
             _n_horarios = _entry_count_sched.get(_code, 0)
         _hsem = _m.horas_semanales if _m else None
+        _hlab = _m.horas_laboratorio if _m else None
         _virtual = bool(_m.virtual) if _m else False
         # Carreras distintas que comparten esta materia (Comunes/Exclusivas)
         _n_carreras = len({_pe.carrera_codigo for _pe in _pes})
@@ -1275,6 +1276,7 @@ def _render_detalle_por_materia(
             "optativa": _optativa,
             "virtual": _virtual,
             "tiene_lab": _code in _labs_set,
+            "horas_lab": _hlab,
             "n_carreras": _n_carreras,
             "horas_semanales": _hsem,
             "n_comisiones": _n_coms,
@@ -1398,6 +1400,46 @@ def _render_detalle_por_materia(
         return
 
     st.caption(f"Mostrando {len(_filtered)} de {_n_total} materias.")
+
+    # =========================================================================
+    # Tabla "Resumen por carrera" — counts de status por carrera
+    # =========================================================================
+    _carrera_counts: dict[str, dict[str, int]] = {}
+    for r in _filtered:
+        cc = r["carrera"]
+        if cc == "—":
+            continue
+        bkt = _carrera_counts.setdefault(
+            cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
+                 "Conflictiva": 0, "Sin datos": 0},
+        )
+        bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
+    if _carrera_counts:
+        _cs_rows = []
+        for cc in sorted(_carrera_counts.keys()):
+            counts = _carrera_counts[cc]
+            _cs_rows.append({
+                "Carrera": cc,
+                "Materias": sum(counts.values()),
+                "✅ OK": counts["OK"],
+                "⚠️ Revisión": counts["Conflictiva"] + counts["Sin datos"],
+                "📭 Faltantes": counts["Faltante"],
+                "📥 No esperadas": counts["No esperada"],
+            })
+        # Total al pie
+        _tot = {
+            "Carrera": "**Total**",
+            "Materias": sum(r["Materias"] for r in _cs_rows),
+            "✅ OK": sum(r["✅ OK"] for r in _cs_rows),
+            "⚠️ Revisión": sum(r["⚠️ Revisión"] for r in _cs_rows),
+            "📭 Faltantes": sum(r["📭 Faltantes"] for r in _cs_rows),
+            "📥 No esperadas": sum(r["📥 No esperadas"] for r in _cs_rows),
+        }
+        st.markdown("**Resumen por carrera (sobre el set filtrado)**")
+        st.dataframe(
+            pd.DataFrame(_cs_rows + [_tot]),
+            use_container_width=True, hide_index=True,
+        )
 
     # =========================================================================
     # Tabla resumen (siempre visible, con todas las filtradas)
@@ -1534,10 +1576,24 @@ def _render_detalle_por_materia(
             f"{_r['horas_semanales']:g}h/sem"
             if _r["horas_semanales"] is not None else "h/sem ?"
         )
+
+        # Sufijo de modo lab: ad-hoc (reserva) si tiene lab asignado y
+        # hl=0; lab fijo Xh si hl>0.
+        _hlab_v = _r.get("horas_lab")
+        _has_lab_v = _r.get("tiene_lab", False)
+        if _has_lab_v and _hlab_v is not None and _hlab_v == 0:
+            _lab_suffix = " · ℹ️ lab por reserva"
+        elif _has_lab_v and _hlab_v is not None and _hlab_v > 0:
+            _lab_suffix = f" · 🧪 lab fijo {_hlab_v:g}h"
+        elif _has_lab_v and _hlab_v is None:
+            _lab_suffix = " · ⚠️ lab pendiente"
+        else:
+            _lab_suffix = ""
+
         _hdr = (
             f"{_worst_icon} {_code} — "
             f"{_r['nombre']} | {_r['n_comisiones']} com · "
-            f"{_r['n_horarios']} clases · {_hsem_disp}"
+            f"{_r['n_horarios']} clases · {_hsem_disp}{_lab_suffix}"
         )
 
         # Política de expansión:
