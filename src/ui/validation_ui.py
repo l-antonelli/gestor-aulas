@@ -1230,6 +1230,18 @@ def _render_detalle_por_materia(
             st.session_state[pending_revalidate_key] = True
             for _k in (invalidate_cache_keys or []):
                 st.session_state.pop(_k, None)
+            # Invalidar caches de _chk_worst de todos los expanders del
+            # editor para que el header del expander muestre el icono
+            # fresco en el proximo render (en lugar del cacheado del
+            # render anterior, que es stale despues de la edicion).
+            _chk_prefix = f"{key_ns}_dpm_edit_"
+            for _k in list(st.session_state.keys()):
+                if (
+                    isinstance(_k, str)
+                    and _k.startswith(_chk_prefix)
+                    and _k.endswith("_chk_worst")
+                ):
+                    st.session_state.pop(_k, None)
             # Re-run inmediato para que el panel padre vea el flag
             # antes de que rendereemos contenido stale.
             st.rerun()
