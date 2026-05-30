@@ -184,12 +184,21 @@ def _dialog_edit_entry():
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Guardar", type="primary", use_container_width=True):
+            # Comparar contra el "baseline" — los valores actualmente
+            # en DB. Si el dialog vino de un drag/resize del calendario,
+            # `pending["dia"/"hora_*"]` ya tienen los nuevos valores
+            # propuestos (precarga del dialog), pero `_baseline_*` tiene
+            # los valores reales en DB para detectar el cambio.
+            _base_dia = pending.get("_baseline_dia", pending["dia"])
+            _base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
+            _base_hf = pending.get("_baseline_hf", pending["hora_fin"])
+
             cambios: dict = {}
-            if new_dia != pending["dia"]:
+            if new_dia != _base_dia:
                 cambios["dia"] = new_dia
-            if new_inicio != pending["hora_inicio"]:
+            if new_inicio != _base_hi:
                 cambios["hora_inicio"] = new_inicio
-            if new_fin != pending["hora_fin"]:
+            if new_fin != _base_hf:
                 cambios["hora_fin"] = new_fin
             _new_com_val = new_comision if new_comision > 0 else None
             if _new_com_val != (pending.get("comision") or None):
@@ -1351,12 +1360,21 @@ def _render_editable_calendar(
         # edicion con los nuevos valores propuestos. Eso evita que un
         # drag accidental (o que FullCalendar mande eventChange por un
         # click sin drag real) modifique la DB sin confirmacion.
+        # IMPORTANTE: el `pending["dia"/"hora_*"]` lleva los nuevos
+        # valores propuestos (precarga del dialog), pero `_baseline_*`
+        # lleva los valores actuales en DB para comparar al guardar y
+        # detectar el cambio del move correctamente.
         if not action.entry_id:
             return
         with next(get_session()) as session:
             _entry = session.get(ScheduleEntryDB, action.entry_id)
-            _tipo = _entry.tipo_clase if _entry else None
-            _com = _entry.comision if _entry else None
+            if _entry is None:
+                return
+            _baseline_dia = _entry.dia
+            _baseline_hi = _entry.hora_inicio
+            _baseline_hf = _entry.hora_fin
+            _tipo = _entry.tipo_clase
+            _com = _entry.comision
         st.session_state["_sme_pending_click"] = {
             "schedule_id": schedule_id,
             "entry_id": action.entry_id,
@@ -1366,6 +1384,9 @@ def _render_editable_calendar(
             "hora_fin": action.hora_fin,
             "comision": _com,
             "tipo_clase": _tipo,
+            "_baseline_dia": _baseline_dia,
+            "_baseline_hi": _baseline_hi,
+            "_baseline_hf": _baseline_hf,
             "_kp": kp,
             "_save_as_copy": save_as_copy,
             "_key": _key_str,
