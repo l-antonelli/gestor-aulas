@@ -1286,7 +1286,28 @@ def _render_editable_calendar(
     }
     grid_filt = {d: bs for d, bs in grid_filt.items() if bs}
 
-    st.markdown("**🗓️ Calendario** — drag para mover, click para editar, drag sobre celdas vacías para agregar")
+    # Si hay un dialog pendiente, NO procesar nuevas acciones del
+    # calendario: el dialog en si causa rerun con su Guardar/Cancelar
+    # y FullCalendar puede estar replayendo el ultimo evento.
+    if (
+        "_sme_pending_click" in st.session_state
+        or "_sme_pending_select" in st.session_state
+    ):
+        # Aun asi rendereamos el calendario para que el usuario lo vea,
+        # pero ignoramos cualquier action.
+        with next(get_session()) as _ro_sess:
+            from src.ui.calendar_render import render_schedule_calendar
+            render_schedule_calendar(
+                grid_filt, config,
+                key=f"{kp}_cal_ro_dialog",
+                color_by_comision=True,
+            )
+        return
+
+    st.markdown(
+        "**🗓️ Calendario** — drag para mover/redimensionar, click "
+        "para editar, drag sobre celdas vacías para agregar"
+    )
     action = render_editable_schedule_calendar(
         grid_filt, config,
         key=f"{kp}_cal_edit",
@@ -1304,26 +1325,53 @@ def _render_editable_calendar(
         f"{action.dia}|{action.hora_inicio}|{action.hora_fin}"
     )
 
+    # Cache global de actions procesadas en esta sesion (no por accion).
+    # Si el mismo evento ya fue procesado, ignoramos. Esto deduplica
+    # callbacks de FullCalendar que se replayan en reruns. Cap el set
+    # a 200 entries (FIFO mediante list+set) para evitar leak.
+    _processed_set: set = st.session_state.setdefault(
+        "_sme_processed_actions", set(),
+    )
+    _processed_list: list = st.session_state.setdefault(
+        "_sme_processed_actions_order", [],
+    )
+    if _key_str in _processed_set:
+        return
+    _processed_set.add(_key_str)
+    _processed_list.append(_key_str)
+    # Evict oldest si supera el cap
+    while len(_processed_list) > 200:
+        _evicted = _processed_list.pop(0)
+        _processed_set.discard(_evicted)
+
     if action.action == "move":
-        if st.session_state.get("_sme_processed_move") == _key_str:
+        # Tratar el move EXACTAMENTE como un click: abrir el dialog de
+        # edicion con los nuevos valores propuestos. Eso evita que un
+        # drag accidental (o que FullCalendar mande eventChange por un
+        # click sin drag real) modifique la DB sin confirmacion.
+        if not action.entry_id:
             return
         with next(get_session()) as session:
-            update_schedule_entry(
-                session, action.entry_id,
-                dia=action.dia,
-                hora_inicio=action.hora_inicio,
-                hora_fin=action.hora_fin,
-            )
-        st.session_state["_sme_processed_move"] = _key_str
-        # Limpiar caches para que el data_editor refleje el cambio
-        for _k in list(st.session_state.keys()):
-            if isinstance(_k, str) and _k.startswith(kp) and not _k.endswith("_chk_worst"):
-                del st.session_state[_k]
-        st.toast(f"Entrada movida: {action.dia} {action.hora_inicio}-{action.hora_fin}.")
-        st.rerun()
+            _entry = session.get(ScheduleEntryDB, action.entry_id)
+            _tipo = _entry.tipo_clase if _entry else None
+            _com = _entry.comision if _entry else None
+        st.session_state["_sme_pending_click"] = {
+            "schedule_id": schedule_id,
+            "entry_id": action.entry_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "comision": _com,
+            "tipo_clase": _tipo,
+            "_kp": kp,
+            "_save_as_copy": save_as_copy,
+            "_key": _key_str,
+        }
+        _dialog_edit_entry()
 
     elif action.action == "click":
-        if st.session_state.get("_sme_processed_click") == _key_str:
+        if not action.entry_id:
             return
         # Buscar el comision/tipo actual de la entry (no viene en CalendarAction)
         with next(get_session()) as session:
@@ -1345,8 +1393,6 @@ def _render_editable_calendar(
         _dialog_edit_entry()
 
     elif action.action == "select":
-        if st.session_state.get("_sme_processed_select") == _key_str:
-            return
         st.session_state["_sme_pending_select"] = {
             "schedule_id": schedule_id,
             "materia_codigo": materia_codigo,
