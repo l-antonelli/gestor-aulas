@@ -692,7 +692,13 @@ with tab_detalle:
 # =============================================================================
 with tab_grilla:
     st.subheader("Grilla Horaria")
-    st.caption("Visualizacion de horarios en formato de cronograma semanal.")
+    st.caption(
+        "Editor del plan en formato cronograma semanal. Replica la "
+        "funcionalidad de **Cronogramas → Editar** pero opera sobre "
+        "los horarios y comisiones del plan. Útil para resolver "
+        "conflictos de cursada (superposiciones del mismo cuatri/"
+        "carrera) editando directamente en la grilla."
+    )
 
     sel_ciclo_grilla = st.selectbox(
         "Seleccionar Ciclo", options=ciclo_ids, key="planes_sel_ciclo_grilla"
@@ -720,82 +726,12 @@ with tab_grilla:
             )
 
             if sel_plan_grilla_id:
-                # --- Filters ---
-                with next(get_session()) as session:
-                    grilla_pv_ids = session.exec(
-                        select(CicloPlanVersionDB.plan_version_id)
-                        .where(CicloPlanVersionDB.ciclo_id == sel_ciclo_grilla)
-                    ).all()
-
-                    grilla_carreras = []
-                    if grilla_pv_ids:
-                        grilla_carreras = session.exec(
-                            select(CarreraDB)
-                            .join(PlanCarreraVersionDB, CarreraDB.codigo == PlanCarreraVersionDB.carrera_codigo)
-                            .where(PlanCarreraVersionDB.id.in_(grilla_pv_ids))
-                            .distinct()
-                        ).all()
-
-                col_gf1, col_gf2, col_gf3 = st.columns(3)
-                with col_gf1:
-                    g_carrera_opts = ["Todas"] + [f"{c.codigo} - {c.nombre}" for c in grilla_carreras]
-                    g_filtro_carrera = st.selectbox(
-                        "Carrera", options=g_carrera_opts, key="grilla_filtro_carrera"
-                    )
-                with col_gf2:
-                    g_filtro_anio = st.selectbox(
-                        "Año", options=["Todos", 1, 2, 3, 4, 5, 6], key="grilla_filtro_anio"
-                    )
-                with col_gf3:
-                    g_filtro_cuatri = st.selectbox(
-                        "Cuatrimestre",
-                        options=["Todos", "1C", "2C", "Anual"],
-                        key="grilla_filtro_cuatri"
-                    )
-
-                # Determine filtered materia codigos
-                g_filtered_mats = None
-                if g_filtro_carrera != "Todas" or g_filtro_anio != "Todos" or g_filtro_cuatri != "Todos":
-                    with next(get_session()) as session:
-                        g_query = (
-                            select(PlanEstudioDB.materia_codigo)
-                            .where(PlanEstudioDB.plan_version_id.in_(grilla_pv_ids))
-                        )
-                        if g_filtro_carrera != "Todas":
-                            g_carrera_cod = g_filtro_carrera.split(" - ")[0]
-                            g_query = g_query.where(PlanEstudioDB.carrera_codigo == g_carrera_cod)
-                        if g_filtro_anio != "Todos":
-                            g_query = g_query.where(PlanEstudioDB.anio_plan == int(g_filtro_anio))
-                        if g_filtro_cuatri != "Todos":
-                            if g_filtro_cuatri == "Anual":
-                                g_query = g_query.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
-                            else:
-                                g_query = g_query.where(PlanEstudioDB.cuatrimestre_plan == g_filtro_cuatri)
-                        g_filtered_mats = set(session.exec(g_query.distinct()).all())
-
-                # --- Filter: solo materias del cuatrimestre ---
-                solo_cuatri = st.checkbox(
-                    "Solo materias del cuatrimestre del ciclo",
-                    value=False,
-                    key="grilla_solo_cuatri",
+                from src.ui.plan_grilla_editor import (
+                    render_plan_grilla_editor,
                 )
-
-                st.divider()
-
-                # --- Build grid data ---
-                with next(get_session()) as session:
-                    config = get_or_create_config(session)
-                    grid_data = build_timetable_grid(
-                        session, sel_plan_grilla_id, config, g_filtered_mats,
-                        ciclo_id=sel_ciclo_grilla,
-                    )
-
-                # Apply cuatrimestre filter if checkbox is checked
-                if solo_cuatri and grid_data:
-                    for dia in grid_data:
-                        grid_data[dia] = [b for b in grid_data[dia] if b.en_periodo is not False]
-
-                render_timetable_calendar(grid_data, config, key="grilla_cal")
+                render_plan_grilla_editor(
+                    sel_plan_grilla_id, key_ns="plan_grilla",
+                )
 
 
 # =============================================================================
