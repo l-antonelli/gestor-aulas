@@ -40,13 +40,21 @@ import streamlit as st
 from sqlmodel import select
 
 from src.database.connection import get_session
-from src.database.crud import materia_crud
+from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
     MateriaLaboratorioDB,
     ScheduleEntryDB,
 )
-from src.services.schedule_service import sync_preview_edits_to_schedule
+from src.services.schedule_service import (
+    add_schedule_entry,
+    build_schedule_grid,
+    delete_schedule_entry,
+    duplicate_schedule,
+    sync_preview_edits_to_schedule,
+    update_schedule_entry,
+)
 from src.services.validations import _subset_sum_exists
+from src.ui.calendar_render import render_editable_schedule_calendar
 
 
 _DIA_ORD = {
@@ -101,11 +109,241 @@ def _entry_hours(row) -> float:
 
 
 # =============================================================================
+# Dialogs para editar/agregar entries via calendario embebido
+# =============================================================================
+
+@st.dialog("Editar entrada", width="large")
+def _dialog_edit_entry():
+    """Dialog para editar una entry del cronograma desde el calendario.
+
+    Lee de `st.session_state["_sme_pending_click"]` un dict con
+    {schedule_id, entry_id, materia_codigo, dia, hora_inicio, hora_fin,
+    comision, tipo_clase, _key, _save_as_copy}. Guarda la edicion en
+    DB (o en una copia del cronograma si `_save_as_copy=True`).
+    """
+    pending = st.session_state.get("_sme_pending_click")
+    if not pending:
+        st.rerun()
+        return
+
+    _schedule_id = pending["schedule_id"]
+    _save_as_copy = pending.get("_save_as_copy", False)
+    _materia_codigo = pending["materia_codigo"]
+    _dias_list = list(_DIA_ORD.keys())
+
+    st.markdown(f"**Materia**: `{_materia_codigo}`")
+
+    col_dia, col_ini, col_fin = st.columns(3)
+    with col_dia:
+        new_dia = st.selectbox(
+            "Día",
+            options=_dias_list,
+            index=(
+                _dias_list.index(pending["dia"])
+                if pending["dia"] in _dias_list else 0
+            ),
+            key="_sme_dlg_dia",
+        )
+    with col_ini:
+        new_inicio = st.time_input(
+            "Inicio", value=pending["hora_inicio"], key="_sme_dlg_ini",
+        )
+    with col_fin:
+        new_fin = st.time_input(
+            "Fin", value=pending["hora_fin"], key="_sme_dlg_fin",
+        )
+
+    col_com, col_tipo = st.columns(2)
+    with col_com:
+        _pending_com = pending.get("comision") or 0
+        new_comision = st.number_input(
+            "Comisión (0 = sin asignar)",
+            min_value=0, max_value=20, value=_pending_com,
+            key="_sme_dlg_com",
+        )
+    with col_tipo:
+        _tipo_options = ["sin determinar", "teorica", "laboratorio"]
+        _pending_tipo = pending.get("tipo_clase") or "sin determinar"
+        new_tipo = st.selectbox(
+            "Tipo de clase",
+            options=_tipo_options,
+            index=(
+                _tipo_options.index(_pending_tipo)
+                if _pending_tipo in _tipo_options else 0
+            ),
+            key="_sme_dlg_tipo",
+            help=(
+                "Sin determinar: el LP elige cuál de los bloques con "
+                "horas suficientes será de laboratorio. "
+                "Teórica/Laboratorio: forzar el tipo."
+            ),
+        )
+
+    st.divider()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Guardar", type="primary", use_container_width=True):
+            cambios: dict = {}
+            if new_dia != pending["dia"]:
+                cambios["dia"] = new_dia
+            if new_inicio != pending["hora_inicio"]:
+                cambios["hora_inicio"] = new_inicio
+            if new_fin != pending["hora_fin"]:
+                cambios["hora_fin"] = new_fin
+            _new_com_val = new_comision if new_comision > 0 else None
+            if _new_com_val != (pending.get("comision") or None):
+                cambios["comision"] = _new_com_val
+            _new_tipo_val = (
+                None if new_tipo == "sin determinar" else new_tipo
+            )
+            if _new_tipo_val != (pending.get("tipo_clase") or None):
+                cambios["tipo_clase"] = _new_tipo_val
+
+            if cambios:
+                _eff_sid = _maybe_save_as_copy(_schedule_id, _save_as_copy)
+                with next(get_session()) as session:
+                    update_schedule_entry(
+                        session, pending["entry_id"], **cambios,
+                    )
+                st.session_state["_sme_toast"] = (
+                    f"{_materia_codigo} actualizada"
+                )
+            else:
+                st.session_state["_sme_toast"] = "Sin cambios"
+            st.session_state["_sme_processed_click"] = pending["_key"]
+            _invalidate_caches(pending)
+            del st.session_state["_sme_pending_click"]
+            st.rerun()
+    with col2:
+        if st.button("Eliminar", use_container_width=True):
+            _maybe_save_as_copy(_schedule_id, _save_as_copy)
+            with next(get_session()) as session:
+                delete_schedule_entry(session, pending["entry_id"])
+            st.session_state["_sme_toast"] = (
+                f"{_materia_codigo} eliminada"
+            )
+            st.session_state["_sme_processed_click"] = pending["_key"]
+            _invalidate_caches(pending)
+            del st.session_state["_sme_pending_click"]
+            st.rerun()
+    with col3:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_sme_processed_click"] = pending["_key"]
+            del st.session_state["_sme_pending_click"]
+            st.rerun()
+
+
+@st.dialog("Agregar entrada", width="large")
+def _dialog_add_entry():
+    """Dialog para crear una entry nueva con tipo + comisión cuando el
+    usuario seleccionó un rango vacío en el calendario."""
+    pending = st.session_state.get("_sme_pending_select")
+    if not pending:
+        st.rerun()
+        return
+
+    _schedule_id = pending["schedule_id"]
+    _save_as_copy = pending.get("_save_as_copy", False)
+    _materia_codigo = pending["materia_codigo"]
+
+    st.markdown(f"**Materia**: `{_materia_codigo}`")
+    st.markdown(
+        f"**{pending['dia']}** · "
+        f"{pending['hora_inicio'].strftime('%H:%M')} - "
+        f"{pending['hora_fin'].strftime('%H:%M')}"
+    )
+
+    col_com, col_tipo = st.columns(2)
+    with col_com:
+        new_comision = st.number_input(
+            "Comisión (0 = sin asignar)",
+            min_value=0, max_value=20, value=0,
+            key="_sme_dlg_add_com",
+        )
+    with col_tipo:
+        _tipo_options = ["sin determinar", "teorica", "laboratorio"]
+        new_tipo = st.selectbox(
+            "Tipo de clase",
+            options=_tipo_options, index=0,
+            key="_sme_dlg_add_tipo",
+        )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Confirmar", type="primary", use_container_width=True):
+            _com_val = new_comision if new_comision > 0 else None
+            _tipo_val = None if new_tipo == "sin determinar" else new_tipo
+            _eff_sid = _maybe_save_as_copy(_schedule_id, _save_as_copy)
+            with next(get_session()) as session:
+                add_schedule_entry(
+                    session, _eff_sid, _materia_codigo,
+                    pending["dia"], pending["hora_inicio"], pending["hora_fin"],
+                    comision=_com_val, tipo_clase=_tipo_val,
+                )
+            st.session_state["_sme_toast"] = (
+                f"{_materia_codigo} agregada"
+            )
+            st.session_state["_sme_processed_select"] = pending["_key"]
+            _invalidate_caches(pending)
+            del st.session_state["_sme_pending_select"]
+            st.rerun()
+    with col2:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state["_sme_processed_select"] = pending["_key"]
+            del st.session_state["_sme_pending_select"]
+            st.rerun()
+
+
+def _maybe_save_as_copy(schedule_id: str, save_as_copy: bool) -> str:
+    """Si `save_as_copy=True`, duplica el cronograma y devuelve el id
+    de la copia; sino devuelve el original. La copia se nombra con el
+    valor de `st.session_state['_sme_copy_name']` o un default.
+
+    Cuidado: la duplicacion se aplica una sola vez por sesion (cacheada
+    en `_sme_active_copy_<orig_id>`) para que ediciones sucesivas
+    sigan apuntando a la misma copia hasta que el usuario apague el
+    toggle.
+    """
+    if not save_as_copy:
+        return schedule_id
+    _cache_key = f"_sme_active_copy_{schedule_id}"
+    if _cache_key in st.session_state:
+        return st.session_state[_cache_key]
+    _copy_name = (
+        st.session_state.get("_sme_copy_name")
+        or f"Copia (auto)"
+    )
+    with next(get_session()) as session:
+        _copy = duplicate_schedule(session, schedule_id, _copy_name)
+    st.session_state[_cache_key] = _copy.id
+    st.toast(f"Cronograma duplicado en '{_copy_name}'.")
+    return _copy.id
+
+
+def _invalidate_caches(pending: dict) -> None:
+    """Limpia los caches del editor para que el data_editor se
+    reconstruya desde DB despues de mutar entries via calendario."""
+    _kp = pending.get("_kp")
+    if not _kp:
+        return
+    for _k in list(st.session_state.keys()):
+        if isinstance(_k, str) and _k.startswith(_kp):
+            # Mantener `_chk_worst` para no titilar el icono mientras
+            # se recalcula
+            if _k.endswith("_chk_worst"):
+                continue
+            del st.session_state[_k]
+
+
+# =============================================================================
 # Entrypoint
 # =============================================================================
 
 def render_schedule_materia_detail(
     schedule_id: str, materia_codigo: str, key_ns: str,
+    *,
+    save_as_copy: bool = False,
 ) -> str:
     """Renderea el editor de una materia del cronograma.
 
@@ -118,6 +356,12 @@ def render_schedule_materia_detail(
     # cronogramas o renderea la misma materia bajo cronogramas distintos.
     # `_kp` es el "key prefix" base que combina ambos.
     _kp = f"{key_ns}_{schedule_id}_{materia_codigo}"
+
+    # Toast de confirmacion despues de un dialog (rerun no permite
+    # st.toast directo desde el handler).
+    _toast_msg = st.session_state.pop("_sme_toast", None)
+    if _toast_msg:
+        st.toast(_toast_msg)
 
     # --- Carga de datos ---
     with next(get_session()) as session:
@@ -143,6 +387,14 @@ def render_schedule_materia_detail(
     db_hsem = float(mat_db.horas_semanales or 0.0)
     db_hteo = mat_db.horas_teoria
     db_hlab = mat_db.horas_laboratorio
+
+    # --- Calendario editable filtrado a la materia (drag/drop/click/select) ---
+    _render_editable_calendar(
+        schedule_id=schedule_id,
+        materia_codigo=materia_codigo,
+        kp=_kp,
+        save_as_copy=save_as_copy,
+    )
 
     # --- Controles de horas ---
     ic1, ic2, ic3, ic4 = st.columns(4)
@@ -1001,3 +1253,108 @@ def _compute_checks(
             })
 
     return checks
+
+
+# =============================================================================
+# Calendario editable filtrado a la materia
+# =============================================================================
+
+def _render_editable_calendar(
+    *, schedule_id: str, materia_codigo: str, kp: str,
+    save_as_copy: bool,
+) -> None:
+    """Renderiza el calendario semanal editable filtrado a la materia.
+
+    Soporta:
+    - **drag/resize** sobre eventos existentes → actualiza dia + horarios.
+    - **click** sobre evento → abre dialog de "Editar entrada" (con
+      tipo de clase + comisión + eliminar).
+    - **select** (drag sobre celdas vacías) → abre dialog "Agregar
+      entrada" pre-llenando dia/inicio/fin/materia.
+
+    Si `save_as_copy=True`, todas las mutaciones se aplican a una
+    copia del cronograma (creada al primer save) en lugar del original.
+    """
+    with next(get_session()) as session:
+        config = get_or_create_config(session)
+        grid_full = build_schedule_grid(session, schedule_id)
+
+    # Filtrar a la materia
+    grid_filt: dict[str, list] = {
+        dia: [b for b in blocks if b.materia_codigo == materia_codigo]
+        for dia, blocks in grid_full.items()
+    }
+    grid_filt = {d: bs for d, bs in grid_filt.items() if bs}
+
+    st.markdown("**🗓️ Calendario** — drag para mover, click para editar, drag sobre celdas vacías para agregar")
+    action = render_editable_schedule_calendar(
+        grid_filt, config,
+        key=f"{kp}_cal_edit",
+        allow_empty=True,  # permitir seleccionar rangos aunque no haya entries
+        color_by_comision=True,
+    )
+
+    if action is None:
+        return
+
+    # Each action produces a unique "key" so we don't reprocess the
+    # same action across reruns.
+    _key_str = (
+        f"{action.action}|{getattr(action, 'entry_id', '') or ''}|"
+        f"{action.dia}|{action.hora_inicio}|{action.hora_fin}"
+    )
+
+    if action.action == "move":
+        if st.session_state.get("_sme_processed_move") == _key_str:
+            return
+        with next(get_session()) as session:
+            update_schedule_entry(
+                session, action.entry_id,
+                dia=action.dia,
+                hora_inicio=action.hora_inicio,
+                hora_fin=action.hora_fin,
+            )
+        st.session_state["_sme_processed_move"] = _key_str
+        # Limpiar caches para que el data_editor refleje el cambio
+        for _k in list(st.session_state.keys()):
+            if isinstance(_k, str) and _k.startswith(kp) and not _k.endswith("_chk_worst"):
+                del st.session_state[_k]
+        st.toast(f"Entrada movida: {action.dia} {action.hora_inicio}-{action.hora_fin}.")
+        st.rerun()
+
+    elif action.action == "click":
+        if st.session_state.get("_sme_processed_click") == _key_str:
+            return
+        # Buscar el comision/tipo actual de la entry (no viene en CalendarAction)
+        with next(get_session()) as session:
+            _entry = session.get(ScheduleEntryDB, action.entry_id)
+            _tipo = _entry.tipo_clase if _entry else None
+        st.session_state["_sme_pending_click"] = {
+            "schedule_id": schedule_id,
+            "entry_id": action.entry_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "comision": action.comision,
+            "tipo_clase": _tipo,
+            "_kp": kp,
+            "_save_as_copy": save_as_copy,
+            "_key": _key_str,
+        }
+        _dialog_edit_entry()
+
+    elif action.action == "select":
+        if st.session_state.get("_sme_processed_select") == _key_str:
+            return
+        st.session_state["_sme_pending_select"] = {
+            "schedule_id": schedule_id,
+            "materia_codigo": materia_codigo,
+            "dia": action.dia,
+            "hora_inicio": action.hora_inicio,
+            "hora_fin": action.hora_fin,
+            "_kp": kp,
+            "_save_as_copy": save_as_copy,
+            "_key": _key_str,
+        }
+        _dialog_add_entry()

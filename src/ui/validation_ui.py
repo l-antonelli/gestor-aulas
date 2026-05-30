@@ -1144,6 +1144,7 @@ def _render_detalle_por_materia(
     plan_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     ciclo_id: Optional[str] = None,
+    save_as_copy: bool = False,
 ) -> None:
     """Lista filtrada de materias + esperadas con su estado.
 
@@ -1617,6 +1618,7 @@ def _render_detalle_por_materia(
                 schedule_id=schedule_id,
                 ciclo_id=ciclo_id,
                 key_ns=f"{key_ns}_dpm_edit",
+                save_as_copy=save_as_copy,
             )
 
 
@@ -1624,13 +1626,16 @@ def _render_materia_inner(
     *, row: dict, source: Literal["plan", "schedule"],
     plan_id: Optional[str], schedule_id: Optional[str],
     ciclo_id: Optional[str], key_ns: str,
+    save_as_copy: bool = False,
 ) -> None:
-    """Cuerpo de un expander del loop "Detalle por materia": calendario
-    embebido + editor inline (plan o schedule)."""
+    """Cuerpo de un expander del loop "Detalle por materia": delega al
+    editor inline (plan o schedule), que renderea su propio calendario
+    editable + 10 checks + data_editor."""
     _code = row["codigo"]
 
-    # --- Calendario embebido ---
     if source == "plan" and plan_id:
+        # Plan: calendario read-only + editor inline (plan_materia_editor
+        # no tiene calendario editable propio todavia).
         with next(get_session()) as _cal_sess:
             from src.database.crud import get_or_create_config as _gc
             from src.services.plan_generation_service import (
@@ -1649,30 +1654,6 @@ def _render_materia_inner(
                 _grid, _cal_config,
                 key=f"{key_ns}_cal_{_code}",
             )
-    elif source == "schedule" and schedule_id:
-        with next(get_session()) as _cal_sess:
-            from src.database.crud import get_or_create_config as _gc
-            from src.services.schedule_service import (
-                build_schedule_grid as _bsg,
-            )
-            _cal_config = _gc(_cal_sess)
-            _grid_full = _bsg(_cal_sess, schedule_id)
-        _grid = {
-            dia: [b for b in blocks if b.materia_codigo == _code]
-            for dia, blocks in _grid_full.items()
-        }
-        _grid = {d: bs for d, bs in _grid.items() if bs}
-        if _grid:
-            from src.ui.calendar_render import render_schedule_calendar
-            st.markdown("**🗓️ Vista calendario**")
-            render_schedule_calendar(
-                _grid, _cal_config,
-                key=f"{key_ns}_cal_{_code}",
-                color_by_comision=True,
-            )
-
-    st.markdown("**✏️ Editor**")
-    if source == "plan" and plan_id:
         from src.ui.plan_materia_editor import render_plan_materia_detail
         render_plan_materia_detail(
             plan_id=plan_id,
@@ -1680,16 +1661,17 @@ def _render_materia_inner(
             key_ns=key_ns,
         )
     elif source == "schedule" and schedule_id:
+        # Schedule: el editor renderea su propio calendario editable
+        # (drag/drop/click/select) + dialogs internos. No agregamos un
+        # calendario read-only previo (seria redundante).
         from src.ui.schedule_materia_editor import (
             render_schedule_materia_detail,
         )
-        # El editor setea internamente
-        # `f"{key_ns}_{schedule_id}_{materia_codigo}_chk_worst"` que el
-        # caller lee en el siguiente rerun para el icono del header.
         render_schedule_materia_detail(
             schedule_id=schedule_id,
             materia_codigo=_code,
             key_ns=key_ns,
+            save_as_copy=save_as_copy,
         )
 
 
@@ -1754,6 +1736,31 @@ def _render_schedule(
             "Validar cronograma", type="primary",
             key=f"{key_ns}_btn_validate",
             use_container_width=True,
+        )
+
+    # Toggle global "Guardar como copia": cualquier mutacion via
+    # calendario editable o data_editor del schedule_materia_editor se
+    # aplica a una copia del cronograma en lugar del original.
+    _save_as_copy_key = f"{key_ns}_save_as_copy"
+    _save_as_copy = st.toggle(
+        "Guardar cambios como copia del cronograma",
+        value=st.session_state.get(_save_as_copy_key, False),
+        key=_save_as_copy_key,
+        help=(
+            "Si está activo, todas las ediciones (calendario, data "
+            "editor, reasignar comisiones) se aplican a una copia del "
+            "cronograma — el original no se toca. La copia se crea al "
+            "primer cambio y se sigue usando hasta que apagues el toggle."
+        ),
+    )
+    if _save_as_copy:
+        _copy_name_default = "Cronograma editado"
+        _copy_name = st.text_input(
+            "Nombre de la copia",
+            value=st.session_state.get(
+                "_sme_copy_name", _copy_name_default
+            ),
+            key="_sme_copy_name",
         )
 
     _last_toggle_key = f"{key_ns}_last_toggle"
@@ -1945,11 +1952,12 @@ def _render_schedule(
                 )
 
     # =========================================================================
-    # Detalle por materia (sin editor inline)
+    # Detalle por materia
     # =========================================================================
     with st.expander("🔎 Detalle por materia", expanded=False):
         _render_detalle_por_materia(
             summary=summary, key_ns=key_ns,
             source="schedule",
             schedule_id=schedule_id, ciclo_id=ciclo_id,
+            save_as_copy=_save_as_copy,
         )
