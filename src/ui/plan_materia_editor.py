@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -46,6 +47,9 @@ from src.services.validations import validar_factibilidad_particion_horas
 
 def render_plan_materia_detail(
     plan_id: str, materia_codigo: str, key_ns: str,
+    *,
+    pending_revalidate_key: Optional[str] = None,
+    invalidate_cache_keys: Optional[list[str]] = None,
 ) -> None:
     """Renderiza el editor completo de una materia dentro del plan.
 
@@ -55,6 +59,13 @@ def render_plan_materia_detail(
         key_ns: namespace para las keys de session_state (debe ser único
             por instancia para evitar colisiones cuando se rendea más de
             un editor en la misma página).
+        pending_revalidate_key: si se provee, al final del render se
+            compara el conteo vivo de comisiones+horarios del plan con
+            el snapshot del último validar_plan; si cambió, se marca
+            este flag para que el panel padre auto-revalide en el
+            próximo rerun.
+        invalidate_cache_keys: keys de session_state a popear cuando se
+            detecta cambio (para invalidar el summary cacheado).
     """
     # Carga inicial: plan, ciclo, materia, comisiones, horarios.
     with next(get_session()) as session:

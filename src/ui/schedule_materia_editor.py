@@ -344,6 +344,8 @@ def render_schedule_materia_detail(
     schedule_id: str, materia_codigo: str, key_ns: str,
     *,
     save_as_copy: bool = False,
+    pending_revalidate_key: Optional[str] = None,
+    invalidate_cache_keys: Optional[list[str]] = None,
 ) -> str:
     """Renderea el editor de una materia del cronograma.
 

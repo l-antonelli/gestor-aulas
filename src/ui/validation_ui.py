@@ -342,6 +342,10 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         _render_detalle_por_materia(
             summary=summary, key_ns=key_ns,
             source="plan", plan_id=plan_id, ciclo_id=plan.ciclo_id,
+            pending_revalidate_key=_pending_revalidate_key,
+            invalidate_cache_keys=[
+                _validation_key, _last_toggle_key,
+            ],
         )
 
     # =====================================================================
@@ -1137,6 +1141,61 @@ def _estado_de_materia(data: dict) -> str:
     return "OK"
 
 
+def _compute_live_fingerprint(
+    *,
+    source: Literal["plan", "schedule"],
+    plan_id: Optional[str],
+    schedule_id: Optional[str],
+) -> tuple:
+    """Fingerprint del estado vivo en DB. Si cambia entre renders,
+    significa que algo se edito y hay que revalidar."""
+    with next(get_session()) as session:
+        if source == "plan" and plan_id:
+            n_com = session.exec(
+                select(func.count(ComisionDB.id))
+                .where(ComisionDB.plan_cursada_id == plan_id)
+            ).one()
+            com_ids = list(session.exec(
+                select(ComisionDB.id)
+                .where(ComisionDB.plan_cursada_id == plan_id)
+            ).all())
+            n_h = 0
+            if com_ids:
+                n_h = session.exec(
+                    select(func.count(HorarioDB.id))
+                    .where(col(HorarioDB.comision_id).in_(com_ids))
+                ).one()
+            return ("plan", n_com, n_h)
+        elif source == "schedule" and schedule_id:
+            from src.database.models import ScheduleEntryDB as _SE
+            n_e = session.exec(
+                select(func.count(_SE.id))
+                .where(_SE.schedule_id == schedule_id)
+            ).one()
+            return ("schedule", n_e)
+    return ("none",)
+
+
+def _compute_summary_fingerprint(
+    summary, *, source: Literal["plan", "schedule"],
+) -> tuple:
+    """Fingerprint equivalente al `_compute_live_fingerprint` pero
+    derivado del summary cacheado. Si difieren, hubo cambios en DB
+    que el summary no refleja."""
+    if source == "plan":
+        return (
+            "plan",
+            getattr(summary, "comision_count_at_validation", 0),
+            getattr(summary, "horario_count_at_validation", 0),
+        )
+    elif source == "schedule":
+        return (
+            "schedule",
+            getattr(summary, "entry_count_at_validation", 0),
+        )
+    return ("none",)
+
+
 def _render_detalle_por_materia(
     summary, key_ns: str,
     *,
@@ -1145,6 +1204,8 @@ def _render_detalle_por_materia(
     schedule_id: Optional[str] = None,
     ciclo_id: Optional[str] = None,
     save_as_copy: bool = False,
+    pending_revalidate_key: Optional[str] = None,
+    invalidate_cache_keys: Optional[list[str]] = None,
 ) -> None:
     """Lista filtrada de materias + esperadas con su estado.
 
@@ -1153,6 +1214,26 @@ def _render_detalle_por_materia(
     cronograma las "comisiones" se cuentan a nivel de `ScheduleEntryDB`
     (cantidad de entries únicas por materia).
     """
+    # Detectar si las entries/comisiones cambiaron en DB respecto del
+    # snapshot del summary cacheado. Si cambiaron → marcar pending y
+    # rerun para que el panel padre re-corra validar_* al inicio del
+    # proximo render. Esto cubre cualquier mutación del editor inline
+    # sin necesidad de instrumentar cada punto de mutación uno por uno.
+    if pending_revalidate_key is not None:
+        _live_fp = _compute_live_fingerprint(
+            source=source, plan_id=plan_id, schedule_id=schedule_id,
+        )
+        _snap_fp = _compute_summary_fingerprint(
+            summary, source=source,
+        )
+        if _live_fp != _snap_fp:
+            st.session_state[pending_revalidate_key] = True
+            for _k in (invalidate_cache_keys or []):
+                st.session_state.pop(_k, None)
+            # Re-run inmediato para que el panel padre vea el flag
+            # antes de que rendereemos contenido stale.
+            st.rerun()
+
     # Construir dataset unificado: union de esperadas + materias del plan
     _esperadas_set = set(summary.esperadas.keys())
     _en_plan_set = set(summary.mat_map.keys())
@@ -1619,6 +1700,8 @@ def _render_detalle_por_materia(
                 ciclo_id=ciclo_id,
                 key_ns=f"{key_ns}_dpm_edit",
                 save_as_copy=save_as_copy,
+                pending_revalidate_key=pending_revalidate_key,
+                invalidate_cache_keys=invalidate_cache_keys,
             )
 
 
@@ -1627,6 +1710,8 @@ def _render_materia_inner(
     plan_id: Optional[str], schedule_id: Optional[str],
     ciclo_id: Optional[str], key_ns: str,
     save_as_copy: bool = False,
+    pending_revalidate_key: Optional[str] = None,
+    invalidate_cache_keys: Optional[list[str]] = None,
 ) -> None:
     """Cuerpo de un expander del loop "Detalle por materia": delega al
     editor inline (plan o schedule), que renderea su propio calendario
@@ -1672,6 +1757,8 @@ def _render_materia_inner(
             materia_codigo=_code,
             key_ns=key_ns,
             save_as_copy=save_as_copy,
+            pending_revalidate_key=pending_revalidate_key,
+            invalidate_cache_keys=invalidate_cache_keys,
         )
 
 
@@ -1960,4 +2047,8 @@ def _render_schedule(
             source="schedule",
             schedule_id=schedule_id, ciclo_id=ciclo_id,
             save_as_copy=_save_as_copy,
+            pending_revalidate_key=_pending_revalidate_key,
+            invalidate_cache_keys=[
+                _validation_key, _last_toggle_key,
+            ],
         )
