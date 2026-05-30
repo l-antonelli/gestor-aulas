@@ -113,6 +113,12 @@ def render_schedule_materia_detail(
         worst status entre los 10 chequeos: 'ok' | 'warn' | 'error' | 'info'.
         Útil para que el caller arme un badge en el header del expander.
     """
+    # Todas las keys de session_state incluyen schedule_id+materia_codigo
+    # para evitar contaminacion cruzada cuando el usuario salta entre
+    # cronogramas o renderea la misma materia bajo cronogramas distintos.
+    # `_kp` es el "key prefix" base que combina ambos.
+    _kp = f"{key_ns}_{schedule_id}_{materia_codigo}"
+
     # --- Carga de datos ---
     with next(get_session()) as session:
         mat_db = materia_crud.get(session, materia_codigo)
@@ -143,7 +149,7 @@ def render_schedule_materia_detail(
     ic1.markdown("**Horas semanales:**")
     new_hsem = ic2.number_input(
         "h/sem", value=db_hsem, min_value=0.0, step=0.25, format="%.2f",
-        key=f"{key_ns}_hsem_{materia_codigo}",
+        key=f"{_kp}_hsem",
         label_visibility="collapsed",
     )
     if new_hsem != db_hsem:
@@ -169,7 +175,7 @@ def render_schedule_materia_detail(
             "h_teo",
             value=float(db_hteo) if db_hteo is not None else 0.0,
             min_value=0.0, step=0.25, format="%.2f",
-            key=f"{key_ns}_hteo_{materia_codigo}",
+            key=f"{_kp}_hteo",
             label_visibility="collapsed",
             help=(
                 "Horas semanales de teoría. Junto con Hs lab debe sumar "
@@ -181,7 +187,7 @@ def render_schedule_materia_detail(
             "h_lab",
             value=float(db_hlab) if db_hlab is not None else 0.0,
             min_value=0.0, step=0.25, format="%.2f",
-            key=f"{key_ns}_hlab_{materia_codigo}",
+            key=f"{_kp}_hlab",
             label_visibility="collapsed",
             help=(
                 "Horas semanales fijas como laboratorio. Si tiene lab "
@@ -225,7 +231,7 @@ def render_schedule_materia_detail(
 
     # --- Selector cantidad de comisiones ---
     derived_ncom = _derive_n_comisiones(entries)
-    ncom_key = f"{key_ns}_ncom_{materia_codigo}"
+    ncom_key = f"{_kp}_ncom"
     ic3.markdown("**Comisiones:**")
     n_com = ic4.number_input(
         "n_com", value=st.session_state.get(ncom_key, derived_ncom),
@@ -241,14 +247,14 @@ def render_schedule_materia_detail(
 
     # --- Botón Reasignar comisiones ---
     cached_has_changes = st.session_state.get(
-        f"{key_ns}_has_changes_{materia_codigo}", False
+        f"{_kp}_has_changes", False
     )
     if cached_has_changes:
         st.info("Hay cambios sin guardar en la tabla de abajo.", icon="💾")
 
     if st.button(
         "Reasignar comisiones",
-        key=f"{key_ns}_btn_reassign_{materia_codigo}",
+        key=f"{_kp}_btn_reassign",
         help=(
             "Redistribuye las clases entre las comisiones balanceando "
             "por horas (round-robin)."
@@ -272,9 +278,9 @@ def render_schedule_materia_detail(
         # Invalidar cache del data_editor
         for _k in list(st.session_state.keys()):
             if isinstance(_k, str) and _k.startswith((
-                f"{key_ns}_init_df_{materia_codigo}",
-                f"{key_ns}_de_{materia_codigo}",
-                f"{key_ns}_has_changes_{materia_codigo}",
+                f"{_kp}_init_df",
+                f"{_kp}_de",
+                f"{_kp}_has_changes",
             )):
                 del st.session_state[_k]
         st.toast("Comisiones reasignadas.")
@@ -283,8 +289,26 @@ def render_schedule_materia_detail(
     # --- Data editor con entries ---
     com_options = list(range(1, n_com + 1))
 
-    init_key = f"{key_ns}_init_df_{materia_codigo}"
-    saved_key = f"{key_ns}_saved_{materia_codigo}"
+    init_key = f"{_kp}_init_df"
+    saved_key = f"{_kp}_saved"
+    fp_key = f"{_kp}_fp"
+
+    # Fingerprint del estado actual de DB: si los entries cambiaron por
+    # fuera del editor (otro tab, otro usuario, recarga), invalidamos el
+    # cache para que el data_editor refleje la realidad.
+    _current_fp = tuple(sorted(
+        (e.id, e.dia, str(e.hora_inicio), str(e.hora_fin),
+         e.comision or 0, e.tipo_clase or "")
+        for e in entries
+    ))
+    _cached_fp = st.session_state.get(fp_key)
+    _has_unsaved = st.session_state.get(f"{_kp}_has_changes", False)
+    # Solo invalidar si NO hay cambios sin guardar (sino borrarlos seria
+    # destructivo).
+    if _cached_fp != _current_fp and not _has_unsaved:
+        for _k in (init_key, saved_key):
+            st.session_state.pop(_k, None)
+
     if init_key not in st.session_state:
         rows = []
         for e in entries:
@@ -317,6 +341,7 @@ def render_schedule_materia_detail(
         st.session_state[saved_key] = {
             e.id: (e.comision or 1) for e in entries
         }
+        st.session_state[fp_key] = _current_fp
     else:
         df = st.session_state[init_key]
 
@@ -357,7 +382,7 @@ def render_schedule_materia_detail(
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key=f"{key_ns}_de_{materia_codigo}",
+        key=f"{_kp}_de",
     )
 
     st.caption(
@@ -417,7 +442,7 @@ def render_schedule_materia_detail(
         worst = "info"
 
     st.session_state[
-        f"{key_ns}_chk_worst_{materia_codigo}"
+        f"{_kp}_chk_worst"
     ] = worst
 
     # Render checks
@@ -456,7 +481,7 @@ def render_schedule_materia_detail(
         len(orig_cmp) != len(edit_cmp) or not orig_cmp.equals(edit_cmp)
     )
     st.session_state[
-        f"{key_ns}_has_changes_{materia_codigo}"
+        f"{_kp}_has_changes"
     ] = has_changes
 
     if has_changes:
@@ -464,14 +489,14 @@ def render_schedule_materia_detail(
         with sc2:
             if st.button(
                 "Descartar cambios",
-                key=f"{key_ns}_discard_{materia_codigo}",
+                key=f"{_kp}_discard",
                 help="Descarta ediciones y vuelve al estado guardado.",
             ):
                 for _k in list(st.session_state.keys()):
                     if isinstance(_k, str) and _k.startswith((
-                        f"{key_ns}_init_df_{materia_codigo}",
-                        f"{key_ns}_de_{materia_codigo}",
-                        f"{key_ns}_has_changes_{materia_codigo}",
+                        f"{_kp}_init_df",
+                        f"{_kp}_de",
+                        f"{_kp}_has_changes",
                     )):
                         del st.session_state[_k]
                 st.toast("Cambios descartados.")
@@ -480,7 +505,7 @@ def render_schedule_materia_detail(
             if st.button(
                 "💾 Guardar cambios",
                 type="primary",
-                key=f"{key_ns}_save_{materia_codigo}",
+                key=f"{_kp}_save",
             ):
                 _persist_edits(
                     schedule_id, materia_codigo, valid_df,
@@ -488,11 +513,11 @@ def render_schedule_materia_detail(
                 # Limpiar caches
                 for _k in list(st.session_state.keys()):
                     if isinstance(_k, str) and _k.startswith((
-                        f"{key_ns}_init_df_{materia_codigo}",
-                        f"{key_ns}_de_{materia_codigo}",
-                        f"{key_ns}_has_changes_{materia_codigo}",
-                        f"{key_ns}_saved_{materia_codigo}",
-                        f"{key_ns}_chk_worst_{materia_codigo}",
+                        f"{_kp}_init_df",
+                        f"{_kp}_de",
+                        f"{_kp}_has_changes",
+                        f"{_kp}_saved",
+                        f"{_kp}_chk_worst",
                     )):
                         del st.session_state[_k]
                 st.toast("Cronograma actualizado.")

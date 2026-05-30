@@ -1516,7 +1516,14 @@ def _render_detalle_por_materia(
 
         # Worst icon cacheado por el editor en el render anterior. Si
         # no hay cache, usar el estado del row.
-        _worst_key_s = f"{key_ns}_dpm_edit_chk_worst_{_code}"
+        # Para schedule, la key incluye schedule_id+materia_codigo (ver
+        # schedule_materia_editor: `_kp = f"{key_ns}_{schedule_id}_{mat}"`).
+        if source == "schedule" and schedule_id:
+            _worst_key_s = (
+                f"{key_ns}_dpm_edit_{schedule_id}_{_code}_chk_worst"
+            )
+        else:
+            _worst_key_s = f"{key_ns}_dpm_edit_chk_worst_{_code}"
         _worst_cached = st.session_state.get(_worst_key_s)
         if _worst_cached:
             _worst_icon = _icon_map.get(_worst_cached, "•")
@@ -1620,14 +1627,14 @@ def _render_materia_inner(
         from src.ui.schedule_materia_editor import (
             render_schedule_materia_detail,
         )
-        _worst = render_schedule_materia_detail(
+        # El editor setea internamente
+        # `f"{key_ns}_{schedule_id}_{materia_codigo}_chk_worst"` que el
+        # caller lee en el siguiente rerun para el icono del header.
+        render_schedule_materia_detail(
             schedule_id=schedule_id,
             materia_codigo=_code,
             key_ns=key_ns,
         )
-        # Cache worst para que el header del expander en el siguiente
-        # render muestre el icono apropiado.
-        st.session_state[f"{key_ns}_chk_worst_{_code}"] = _worst
 
 
 def _estado_badge(estado: str) -> str:
