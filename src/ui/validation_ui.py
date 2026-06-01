@@ -1481,7 +1481,7 @@ def _render_detalle_por_materia(
         )
     with _g3:
         _only_issues = st.toggle(
-            "Solo con issues",
+            "Solo con alertas",
             value=False,
             key=f"{key_ns}_dpm_only_issues",
             help=(
@@ -1690,7 +1690,10 @@ def _render_detalle_por_materia(
     _page_rows = _loop_rows[_start:_end]
 
     # Render expanders
-    _icon_map = {"ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️"}
+    _icon_map = {
+        "ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️",
+        "faltante": "📭",
+    }
     for _r in _page_rows:
         _code = _r["codigo"]
         _is_pending = _pending_codigo == _code

@@ -678,38 +678,61 @@ def render_schedule_materia_detail(
     hours_by_com = {c: round(h, 2) for c, h in hours_by_com.items()}
 
     # =========================================================================
-    # 10 chequeos estructurados
+    # Caso especial: materia sin horarios (Faltante)
     # =========================================================================
-    checks = _compute_checks(
-        h_sem=db_hsem, n_com=n_com, total=new_total,
-        paralelas=paralelas, hours_by_com=hours_by_com,
-        has_lab=has_lab, h_teo=db_hteo, h_lab=db_hlab,
-        valid_df=valid_df, com_options=com_options,
-    )
+    # Si la materia no tiene ninguna entry en el cronograma, es una
+    # "Faltante" (esperada por dictado activo pero sin horarios cargados).
+    # En ese caso muchos checks no aplican (n_com derivado, comisiones
+    # vacias, etc) y solo confunden. Mostramos un check unico que es
+    # consistente con el badge "📭 Faltante" de la tabla resumen.
+    sin_entries = len(valid_df) == 0
 
-    # Worst status
+    if sin_entries:
+        checks = [{
+            "id": "materia_faltante",
+            "label": "Faltante",
+            "status": "faltante",
+            "detail": (
+                "Esta materia tiene un dictado activo en el ciclo pero no "
+                "tiene horarios cargados en el cronograma. Cargá las "
+                "clases con el calendario de arriba (drag sobre celdas "
+                "vacías) o desactivá el dictado si la materia no se va a "
+                "dictar."
+            ),
+        }]
+    else:
+        # =====================================================================
+        # 10 chequeos estructurados (solo si hay horarios cargados)
+        # =====================================================================
+        checks = _compute_checks(
+            h_sem=db_hsem, n_com=n_com, total=new_total,
+            paralelas=paralelas, hours_by_com=hours_by_com,
+            has_lab=has_lab, h_teo=db_hteo, h_lab=db_hlab,
+            valid_df=valid_df, com_options=com_options,
+        )
+
+    # Worst status — `faltante` tiene su propio nivel para que el icono
+    # del header coincida con el badge 📭 de la tabla resumen.
     worst = "ok"
     for ck in checks:
+        if ck["status"] == "faltante":
+            worst = "faltante"
+            break
         if ck["status"] == "error":
             worst = "error"
             break
         if ck["status"] == "warn" and worst != "error":
             worst = "warn"
-        if ck["status"] == "info" and worst not in ("error", "warn"):
-            # info no degrada del ok inicial; el ok se mantiene salvo que
-            # explicitamente todos sean info y no haya ok. Para badge,
-            # info se trata como ok salvo que no haya ningun ok.
-            pass
-    # Si el peor es 'info' pero no hay ningun 'ok', degradar a info
     if worst == "ok" and not any(c["status"] == "ok" for c in checks):
         worst = "info"
 
-    st.session_state[
-        f"{_kp}_chk_worst"
-    ] = worst
+    st.session_state[f"{_kp}_chk_worst"] = worst
 
     # Render checks
-    icon_map = {"ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️"}
+    icon_map = {
+        "ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️",
+        "faltante": "📭",
+    }
     for ck in checks:
         ico = icon_map.get(ck["status"], "•")
         st.markdown(f"{ico} **{ck['label']}:** {ck['detail']}")
