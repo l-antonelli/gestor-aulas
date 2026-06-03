@@ -34,6 +34,7 @@ METODO_LABELS: dict[str, str] = {
     "media_movil": "Media móvil",
     "drift": "Drift (lineal)",
     "ses": "SES (α auto)",
+    "manual": "Manual (override)",
 }
 
 
@@ -295,18 +296,25 @@ def set_metodo_override(
     cuatrimestre: str,
     metodo: Optional[str],
 ) -> None:
-    """Setea o elimina un override por materia.
+    """Setea o elimina el override del metodo de forecast.
 
-    Si `metodo` es None, elimina el override existente (vuelve al default).
+    Si `metodo` es None y no hay valor_override, elimina la fila
+    completa (vuelve al default). Si hay valor_override, solo limpia
+    el metodo y preserva el valor_override.
     """
     rec = session.get(
         MateriaForecastConfigDB,
         (plan_cursada_id, materia_codigo, cuatrimestre),
     )
     if metodo is None:
-        if rec is not None:
+        if rec is None:
+            return
+        if rec.valor_override is None:
             session.delete(rec)
-            session.commit()
+        else:
+            rec.metodo = None
+            session.add(rec)
+        session.commit()
         return
     if metodo not in METODOS_DISPONIBLES:
         raise ValueError(f"Metodo desconocido '{metodo}'")
@@ -323,15 +331,81 @@ def set_metodo_override(
     session.commit()
 
 
+def get_valor_override(
+    session: Session,
+    plan_cursada_id: str,
+    materia_codigo: str,
+    cuatrimestre: str,
+) -> Optional[float]:
+    """Devuelve el valor manual seteado o None si no hay."""
+    rec = session.get(
+        MateriaForecastConfigDB,
+        (plan_cursada_id, materia_codigo, cuatrimestre),
+    )
+    return rec.valor_override if rec is not None else None
+
+
+def set_valor_override(
+    session: Session,
+    plan_cursada_id: str,
+    materia_codigo: str,
+    cuatrimestre: str,
+    valor: Optional[float],
+) -> None:
+    """Setea o elimina el override del valor de forecast.
+
+    Si `valor` es None y no hay metodo override, elimina la fila
+    completa. Si hay metodo override, solo limpia el valor.
+    """
+    rec = session.get(
+        MateriaForecastConfigDB,
+        (plan_cursada_id, materia_codigo, cuatrimestre),
+    )
+    if valor is None:
+        if rec is None:
+            return
+        if rec.metodo is None:
+            session.delete(rec)
+        else:
+            rec.valor_override = None
+            session.add(rec)
+        session.commit()
+        return
+    if valor < 0:
+        raise ValueError("valor_override debe ser >= 0")
+    if rec is None:
+        rec = MateriaForecastConfigDB(
+            plan_cursada_id=plan_cursada_id,
+            materia_codigo=materia_codigo,
+            cuatrimestre=cuatrimestre,
+            valor_override=valor,
+        )
+    else:
+        rec.valor_override = valor
+    session.add(rec)
+    session.commit()
+
+
 def get_forecast_for_materia(
     session: Session,
     plan_cursada_id: str,
     materia_codigo: str,
     cuatrimestre: str,
 ) -> Optional[ForecastResult]:
-    """Computa el forecast para (plan, materia, cuatri) usando el metodo
-    resuelto (override > default plan). Devuelve None si no hay serie.
+    """Devuelve el forecast a usar para (plan, materia, cuatri).
+
+    Resolución:
+    1. Si hay `valor_override` → devuelve un ForecastResult sintético
+       con valor=override, metodo="manual".
+    2. Sino, computa desde la serie histórica con el método resuelto
+       (override del método > default del plan).
+    3. Si no hay serie → None.
     """
+    override = get_valor_override(
+        session, plan_cursada_id, materia_codigo, cuatrimestre,
+    )
+    if override is not None:
+        return ForecastResult(valor=override, metodo="manual")
     serie = get_serie(session, materia_codigo, cuatrimestre)
     if not serie:
         return None

@@ -51,6 +51,10 @@ def _run_migrations(eng):
         "ALTER TABLE comisiones ADD COLUMN coef_asignacion REAL NOT NULL DEFAULT 1.0",
         "ALTER TABLE planificaciones_cursada ADD COLUMN forecast_metodo_default VARCHAR NOT NULL DEFAULT 'media_movil'",
         "DROP TABLE IF EXISTS inscripcion_forecasts",
+        # Override manual del valor de forecast por (plan, materia, cuatri).
+        # Si esta seteado, fuerza el valor de inscriptos esperados,
+        # sobreescribiendo cualquier resultado del forecast historico.
+        "ALTER TABLE materia_forecast_config ADD COLUMN valor_override REAL DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -86,6 +90,10 @@ def _run_migrations(eng):
 
     # Migration: make schedules.ciclo_id nullable (SQLite requires table recreation)
     _migrate_schedules_nullable_ciclo(eng)
+
+    # Migration: make materia_forecast_config.metodo nullable (para
+    # poder tener filas con solo valor_override sin metodo override).
+    _migrate_forecast_config_metodo_nullable(eng)
 
 
 def _migrate_schedules_nullable_ciclo(eng):
@@ -132,6 +140,61 @@ def _migrate_schedules_nullable_ciclo(eng):
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_schedules_ciclo_id ON schedules (ciclo_id)")
         conn.commit()
         logger.info("Migration complete: schedules.ciclo_id is now nullable")
+
+
+def _migrate_forecast_config_metodo_nullable(eng):
+    """Recreate materia_forecast_config para que `metodo` permita NULL.
+
+    El modelo ahora soporta filas con solo `valor_override` (sin metodo
+    override). Para eso `metodo` debe ser nullable. SQLite no soporta
+    ALTER COLUMN, asi que recreamos la tabla preservando los datos.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "PRAGMA table_info(materia_forecast_config)"
+        ).fetchall()
+        if not rows:
+            return  # Tabla no existe aun; create_all la hara con el modelo nuevo
+
+        # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+        for row in rows:
+            if row[1] == "metodo":
+                if row[3] == 0:
+                    return  # ya nullable
+                break
+        else:
+            return  # columna metodo no existe (raro)
+
+        logger.info(
+            "Migrating materia_forecast_config: making metodo nullable"
+        )
+        conn.exec_driver_sql("""
+            CREATE TABLE materia_forecast_config_tmp (
+                plan_cursada_id VARCHAR NOT NULL,
+                materia_codigo VARCHAR NOT NULL,
+                cuatrimestre VARCHAR NOT NULL,
+                metodo VARCHAR,
+                valor_override REAL,
+                PRIMARY KEY (plan_cursada_id, materia_codigo, cuatrimestre),
+                FOREIGN KEY (plan_cursada_id) REFERENCES planificaciones_cursada (id),
+                FOREIGN KEY (materia_codigo) REFERENCES materias (codigo)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO materia_forecast_config_tmp (
+                plan_cursada_id, materia_codigo, cuatrimestre,
+                metodo, valor_override
+            )
+            SELECT plan_cursada_id, materia_codigo, cuatrimestre,
+                   metodo, valor_override
+            FROM materia_forecast_config
+        """)
+        conn.exec_driver_sql("DROP TABLE materia_forecast_config")
+        conn.exec_driver_sql(
+            "ALTER TABLE materia_forecast_config_tmp "
+            "RENAME TO materia_forecast_config"
+        )
+        conn.commit()
 
 
 def init_db():

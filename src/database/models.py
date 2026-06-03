@@ -484,15 +484,22 @@ class InscripcionHistoricaDB(SQLModel, table=True):
 
 
 class MateriaForecastConfigDB(SQLModel, table=True):
-    """Override del metodo de forecast por (plan, materia, cuatri).
+    """Override de configuracion de forecast por (plan, materia, cuatri).
 
-    El default por plan vive en `PlanificacionCursadaDB.forecast_metodo_default`.
-    Esta tabla solo guarda overrides puntuales para materias cuyo
-    comportamiento no encaja con el default. La resolucion final del metodo
-    a usar es: override si existe, sino default de plan.
+    Dos overrides posibles, ambos opcionales:
 
-    El valor del forecast NO se persiste — se recomputa on-demand desde la
-    serie historica al consultar (via `forecast_service.get_forecast_for_materia`).
+    - `metodo`: que metodo usar para calcular el forecast (override del
+      default del plan). Default por plan vive en
+      `PlanificacionCursadaDB.forecast_metodo_default`. La resolucion final
+      es: override si existe, sino default de plan.
+    - `valor_override`: si esta seteado, FUERZA un valor manual de inscriptos
+      esperados, sobreescribiendo cualquier resultado del forecast historico.
+      Util cuando el usuario tiene info externa (preinscripcion, datos no
+      historicos) o no hay serie historica disponible.
+
+    Cuando `valor_override` es None, `get_forecast_for_materia` calcula
+    desde la serie historica usando el metodo resuelto. El valor calculado
+    NO se persiste — se recomputa on-demand.
     """
     __tablename__ = "materia_forecast_config"
 
@@ -501,4 +508,5 @@ class MateriaForecastConfigDB(SQLModel, table=True):
     )
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     cuatrimestre: str = Field(primary_key=True)  # "1C" | "2C" | "Anual"
-    metodo: str  # "media_movil" | "drift" | "ses"
+    metodo: Optional[str] = Field(default=None)  # "media_movil"|"drift"|"ses"|None
+    valor_override: Optional[float] = Field(default=None, ge=0)
