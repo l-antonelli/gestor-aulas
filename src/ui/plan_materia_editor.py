@@ -752,12 +752,16 @@ def render_plan_materia_detail(
         "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"
     ].index(d))
 
-    # --- Controles de horas (editables, auto-save) ---
+    # --- 1. Catálogo de horas (editable, auto-save) ---
+    st.markdown("##### 📚 Catálogo de horas")
     if mat_db is not None:
         _editar_horas_materia(mat_db, _kp, ciclo)
         st.caption(f"**Período**: {mat_db.periodo} (catálogo, read-only).")
 
-    # --- Calendario editable (drag/click/select + dialogs) ---
+    st.divider()
+
+    # --- 2. Calendario editable (drag/click/select + dialogs) ---
+    st.markdown("##### 🗓️ Calendario")
     _render_plan_editable_calendar(
         plan_id=plan_id, materia_codigo=materia_codigo, kp=_kp,
     )
@@ -781,6 +785,7 @@ def render_plan_materia_detail(
 
     # Sin comisiones: solo el boton de agregar
     if not mat_coms:
+        st.divider()
         st.info(
             "Esta materia no tiene comisiones en el plan. Agregá la "
             "primera comisión para empezar a cargar horarios."
@@ -788,33 +793,36 @@ def render_plan_materia_detail(
         _render_add_comision_button(plan_id, materia_codigo, mat_coms, key_ns)
         return
 
-    # --- Bulk horario editor (data_editor) ---
+    st.divider()
+
+    # --- 3. Editor masivo de horarios (data_editor) ---
+    st.markdown("##### ✏️ Edición masiva de horarios")
     _render_bulk_horario_editor(
         plan_id, materia_codigo, mat_coms, horarios_by_comision, key_ns,
     )
 
     st.divider()
 
-    # --- Coef sums + forecast info ---
+    # --- 4. Inscriptos esperados (peso total + total manual + forecast) ---
+    st.markdown("##### 👥 Inscriptos esperados")
     _render_coef_y_forecast_header(
         plan, ciclo, materia_codigo, mat_coms, key_ns,
     )
 
-    # --- Loop por comision: edicion de campos + horarios ---
+    st.divider()
+
+    # --- 5. Comisiones (cada una en su propio expander) ---
+    st.markdown(f"##### 🎓 Comisiones ({len(mat_coms)})")
     for com in mat_coms:
         _render_comision_row(
             com, materia_codigo, mat_coms,
             horarios_by_comision.get(com.id, []),
             _infactibles_set, dias_list, time_slots, key_ns,
         )
-        if com != mat_coms[-1]:
-            st.divider()
 
-    # --- Add comision button ---
-    st.divider()
     _render_add_comision_button(plan_id, materia_codigo, mat_coms, key_ns)
 
-    # --- 10 chequeos estructurados (idem cronograma) ---
+    # --- 6. Validaciones (10 checks) ---
     st.divider()
     st.markdown("##### ✅ Validaciones de la materia")
     _worst = _render_plan_checks(
@@ -964,69 +972,128 @@ def _render_coef_y_forecast_header(
     mat_coms: list[ComisionDB],
     key_ns: str,
 ) -> None:
-    """Resumen de coef + forecast + selector de método override."""
+    """Header con: peso total + total esperado (con override manual) +
+    forecast info + selector de método. El override de valor manual va
+    en un input dedicado; si está seteado el forecast histórico queda
+    cubierto por el manual.
+    """
     from src.services.forecast_service import (
         METODO_LABELS as _M_LABELS,
         METODOS_DISPONIBLES as _M_AVAIL,
         get_forecast_for_materia as _get_fc,
         get_metodo_override as _get_ov,
+        get_valor_override as _get_vov,
         set_metodo_override as _set_ov,
+        set_valor_override as _set_vov,
     )
     from src.services.plan_generation_service import (
         normalize_coef_asignacion as _norm_coef,
         get_inscriptos_esperados_por_comision as _get_esperados,
     )
 
-    _coef_sum = sum(c.coef_asignacion for c in mat_coms)
-    _coef_ok = abs(_coef_sum - 1.0) < 0.01
-    _coef_color = "🟢" if _coef_ok else "🟡"
+    # --- Peso (suma de coef_asignacion) ---
+    _peso_sum = sum(c.coef_asignacion for c in mat_coms)
+    _peso_ok = abs(_peso_sum - 1.0) < 0.01
+    _peso_color = "🟢" if _peso_ok else "🟡"
 
     _cuatri_ciclo = f"{ciclo.numero}C" if ciclo else "?"
 
-    with next(get_session()) as _fc_sess:
-        _fc_cuatri_res = _get_fc(_fc_sess, plan.id, materia_codigo, _cuatri_ciclo)
-        _fc_anual_res = _get_fc(_fc_sess, plan.id, materia_codigo, "Anual")
-        _esperados_map = _get_esperados(_fc_sess, plan.id)
+    # Determinar el cuatri donde aplica el override (Anual si la materia
+    # tiene serie anual, sino el del ciclo).
+    with next(get_session()) as _sess:
+        _fc_cuatri_res = _get_fc(_sess, plan.id, materia_codigo, _cuatri_ciclo)
+        _fc_anual_res = _get_fc(_sess, plan.id, materia_codigo, "Anual")
+        _esperados_map = _get_esperados(_sess, plan.id)
         _ov_cuatri = "Anual" if _fc_anual_res else _cuatri_ciclo
-        _ov_actual = _get_ov(_fc_sess, plan.id, materia_codigo, _ov_cuatri)
+        _ov_metodo_actual = _get_ov(_sess, plan.id, materia_codigo, _ov_cuatri)
+        _ov_valor_actual = _get_vov(_sess, plan.id, materia_codigo, _ov_cuatri)
 
-    _fc_used = (
-        _fc_anual_res if _fc_anual_res is not None else _fc_cuatri_res
-    )
+    _fc_used = _fc_anual_res if _fc_anual_res is not None else _fc_cuatri_res
+    _is_manual = _fc_used is not None and _fc_used.metodo == "manual"
 
-    _info_c1, _info_c2, _info_c3 = st.columns([2, 3, 1])
-    _info_c1.markdown(
-        f"**Coef total:** {_coef_color} {_coef_sum:.2f} "
-        f"(debe ser ~1.0)"
+    # --- Fila 1: Peso total + Normalizar ---
+    _h1_c1, _h1_c2 = st.columns([4, 1])
+    _h1_c1.markdown(
+        f"**Peso total:** {_peso_color} {_peso_sum:.2f} "
+        f"(debe ser ~1.0 — la suma de pesos por materia distribuye "
+        f"los inscriptos esperados entre las comisiones)"
     )
-    if _fc_used is not None:
-        _src = "Anual" if _fc_anual_res else _cuatri_ciclo
-        _info_c2.markdown(
-            f"**Forecast {_src}:** {_fc_used.valor:.0f} "
-            f"·  método: {_M_LABELS.get(_fc_used.metodo, _fc_used.metodo)}"
-            f"{' (override)' if _ov_actual else ' (default plan)'}"
-        )
-    else:
-        _info_c2.markdown(
-            "**Forecast:** — *(sin serie histórica en Inscriptos)*"
-        )
-    with _info_c3:
-        if not _coef_ok and st.button(
+    with _h1_c2:
+        if not _peso_ok and st.button(
             "Normalizar",
             key=f"{key_ns}_norm_coef_{plan.id}_{materia_codigo}",
-            help="Reasigna coef uniformemente (1/n)",
+            help="Reasigna pesos uniformemente (1/n)",
+            use_container_width=True,
         ):
             with next(get_session()) as _norm_s:
                 _norm_coef(_norm_s, plan.id, materia_codigo)
-            st.toast("Coef normalizados.")
+            st.toast("Pesos normalizados.")
             st.rerun()
 
-    if _fc_used is not None:
+    # --- Fila 2: Total esperado (override manual) ---
+    _h2_c1, _h2_c2 = st.columns([1, 3])
+    with _h2_c1:
+        _esp_input = st.number_input(
+            "Total esperado (manual)",
+            min_value=0.0,
+            value=float(_ov_valor_actual) if _ov_valor_actual is not None else 0.0,
+            step=1.0, format="%.0f",
+            key=f"{key_ns}_vov_{plan.id}_{materia_codigo}",
+            help=(
+                "Valor manual de inscriptos esperados. Si está en 0 y "
+                "no hay serie histórica, el forecast queda en 0. Para "
+                "volver al forecast automático, usar el botón 'Quitar "
+                "manual' a la derecha."
+            ),
+        )
+    with _h2_c2:
+        if _ov_valor_actual is not None:
+            _esp_caption = (
+                f"📌 **Override manual activo:** {_ov_valor_actual:.0f} "
+                f"esperados (ignorando forecast histórico)."
+            )
+            st.markdown(_esp_caption)
+            if st.button(
+                "Quitar manual",
+                key=f"{key_ns}_clr_vov_{plan.id}_{materia_codigo}",
+                help="Vuelve al forecast histórico automático.",
+            ):
+                with next(get_session()) as _s:
+                    _set_vov(_s, plan.id, materia_codigo, _ov_cuatri, None)
+                st.toast("Override manual eliminado.")
+                st.rerun()
+        else:
+            if _fc_used is not None:
+                _src = "Anual" if _fc_anual_res else _cuatri_ciclo
+                st.markdown(
+                    f"**Forecast {_src} (automático):** "
+                    f"{_fc_used.valor:.0f} · "
+                    f"método: {_M_LABELS.get(_fc_used.metodo, _fc_used.metodo)}"
+                    f"{' (override)' if _ov_metodo_actual else ' (default plan)'}"
+                )
+            else:
+                st.markdown(
+                    "**Forecast:** — *(sin serie histórica)*. "
+                    "Ingresá un total esperado manual a la izquierda "
+                    "para distribuir entre las comisiones."
+                )
+
+    # Persistir el override de valor cuando el usuario lo cambia
+    _esp_input_val = _esp_input if _esp_input > 0 else None
+    if _esp_input_val != _ov_valor_actual:
+        with next(get_session()) as _s:
+            _set_vov(
+                _s, plan.id, materia_codigo, _ov_cuatri, _esp_input_val,
+            )
+        st.rerun()
+
+    # --- Fila 3: Selector de método (solo si NO está activo override manual) ---
+    if not _is_manual and _fc_used is not None:
         _ov_options = ["Default plan"] + [_M_LABELS[m] for m in _M_AVAIL]
         _ov_keys: list[str | None] = [None] + list(_M_AVAIL)
         _ov_idx = 0
-        if _ov_actual in _M_AVAIL:
-            _ov_idx = _ov_keys.index(_ov_actual)
+        if _ov_metodo_actual in _M_AVAIL:
+            _ov_idx = _ov_keys.index(_ov_metodo_actual)
         _ov_choice = st.selectbox(
             "Método de forecast (override)",
             options=list(range(len(_ov_keys))),
@@ -1039,9 +1106,9 @@ def _render_coef_y_forecast_header(
             ),
         )
         _ov_new = _ov_keys[_ov_choice]
-        if _ov_new != _ov_actual:
-            with next(get_session()) as _ov_s:
-                _set_ov(_ov_s, plan.id, materia_codigo, _ov_cuatri, _ov_new)
+        if _ov_new != _ov_metodo_actual:
+            with next(get_session()) as _s:
+                _set_ov(_s, plan.id, materia_codigo, _ov_cuatri, _ov_new)
             st.rerun()
 
     # Guardar en session_state para que _render_comision_row pueda leerlo
@@ -1062,7 +1129,16 @@ def _render_comision_row(
     time_slots: list,
     key_ns: str,
 ) -> None:
-    """Render de una comision: nombre/cupo/coef/borrar + horarios + agregar."""
+    """Render de una comisión dentro de su propio expander.
+
+    Layout (de arriba a abajo):
+    1. Header del expander: nombre · #N · peso actual · esperados · flag
+       de partición infactible si aplica.
+    2. Fila editable: Nombre / Peso / Esperados (read-only).
+    3. Lista de horarios con botón de borrar por horario.
+    4. Popover "Agregar horario".
+    5. Botón "Eliminar comisión" al pie.
+    """
     from src.services.plan_generation_service import (
         update_comision_coef as _upd_coef,
     )
@@ -1070,53 +1146,158 @@ def _render_comision_row(
     _esperados_map = st.session_state.get(
         f"_pme_esperados_{com.plan_cursada_id}_{materia_codigo}", {}
     )
+    _esperados_val = _esperados_map.get(com.id)
 
-    _com_flag = (
-        " ⚠️ partición teoría/lab infactible"
+    _flag_part = (
+        " · ⚠️ partición teoría/lab infactible"
         if (materia_codigo, com.numero) in infactibles_set
         else ""
     )
-    st.markdown(f"##### {com.nombre} (#{com.numero}){_com_flag}")
-
-    col_name, col_cupo, col_coef, col_esp, col_del = st.columns(
-        [3, 1.5, 1.5, 1.2, 0.6]
+    _esp_str = (
+        f"{_esperados_val:.0f} esperados"
+        if _esperados_val is not None else "esperados —"
     )
-    with col_name:
-        new_name = st.text_input(
-            "Nombre", value=com.nombre,
-            key=f"{key_ns}_com_name_{com.id}",
-            label_visibility="collapsed",
-        )
-    with col_cupo:
-        new_cupo = st.number_input(
-            "Cupo", value=max(com.cupo, 1), min_value=1,
-            key=f"{key_ns}_com_cupo_{com.id}",
-        )
-    with col_coef:
-        new_coef = st.number_input(
-            "Coef", value=float(com.coef_asignacion),
-            min_value=0.0, max_value=1.0,
-            step=0.05, format="%.2f",
-            key=f"{key_ns}_com_coef_{com.id}",
-            help=(
-                "Fracción de inscriptos esperados que se asignan a "
-                "esta comisión. La suma por materia debe ser ≈1.0."
-            ),
-        )
-    with col_esp:
-        if com.id in _esperados_map:
-            st.metric(
-                "Esperados",
-                f"{_esperados_map[com.id]:.0f}",
-                label_visibility="visible",
+    _hdr = (
+        f"{com.nombre}  ·  #{com.numero}  ·  "
+        f"peso {com.coef_asignacion:.2f}  ·  {_esp_str}{_flag_part}"
+    )
+
+    with st.expander(_hdr, expanded=False):
+        # --- Fila editable: nombre / peso / esperados (read-only) ---
+        col_name, col_peso, col_esp = st.columns([3, 1.5, 1.5])
+        with col_name:
+            new_name = st.text_input(
+                "Nombre",
+                value=com.nombre,
+                key=f"{key_ns}_com_name_{com.id}",
             )
+        with col_peso:
+            new_peso = st.number_input(
+                "Peso",
+                value=float(com.coef_asignacion),
+                min_value=0.0, max_value=1.0,
+                step=0.05, format="%.2f",
+                key=f"{key_ns}_com_coef_{com.id}",
+                help=(
+                    "Fracción del total esperado de la materia que se "
+                    "asigna a esta comisión. La suma de pesos por "
+                    "materia debe ser ≈1.0. Inscriptos esperados de "
+                    "esta comisión = total esperado × peso."
+                ),
+            )
+        with col_esp:
+            if _esperados_val is not None:
+                st.metric(
+                    "Esperados",
+                    f"{_esperados_val:.0f}",
+                    label_visibility="visible",
+                    help=(
+                        "Calculado como total esperado de la materia × "
+                        "peso de esta comisión."
+                    ),
+                )
+            else:
+                st.caption("Esperados: —")
+
+        # Persist peso change immediately (sin botón)
+        if abs(new_peso - com.coef_asignacion) > 1e-9:
+            with next(get_session()) as _coef_s:
+                _upd_coef(_coef_s, com.id, new_peso)
+            st.rerun()
+
+        # Save name change si cambió
+        if new_name != com.nombre:
+            if st.button(
+                "💾 Guardar nombre",
+                key=f"{key_ns}_save_com_{com.id}",
+            ):
+                with next(get_session()) as session:
+                    db_com = session.get(ComisionDB, com.id)
+                    if db_com:
+                        db_com.nombre = new_name
+                        session.add(db_com)
+                        session.commit()
+                st.success("Comisión actualizada")
+                st.rerun()
+
+        # --- Horarios listados ---
+        st.markdown("**Horarios**")
+        if com_horarios:
+            for h in sorted(com_horarios, key=lambda x: (x.dia, x.hora_inicio)):
+                col_h_info, col_h_del = st.columns([5, 1])
+                with col_h_info:
+                    st.text(
+                        f"  {h.dia} "
+                        f"{h.hora_inicio.strftime('%H:%M')}-"
+                        f"{h.hora_fin.strftime('%H:%M')}"
+                    )
+                with col_h_del:
+                    if st.button(
+                        "✕", key=f"{key_ns}_del_h_{h.id}",
+                        help="Eliminar horario",
+                    ):
+                        with next(get_session()) as session:
+                            db_h = session.get(HorarioDB, h.id)
+                            if db_h:
+                                session.delete(db_h)
+                                session.commit()
+                        st.success("Horario eliminado")
+                        st.rerun()
         else:
-            st.caption("Esperados: —")
-    with col_del:
-        st.write("")
+            st.caption("Sin horarios cargados.")
+
+        # --- Add horario popover ---
+        with st.popover("➕ Agregar horario"):
+            add_dia = st.selectbox(
+                "Día", options=dias_list,
+                key=f"{key_ns}_add_h_dia_{com.id}",
+            )
+            time_options = sorted({s for slot in time_slots for s in slot})
+            time_labels = {t: t.strftime("%H:%M") for t in time_options}
+            add_inicio = st.selectbox(
+                "Hora inicio",
+                options=time_options,
+                format_func=lambda t: time_labels[t],
+                key=f"{key_ns}_add_h_ini_{com.id}",
+            )
+            add_fin = st.selectbox(
+                "Hora fin",
+                options=time_options,
+                format_func=lambda t: time_labels[t],
+                index=min(1, len(time_options) - 1),
+                key=f"{key_ns}_add_h_fin_{com.id}",
+            )
+            if st.button(
+                "Agregar",
+                key=f"{key_ns}_btn_add_h_{com.id}",
+                type="primary",
+            ):
+                if add_fin <= add_inicio:
+                    st.error(
+                        "La hora de fin debe ser posterior a la de inicio"
+                    )
+                else:
+                    with next(get_session()) as session:
+                        new_h = HorarioDB(
+                            id=str(uuid.uuid4()),
+                            comision_id=com.id,
+                            codigo_materia=materia_codigo,
+                            dia=add_dia,
+                            hora_inicio=add_inicio,
+                            hora_fin=add_fin,
+                        )
+                        session.add(new_h)
+                        session.commit()
+                    st.success("Horario agregado")
+                    st.rerun()
+
+        st.divider()
+
+        # --- Eliminar comisión (al pie del expander) ---
         if st.button(
-            "🗑️", key=f"{key_ns}_del_com_{com.id}",
-            help="Eliminar comision",
+            "🗑️ Eliminar comisión",
+            key=f"{key_ns}_del_com_{com.id}",
+            help="Borra la comisión y todos sus horarios. Irreversible.",
         ):
             with next(get_session()) as session:
                 hs = session.exec(
@@ -1128,95 +1309,8 @@ def _render_comision_row(
                 if db_com:
                     session.delete(db_com)
                 session.commit()
-            st.success(f"Comision '{com.nombre}' eliminada")
+            st.success(f"Comisión '{com.nombre}' eliminada")
             st.rerun()
-
-    # Persist coef change immediately (no extra button)
-    if abs(new_coef - com.coef_asignacion) > 1e-9:
-        with next(get_session()) as _coef_s:
-            _upd_coef(_coef_s, com.id, new_coef)
-        st.rerun()
-
-    # Save comision changes if modified (name/cupo)
-    if new_name != com.nombre or new_cupo != com.cupo:
-        if st.button(
-            "💾 Guardar comision", key=f"{key_ns}_save_com_{com.id}",
-        ):
-            with next(get_session()) as session:
-                db_com = session.get(ComisionDB, com.id)
-                if db_com:
-                    db_com.nombre = new_name
-                    db_com.cupo = new_cupo
-                    session.add(db_com)
-                    session.commit()
-            st.success("Comision actualizada")
-            st.rerun()
-
-    # --- Horarios listados con botón de borrar ---
-    if com_horarios:
-        for h in sorted(com_horarios, key=lambda x: (x.dia, x.hora_inicio)):
-            col_h_info, col_h_del = st.columns([5, 1])
-            with col_h_info:
-                st.text(
-                    f"  {h.dia} "
-                    f"{h.hora_inicio.strftime('%H:%M')}-"
-                    f"{h.hora_fin.strftime('%H:%M')}"
-                )
-            with col_h_del:
-                if st.button(
-                    "✕", key=f"{key_ns}_del_h_{h.id}",
-                    help="Eliminar horario",
-                ):
-                    with next(get_session()) as session:
-                        db_h = session.get(HorarioDB, h.id)
-                        if db_h:
-                            session.delete(db_h)
-                            session.commit()
-                    st.success("Horario eliminado")
-                    st.rerun()
-    else:
-        st.caption("Sin horarios")
-
-    # --- Add horario popover ---
-    with st.popover("➕ Agregar horario"):
-        add_dia = st.selectbox(
-            "Dia", options=dias_list,
-            key=f"{key_ns}_add_h_dia_{com.id}",
-        )
-        time_options = sorted({s for slot in time_slots for s in slot})
-        time_labels = {t: t.strftime("%H:%M") for t in time_options}
-        add_inicio = st.selectbox(
-            "Hora inicio",
-            options=time_options,
-            format_func=lambda t: time_labels[t],
-            key=f"{key_ns}_add_h_ini_{com.id}",
-        )
-        add_fin = st.selectbox(
-            "Hora fin",
-            options=time_options,
-            format_func=lambda t: time_labels[t],
-            index=min(1, len(time_options) - 1),
-            key=f"{key_ns}_add_h_fin_{com.id}",
-        )
-        if st.button(
-            "Agregar", key=f"{key_ns}_btn_add_h_{com.id}", type="primary",
-        ):
-            if add_fin <= add_inicio:
-                st.error("La hora de fin debe ser posterior a la de inicio")
-            else:
-                with next(get_session()) as session:
-                    new_h = HorarioDB(
-                        id=str(uuid.uuid4()),
-                        comision_id=com.id,
-                        codigo_materia=materia_codigo,
-                        dia=add_dia,
-                        hora_inicio=add_inicio,
-                        hora_fin=add_fin,
-                    )
-                    session.add(new_h)
-                    session.commit()
-                st.success("Horario agregado")
-                st.rerun()
 
 
 # =============================================================================
