@@ -1346,8 +1346,21 @@ def _render_detalle_por_materia(
     for _code in _all_codes:
         _m = _mat_map.get(_code)
         _pes = _pe_map.get(_code, [])
-        # Tomar primera carrera/anio/cuatri (mas comun: una sola) para filtros.
-        _carrera = (_pes[0].carrera_codigo if _pes else None) or "—"
+        # Set de carreras a las que pertenece la materia (puede estar en
+        # varias). El display "carrera" muestra una representativa para
+        # la columna de la tabla; el filtro usa el set completo para
+        # detectar pertenencia.
+        _carreras_set: set[str] = {
+            _pe.carrera_codigo for _pe in _pes if _pe.carrera_codigo
+        }
+        if not _carreras_set:
+            _carrera_display = "—"
+        elif len(_carreras_set) == 1:
+            _carrera_display = next(iter(_carreras_set))
+        else:
+            _carrera_display = (
+                f"{sorted(_carreras_set)[0]} (+{len(_carreras_set) - 1})"
+            )
         _anio = _pes[0].anio_plan if _pes else None
         _cuatri = (_pes[0].cuatrimestre_plan if _pes else None) or "—"
         _optativa = any(bool(_pe.optativa) for _pe in _pes)
@@ -1366,13 +1379,13 @@ def _render_detalle_por_materia(
         _virtual = bool(_m.virtual) if _m else False
         _periodo = _m.periodo if _m else "cuatrimestral"
         _anual = _periodo == "anual"
-        # Carreras distintas que comparten esta materia (Comunes/Exclusivas)
-        _n_carreras = len({_pe.carrera_codigo for _pe in _pes})
+        _n_carreras = len(_carreras_set)
 
         _data = {
             "codigo": _code,
             "nombre": _m.nombre if _m else "?",
-            "carrera": _carrera,
+            "carrera": _carrera_display,
+            "carreras_set": _carreras_set,
             "anio": _anio,
             "cuatri": _cuatri,
             "optativa": _optativa,
@@ -1405,7 +1418,13 @@ def _render_detalle_por_materia(
     # =========================================================================
     # Filtros
     # =========================================================================
-    _carreras_opts = sorted({r["carrera"] for r in _rows if r["carrera"] != "—"})
+    # Set completo de carreras de todas las materias (union de
+    # carreras_set por row). Asi una materia comun puede ser elegida
+    # por cualquiera de sus carreras.
+    _all_carreras: set[str] = set()
+    for r in _rows:
+        _all_carreras |= r.get("carreras_set") or set()
+    _carreras_opts = sorted(_all_carreras)
     _anios_opts = sorted({r["anio"] for r in _rows if r["anio"] is not None})
     _cuatris_opts = sorted({r["cuatri"] for r in _rows if r["cuatri"] != "—"})
     _estados_opts = ["OK", "Faltante", "No esperada", "Conflictiva", "Sin datos"]
@@ -1496,8 +1515,15 @@ def _render_detalle_por_materia(
             _t = _busc.strip().lower()
             if _t not in r["codigo"].lower() and _t not in r["nombre"].lower():
                 return False
-        if _f_carr and r["carrera"] not in _f_carr:
-            return False
+        if _f_carr:
+            # Una materia matchea el filtro de carrera si pertenece a
+            # AL MENOS una de las carreras seleccionadas (intersección
+            # no vacia entre el set de carreras de la materia y las
+            # elegidas). Esto soporta materias comunes que pertenecen
+            # a varias carreras simultaneamente.
+            _r_set = r.get("carreras_set") or set()
+            if not _r_set or not (_r_set & set(_f_carr)):
+                return False
         if _f_anio and r["anio"] not in _f_anio:
             return False
         if _f_cuatri and r["cuatri"] not in _f_cuatri:
@@ -1545,14 +1571,14 @@ def _render_detalle_por_materia(
     # =========================================================================
     _carrera_counts: dict[str, dict[str, int]] = {}
     for r in _filtered:
-        cc = r["carrera"]
-        if cc == "—":
-            continue
-        bkt = _carrera_counts.setdefault(
-            cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
-                 "Conflictiva": 0, "Sin datos": 0},
-        )
-        bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
+        # Una materia comun cuenta en cada carrera a la que pertenece
+        # (se considera "esperada" en cada plan).
+        for cc in (r.get("carreras_set") or set()):
+            bkt = _carrera_counts.setdefault(
+                cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
+                     "Conflictiva": 0, "Sin datos": 0},
+            )
+            bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
     if _carrera_counts:
         _cs_rows = []
         for cc in sorted(_carrera_counts.keys()):
@@ -1565,16 +1591,31 @@ def _render_detalle_por_materia(
                 "📭 Faltantes": counts["Faltante"],
                 "📥 No esperadas": counts["No esperada"],
             })
-        # Total al pie
+        # Total al pie: cuenta materias UNICAS del set filtrado (no
+        # sumas de carrera, porque una materia comun se cuenta en cada
+        # carrera y eso inflaria el total).
+        _u_total = len(_filtered)
+        _u_ok = sum(1 for r in _filtered if r["estado"] == "OK")
+        _u_falt = sum(1 for r in _filtered if r["estado"] == "Faltante")
+        _u_noesp = sum(1 for r in _filtered if r["estado"] == "No esperada")
+        _u_rev = sum(
+            1 for r in _filtered
+            if r["estado"] in ("Conflictiva", "Sin datos")
+        )
         _tot = {
-            "Carrera": "**Total**",
-            "Materias": sum(r["Materias"] for r in _cs_rows),
-            "✅ OK": sum(r["✅ OK"] for r in _cs_rows),
-            "⚠️ Revisión": sum(r["⚠️ Revisión"] for r in _cs_rows),
-            "📭 Faltantes": sum(r["📭 Faltantes"] for r in _cs_rows),
-            "📥 No esperadas": sum(r["📥 No esperadas"] for r in _cs_rows),
+            "Carrera": "**Total (únicas)**",
+            "Materias": _u_total,
+            "✅ OK": _u_ok,
+            "⚠️ Revisión": _u_rev,
+            "📭 Faltantes": _u_falt,
+            "📥 No esperadas": _u_noesp,
         }
         st.markdown("**Resumen por carrera (sobre el set filtrado)**")
+        st.caption(
+            "Una materia común se cuenta en cada carrera a la que "
+            "pertenece. La fila **Total (únicas)** cuenta materias "
+            "distintas (sin duplicar)."
+        )
         st.dataframe(
             pd.DataFrame(_cs_rows + [_tot]),
             use_container_width=True, hide_index=True,
