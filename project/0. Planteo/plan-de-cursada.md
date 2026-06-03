@@ -1,8 +1,14 @@
 # Plan de Cursada — Definicion Conceptual
 
-> **Fecha**: 2026-04-19
-> **Estado**: Documento de planteo. Complementa `modelo-er.md` (modelo conceptual) y
-> `1. Diseño/modelo-planificacion-cursada.md` (modelo tecnico implementado).
+> **Fecha**: 2026-04-19 (revisado 2026-06-03).
+> **Estado**: Documento de planteo. Complementa
+> [`modelo-er.md`](modelo-er.md) (modelo conceptual),
+> [`1. Diseño/modelo-planificacion-cursada.md`](../1.%20Diseño/modelo-planificacion-cursada.md)
+> (modelo tecnico implementado),
+> [`2. Desarrollo/WORKFLOW.md`](../2.%20Desarrollo/WORKFLOW.md)
+> (flujo end-to-end del usuario) y
+> [`2. Desarrollo/VALIDACIONES.md`](../2.%20Desarrollo/VALIDACIONES.md)
+> (validaciones del sistema en cada capa).
 
 ---
 

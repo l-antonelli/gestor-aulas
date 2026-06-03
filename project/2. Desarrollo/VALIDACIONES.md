@@ -229,17 +229,41 @@ agregador llamar y qué bloques mostrar. La estructura común es:
      shortcut "Editar A" / "Editar B" al editor inline) y "Ignorar
      conflicto" (solo plan: agrega a `IgnoredConflictDB`).
    - Conflictos ignorados (solo plan): tabla + botón "Dejar de ignorar".
-6. **Detalle por materia** (expander principal con tabla resumen
-   filtrable por carrera/año/cuatri/estado/búsqueda + selector "Materia
-   activa" + calendario embebido + editor inline):
-   - **Plan**: editor completo via
-     `plan_materia_editor.render_plan_materia_detail`.
-   - **Cronograma**: editor completo via
-     `schedule_materia_editor.render_schedule_materia_detail` (pendiente
-     de re-implementación — antes vivía inline en
-     `validacion_cronograma_tab.py` y se borró por error en Sub-task C).
+6. **Detalle por materia** (expander principal con loop paginado de
+   expanders, uno por materia):
+   - **Filtros**: búsqueda, Carrera (multiselect, soporta materias
+     comunes vía `carreras_set`), Año, Cuatri, Estado, Tipo
+     (Comunes/Exclusivas), Atributos (Optativa/Virtual/Anual/Con
+     lab/Sin lab/etc), toggle "Solo con alertas".
+   - **Tabla resumen por carrera** (sobre el set filtrado): una
+     materia común se cuenta en cada carrera donde pertenece; fila
+     "Total (únicas)" al pie cuenta materias distintas.
+   - **Tabla compacta** con columnas: Estado, Código, Nombre,
+     Carrera (`X (+N)` para comunes), Año, Cuatri, Comisiones,
+     Horarios, h/sem, Optativa, Virtual, Lab.
+   - **Loop paginado de expanders** (10/página) con header
+     dinámico (icono según worst-status del editor + sufijo de
+     modo lab) y botones "Abrir todas / Cerrar todas".
+   - **Editor inline** dentro de cada expander:
+     - **Plan**: `plan_materia_editor.render_plan_materia_detail`
+       (catálogo / calendario editable / edición masiva /
+       inscriptos esperados / comisiones en sub-expanders /
+       validaciones).
+     - **Cronograma**:
+       `schedule_materia_editor.render_schedule_materia_detail`
+       (controles de horas / calendario editable / data_editor /
+       resumen / 10 chequeos).
 7. **Activación gate** (solo plan): botón "Activar plan" deshabilitado
    si hay conflictos no ignorados.
+
+> **Auto-revalidar**: el wrapper
+> `_render_detalle_por_materia` compara fingerprint vivo de DB
+> (cuenta de comisiones + horarios para plan, entries para schedule)
+> contra el snapshot del summary cacheado al inicio del render. Si
+> difieren, marca `pending_revalidate_key` + invalida caches
+> (`_chk_worst_*`, etc.) + `st.rerun()`. Cubre cualquier mutación
+> del editor (calendario, dialogs, data_editor, hsem/hteo/hlab,
+> peso de comisión) sin instrumentar cada call site.
 
 Cada acción del panel (activar/desactivar dictados, ignorar/dejar de
 ignorar conflicto) marca un flag `_pending_revalidate_key` consumido en
@@ -290,10 +314,26 @@ Para cada materia activa del cronograma, el editor renderiza:
    decide). `Hs` se computa como `(fin − inicio)` y es read-only.
 4. **Resumen** (`N clases · X horas en cronograma · M comision(es)`) +
    distribución de horas por comisión.
-5. **10 chequeos estructurados** (cada uno con `status ∈ {ok, warn,
-   error, info}`, `label`, `detail`) que se renderean en una grilla con
-   tilde verde / signo de exclamación amarillo / círculo rojo / signo
-   de pregunta gris según el `status`. Lista completa abajo.
+5. **Chequeos estructurados** (cada uno con `status ∈ {ok, warn,
+   error, info, faltante}`, `label`, `detail`) que se renderean en
+   una grilla con tilde verde / signo de exclamación amarillo /
+   círculo rojo / signo de pregunta gris / buzón rojo según el
+   `status`. Lista completa abajo.
+
+### 4.0. `materia_faltante` — caso especial cuando la materia no tiene horarios
+
+- **`status = faltante`** (solo si la materia tiene dictado activo
+  pero **0 entries** en el cronograma).
+- **Comportamiento**: cuando este check se dispara, los 10 chequeos
+  de las secciones 4.1-4.10 **no se ejecutan** (no aplican porque no
+  hay datos sobre los cuales validar). El editor muestra un único
+  card con icono 📭 y un detail que invita al usuario a cargar
+  clases con el calendario o a desactivar el dictado si la materia
+  no se va a dictar.
+- **Worst-status del expander**: `faltante` tiene un nivel propio
+  entre `error` y `warn` (`error > faltante > warn > info > ok`)
+  para que el icono del header del expander coincida con el badge
+  📭 que aparece en la tabla resumen.
 
 ### 4.1. `hsem_x_com` — h/sem × comisiones = total
 
@@ -387,22 +427,83 @@ Para cada comisión:
   `Cn: clases [d1, d2, ...] no se pueden particionar para sumar Hs
   lab Xh`.
 
-### Worst status (badge de la materia activa)
+### Worst status (badge del header del expander)
 
-El editor calcula el **peor `status`** entre los 10 chequeos, con
-prioridad `error > warn > info > ok`. Ese worst se muestra como **badge
-arriba del editor** (antes era el icono del expander del loop):
+El editor calcula el **peor `status`** entre los 10 chequeos (más el
+posible `materia_faltante`), con prioridad
+`error > faltante > warn > info > ok`. Se cachea en
+`session_state[f"{kp}_chk_worst"]` y el caller
+(`validation_ui._render_detalle_por_materia`) lo lee al renderear el
+header de cada expander del loop paginado:
 
 | Worst status | Icono | Ejemplo |
 |---|---|---|
 | `error` | 🔺 | Paralelas > comisiones, o partición infactible |
+| `faltante` | 📭 | Materia con dictado activo y 0 horarios cargados |
 | `warn` | ⚠️ | Discrepancia de horas, comisiones desbalanceadas |
 | `info` | ❓ | Falta dato (h/sem no definido) o modo reserva ad-hoc |
 | `ok` | ✅ | Todos los chequeos pasan |
 
-> El cache `_chk_worst_<schedule_id>_<materia_codigo>` permite que el
-> selector "Materia activa" muestre el badge de cada materia sin
-> recomputar todo el editor — útil para ordenar por estado.
+> El icono del header coincide siempre con el badge correspondiente
+> de la tabla resumen del Detalle por materia (alineamiento entre
+> ambas vistas).
+>
+> Cuando el detector de cambios del wrapper invalida el summary
+> cacheado, **también** invalida los `_chk_worst_*` para que el
+> próximo render no muestre un icono stale durante el gap entre
+> "render del header" y "render del editor que recalcula".
+
+---
+
+## 4bis. Validaciones inline del editor por materia (plan)
+
+> Estas son las validaciones del **editor por materia del plan**
+> (`plan_materia_editor.render_plan_materia_detail`) — espejo del de
+> cronograma pero operando sobre `ComisionDB` + `HorarioDB` reales del
+> plan en lugar de `ScheduleEntryDB`.
+
+El editor del plan rendea **los mismos 10 chequeos** que el del
+cronograma, vía `_render_plan_checks` que reusa la función
+`_compute_checks` de `schedule_materia_editor`. La adaptación
+construye un DataFrame compatible con los datos del plan:
+
+- `Día`, `Inicio`, `Fin` desde `HorarioDB`.
+- `Comisión` desde `ComisionDB.numero` (no `int` suelto como en el
+  schedule).
+- `Tipo` desde `HorarioDB.tipo_clase`.
+- `Hs` calculado.
+
+Los 10 chequeos (4.1-4.10) se evalúan idénticamente. La lógica de
+`materia_faltante` aplica análogamente cuando la materia está en
+`mat_coms` pero todas las comisiones tienen 0 horarios.
+
+### Override manual de inscriptos esperados
+
+En la sección "👥 Inscriptos esperados" del editor de plan, el
+usuario puede ingresar un **total esperado manual** (input
+"Total esperado (manual)"). Si está seteado y > 0:
+
+- Se persiste en `MateriaForecastConfigDB.valor_override` por
+  `(plan_id, materia_codigo, cuatrimestre)`.
+- `forecast_service.get_forecast_for_materia` devuelve un
+  `ForecastResult(metodo="manual", valor=override)` saltando el
+  cálculo desde la serie histórica.
+- Los esperados por comisión se calculan como
+  `valor_override × peso (coef_asignacion)`.
+
+Botón **"Quitar manual"** elimina el override y vuelve al forecast
+automático. Si la fila de `MateriaForecastConfigDB` también tiene
+un `metodo` override, se conserva (solo se limpia
+`valor_override`); si no, se borra la fila completa.
+
+### "Peso" en lugar de "Coef"
+
+El campo DB sigue siendo `ComisionDB.coef_asignacion` para no romper
+nada, pero el UI lo muestra como **"Peso"** con help text claro:
+"Fracción del total esperado de la materia que se asigna a esta
+comisión. La suma de pesos por materia debe ser ≈1.0".
+
+Botón **"Normalizar"** reasigna 1/n cuando la suma se aleja de 1.0.
 
 ---
 
