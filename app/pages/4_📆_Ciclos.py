@@ -13,11 +13,13 @@ from src.database.models import (
 )
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
+    clear_activo_override,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_drift_summary,
     get_skipped_materias_for_ciclo,
     recompute_activo_for_ciclo,
+    set_activo_manual,
     swap_plan_version_for_ciclo,
     update_dictado,
 )
@@ -293,12 +295,12 @@ with tab_dictados:
             _cfg2.metric("Planes", _cfg_n_planes)
             _cfg3.metric("Materias", _cfg_n_mats)
             _cfg4.metric("Optativas", _cfg_n_optativas)
-            _cfg5.metric("Override recursado", _cfg_n_override)
+            _cfg5.metric("Recursado fijado a mano", _cfg_n_override)
             if _cfg_n_no_recursado:
                 st.caption(
                     f"⚠️ {_cfg_n_no_recursado} carrera(s) con "
                     f"`dicta_recursado=False`: las materias exclusivas y del "
-                    f"cuatri opuesto se crean como **inactivas** (salvo override)."
+                    f"cuatri opuesto se crean como **inactivas** (salvo edición a mano)."
                 )
             if _cfg_n_inactive:
                 st.caption(
@@ -379,15 +381,25 @@ with tab_dictados:
                                 f"**🟢 Pasarán a Activo al recalcular "
                                 f"({len(_drift.recompute_to_activate)})**"
                             )
-                            for _mc, _dc in _drift.recompute_to_activate:
-                                st.write(f"- `{_dc}` ({_mc})")
+                            for _it in _drift.recompute_to_activate:
+                                st.write(
+                                    f"- **{_it['materia_codigo']}** — "
+                                    f"{_it['materia_nombre']} "
+                                    f"({_it['carrera_nombre']})  \n"
+                                    f"  _{_it['razon']}_"
+                                )
                         if _drift.recompute_to_deactivate:
                             st.markdown(
                                 f"**⚪ Pasarán a Inactivo al recalcular "
                                 f"({len(_drift.recompute_to_deactivate)})**"
                             )
-                            for _mc, _dc in _drift.recompute_to_deactivate:
-                                st.write(f"- `{_dc}` ({_mc})")
+                            for _it in _drift.recompute_to_deactivate:
+                                st.write(
+                                    f"- **{_it['materia_codigo']}** — "
+                                    f"{_it['materia_nombre']} "
+                                    f"({_it['carrera_nombre']})  \n"
+                                    f"  _{_it['razon']}_"
+                                )
                         if _drift.missing_materias:
                             st.markdown(
                                 f"**➕ Materias del plan sin dictado "
@@ -466,16 +478,35 @@ with tab_dictados:
                     st.success(f"Dictados: {', '.join(msg_parts)}")
                     st.rerun()
 
+            # Checkbox "pisar ediciones manuales" debe estar disponible
+            # *siempre* antes del botón Recalcular (no condicionado a un
+            # estado intermedio).
+            _pisar_ovr = st.checkbox(
+                "Pisar también las ediciones manuales",
+                value=False,
+                key=f"recompute_pisar_ovr_{sel_ciclo_dict}",
+                help=(
+                    "Por default, 'Recalcular según reglas' respeta los "
+                    "dictados que fueron editados a mano (los marcados "
+                    "con el indicador ✋). Activá esta opción sólo si "
+                    "querés descartar todas las ediciones manuales y "
+                    "dejar que las reglas vuelvan a decidir el estado "
+                    "de cada dictado."
+                ),
+            )
             if _do_recompute:
                 with next(get_session()) as session:
                     preview = recompute_activo_for_ciclo(
                         session, sel_ciclo_dict, apply=False,
+                        pisar_overrides=_pisar_ovr,
                     )
                 st.session_state["dict_recompute_preview"] = {
                     "ciclo": sel_ciclo_dict,
                     "to_activate": preview.to_activate,
                     "to_deactivate": preview.to_deactivate,
+                    "overrides_respetados": preview.overrides_respetados,
                     "unchanged": preview.unchanged,
+                    "pisar_overrides": _pisar_ovr,
                 }
 
             # --- Recompute preview UI ---
@@ -483,47 +514,122 @@ with tab_dictados:
             if _rprev and _rprev.get("ciclo") == sel_ciclo_dict:
                 _to_act = _rprev["to_activate"]
                 _to_deact = _rprev["to_deactivate"]
+                _ovr = _rprev.get("overrides_respetados", [])
                 _n_changes = len(_to_act) + len(_to_deact)
-                if _n_changes == 0:
+                if _n_changes == 0 and not _ovr:
                     st.info(
-                        f"Todos los dictados ya están alineados con las reglas "
-                        f"actuales ({_rprev['unchanged']} sin cambios)."
+                        f"Todos los dictados ya están alineados con las "
+                        f"reglas actuales ({_rprev['unchanged']} sin "
+                        f"cambios)."
                     )
                     st.session_state.pop("dict_recompute_preview", None)
                 else:
                     with st.container(border=True):
+                        _modo_ovr = (
+                            "🚨 Modo: pisar ediciones manuales"
+                            if _rprev.get("pisar_overrides")
+                            else "✋ Modo: respetar ediciones manuales"
+                        )
                         st.markdown(
                             f"**Preview de recálculo** — "
                             f"{_n_changes} cambio(s), "
-                            f"{_rprev['unchanged']} sin cambio."
+                            f"{_rprev['unchanged']} sin cambio. "
+                            f"_{_modo_ovr}_"
                         )
+
+                        def _render_recompute_table(items, key_prefix):
+                            import pandas as _pd
+                            rows = []
+                            for it in items:
+                                _aa = it.get("anio_plan")
+                                _cc = it.get("cuatrimestre_plan")
+                                _ubic = (
+                                    f"{_aa}°·{_cc}" if _aa and _cc
+                                    else (str(_aa) if _aa else (_cc or "—"))
+                                )
+                                _ea = "Activo" if it["estado_actual"] else "Inactivo"
+                                _en = "Activo" if it["estado_nuevo"] else "Inactivo"
+                                _flecha = (
+                                    f"{_ea} → {_en}"
+                                    if it["estado_actual"] != it["estado_nuevo"]
+                                    else _ea
+                                )
+                                rows.append({
+                                    "Materia": (
+                                        f"{it['materia_codigo']} — "
+                                        f"{it['materia_nombre']}"
+                                    ),
+                                    "Carrera": it["carrera_nombre"],
+                                    "Año/Cuatri": _ubic,
+                                    "Cambio": _flecha,
+                                    "Razón": it["razon"],
+                                    "Editado a mano": (
+                                        "✋" if it["tiene_override"] else ""
+                                    ),
+                                })
+                            return _pd.DataFrame(rows)
+
                         if _to_act:
                             with st.expander(
                                 f"🟢 Pasarán a Activo ({len(_to_act)})",
                                 expanded=True,
                             ):
-                                for _mc, _dc in _to_act:
-                                    st.write(f"- `{_dc}` ({_mc})")
+                                _df = _render_recompute_table(_to_act, "act")
+                                st.dataframe(
+                                    _df,
+                                    width='stretch',
+                                    hide_index=True,
+                                )
                         if _to_deact:
                             with st.expander(
                                 f"⚪ Pasarán a Inactivo ({len(_to_deact)})",
                                 expanded=True,
                             ):
-                                for _mc, _dc in _to_deact:
-                                    st.write(f"- `{_dc}` ({_mc})")
+                                _df = _render_recompute_table(_to_deact, "deact")
+                                st.dataframe(
+                                    _df,
+                                    width='stretch',
+                                    hide_index=True,
+                                )
+                        if _ovr:
+                            with st.expander(
+                                f"✋ Editados a mano (respetados) ({len(_ovr)})",
+                                expanded=False,
+                            ):
+                                st.caption(
+                                    "Estos dictados fueron editados a mano "
+                                    "desde la grilla: la recalculación los "
+                                    "respeta y NO los modifica. Para que "
+                                    "vuelvan a alinearse con la regla, "
+                                    "apretá 'Quitar edición manual' en la "
+                                    "grilla o activá el toggle 'Pisar "
+                                    "también las ediciones manuales'."
+                                )
+                                _df = _render_recompute_table(_ovr, "ovr")
+                                st.dataframe(
+                                    _df,
+                                    width='stretch',
+                                    hide_index=True,
+                                )
                         _ac1, _ac2, _ = st.columns([1, 1, 3])
                         with _ac1:
                             if st.button(
                                 "Aplicar cambios",
                                 type="primary",
                                 key="btn_apply_recompute",
+                                disabled=(_n_changes == 0),
                             ):
                                 with next(get_session()) as session:
                                     res = recompute_activo_for_ciclo(
-                                        session, sel_ciclo_dict, apply=True,
+                                        session, sel_ciclo_dict,
+                                        apply=True,
+                                        pisar_overrides=_rprev.get(
+                                            "pisar_overrides", False,
+                                        ),
                                     )
                                 st.success(
-                                    f"{res.n_changes} dictado(s) actualizado(s)."
+                                    f"{res.n_changes} dictado(s) "
+                                    f"actualizado(s)."
                                 )
                                 st.session_state.pop(
                                     "dict_recompute_preview", None,
@@ -775,7 +881,9 @@ with tab_dictados:
             # =========================================================
             # Per-carrera expanders
             # =========================================================
-            changes: dict[str, dict] = {}  # dictado_id -> {activo, virtual}
+            # Nota: cambios al toggle Activo/Virtual son auto-save
+            # (set_activo_manual / update_dictado). El override manual
+            # queda registrado en DictadoDB.activo_override_manual.
 
             def _render_item(item: dict, carrera_cod: str) -> None:
                 """Render one materia row inside a carrera expander."""
@@ -796,6 +904,8 @@ with tab_dictados:
                         _badge = "🟢 Activo"
                     else:
                         _badge = "⚪ Inactivo"
+                    if d is not None and d.activo_override_manual is not None:
+                        _badge += " · ✋ editado a mano"
                     _virt = " · 🌐 virtual" if (
                         (d.virtual if d else mat.virtual)
                     ) else ""
@@ -860,8 +970,8 @@ with tab_dictados:
                                 _ds.add(_m_db)
                                 _ds.commit()
                         st.toast(
-                            f"{mat.codigo}: recursado override = {_new_rec_lbl}. "
-                            "🔄 Recalcular para aplicar."
+                            f"{mat.codigo}: recursado fijado a mano = "
+                            f"{_new_rec_lbl}. 🔄 Recalculá para aplicar."
                         )
                         st.rerun()
 
@@ -871,9 +981,42 @@ with tab_dictados:
                             "Activo",
                             value=d.activo,
                             key=f"activo_{carrera_cod}_{d.id}",
+                            help=(
+                                "Cambiar este toggle queda como una "
+                                "edición a mano: la próxima vez que "
+                                "corras 'Recalcular según reglas' "
+                                "respetará tu decisión."
+                            ),
                         )
                         if new_activo != d.activo:
-                            changes.setdefault(d.id, {})["activo"] = new_activo
+                            with next(get_session()) as _ds:
+                                set_activo_manual(_ds, d.id, new_activo)
+                            st.toast(
+                                f"{mat.codigo}: "
+                                f"{'Activo' if new_activo else 'Inactivo'} "
+                                "(editado a mano)"
+                            )
+                            st.rerun()
+                        # Botón para limpiar la edición manual y volver
+                        # a alinear el dictado con la regla.
+                        if d.activo_override_manual is not None:
+                            if st.button(
+                                "Quitar edición manual",
+                                key=f"clear_ovr_{carrera_cod}_{d.id}",
+                                help=(
+                                    "Descarta la edición a mano de este "
+                                    "dictado: en la próxima "
+                                    "recalculación, volverá a alinearse "
+                                    "con la regla."
+                                ),
+                            ):
+                                with next(get_session()) as _ds:
+                                    clear_activo_override(_ds, d.id)
+                                st.toast(
+                                    f"{mat.codigo}: edición manual "
+                                    "descartada"
+                                )
+                                st.rerun()
                     with col_virtual:
                         new_virtual = st.checkbox(
                             "Virtual",
@@ -881,7 +1024,13 @@ with tab_dictados:
                             key=f"virtual_{carrera_cod}_{d.id}",
                         )
                         if new_virtual != d.virtual:
-                            changes.setdefault(d.id, {})["virtual"] = new_virtual
+                            with next(get_session()) as _ds:
+                                update_dictado(_ds, d.id, virtual=new_virtual)
+                            st.toast(
+                                f"{mat.codigo}: virtual="
+                                f"{'sí' if new_virtual else 'no'}"
+                            )
+                            st.rerun()
                 else:
                     # Caso raro: materia del plan sin dictado todavia. Suele
                     # pasar solo en estado intermedio (DB pre-migracion).
@@ -939,8 +1088,9 @@ with tab_dictados:
                                         "(obligatorias o de cuatri opuesto) se "
                                         "crean activas por defecto. Si está "
                                         "apagado, las del cuatri opuesto a este "
-                                        "ciclo se crean inactivas (salvo override "
-                                        "de la materia)."
+                                        "ciclo se crean inactivas (salvo que "
+                                        "la materia tenga marcado un "
+                                        "recursado propio que prevalezca)."
                                     ),
                                 )
                                 if _new_rec != _carr.dicta_recursado:
@@ -1033,23 +1183,7 @@ with tab_dictados:
                         for it in optativas:
                             _render_item(it, carrera_cod)
 
-            # =========================================================
-            # Batch save (toggles activo/virtual)
-            # =========================================================
-            if changes:
-                st.divider()
-                if st.button(
-                    f"💾 Guardar cambios ({len(changes)} dictado(s))",
-                    type="primary",
-                    key="btn_save_dictados",
-                ):
-                    with next(get_session()) as save_session:
-                        for did, vals in changes.items():
-                            update_dictado(
-                                save_session,
-                                did,
-                                activo=vals.get("activo"),
-                                virtual=vals.get("virtual"),
-                            )
-                    st.success(f"{len(changes)} dictado(s) actualizado(s)")
-                    st.rerun()
+            # Nota: ya no hay batch save. Los toggles Activo/Virtual
+            # se persisten on-change. El toggle Activo además registra
+            # un override manual que sobrevive a "Recalcular según
+            # reglas" (salvo que se active "Pisar overrides").

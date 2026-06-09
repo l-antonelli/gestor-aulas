@@ -124,6 +124,13 @@ class DictadoDB(SQLModel, table=True):
     inicio_dictado: Optional[date] = Field(default=None)
     fin_dictado: Optional[date] = Field(default=None)
     activo: bool = Field(default=True)
+    # Override manual del flag `activo`. Cuando es None, el dictado se
+    # alinea con la regla de recursado al apretar "Recalcular según
+    # reglas". Cuando es True/False, fuerza el valor manualmente y la
+    # ejecucion default de `recompute_activo_for_ciclo` lo respeta
+    # (sólo se borra cuando el usuario activa el toggle "Pisar overrides
+    # manuales").
+    activo_override_manual: Optional[bool] = Field(default=None)
     virtual: bool = Field(default=False)
 
     # Relationships
@@ -216,12 +223,31 @@ class ComisionDB(SQLModel, table=True):
     horarios: list["HorarioDB"] = Relationship(back_populates="comision")
 
 
+class SedeDB(SQLModel, table=True):
+    """Sede física donde se ubican las aulas.
+
+    Modelada como entidad propia (en vez de un string libre en `AulaDB.sede`)
+    para permitir referenciarla desde otras entidades (por ejemplo, futuras
+    restricciones del LP del tipo "esta materia solo se puede cursar en estas
+    sedes"). El nombre es único globalmente.
+    """
+    __tablename__ = "sedes"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    nombre: str = Field(min_length=1, unique=True, index=True)
+
+
 class AulaDB(SQLModel, table=True):
     """Espacio físico donde se dictan las clases."""
     __tablename__ = "aulas"
 
-    id: str = Field(primary_key=True, min_length=1)
-    sede: str = Field(index=True)
+    # ID opaco autogenerado. No se ingresa manualmente desde la UI.
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    sede_id: str = Field(foreign_key="sedes.id", index=True)
+    # Código display editable. Único globalmente. Si el usuario no lo provee
+    # al crear el aula, se autoderiva como "{sede.nombre}-{nombre}" con
+    # espacios reemplazados por guiones.
+    codigo_aula: str = Field(min_length=1, unique=True, index=True)
     nombre: str = Field(min_length=1)
     capacidad: int = Field(gt=0)
     tipo: str = Field(default="teorica")
@@ -460,6 +486,10 @@ class ClaseDB(SQLModel, table=True):
     executed: bool = Field(default=False)
     aula_id: Optional[str] = Field(default=None, foreign_key="aulas.id")
     tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
+    # True si la aula fue asignada por una edicion manual del usuario.
+    # El re-run del LP por default respeta estas asignaciones (no las pisa)
+    # salvo que el usuario active el toggle "sobreescribir todo".
+    aula_asignada_manualmente: bool = Field(default=False)
 
     # Relationships
     plan_cursada: Optional[PlanificacionCursadaDB] = Relationship(back_populates="clases")
@@ -510,3 +540,63 @@ class MateriaForecastConfigDB(SQLModel, table=True):
     cuatrimestre: str = Field(primary_key=True)  # "1C" | "2C" | "Anual"
     metodo: Optional[str] = Field(default=None)  # "media_movil"|"drift"|"ses"|None
     valor_override: Optional[float] = Field(default=None, ge=0)
+
+
+# =============================================================================
+# LP de Asignacion de Aulas
+# =============================================================================
+
+class LPRunDB(SQLModel, table=True):
+    """Snapshot de una corrida del LP de asignacion de aulas.
+
+    Cada vez que el usuario corre el LP se inserta una fila. La UI por
+    default muestra la mas reciente (`get_latest_run`). Las anteriores se
+    conservan para auditoria y comparacion entre corridas.
+
+    El detalle por horario (gap, aula asignada, t[h] resuelto, alpha[k] si
+    aplica) se guarda serializado en `details_json` para reconstruccion sin
+    recomputar.
+    """
+    __tablename__ = "lp_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    plan_cursada_id: str = Field(
+        foreign_key="planificaciones_cursada.id", index=True,
+    )
+    run_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Rango temporal aplicado a ClaseDB.
+    fecha_desde: date
+
+    # Configuracion aplicada al LP.
+    lambda_over: float = Field(default=10.0, ge=0)
+    lambda_under: float = Field(default=1.0, ge=0)
+    tol_over: float = Field(default=0.0, ge=0)
+    tol_under: float = Field(default=0.20, ge=0)
+    activar_alpha: bool = Field(default=False)
+    respetar_ediciones_manuales: bool = Field(default=True)
+    timeout_seconds: int = Field(default=300, ge=1)
+
+    # Resultado.
+    status: str = Field(default="error")  # "optimal" | "infeasible" | "timeout" | "error"
+    objective_value: Optional[float] = Field(default=None)
+    n_horarios_total: int = Field(default=0, ge=0)
+    n_horarios_asignados: int = Field(default=0, ge=0)
+    n_clases_actualizadas: int = Field(default=0, ge=0)
+    n_clases_sobreocupadas: int = Field(default=0, ge=0)
+    n_clases_subutilizadas: int = Field(default=0, ge=0)
+    n_ediciones_manuales_respetadas: int = Field(default=0, ge=0)
+    solver_seconds: Optional[float] = Field(default=None, ge=0)
+    error_message: str = Field(default="")
+
+    # Snapshot detalle JSON. Estructura:
+    # {
+    #   "horarios": [
+    #     {"horario_id": str, "aula_id": str|None, "tipo_clase": str|None,
+    #      "insc": float, "cap": int, "delta": float,
+    #      "over": float, "under": float, "estado": "ok"|"sobre"|"sub"},
+    #     ...
+    #   ],
+    #   "alpha": {comision_id: float}    # solo si activar_alpha=True
+    # }
+    details_json: str = Field(default="{}")

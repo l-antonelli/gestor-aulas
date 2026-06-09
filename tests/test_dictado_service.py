@@ -745,7 +745,11 @@ class TestRecomputeActivo:
         # Preview: debe sugerir activar REC01
         preview = recompute_activo_for_ciclo(session, "2025-1C-REC", apply=False)
         assert preview.applied is False
-        assert ("REC01", "REC01-2025-1C") in preview.to_activate
+        # Cada item es ahora un dict enriquecido. Buscamos por materia.
+        materias_activate = {
+            it["materia_codigo"] for it in preview.to_activate
+        }
+        assert "REC01" in materias_activate
         assert preview.n_changes == 1
 
         # DB sin cambios
@@ -855,3 +859,185 @@ class TestUpdateDictado:
     def test_update_nonexistent_returns_none(self, session):
         result = update_dictado(session, "nonexistent-id", activo=False)
         assert result is None
+
+
+class TestActivoOverrideManual:
+    """Tests para `set_activo_manual`, `clear_activo_override` y la
+    interaccion con `recompute_activo_for_ciclo` (Fase override)."""
+
+    def test_set_activo_manual_persiste_ambos_campos(
+        self, session, ciclo_1c, materias,
+    ):
+        from src.services.dictado_service import set_activo_manual
+        create_dictados_for_ciclo(session, "2025-1C")
+        d = get_dictados_for_ciclo(session, "2025-1C")[0]
+        # Inicialmente activo=True, override=None
+        assert d.activo is True
+        assert d.activo_override_manual is None
+
+        updated = set_activo_manual(session, d.id, False)
+        assert updated is not None
+        assert updated.activo is False
+        assert updated.activo_override_manual is False
+
+    def test_recompute_respeta_override_por_default(self, session):
+        """Override que difiere de la regla → queda en
+        overrides_respetados."""
+        from src.services.dictado_service import (
+            recompute_activo_for_ciclo, set_activo_manual,
+        )
+        # Setup: carrera dicta_recursado=True (regla → activo), pero
+        # el usuario forzo desactivado manualmente.
+        carrera = CarreraDB(codigo="OV1", nombre="OV1", dicta_recursado=True)
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="OV1",
+            nombre="P", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        materia = MateriaDB(
+            codigo="OV01", nombre="OV01", periodo="cuatrimestral",
+            horas_semanales=4, horas_teoria=4, horas_laboratorio=0,
+        )
+        session.add(materia)
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OV01",
+            carrera_codigo="OV1", anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-OV", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 1), fecha_fin=date(2025, 7, 31),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+        create_dictados_for_ciclo(session, ciclo.id)
+        d = get_dictados_for_ciclo(session, ciclo.id)[0]
+        assert d.activo is True
+
+        # Override manual: forzar inactivo.
+        set_activo_manual(session, d.id, False)
+
+        # Recalcular en modo default: respeta override.
+        preview = recompute_activo_for_ciclo(session, ciclo.id, apply=False)
+        assert preview.unchanged == 0
+        assert preview.n_changes == 0
+        assert len(preview.overrides_respetados) == 1
+        item = preview.overrides_respetados[0]
+        assert item["materia_codigo"] == "OV01"
+        assert item["tiene_override"] is True
+
+    def test_recompute_pisa_overrides_si_flag_on(self, session):
+        """Con pisar_overrides=True, el override se borra y la regla
+        aplica."""
+        from src.services.dictado_service import (
+            recompute_activo_for_ciclo, set_activo_manual,
+        )
+        carrera = CarreraDB(codigo="OV2", nombre="OV2", dicta_recursado=True)
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="OV2",
+            nombre="P", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        materia = MateriaDB(
+            codigo="OV02", nombre="OV02", periodo="cuatrimestral",
+            horas_semanales=4, horas_teoria=4, horas_laboratorio=0,
+        )
+        session.add(materia)
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="OV02",
+            carrera_codigo="OV2", anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-OV2", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 1), fecha_fin=date(2025, 7, 31),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+        create_dictados_for_ciclo(session, ciclo.id)
+        d = get_dictados_for_ciclo(session, ciclo.id)[0]
+        set_activo_manual(session, d.id, False)
+
+        # Recalcular pisando overrides.
+        result = recompute_activo_for_ciclo(
+            session, ciclo.id, apply=True, pisar_overrides=True,
+        )
+        assert result.applied is True
+        # El dictado pasa a activo=True (regla manda) y el override
+        # se borra.
+        d2 = get_dictados_for_ciclo(session, ciclo.id)[0]
+        assert d2.activo is True
+        assert d2.activo_override_manual is None
+        assert len(result.overrides_respetados) == 0
+        assert len(result.to_activate) == 1
+
+    def test_recompute_items_tienen_contexto_completo(self, session):
+        """Cada item del preview debe traer materia_nombre, carrera,
+        anio_plan, cuatrimestre_plan, razon."""
+        from src.services.dictado_service import recompute_activo_for_ciclo
+        carrera = CarreraDB(codigo="CTX", nombre="Carrera CTX", dicta_recursado=False)
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="CTX",
+            nombre="Plan CTX", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        materia = MateriaDB(
+            codigo="CTX01", nombre="Materia Contextualizada",
+            periodo="cuatrimestral",
+            horas_semanales=4, horas_teoria=4, horas_laboratorio=0,
+        )
+        session.add(materia)
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="CTX01",
+            carrera_codigo="CTX", anio_plan=2, cuatrimestre_plan="2C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-CTX", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 1), fecha_fin=date(2025, 7, 31),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        # Materia es 2C en plan, ciclo es 1C, carrera no recursa
+        # → debe figurar en to_deactivate (si arrancó activa) o ya
+        # estar inactiva.
+        # Como create_dictados_for_ciclo aplica la regla en creación,
+        # arranca inactiva. Forzamos activarla y recalcular.
+        d = get_dictados_for_ciclo(session, ciclo.id)[0]
+        d.activo = True
+        session.add(d)
+        session.commit()
+
+        preview = recompute_activo_for_ciclo(session, ciclo.id, apply=False)
+        assert len(preview.to_deactivate) == 1
+        item = preview.to_deactivate[0]
+        assert item["materia_codigo"] == "CTX01"
+        assert item["materia_nombre"] == "Materia Contextualizada"
+        assert item["carrera_codigo"] == "CTX"
+        assert item["carrera_nombre"] == "Carrera CTX"
+        assert item["anio_plan"] == 2
+        assert item["cuatrimestre_plan"] == "2C"
+        assert item["estado_actual"] is True
+        assert item["estado_nuevo"] is False
+        assert "no dicta recursado" in item["razon"]
+        assert item["tiene_override"] is False

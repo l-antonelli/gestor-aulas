@@ -32,7 +32,7 @@ sys.path.insert(0, str(project_root))
 from src.database.connection import get_session, init_db
 from src.database.models import (
     AulaDB, CarreraDB, MateriaDB, PlanEstudioDB,
-    PlanCarreraVersionDB,
+    PlanCarreraVersionDB, SedeDB,
 )
 from src.database.crud import aula_crud, materia_crud, carrera_crud
 
@@ -47,10 +47,31 @@ CARRERAS_METADATA = DATA_DIR / "Carreras" / "carreras_metadata.json"
 # Step 1: Load Aulas
 # =============================================================================
 
+def _ensure_sede_pellegrini(session: Session) -> SedeDB:
+    """Devuelve la sede 'Pellegrini', creandola si no existe.
+
+    Es la sede default para aulas cargadas desde el Excel inicial. Las
+    aulas adicionales en otras sedes se gestionan desde la UI.
+    """
+    from sqlmodel import select
+    existing = session.exec(
+        select(SedeDB).where(SedeDB.nombre == "Pellegrini")
+    ).first()
+    if existing is not None:
+        return existing
+    sede = SedeDB(nombre="Pellegrini")
+    session.add(sede)
+    session.commit()
+    session.refresh(sede)
+    return sede
+
+
 def load_aulas(session: Session) -> dict:
     """Load aulas from aulas.xlsx."""
     df = pd.read_excel(AULAS_FILE)
     stats = {"created": 0, "skipped": 0, "warnings": []}
+
+    sede_pellegrini = _ensure_sede_pellegrini(session)
 
     for _, row in df.iterrows():
         nombre = str(row["Aula"]).strip()
@@ -62,17 +83,21 @@ def load_aulas(session: Session) -> dict:
             stats["warnings"].append(f"{nombre}: capacidad invalida '{capacidad_raw}'")
             continue
 
-        # Derive ID from name: "AULA 01" -> "AULA-01"
-        aula_id = nombre.replace(" ", "-")
+        # Codigo display: "AULA 01" -> "Pellegrini-AULA-01"
+        codigo_aula = f"{sede_pellegrini.nombre}-{nombre}".replace(" ", "-")
 
-        existing = aula_crud.get(session, aula_id)
-        if existing:
+        # Idempotencia: skip si ya existe un aula con ese codigo.
+        from sqlmodel import select
+        existing = session.exec(
+            select(AulaDB).where(AulaDB.codigo_aula == codigo_aula)
+        ).first()
+        if existing is not None:
             stats["skipped"] += 1
             continue
 
         aula = AulaDB(
-            id=aula_id,
-            sede="Principal",
+            sede_id=sede_pellegrini.id,
+            codigo_aula=codigo_aula,
             nombre=nombre,
             capacidad=capacidad,
             tipo="teorica",

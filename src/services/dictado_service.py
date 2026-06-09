@@ -59,8 +59,9 @@ class DriftSummary:
       en ningun plan asignado al ciclo. Surgen al swap de plan a otra
       version sin las mismas materias.
     """
-    recompute_to_activate: list[tuple[str, str]] = field(default_factory=list)
-    recompute_to_deactivate: list[tuple[str, str]] = field(default_factory=list)
+    # Items enriquecidos del recompute (mismo shape que RecomputeResult).
+    recompute_to_activate: list[dict] = field(default_factory=list)
+    recompute_to_deactivate: list[dict] = field(default_factory=list)
     missing_materias: list[tuple[str, str]] = field(default_factory=list)
     orphan_dictados: list[tuple[str, str]] = field(default_factory=list)
 
@@ -82,13 +83,21 @@ class DriftSummary:
 class RecomputeResult:
     """Diff de un recompute de `activo` segun reglas de recursado.
 
-    Cada lista es una tupla `(materia_codigo, dictado_codigo)`. El total se
-    obtiene sumando ambas listas. `applied=True` si el cambio fue persistido.
+    Cada lista contiene dicts con metadata enriquecida (nombre de
+    materia, carrera, año/cuatri del plan, razón). Ver
+    ``_build_recompute_item`` para el shape exacto.
+
+    `overrides_respetados` lista los dictados con
+    ``activo_override_manual is not None`` cuando se corrió en modo
+    default (sin pisar overrides). `applied=True` si el cambio fue
+    persistido.
     """
-    to_activate: list[tuple[str, str]] = field(default_factory=list)
-    to_deactivate: list[tuple[str, str]] = field(default_factory=list)
+    to_activate: list[dict] = field(default_factory=list)
+    to_deactivate: list[dict] = field(default_factory=list)
+    overrides_respetados: list[dict] = field(default_factory=list)
     unchanged: int = 0
     applied: bool = False
+    pisar_overrides: bool = False
 
     @property
     def n_changes(self) -> int:
@@ -361,26 +370,133 @@ def _link_anual_dictado_2c(
     result.linked += 1
 
 
+def _razon_para_dictado(
+    session: Session,
+    materia: MateriaDB,
+    ciclo: CicloDB,
+    plan_version_ids: list[str],
+) -> str:
+    """Devuelve una razón humana del estado esperado de un dictado.
+
+    Verbaliza la lógica de ``_should_skip_for_recursado`` + el caso anual
+    para que la UI de "Recalcular según reglas" muestre el motivo legible
+    detrás de cada cambio.
+    """
+    if materia.periodo == "anual":
+        return "Materia anual → siempre activa"
+    if materia.dicta_recursado is True:
+        return "Override de la materia: dicta_recursado=Sí → activa"
+    if materia.dicta_recursado is False:
+        if _is_opposite_cuatrimestre(session, materia, ciclo, plan_version_ids):
+            return (
+                "Override de la materia: dicta_recursado=No y la materia "
+                "es del cuatrimestre opuesto al ciclo → inactiva"
+            )
+        return (
+            "Override de la materia: dicta_recursado=No pero el ciclo "
+            "coincide con su cuatrimestre del plan → activa"
+        )
+    entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.materia_codigo == materia.codigo)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))  # type: ignore[attr-defined]
+    ).all())
+    carrera_codigos = sorted({e.carrera_codigo for e in entries})
+    if len(carrera_codigos) > 1:
+        return (
+            f"Materia compartida entre {len(carrera_codigos)} carreras "
+            f"({', '.join(carrera_codigos)}) → activa"
+        )
+    if not carrera_codigos:
+        return "Materia sin entradas en planes asignados al ciclo"
+    carrera = session.get(CarreraDB, carrera_codigos[0])
+    if carrera is None:
+        return f"Carrera {carrera_codigos[0]} no encontrada → activa"
+    if carrera.dicta_recursado:
+        return f"Carrera {carrera.codigo} dicta recursado → activa"
+    cuatri_ciclo = f"{ciclo.numero}C"
+    cuatris_plan = sorted({e.cuatrimestre_plan or "?" for e in entries})
+    if any(c == cuatri_ciclo or c.lower() == "anual" for c in cuatris_plan):
+        return (
+            f"Carrera {carrera.codigo} no dicta recursado pero la materia "
+            f"figura en el cuatri actual ({cuatri_ciclo}) → activa"
+        )
+    return (
+        f"Carrera {carrera.codigo} no dicta recursado y la materia es del "
+        f"cuatri opuesto ({', '.join(cuatris_plan)} vs ciclo {cuatri_ciclo}) "
+        f"→ inactiva"
+    )
+
+
+def _build_recompute_item(
+    session: Session,
+    dictado: DictadoDB,
+    materia: MateriaDB,
+    plan_version_ids: list[str],
+    estado_actual: bool,
+    estado_nuevo: bool,
+    ciclo: CicloDB,
+) -> dict:
+    """Arma el dict de detalle para una entrada del RecomputeResult."""
+    entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.materia_codigo == materia.codigo)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))  # type: ignore[attr-defined]
+    ).all())
+    carrera_codigos = sorted({e.carrera_codigo for e in entries})
+    if len(carrera_codigos) == 1:
+        carr = session.get(CarreraDB, carrera_codigos[0])
+        carrera_codigo = carrera_codigos[0]
+        carrera_nombre = carr.nombre if carr else carrera_codigos[0]
+    elif len(carrera_codigos) > 1:
+        carrera_codigo = "compartida"
+        carrera_nombre = f"Compartida ({', '.join(carrera_codigos)})"
+    else:
+        carrera_codigo = "—"
+        carrera_nombre = "—"
+    # Año/cuatri del primer entry (con cualquiera de las carreras de la materia).
+    anio_plan = entries[0].anio_plan if entries else None
+    cuatri_plan = entries[0].cuatrimestre_plan if entries else None
+    razon = _razon_para_dictado(session, materia, ciclo, plan_version_ids)
+    return {
+        "dictado_id": dictado.id,
+        "materia_codigo": materia.codigo,
+        "materia_nombre": materia.nombre,
+        "dictado_codigo": dictado.dictado_codigo,
+        "carrera_codigo": carrera_codigo,
+        "carrera_nombre": carrera_nombre,
+        "anio_plan": anio_plan,
+        "cuatrimestre_plan": cuatri_plan,
+        "estado_actual": estado_actual,
+        "estado_nuevo": estado_nuevo,
+        "razon": razon,
+        "tiene_override": dictado.activo_override_manual is not None,
+    }
+
+
 def recompute_activo_for_ciclo(
-    session: Session, ciclo_id: str, apply: bool = False,
+    session: Session,
+    ciclo_id: str,
+    apply: bool = False,
+    *,
+    pisar_overrides: bool = False,
 ) -> RecomputeResult:
     """Recalcula `activo` de cada dictado del ciclo segun las reglas vigentes.
 
-    Para cada dictado del ciclo:
-    - cuatrimestrales con `_should_skip_for_recursado` → activo=False (esperado)
-    - resto → activo=True (esperado)
+    Por default, los dictados con ``activo_override_manual`` seteado se
+    respetan: aparecen en ``result.overrides_respetados`` y no se
+    modifican. Si ``pisar_overrides=True``, el override se borra y la
+    regla se aplica como a cualquier otro dictado.
 
-    Si `apply=False` solo devuelve el diff (preview). Si `apply=True` persiste
-    los cambios. Materias dadas de baja por el usuario manualmente seran
-    re-activadas si la regla actual lo dicta — quien aprieta "Recalcular"
-    confirma que quiere alinear todo a las reglas. Para overrides puntuales,
-    el usuario puede tocar el toggle a mano despues.
+    Si ``apply=False`` sólo devuelve el diff (preview). Si ``apply=True``
+    persiste los cambios.
 
     Returns:
-        RecomputeResult con `to_activate`, `to_deactivate`, `unchanged`,
-        y `applied=True` si se persistio.
+        RecomputeResult con listas enriquecidas (``to_activate``,
+        ``to_deactivate``, ``overrides_respetados``), ``unchanged``, y
+        ``applied=True`` si se persistió.
     """
-    result = RecomputeResult()
+    result = RecomputeResult(pisar_overrides=pisar_overrides)
 
     ciclo = ciclo_crud.get(session, ciclo_id)
     if ciclo is None:
@@ -403,6 +519,15 @@ def recompute_activo_for_ciclo(
         materia = session.get(MateriaDB, d.materia_codigo)
         if materia is None:
             continue
+
+        # Override manual y modo default → respetar.
+        if d.activo_override_manual is not None and not pisar_overrides:
+            result.overrides_respetados.append(_build_recompute_item(
+                session, d, materia, plan_version_ids,
+                estado_actual=d.activo, estado_nuevo=d.activo, ciclo=ciclo,
+            ))
+            continue
+
         # Anuales no se ven afectadas por la regla de recursado
         if materia.periodo == "anual":
             expected_activo = True
@@ -411,24 +536,82 @@ def recompute_activo_for_ciclo(
                 session, materia, ciclo, plan_version_ids,
             )
 
+        # Si pisamos overrides y el dictado tenía uno, lo borramos (al
+        # aplicar). En preview también lo reportamos como cambio si la
+        # regla difiere del estado actual.
         if expected_activo == d.activo:
             result.unchanged += 1
-        elif expected_activo:
-            result.to_activate.append((d.materia_codigo, d.dictado_codigo))
+            if pisar_overrides and apply and d.activo_override_manual is not None:
+                d.activo_override_manual = None
+                session.add(d)
+            continue
+        item = _build_recompute_item(
+            session, d, materia, plan_version_ids,
+            estado_actual=d.activo, estado_nuevo=expected_activo, ciclo=ciclo,
+        )
+        if expected_activo:
+            result.to_activate.append(item)
             if apply:
                 d.activo = True
+                if pisar_overrides:
+                    d.activo_override_manual = None
                 session.add(d)
         else:
-            result.to_deactivate.append((d.materia_codigo, d.dictado_codigo))
+            result.to_deactivate.append(item)
             if apply:
                 d.activo = False
+                if pisar_overrides:
+                    d.activo_override_manual = None
                 session.add(d)
 
-    if apply and result.n_changes > 0:
+    if apply:
+        # Commit aunque n_changes==0 si pisar_overrides limpió banderas
+        # en dictados que ya estaban alineados (el flag activo sigue
+        # igual pero el override se borró).
         session.commit()
         result.applied = True
 
     return result
+
+
+def set_activo_manual(
+    session: Session, dictado_id: str, activo: bool,
+) -> Optional[DictadoDB]:
+    """Setea ``activo`` y persiste el override manual en el mismo paso.
+
+    A diferencia de ``update_dictado``, esta función deja constancia del
+    override en ``activo_override_manual`` para que la próxima ejecución
+    de ``recompute_activo_for_ciclo`` (en modo default) lo respete.
+
+    Útil como auto-save del toggle en la UI del panel de dictados.
+    """
+    d = session.get(DictadoDB, dictado_id)
+    if d is None:
+        return None
+    d.activo = activo
+    d.activo_override_manual = activo
+    session.add(d)
+    session.commit()
+    session.refresh(d)
+    return d
+
+
+def clear_activo_override(
+    session: Session, dictado_id: str,
+) -> Optional[DictadoDB]:
+    """Borra el override manual de un dictado, sin tocar ``activo``.
+
+    Útil si el usuario quiere volver a alinear ese dictado a la regla
+    sin necesariamente cambiar su estado actual.
+    """
+    d = session.get(DictadoDB, dictado_id)
+    if d is None:
+        return None
+    d.activo_override_manual = None
+    session.add(d)
+    session.commit()
+    session.refresh(d)
+    return d
 
 
 def set_activo_for_materias_in_ciclo(

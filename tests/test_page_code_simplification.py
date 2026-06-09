@@ -24,13 +24,12 @@ import pytest
 # =============================================================================
 
 # Pages using EntityPageConfig / EntityPageTemplate
-TEMPLATE_PAGES = [
-    "app/pages/2_🏛️_Aulas.py",
-]
+TEMPLATE_PAGES: list[str] = []
 
 # Pages with custom implementations (legitimate reasons not to use template)
 CUSTOM_PAGES = [
     "app/pages/1_📚_Materias.py",       # Complex carrera/comision management
+    "app/pages/2_🏛️_Aulas.py",          # Aulas + Sedes en tabs (entidad propia)
     "app/pages/3_👥_Comisiones.py",      # Read-only view with cupo editing
     "app/pages/4_📅_Horarios.py",        # File upload + manual entry
     "app/pages/5_🎓_Carreras.py",        # Completeness tracking + plan management
@@ -296,13 +295,21 @@ class TestPageStructureVerification:
         assert "MateriaCarreraEditor" in content or "CarreraStatusWidget" in content
 
     def test_aulas_page_structure(self):
-        """Test Aulas page uses EntityPageConfig template."""
+        """Test Aulas page integrates Aulas + Sedes management.
+
+        Desde el refactor de Sede a entidad propia, la página de Aulas
+        es custom (tabs 📋 Listado / ➕ Crear / 👁️ Detalle / 📍 Sedes)
+        y ya no usa el `EntityPageTemplate`. Verifica que estén los
+        elementos clave del nuevo flujo.
+        """
         content = get_page_content("app/pages/2_🏛️_Aulas.py")
         if not content:
             pytest.skip("Aulas page not found")
 
-        assert "aula_service" in content
-        assert "EntityPageConfig" in content
+        assert "AulaDB" in content
+        assert "SedeDB" in content
+        assert "sede_service" in content
+        assert "codigo_aula" in content
 
     def test_comisiones_page_structure(self):
         """Test Comisiones page is read-only with cupo editing."""

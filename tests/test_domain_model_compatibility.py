@@ -72,7 +72,8 @@ def create_valid_aula() -> Aula:
     """Create a valid Aula instance for testing."""
     return Aula(
         id="AULA-001",
-        sede="Campus Central",
+        sede_id="sede-test",
+        codigo_aula="AULA-001",
         nombre="Aula 101",
         capacidad=40,
         tipo="teorica",
@@ -233,7 +234,8 @@ class TestCustomValidatorRespect:
         """Test that Aula capacidad constraint (gt=0) is respected."""
         form_data = {
             "id": "AULA-001",
-            "sede": "Campus Central",
+            "sede_id": "sede-test",
+            "codigo_aula": "AULA-001",
             "nombre": "Aula 101",
             "capacidad": 0,  # Must be > 0
             "tipo": "teorica",

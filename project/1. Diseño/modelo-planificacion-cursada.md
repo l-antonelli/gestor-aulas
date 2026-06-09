@@ -120,18 +120,39 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 > mediante las versiones de plan asignadas al ciclo (CicloPlanVersion -> PlanCarreraVersion -> PlanEstudio).
 > Solo las materias presentes en las versiones de plan asignadas al ciclo obtienen Dictado.
 
-#### Aula
+#### Sede (nueva, 2026-06)
 
-Sin cambios. Espacio fisico para clases.
+Sede física donde se ubican las aulas. Modelada como entidad propia
+(antes era un string libre dentro de `Aula.sede`) para permitir
+referenciarla desde futuras restricciones del LP del tipo "esta materia
+sólo se puede cursar en estas sedes".
 
 | Campo | Tipo | Notas |
 |-------|------|-------|
-| id | str PK | |
-| sede | str | |
+| id | str PK | UUID auto-generado |
+| nombre | str unique | Único globalmente (ej. "Pellegrini") |
+
+#### Aula
+
+Espacio físico para clases. Refactor 2026-06: `id` opaco autogenerado +
+nuevo campo `codigo_aula` editable como display.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| id | str PK | UUID auto-generado, no ingresable manualmente |
+| sede_id | str FK → Sede | Reemplaza el string `sede` legacy |
+| codigo_aula | str unique | Código display editable. Si se omite al crear, se autoderiva como `{Sede.nombre}-{Aula.nombre}` con espacios reemplazados por guiones (ej. "Pellegrini-AULA-01") |
 | nombre | str | |
 | capacidad | int | |
-| tipo | str | `"teorica"` (default) o `"laboratorio"`. Determina a que clases puede asignarse |
+| tipo | str | `"teorica"` (default), `"practica"`, `"laboratorio"` o `"anfiteatro"`. Determina a qué clases puede asignarse |
 | descripcion | str | |
+
+> **Migración (2026-06)**: para DBs existentes, la migración extrae cada
+> `DISTINCT aulas.sede` (string legacy) en una `SedeDB`, asigna
+> `aulas.sede_id` por nombre, llena `codigo_aula` con el `id` viejo
+> (preserva el display) y reasigna IDs no-UUID a UUID, propagando el
+> remap a `clases.aula_id`, `materia_laboratorio.aula_id` y al JSON de
+> `lp_runs.details_json`. Idempotente.
 
 #### MateriaLaboratorio (nueva)
 
@@ -227,6 +248,7 @@ participa de la prevalidacion como "esperada".
 | inicio_dictado | date | Heredado de la fecha_inicio del primer ciclo vinculado |
 | fin_dictado | date nullable | Null para anuales en 1C, se llena cuando se crea el ciclo 2C |
 | **activo** | **bool** | **Si el dictado se ofrece efectivamente este ciclo. Default `True` salvo que la regla de `dicta_recursado` lo dicte inactivo. Las "materias esperadas" en la prevalidacion son los `Dictado.activo == True`** |
+| **activo_override_manual** | **Optional[bool]** | **Marca de edición a mano del flag `activo`. `None` = el dictado se alinea a la regla en cada `recompute_activo_for_ciclo`; `True/False` = el usuario lo editó manualmente, y la recalculación default lo respeta (RN17)** |
 | **virtual** | **bool** | **Default heredado de `MateriaDB.virtual`. Las virtuales no requieren aula y se excluyen del LP de asignacion. Editable por dictado** |
 
 > **Dictados para materias anuales**: Se crean en 1C con fin_dictado = null.
@@ -243,7 +265,10 @@ participa de la prevalidacion como "esperada".
 > que recalcula `activo` para todos los dictados del ciclo segun las reglas
 > vigentes (flags de carrera + materia override). El usuario lo dispara
 > desde **Ciclos → Dictados → 🔄 Recalcular según reglas** despues de
-> cambiar configuracion.
+> cambiar configuracion. Por default respeta los overrides manuales
+> (`activo_override_manual is not None`); con el toggle "Pisar también
+> las ediciones manuales" activado, las descarta y aplica la regla a
+> todos. Ver RN17.
 
 #### DictadoCiclo (bridge)
 
@@ -723,6 +748,7 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | RN14 | Persistencia de ediciones de preview | Las ediciones que el usuario realiza en el preview de un plan se persisten al ScheduleEntryDB correspondiente, con opción de aplicar al cronograma original o crear una copia |
 | RN15 | Esperadas via dictados activos | Las "materias esperadas" en la prevalidacion de un cronograma contra un ciclo son las que tienen `DictadoDB.activo = True` linkeado al ciclo. Si el ciclo no tiene dictados creados, la prevalidacion se aborta con un error explicito. La staleness del `ScheduleValidationDB` considera tambien el conteo de dictados activos (`dictado_count_at_validation`) |
 | RN16 | Override de recursado por materia | `MateriaDB.dicta_recursado` (nullable) es un override que gana sobre `CarreraDB.dicta_recursado`. `None` = usar el flag de la carrera. `True` = la materia se ofrece (activo=True) siempre, sin importar carrera. `False` = la materia no se ofrece (activo=False) si su cuatrimestre del plan es opuesto al ciclo |
+| RN17 | Edición manual del flag activo por dictado | `DictadoDB.activo_override_manual` (nullable) registra cualquier edición manual del toggle "Activo" en el panel de dictados. `None` = el dictado se alinea a la regla en cada recompute. `True/False` = el usuario lo editó a mano. La función `recompute_activo_for_ciclo` respeta las ediciones manuales por default (las lista en `overrides_respetados`). Con el flag `pisar_overrides=True` la recalculación las descarta y aplica la regla a todos los dictados. Esta granularidad permite registrar excepciones puntuales (materias comodín, recursados especiales) sin que el siguiente recompute las pise |
 
 ---
 

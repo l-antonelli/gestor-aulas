@@ -83,10 +83,13 @@ if not ciclo_ids:
     st.info("No hay ciclos registrados. Crea uno en la pagina de Ciclos.")
     st.stop()
 
-tab_generar, tab_general, tab_detalle, tab_grilla, tab_clases, tab_config = st.tabs([
+(
+    tab_generar, tab_general, tab_detalle, tab_grilla,
+    tab_clases, tab_aulas, tab_config,
+) = st.tabs([
     "📥 Generar Plan",
     "📋 Vista General", "🔍 Detalle del Plan",
-    "📋 Grilla Horaria", "📅 Clases", "⚙️ Configuración",
+    "📋 Grilla Horaria", "📅 Clases", "🏛️ Aulas", "⚙️ Configuración",
 ])
 
 
@@ -865,6 +868,43 @@ with tab_clases:
                         st.caption(f"Mostrando {len(filtered)} de {n_clases_total} clases")
                     else:
                         st.info("No hay clases que coincidan con los filtros.")
+
+
+# =============================================================================
+# Tab Aulas: LP de asignacion de aulas
+# =============================================================================
+with tab_aulas:
+    st.subheader("Asignación de aulas")
+    sel_ciclo_aulas = st.selectbox(
+        "Seleccionar Ciclo", options=ciclo_ids,
+        key="planes_sel_ciclo_aulas",
+    )
+
+    if sel_ciclo_aulas:
+        with next(get_session()) as session:
+            planes_aulas = session.exec(
+                select(PlanificacionCursadaDB)
+                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_aulas)
+            ).all()
+
+        if not planes_aulas:
+            st.info("No hay planes para este ciclo.")
+        else:
+            plan_options_aulas = {
+                p.id: f"{p.nombre} {'[ACTIVO]' if p.activo else ''}"
+                for p in planes_aulas
+            }
+            sel_plan_aulas_id = st.selectbox(
+                "Seleccionar Plan",
+                options=list(plan_options_aulas.keys()),
+                format_func=lambda x: plan_options_aulas[x],
+                key="planes_sel_plan_aulas",
+            )
+
+            if sel_plan_aulas_id:
+                from src.ui.asignacion_panel import render_panel
+                with next(get_session()) as session:
+                    render_panel(session, sel_plan_aulas_id, key_ns="asig")
 
 
 # =============================================================================

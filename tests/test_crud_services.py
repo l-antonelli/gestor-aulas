@@ -926,7 +926,8 @@ class TestEntitySpecificServices:
 
         aula = Aula(
             id="AULA-101",
-            sede="Campus Central",
+            sede_id="sede-test",
+            codigo_aula="AULA-101",
             nombre="Aula 101",
             capacidad=50,
             tipo="teorica",

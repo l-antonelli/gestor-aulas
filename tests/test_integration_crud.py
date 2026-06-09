@@ -80,7 +80,8 @@ def sample_aula() -> Aula:
     """Create a sample Aula for testing."""
     return Aula(
         id="AULA-001",
-        sede="Campus Central",
+        sede_id="sede-test",
+        codigo_aula="AULA-001",
         nombre="Aula 101",
         capacidad=40,
         tipo="teorica",
@@ -324,7 +325,8 @@ class TestFormValidationIntegration:
         # Valid data
         valid_data = {
             "id": "AULA-001",
-            "sede": "Campus Central",
+            "sede_id": "sede-test",
+            "codigo_aula": "AULA-001",
             "nombre": "Aula 101",
             "capacidad": 40,
             "tipo": "teorica",
@@ -417,7 +419,8 @@ class TestFormOutputDisplay:
         data = FormOutputRenderer.get_display_data(sample_aula)
 
         assert "Id" in data
-        assert "Sede" in data
+        assert "Sede Id" in data
+        assert "Codigo Aula" in data
         assert "Nombre" in data
         assert "Capacidad" in data
         assert "Tipo" in data

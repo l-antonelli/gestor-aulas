@@ -506,19 +506,20 @@ class BaseCRUDService(Generic[DomainModel, DBModel]):
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.aula import Aula
+from src.domain.problem.sede import Sede
 from src.domain.problem.horario import Horario
 from src.domain.problem.carrera import Carrera
 
 # Import DB models
 from src.database.models import (
-    MateriaDB, ComisionDB, AulaDB,
+    MateriaDB, ComisionDB, AulaDB, SedeDB,
     HorarioDB, CarreraDB
 )
 
 # Import CRUD instances
 from src.database.crud import (
     materia_crud, comision_crud,
-    aula_crud, horario_crud, carrera_crud
+    aula_crud, sede_crud, horario_crud, carrera_crud
 )
 
 
@@ -711,10 +712,10 @@ class ComisionService(BaseCRUDService[Comision, ComisionDB]):
 class AulaService(BaseCRUDService[Aula, AulaDB]):
     """
     CRUD service for Aula entities.
-    
+
     Provides domain-level operations for classrooms.
     """
-    
+
     def __init__(self):
         super().__init__(
             domain_model=Aula,
@@ -722,6 +723,67 @@ class AulaService(BaseCRUDService[Aula, AulaDB]):
             crud=aula_crud,
             id_field="id"
         )
+
+
+class SedeService(BaseCRUDService[Sede, SedeDB]):
+    """CRUD service para sedes.
+
+    Adicionalmente expone `merge_into` para fusionar dos sedes
+    (reasigna las aulas de una en la otra y borra la origen).
+    """
+
+    def __init__(self):
+        super().__init__(
+            domain_model=Sede,
+            db_model=SedeDB,
+            crud=sede_crud,
+            id_field="id",
+        )
+
+    def delete(self, session: Session, entity_id: str) -> bool:
+        """Borrar una sede; bloquea si tiene aulas asociadas."""
+        from sqlmodel import select
+        n = session.exec(
+            select(AulaDB).where(AulaDB.sede_id == entity_id)
+        ).first()
+        if n is not None:
+            raise ValueError(
+                f"No se puede borrar la sede '{entity_id}': "
+                f"tiene aulas asociadas. Reasignalas primero o "
+                f"usá 'fusionar' para moverlas a otra sede."
+            )
+        return super().delete(session, entity_id)
+
+    def merge_into(
+        self,
+        session: Session,
+        sede_origen_id: str,
+        sede_destino_id: str,
+    ) -> int:
+        """Reasigna todas las aulas de `sede_origen` a `sede_destino` y
+        borra la sede origen. Devuelve la cantidad de aulas reasignadas.
+        """
+        from sqlmodel import select
+
+        if sede_origen_id == sede_destino_id:
+            raise ValueError("La sede origen y la destino son la misma.")
+
+        origen = sede_crud.get(session, sede_origen_id)
+        if origen is None:
+            raise EntityNotFoundError("Sede", sede_origen_id)
+        destino = sede_crud.get(session, sede_destino_id)
+        if destino is None:
+            raise EntityNotFoundError("Sede", sede_destino_id)
+
+        aulas = list(session.exec(
+            select(AulaDB).where(AulaDB.sede_id == sede_origen_id)
+        ).all())
+        for a in aulas:
+            a.sede_id = sede_destino_id
+            session.add(a)
+        session.delete(origen)
+        session.commit()
+        return len(aulas)
 
 
 class HorarioService(BaseCRUDService[Horario, HorarioDB]):
@@ -1063,5 +1125,6 @@ class CarreraService(BaseCRUDService[Carrera, CarreraDB]):
 materia_service = MateriaService()
 comision_service = ComisionService()
 aula_service = AulaService()
+sede_service = SedeService()
 horario_service = HorarioService()
 carrera_service = CarreraService()

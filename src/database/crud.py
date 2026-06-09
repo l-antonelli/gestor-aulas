@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from typing import TypeVar, Generic, Type, Optional
 from src.database.models import (
     MateriaDB, ComisionDB, HorarioDB,
-    AulaDB,
+    AulaDB, SedeDB,
     ConfiguracionHoraria, CarreraDB, CicloDB, DictadoDB,
     DictadoCicloDB, ScheduleDB, ScheduleEntryDB,
     PlanificacionCursadaDB, ClaseDB,
@@ -80,6 +80,9 @@ horario_crud = CRUDBase[HorarioDB](HorarioDB)
 
 # Instancia CRUD para Aulas
 aula_crud = CRUDBase[AulaDB](AulaDB)
+
+# Instancia CRUD para Sedes
+sede_crud = CRUDBase[SedeDB](SedeDB)
 
 # Instancia CRUD para Carreras
 carrera_crud = CRUDBase[CarreraDB](CarreraDB)

@@ -314,7 +314,8 @@ class TestInvalidDataHandling:
         """Test validation with invalid Literal value."""
         invalid_data = {
             "id": "AULA-001",
-            "sede": "Campus",
+            "sede_id": "sede-test",
+            "codigo_aula": "AULA-001",
             "nombre": "Aula 1",
             "capacidad": 30,
             "tipo": "invalid_type",  # Not in Literal options
@@ -619,11 +620,12 @@ class TestDomainModelEdgeCases:
     def test_aula_tipo_all_valid_values(self):
         """Test Aula with all valid tipo values."""
         valid_tipos = ["teorica", "practica", "laboratorio", "anfiteatro"]
-        
+
         for tipo in valid_tipos:
             valid_data = {
                 "id": "AULA-001",
-                "sede": "Campus",
+                "sede_id": "sede-test",
+                "codigo_aula": "AULA-001",
                 "nombre": "Aula 1",
                 "capacidad": 30,
                 "tipo": tipo,
@@ -787,9 +789,9 @@ class TestSchemaIntrospectorEdgeCases:
         """Test is_field_required for field with default value."""
         # Aula.tipo has default="teorica"
         assert SchemaIntrospector.is_field_required(Aula, "tipo") is False
-        
-        # Aula.id has no default
-        assert SchemaIntrospector.is_field_required(Aula, "id") is True
+
+        # Aula.sede_id has no default (required FK)
+        assert SchemaIntrospector.is_field_required(Aula, "sede_id") is True
 
     def test_get_field_description_no_description(self):
         """Test getting description for field without description."""

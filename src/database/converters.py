@@ -9,6 +9,7 @@ from typing import Union, overload
 
 # Domain models
 from src.domain.problem.aula import Aula
+from src.domain.problem.sede import Sede
 from src.domain.problem.materia import Materia
 from src.domain.problem.comision import Comision
 from src.domain.problem.horario import Horario
@@ -17,6 +18,7 @@ from src.domain.problem.carrera import Carrera
 # DB models
 from src.database.models import (
     AulaDB,
+    SedeDB,
     MateriaDB,
     ComisionDB,
     HorarioDB,
@@ -24,8 +26,8 @@ from src.database.models import (
 )
 
 # Type aliases for clarity
-DomainModel = Union[Aula, Materia, Comision, Horario, Carrera]
-DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, CarreraDB]
+DomainModel = Union[Aula, Sede, Materia, Comision, Horario, Carrera]
+DBModel = Union[AulaDB, SedeDB, MateriaDB, ComisionDB, HorarioDB, CarreraDB]
 
 
 # =============================================================================
@@ -34,6 +36,8 @@ DBModel = Union[AulaDB, MateriaDB, ComisionDB, HorarioDB, CarreraDB]
 
 @overload
 def to_db(domain: Aula) -> AulaDB: ...
+@overload
+def to_db(domain: Sede) -> SedeDB: ...
 @overload
 def to_db(domain: Materia) -> MateriaDB: ...
 @overload
@@ -49,12 +53,16 @@ def to_db(domain: DomainModel) -> DBModel:
     if isinstance(domain, Aula):
         return AulaDB(
             id=domain.id,
-            sede=domain.sede,
+            sede_id=domain.sede_id,
+            codigo_aula=domain.codigo_aula,
             nombre=domain.nombre,
             capacidad=domain.capacidad,
             tipo=domain.tipo,
             descripcion=domain.descripcion,
         )
+
+    if isinstance(domain, Sede):
+        return SedeDB(id=domain.id, nombre=domain.nombre)
 
     if isinstance(domain, Materia):
         return MateriaDB(
@@ -110,6 +118,8 @@ def to_db(domain: DomainModel) -> DBModel:
 @overload
 def to_domain(db: AulaDB) -> Aula: ...
 @overload
+def to_domain(db: SedeDB) -> Sede: ...
+@overload
 def to_domain(db: MateriaDB) -> Materia: ...
 @overload
 def to_domain(db: ComisionDB) -> Comision: ...
@@ -124,12 +134,16 @@ def to_domain(db: DBModel) -> DomainModel:
     if isinstance(db, AulaDB):
         return Aula(
             id=db.id,
-            sede=db.sede,
+            sede_id=db.sede_id,
+            codigo_aula=db.codigo_aula,
             nombre=db.nombre,
             capacidad=db.capacidad,
             tipo=db.tipo,
             descripcion=db.descripcion,
         )
+
+    if isinstance(db, SedeDB):
+        return Sede(id=db.id, nombre=db.nombre)
 
     if isinstance(db, MateriaDB):
         return Materia(

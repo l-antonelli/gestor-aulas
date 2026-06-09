@@ -1,5 +1,6 @@
 """Aula entity - Physical classroom space."""
 
+import uuid
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -12,37 +13,41 @@ TipoAula = Literal["teorica", "practica", "laboratorio", "anfiteatro"]
 
 
 class Aula(Entity):
-    """
-    Represents a physical classroom space.
-    
+    """Espacio físico donde se dictan las clases.
+
     Attributes:
-        id: Unique classroom identifier
-        sede: Building/location where the classroom is located
-        nombre: Classroom name (e.g., "AULA 01", "LABORATORIO 1")
-        capacidad: Maximum seating capacity (must be positive)
-        tipo: Type of classroom (teorica, practica, laboratorio, anfiteatro)
-        descripcion: Optional description or notes
+        id: UUID opaco autogenerado. No se ingresa manualmente.
+        sede_id: FK hacia `Sede`. Referencia la sede donde está el aula.
+        codigo_aula: Código display editable. Único globalmente. Si se crea
+            sin valor, se autoderiva como ``f"{sede.nombre}-{nombre}"``
+            con espacios reemplazados por guiones.
+        nombre: Nombre del aula (e.g., "AULA 01", "LABORATORIO 1").
+        capacidad: Capacidad máxima en alumnos (positiva).
+        tipo: Tipo (teorica, practica, laboratorio, anfiteatro).
+        descripcion: Descripción opcional.
     """
-    
-    id: str = Field(..., description="Unique classroom identifier")
-    sede: str = Field(..., description="Building/location")
-    nombre: str = Field(..., min_length=1, description="Classroom name")
-    capacidad: int = Field(..., gt=0, description="Maximum seating capacity")
-    tipo: TipoAula = Field(default="teorica", description="Type of classroom")
-    descripcion: str = Field(default="", description="Optional description")
-    
-    @field_validator("id")
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="UUID opaco autogenerado",
+    )
+    sede_id: str = Field(..., description="FK a la sede donde está el aula")
+    codigo_aula: str = Field(..., min_length=1, description="Código display único")
+    nombre: str = Field(..., min_length=1, description="Nombre del aula")
+    capacidad: int = Field(..., gt=0, description="Capacidad máxima")
+    tipo: TipoAula = Field(default="teorica", description="Tipo de aula")
+    descripcion: str = Field(default="", description="Descripción opcional")
+
+    @field_validator("sede_id")
     @classmethod
-    def validate_id(cls, v: str) -> str:
-        """Validate that id is not empty."""
+    def validate_sede_id(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("id cannot be empty")
+            raise ValueError("sede_id cannot be empty")
         return v
-    
-    @field_validator("sede")
+
+    @field_validator("codigo_aula")
     @classmethod
-    def validate_sede(cls, v: str) -> str:
-        """Validate that sede is not empty."""
+    def validate_codigo_aula(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("sede cannot be empty")
-        return v
+            raise ValueError("codigo_aula cannot be empty")
+        return v.strip()

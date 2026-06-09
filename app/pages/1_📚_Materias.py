@@ -6,7 +6,7 @@ Requirements: 7.1, 7.2, 7.4, 7.5
 import streamlit as st
 from sqlmodel import select, col
 from src.database.connection import get_session, init_db
-from src.database.models import AulaDB, MateriaLaboratorioDB
+from src.database.models import AulaDB, MateriaLaboratorioDB, SedeDB
 from src.services.crud_services import materia_service
 from src.ui.materia_form_renderer import MateriaFormRenderer
 from src.ui.carrera_status_widget import CarreraStatusWidget
@@ -21,7 +21,7 @@ def _render_laboratorios_editor(session, materia_codigo: str, key_prefix: str):
     labs = list(session.exec(
         select(AulaDB)
         .where(AulaDB.tipo == "laboratorio")
-        .order_by(col(AulaDB.sede), col(AulaDB.nombre))
+        .order_by(col(AulaDB.sede_id), col(AulaDB.nombre))
     ).all())
 
     if not labs:
@@ -30,6 +30,8 @@ def _render_laboratorios_editor(session, materia_codigo: str, key_prefix: str):
             "Agregalas desde la pagina de Aulas marcando el tipo como 'laboratorio'."
         )
         return
+
+    sede_map = {s.id: s.nombre for s in session.exec(select(SedeDB)).all()}
 
     # Get current associations
     current = list(session.exec(
@@ -44,7 +46,10 @@ def _render_laboratorios_editor(session, materia_codigo: str, key_prefix: str):
         "clases de tipo 'laboratorio'. Se usan al asignar aulas a clases."
     )
 
-    lab_options = [f"{lab.id} — {lab.nombre} ({lab.sede})" for lab in labs]
+    lab_options = [
+        f"{lab.codigo_aula} — {lab.nombre} ({sede_map.get(lab.sede_id, '?')})"
+        for lab in labs
+    ]
     lab_ids = [lab.id for lab in labs]
     lab_id_to_label = dict(zip(lab_ids, lab_options))
 

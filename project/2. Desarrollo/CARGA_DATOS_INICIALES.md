@@ -44,8 +44,10 @@ El script ejecuta 3 pasos en orden:
 
 ### Paso 1: Aulas
 - Lee `aulas.xlsx`
-- Crea registros `AulaDB` con ID derivado del nombre ("AULA 01" -> "AULA-01")
-- Tipo por defecto: "teorica", Sede: "Principal"
+- Crea (o reusa) la sede default `SedeDB(nombre="Pellegrini")`
+- Crea registros `AulaDB` con `id` UUID auto-generado y `codigo_aula`
+  derivado como `Pellegrini-AULA-01` (sede + nombre, con guiones)
+- Tipo por defecto: `"teorica"`
 
 ### Paso 2: Materias
 - Lee `Maestro materias.xlsx`

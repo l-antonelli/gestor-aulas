@@ -92,7 +92,10 @@ python -m scripts.load_initial_data --reset
 
 Resetea la DB y carga desde `data/input/`:
 
-- `aulas.xlsx` → `AulaDB` (sede, capacidad, tipo).
+- `aulas.xlsx` → `SedeDB("Pellegrini")` (default) + `AulaDB` con
+  `sede_id` apuntando a Pellegrini, `codigo_aula` derivado como
+  `Pellegrini-AULA-01` y tipo default `"teorica"`. Aulas de otras
+  sedes se cargan desde la página `🏛️ Aulas y Sedes` en la UI.
 - `materias.xlsx` → `MateriaDB` (código, nombre, hsem, hteo, hlab,
   período, virtual, optativa).
 - `materias_carreras.xlsx` → `CarreraDB` + `PlanEstudioDB` (qué
@@ -151,21 +154,59 @@ ciclo, crea un `DictadoDB` con:
   `dicta_recursado=False` (override por carrera o por materia)
   o que sea anual y este sea el 2C (linkea a la versión del 1C).
 
-### 3.2 Toggle activo/inactivo
+### 3.2 Toggle activo/inactivo (con edición a mano)
 
-Cada fila de la grilla de dictados tiene un toggle. **Activo = la
-materia es esperada este cuatri**. Inactivo = la materia NO se
-considera para validaciones de cobertura.
+Cada fila de la grilla de dictados tiene un toggle "Activo".
+**Activo = la materia es esperada este cuatri**. Inactivo = la
+materia NO se considera para validaciones de cobertura.
 
-> **Source of truth**: el `DictadoDB.activo` es la fuente para "qué
-> materias se esperan en el cuatri". Editar dictados desde aquí
-> impacta a todos los planes y cronogramas del ciclo.
+**Auto-save + marca de edición a mano**: cuando el usuario cambia el
+toggle, el cambio se persiste inmediatamente en `DictadoDB.activo`
+y además queda registrado en `DictadoDB.activo_override_manual` (con
+el mismo valor) como marca de "esto lo editó el usuario". El
+indicador 🟢/⚪ a la izquierda del nombre se actualiza al instante,
+y aparece la etiqueta **✋ editado a mano** que lo deja explícito.
+
+**Por qué importa la marca**: la próxima ejecución de "Recalcular
+según reglas" **respeta las ediciones manuales por default** (no las
+toca). De esta manera el usuario puede desactivar materias comodín
+o sumar excepciones puntuales sin que la regla se las pise.
+
+**Cómo quitar una edición manual**: cada fila marcada muestra un
+botón "Quitar edición manual" debajo del toggle. Al apretarlo se
+borra la marca (`activo_override_manual` vuelve a `None`) sin tocar
+el estado actual de `activo`. La próxima recalculación vuelve a
+evaluar la regla para ese dictado.
+
+> **Source of truth**: el `DictadoDB.activo` sigue siendo la fuente
+> para "qué materias se esperan en el cuatri". El campo
+> `activo_override_manual` sólo afecta cómo se comporta "Recalcular
+> según reglas" frente a esa entrada.
 
 ### 3.3 Recalcular según reglas
 
-Botón que aplica las reglas de `dicta_recursado` a todos los
-dictados existentes y reporta cambios pendientes (drift) sin
-aplicarlos hasta que el usuario confirme.
+Botón que aplica las reglas de `dicta_recursado` (más los flags
+overrideables por carrera y por materia) a todos los dictados
+existentes y reporta los cambios pendientes sin aplicarlos hasta que
+el usuario confirme.
+
+El **detalle del preview** muestra para cada cambio:
+- Materia (código + nombre completo).
+- Carrera (o "Compartida" cuando aplica).
+- Año/cuatrimestre del plan donde figura.
+- Estado actual → estado nuevo.
+- **Razón** legible del cambio (ej. "Carrera FBA no dicta recursado
+  y la materia es del 2C; este ciclo es 1C → inactiva").
+
+**Tres secciones en el preview**: 🟢 Pasarán a Activo, ⚪ Pasarán a
+Inactivo, ✋ Editados a mano (respetados) — estos últimos son los
+que el modo default no toca porque tienen
+`activo_override_manual` seteado.
+
+**Toggle "Pisar también las ediciones manuales"** (default OFF):
+cuando está activo, las ediciones manuales se descartan y la regla
+se aplica a todo. Útil cuando se acumularon muchas ediciones
+obsoletas y se quiere limpiar el estado del ciclo.
 
 ---
 
@@ -394,22 +435,29 @@ lista. Las clases generadas son visibles en
 
 ## 9. Estado actual (qué está implementado)
 
-✅ Pasos 0 a 8 (sin asignación de aulas todavía).
+✅ Pasos 0 a 8 + **LP de asignación de aulas (fases 1 a 8)**.
 
-🚧 **Próxima fase** (objeto del proyecto):
-- Programa lineal (LP) que asigne `AulaDB.id` a cada `ClaseDB`
-  respetando:
-  - Capacidad (`AulaDB.capacidad ≥ inscriptos esperados de la
-    comisión`).
-  - Tipo (`AulaDB.tipo == "laboratorio"` ⇔ clase de tipo "laboratorio";
-    "sin determinar" puede ir a cualquier tipo si la partición lo
-    permite).
-  - Materias virtuales no consumen aula física.
-  - Partición teoría/lab a nivel comisión: si `horas_laboratorio >
-    0`, las clases deben dividirse en dos subconjuntos (teoría /
-    laboratorio).
-  - Función objetivo: minimizar cambios de aula entre clases
-    consecutivas de la misma comisión.
+El LP corre sobre la "semana modelo" (variables por `HorarioDB`,
+propagación a `ClaseDB` con `fecha ≥ fecha_desde`) y cubre:
+
+- R1 asignación única, R3 compatibilidad por tipo, R4 no doble
+  booking vía grupos de simultaneidad, R5 partición teoría/lab,
+  R6 consistencia tipo↔aula, R7 penalty lineal asimétrico.
+- Re-run incremental con flag `aula_asignada_manualmente` y toggle
+  "respetar ediciones manuales" / "sobreescribir todo".
+- Diagnóstico estructural de infactibilidad antes y después del
+  solve (horarios sin aula compatible, franjas saturadas,
+  particiones teoría/lab infactibles) + heatmap día×franja.
+- Detalle del resultado coloreado + candidatas a partir comisión.
+- Vista cronograma por aula con selector de semana.
+- Edición manual de aula con dialog de tres modos (puntual /
+  rango / desde hoy) y validación pre-confirmación.
+- Toggle α opcional para que el LP redistribuya
+  `coef_asignacion` entre comisiones del mismo dictado (R9), con
+  diff visual y persistencia bajo confirmación.
+
+Detalle completo de la implementación:
+[`ASIGNACION_IMPL.md`](ASIGNACION_IMPL.md).
 
 ---
 
@@ -422,7 +470,7 @@ lista. Las clases generadas son visibles en
 | `2_🏛️_Aulas.py` | CRUD Aulas |
 | `3_🎓_Carreras.py` | CRUD Carreras + plan versions |
 | `4_📆_Ciclos.py` | Lista, Crear, Plan versions, **📚 Dictados** |
-| `5_📊_Planes.py` | **Generar plan**, **Detalle**, **Grilla horaria**, Clases, Config |
+| `5_📊_Planes.py` | **Generar plan**, **Detalle**, **Grilla horaria**, Clases, **🏛️ Aulas** (LP), Config |
 | `6_📅_Cronogramas.py` | Lista, **Cargar**, Visualizar, **Editar**, **Validar** |
 | `7_📝_Inscriptos.py` | Carga histórica de inscriptos por materia/cuatri |
 

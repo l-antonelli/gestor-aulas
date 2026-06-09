@@ -1,9 +1,13 @@
 """Database connection and session management."""
 
-from sqlmodel import SQLModel, Session, create_engine
-from typing import Generator
+import json
 import os
 import logging
+import re
+import uuid as uuid_mod
+from typing import Generator
+
+from sqlmodel import SQLModel, Session, create_engine
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,21 @@ def _run_migrations(eng):
         # Si esta seteado, fuerza el valor de inscriptos esperados,
         # sobreescribiendo cualquier resultado del forecast historico.
         "ALTER TABLE materia_forecast_config ADD COLUMN valor_override REAL DEFAULT NULL",
+        # LP asignacion de aulas: flag para distinguir asignaciones
+        # manuales (las del usuario) de las del LP. El re-run respeta las
+        # manuales por default.
+        "ALTER TABLE clases ADD COLUMN aula_asignada_manualmente BOOLEAN NOT NULL DEFAULT 0",
+        # Override manual de `activo` en dictados: None = usar regla,
+        # True/False = forzar manualmente. Lo respeta `recompute_activo_for_ciclo`
+        # por default. Permite desactivar materias "comodín" sin que la
+        # próxima recalculación las vuelva a activar.
+        "ALTER TABLE dictados ADD COLUMN activo_override_manual BOOLEAN DEFAULT NULL",
+        # Sede como entidad propia + IDs de aulas a UUID. Las columnas se
+        # agregan acá; el remap de datos lo hace `_migrate_aulas_sede_y_uuid`.
+        # Nota: aulas.sede (string legacy) se conserva pero el modelo no la
+        # mapea más; se limpiará en una recreación posterior de la tabla.
+        "ALTER TABLE aulas ADD COLUMN sede_id VARCHAR DEFAULT NULL",
+        "ALTER TABLE aulas ADD COLUMN codigo_aula VARCHAR DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -94,6 +113,15 @@ def _run_migrations(eng):
     # Migration: make materia_forecast_config.metodo nullable (para
     # poder tener filas con solo valor_override sin metodo override).
     _migrate_forecast_config_metodo_nullable(eng)
+
+    # Migration: extraer Sede como entidad propia y migrar IDs de Aulas a UUID.
+    # Idempotente: detecta filas ya migradas (id con shape de UUID y sede_id no NULL).
+    _migrate_aulas_sede_y_uuid(eng)
+
+    # Recrear `aulas` para eliminar la columna legacy `sede` (string) y
+    # aplicar UNIQUE en codigo_aula. Solo actúa si `aulas` aún tiene esa
+    # columna (DBs legacy); en DBs nuevas no hace nada.
+    _migrate_aulas_drop_legacy_sede(eng)
 
 
 def _migrate_schedules_nullable_ciclo(eng):
@@ -195,6 +223,213 @@ def _migrate_forecast_config_metodo_nullable(eng):
             "RENAME TO materia_forecast_config"
         )
         conn.commit()
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _migrate_aulas_sede_y_uuid(eng):
+    """Migrar Sede a entidad y reasignar IDs de Aulas a UUID.
+
+    Pasos:
+    1. Crear `SedeDB` por cada distinct `aulas.sede` (legacy string).
+    2. Llenar `aulas.sede_id` desde el string legacy.
+    3. Llenar `aulas.codigo_aula = aulas.id` (preserva display).
+    4. Para cada aula con id no-UUID, generar UUID y remapear FKs:
+       - `clases.aula_id`
+       - `materia_laboratorio.aula_id`
+       - `lp_runs.details_json` (JSON con lista de horarios; cada item
+         puede tener `aula_id`).
+
+    Idempotencia: si ya existe `sede_id` no NULL en todas las filas y
+    todos los `aulas.id` son UUID, no hay nada que hacer.
+    """
+    with eng.connect() as conn:
+        # ¿Existe la tabla aulas? (en DB nueva, create_all la habrá creado
+        # con el schema nuevo; no hay nada legacy para migrar.)
+        rows = conn.exec_driver_sql("PRAGMA table_info(aulas)").fetchall()
+        if not rows:
+            return
+
+        col_names = {r[1] for r in rows}
+        if "sede" not in col_names:
+            # DB ya creada con el schema nuevo (sin columna legacy `sede`).
+            # Solo verificamos que haya al menos una sede default si las
+            # tablas están vacías.
+            _seed_default_sede_if_empty(conn)
+            return
+
+        # Hay columna legacy `sede`. Verificar si la migración ya corrió.
+        aulas = conn.exec_driver_sql(
+            "SELECT id, sede, sede_id, codigo_aula FROM aulas"
+        ).fetchall()
+
+        # Caso 1: tabla vacía. Solo sembrar sede default si no existe.
+        if not aulas:
+            _seed_default_sede_if_empty(conn)
+            return
+
+        ya_migradas = all(
+            (row[2] is not None and row[3] is not None and _UUID_RE.match(row[0]))
+            for row in aulas
+        )
+        if ya_migradas:
+            return
+
+        logger.info("Migrating aulas: extracting Sede entity and converting IDs to UUID")
+
+        # 1. Sedes únicas a partir del string legacy.
+        sedes_unicas = sorted({(row[1] or "Sin sede") for row in aulas})
+        sede_nombre_to_id: dict[str, str] = {}
+        for nombre in sedes_unicas:
+            existing = conn.exec_driver_sql(
+                "SELECT id FROM sedes WHERE nombre = ?", (nombre,)
+            ).fetchone()
+            if existing:
+                sede_nombre_to_id[nombre] = existing[0]
+                continue
+            sede_id = str(uuid_mod.uuid4())
+            conn.exec_driver_sql(
+                "INSERT INTO sedes (id, nombre) VALUES (?, ?)",
+                (sede_id, nombre),
+            )
+            sede_nombre_to_id[nombre] = sede_id
+
+        # 2 + 3. Setear sede_id y codigo_aula. 4. Remapear ids no-UUID.
+        id_remap: dict[str, str] = {}
+        for old_id, sede_legacy, sede_id_actual, codigo_actual in aulas:
+            sede_nombre = sede_legacy or "Sin sede"
+            sede_id = sede_id_actual or sede_nombre_to_id[sede_nombre]
+            codigo_aula = codigo_actual or old_id
+
+            new_id = old_id if _UUID_RE.match(old_id) else str(uuid_mod.uuid4())
+            if new_id != old_id:
+                id_remap[old_id] = new_id
+
+            conn.exec_driver_sql(
+                "UPDATE aulas SET id = ?, sede_id = ?, codigo_aula = ? WHERE id = ?",
+                (new_id, sede_id, codigo_aula, old_id),
+            )
+
+        # Remap de FKs que apuntan a aulas.id.
+        for old_id, new_id in id_remap.items():
+            conn.exec_driver_sql(
+                "UPDATE clases SET aula_id = ? WHERE aula_id = ?",
+                (new_id, old_id),
+            )
+            # materia_laboratorio: PK compuesta (materia_codigo, aula_id).
+            # Como remapeamos a un id distinto, no debería haber colisiones
+            # (los UUIDs nuevos son únicos por aula).
+            conn.exec_driver_sql(
+                "UPDATE materia_laboratorio SET aula_id = ? WHERE aula_id = ?",
+                (new_id, old_id),
+            )
+
+        # Remap dentro de lp_runs.details_json (snapshots históricos).
+        if id_remap:
+            lp_rows = conn.exec_driver_sql(
+                "SELECT id, details_json FROM lp_runs"
+            ).fetchall()
+            for run_id, details_raw in lp_rows:
+                if not details_raw:
+                    continue
+                try:
+                    details = json.loads(details_raw)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        "lp_runs.id=%s: details_json no se pudo parsear, "
+                        "se deja como está (snapshot histórico).",
+                        run_id,
+                    )
+                    continue
+                changed = False
+                for h in details.get("horarios", []) or []:
+                    aid = h.get("aula_id")
+                    if aid and aid in id_remap:
+                        h["aula_id"] = id_remap[aid]
+                        changed = True
+                if changed:
+                    conn.exec_driver_sql(
+                        "UPDATE lp_runs SET details_json = ? WHERE id = ?",
+                        (json.dumps(details), run_id),
+                    )
+
+        conn.commit()
+        logger.info(
+            "Migration complete: %d sede(s), %d id(s) remapeados a UUID",
+            len(sedes_unicas), len(id_remap),
+        )
+
+
+def _migrate_aulas_drop_legacy_sede(eng):
+    """Recrear `aulas` para eliminar columna legacy `sede` y aplicar
+    UNIQUE en codigo_aula.
+
+    SQLite no soporta DROP COLUMN ni ADD UNIQUE — hay que recrear. Solo
+    actúa si la columna `sede` aún existe (DBs migradas desde versión
+    vieja). En DBs nuevas, `create_all` ya creó la tabla con el schema
+    correcto y esto es no-op.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(aulas)").fetchall()
+        if not rows:
+            return
+        col_names = {r[1] for r in rows}
+        if "sede" not in col_names:
+            return  # Ya migrada o tabla nueva.
+
+        logger.info(
+            "Recreating aulas: dropping legacy `sede` column, "
+            "enforcing UNIQUE on codigo_aula"
+        )
+        conn.exec_driver_sql("""
+            CREATE TABLE aulas_tmp (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                sede_id VARCHAR NOT NULL,
+                codigo_aula VARCHAR NOT NULL UNIQUE,
+                nombre VARCHAR NOT NULL,
+                capacidad INTEGER NOT NULL,
+                tipo VARCHAR NOT NULL DEFAULT 'teorica',
+                descripcion VARCHAR NOT NULL DEFAULT '',
+                FOREIGN KEY (sede_id) REFERENCES sedes (id)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO aulas_tmp
+                (id, sede_id, codigo_aula, nombre, capacidad, tipo, descripcion)
+            SELECT id, sede_id, codigo_aula, nombre, capacidad, tipo,
+                   COALESCE(descripcion, '')
+            FROM aulas
+        """)
+        conn.exec_driver_sql("DROP TABLE aulas")
+        conn.exec_driver_sql("ALTER TABLE aulas_tmp RENAME TO aulas")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_aulas_sede_id ON aulas (sede_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_aulas_codigo_aula ON aulas (codigo_aula)"
+        )
+        conn.commit()
+
+
+def _seed_default_sede_if_empty(conn):
+    """Sembrar sede 'Pellegrini' si la tabla está vacía.
+
+    Se invoca cuando creamos la DB desde cero (sin filas legacy en aulas).
+    Garantiza que la UI de creación de aulas siempre tenga al menos una
+    sede para elegir.
+    """
+    n = conn.exec_driver_sql("SELECT COUNT(*) FROM sedes").fetchone()[0]
+    if n > 0:
+        return
+    conn.exec_driver_sql(
+        "INSERT INTO sedes (id, nombre) VALUES (?, ?)",
+        (str(uuid_mod.uuid4()), "Pellegrini"),
+    )
+    conn.commit()
 
 
 def init_db():
