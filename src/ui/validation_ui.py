@@ -313,18 +313,17 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         expanded=_has_issues,
     ):
         if not _grupos:
-            st.caption("Sin discrepancias por carrera.")
+            st.caption("Sin carreras asignadas al ciclo.")
         else:
             _render_resumen_carreras(_grupos)
+            # Mostramos TODAS las carreras del ciclo, incluso las que
+            # quedaron OK tras filtrar (ej. todas sus faltantes eran
+            # optativas y el toggle "excluir optativas" está activo).
+            # Las OK se renderean colapsadas con badge ✅; las que
+            # tienen issues se renderean abiertas para que el usuario
+            # las vea de un vistazo.
             for _cc in sorted(_grupos.keys()):
                 _g = _grupos[_cc]
-                if (
-                    len(_g["faltantes"]) == 0
-                    and len(_g["extras"]) == 0
-                    and len(_g["conflictos"]) == 0
-                    and len(_g.get("conflictos_ignorados", [])) == 0
-                ):
-                    continue
                 _render_carrera_subexpander(
                     _g, ciclo_id=plan.ciclo_id,
                     key_ns=key_ns, mat_map=_full_mat_map,
@@ -338,7 +337,16 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     # =====================================================================
     # Detalle por materia
     # =====================================================================
-    with st.expander("🔎 Detalle por materia", expanded=False):
+    # Si hay un `pending_codigo` (el usuario apretó "✏️ Editar materia"
+    # arriba en algún sub-expander de carrera), abrimos este expander
+    # automáticamente — sino, el flag se setea pero el usuario no ve
+    # nada y parece que el botón no hizo nada.
+    _has_pending_edit = bool(
+        st.session_state.get(f"{key_ns}_dpm_pending_codigo")
+    )
+    with st.expander(
+        "🔎 Detalle por materia", expanded=_has_pending_edit,
+    ):
         _render_detalle_por_materia(
             summary=summary, key_ns=key_ns,
             source="plan", plan_id=plan_id, ciclo_id=plan.ciclo_id,
@@ -563,6 +571,39 @@ def _build_grupos_por_carrera(
         _ensure_grupo(_cc)
         grupos[_cc]["conflictos_ignorados"].append(c)
 
+    # Garantizar que TODAS las carreras del ciclo tengan un grupo,
+    # incluso las que no tienen issues. Si una carrera quedó "OK"
+    # (típicamente al activar "excluir optativas"), igual queremos
+    # mostrarla con un badge ✅ TODO OK en vez de hacerla
+    # desaparecer del listado, porque eso confunde al usuario.
+    if ciclo_id:
+        with next(get_session()) as _s:
+            _all_carrera_rows = list(_s.exec(
+                select(CarreraDB)
+                .join(
+                    PlanCarreraVersionDB,
+                    CarreraDB.codigo == PlanCarreraVersionDB.carrera_codigo,  # type: ignore[arg-type]
+                )
+                .join(
+                    CicloPlanVersionDB,
+                    PlanCarreraVersionDB.id == CicloPlanVersionDB.plan_version_id,  # type: ignore[arg-type]
+                )
+                .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+                .distinct()
+            ).all())
+        for _carr in _all_carrera_rows:
+            if _carr.codigo not in grupos:
+                grupos[_carr.codigo] = {
+                    "carrera_codigo": _carr.codigo,
+                    "carrera_nombre": _carr.nombre,
+                    "plan_version_nombre": "",
+                    "dicta_recursado": _carr.dicta_recursado,
+                    "faltantes": [],
+                    "extras": [],
+                    "conflictos": [],
+                    "conflictos_ignorados": [],
+                }
+
     return grupos
 
 
@@ -614,15 +655,33 @@ def _render_carrera_subexpander(
     _n_ec = len(g["extras"])
     _n_conf = len(g["conflictos"])
     _n_ign = len(g.get("conflictos_ignorados", []))
+    _has_issues = bool(_n_fc or _n_ec or _n_conf or _n_ign)
 
-    _conf_part = f" · ⚠️ {_n_conf} conflicto(s)" if _n_conf else ""
-    _ign_part = f" · 🙈 {_n_ign} ignorado(s)" if _n_ign else ""
-    _exp_lbl = (
-        f"{g['carrera_nombre']} ({_cc}) — "
-        f"📭 {_n_fc} faltante(s) · 📥 {_n_ec} no esperada(s)"
-        f"{_conf_part}{_ign_part}"
-    )
+    if _has_issues:
+        _conf_part = f" · ⚠️ {_n_conf} conflicto(s)" if _n_conf else ""
+        _ign_part = f" · 🙈 {_n_ign} ignorado(s)" if _n_ign else ""
+        _exp_lbl = (
+            f"{g['carrera_nombre']} ({_cc}) — "
+            f"📭 {_n_fc} faltante(s) · 📥 {_n_ec} no esperada(s)"
+            f"{_conf_part}{_ign_part}"
+        )
+    else:
+        # Carrera sin discrepancias. Suele aparecer cuando el usuario
+        # activa "excluir optativas" y todas las faltantes/extras
+        # quedan filtradas. Mostramos un badge ✅ TODO OK para que
+        # quede claro que la carrera está sana, no que desapareció.
+        _exp_lbl = f"✅ {g['carrera_nombre']} ({_cc}) — TODO OK"
+
     with st.expander(_exp_lbl, expanded=False):
+        if not _has_issues:
+            st.caption(
+                "Esta carrera no tiene faltantes, no esperadas ni "
+                "conflictos con los filtros activos. Si activaste "
+                "'excluir optativas', es probable que las "
+                "discrepancias eran todas optativas (que sí cuentan "
+                "cuando el toggle está apagado)."
+            )
+            return
         # Discrepancias de dictado
         if _n_fc or _n_ec:
             with st.expander(
