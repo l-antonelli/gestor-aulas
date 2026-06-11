@@ -175,27 +175,61 @@ def compute_compat(
 class InfeasibilityDiagnosis:
     """Detalle estructural de por qué un LP es (o podría ser) infactible.
 
-    Se computa sobre los inputs antes de correr el solver. Las causas que
-    detecta son las únicas dos que pueden hacer el problema infactible
-    en este modelo (R1 + R3 + R4 — las tolerancias del penalty NO pueden
-    hacer infactible al modelo porque R7 es de desigualdad con `over, under
-    ≥ 0`).
+    Se computa sobre los inputs antes de correr el solver. Las causas
+    que detecta cubren las situaciones más comunes en que el modelo es
+    infactible aunque el solver no dé pistas:
+
+    1. **Horarios sin aula compatible** (R1 + R3): un horario que no
+       tiene NI UNA sola aula que pueda recibirlo. Causa típica: lab
+       sin entradas en `MateriaLaboratorioDB` para esa materia.
+    2. **Franjas saturadas** (R4 + R3, cota pigeonhole sobre la unión):
+       grupo de simultaneidad donde la unión de aulas compatibles tiene
+       menos elementos que el grupo. Necesaria pero no suficiente.
+    3. **Saturación por tipo dentro de una franja** (R3 + R4 + R6):
+       refinamiento de (2). Mira por separado teóricas vs laboratorios:
+       si las clases del grupo que NECESITAN aula teórica son más que
+       el inventario de teóricas/anfiteatros, infactible. Para labs,
+       chequea por materia (cada materia tiene su pool propio).
+       Las clases con `tipo_clase=None` se manejan optimistamente
+       (sólo cuentan como teóricas si NO admiten ir a lab; sólo cuentan
+       como lab si NO admiten ir a teórica) para evitar falsos
+       positivos.
+    4. **Hall violators** (R3 + R4 vía matching bipartito): test
+       suficiente y necesario sobre cada grupo. Para cada subconjunto
+       S del grupo, verifica `|N(S)| >= |S|` donde N(S) es la unión
+       de aulas compatibles de S. Si falla, identifica el subconjunto
+       más chico donde falla (testigo concreto). Cubre casos que las
+       cotas (2) y (3) NO detectan, ej. `{h1,h2,h3}` con aulas
+       compatibles `{A→{a,b}, B→{a}, C→{a}}`: |union|=2 < 3 falla
+       pigeonhole, pero `|N({B,C})|=1 < 2` también falla Hall y es
+       más informativo. Para grupos chicos (≤8) por enumeración de
+       subconjuntos; para más grandes, matching bipartito clásico.
+    5. **Partición teoría/lab infactible** (R5): comisión cuya suma
+       de horas no admite una bipartición que cumpla `hteo + hlab`.
+
+    Las tolerancias del penalty (λ_over, λ_under, tol_*) NO pueden
+    hacer infactible al modelo porque R7 es de desigualdad con
+    `over, under ≥ 0`.
     """
-    # Horarios que no tienen ninguna aula compatible (causa R1 + R3).
+    # (1) Horarios sin ninguna aula compatible.
     horarios_sin_aula_compatible: list[dict] = field(default_factory=list)
-    # Franjas donde hay más clases simultáneas que aulas compatibles
-    # (causa R4 + R3). Cada item describe el grupo y la cuenta de aulas
-    # compatibles para cada uno de sus horarios.
+    # (2) Cota pigeonhole sobre la unión.
     franjas_saturadas: list[dict] = field(default_factory=list)
+    # (3) Saturación por tipo (refina pigeonhole).
+    saturacion_por_tipo: list[dict] = field(default_factory=list)
+    # (4) Hall violators.
+    hall_violators: list[dict] = field(default_factory=list)
     # Inventario de aulas por tipo (contexto global).
     inventario_aulas: dict = field(default_factory=dict)
-    # Comisiones cuya partición teoría/lab es infactible (causa R5).
+    # (5) Comisiones cuya partición teoría/lab es infactible.
     particion_problemas: list[dict] = field(default_factory=list)
 
     def is_infeasible(self) -> bool:
         return bool(
             self.horarios_sin_aula_compatible
             or self.franjas_saturadas
+            or self.saturacion_por_tipo
+            or self.hall_violators
             or self.particion_problemas
         )
 
@@ -209,6 +243,23 @@ class InfeasibilityDiagnosis:
                 f"{item['hora_inicio']}–{item['hora_fin']} "
                 f"(tipo={item['tipo_clase']}). "
                 f"Razón: {item['razon']}"
+            )
+        for item in self.saturacion_por_tipo:
+            msgs.append(
+                f"❌ Saturación de aulas {item['tipo']} en "
+                f"{item['dia']} {item['solapan_inicio']}–"
+                f"{item['solapan_fin']}: {item['n_necesarias']} "
+                f"clases requieren aula {item['tipo']} pero hay "
+                f"{item['n_disponibles']} disponibles. "
+                f"Materias: {', '.join(item['materias'])}."
+            )
+        for item in self.hall_violators:
+            msgs.append(
+                f"❌ Hall: {item['n_horarios']} horarios sólo pueden "
+                f"ir a {item['n_aulas']} aula(s) en común "
+                f"(día {item['dia']}). "
+                f"Horarios: {', '.join(item['materias'])}; "
+                f"Aulas: {', '.join(item['aulas'])}."
             )
         for item in self.franjas_saturadas:
             msgs.append(
@@ -325,7 +376,302 @@ def diagnose_infeasibility(
                 "horario_ids": sorted([h.id for h in hs_grupo]),
             })
 
+    # 3. Saturación por tipo dentro de cada franja (refina pigeonhole).
+    diag.saturacion_por_tipo = _diagnose_saturacion_por_tipo(
+        sim_groups, horarios_map, aulas, materia_lab_map,
+    )
+
+    # 4. Hall violators: matching bipartito por grupo. Más fuerte que
+    #    pigeonhole (es necesario y suficiente para que haya solución).
+    diag.hall_violators = _diagnose_hall(
+        sim_groups, horarios_map, aulas, materia_lab_map,
+    )
+
     return diag
+
+
+# =============================================================================
+# Saturación por tipo (cota refinada de pigeonhole)
+# =============================================================================
+
+def _diagnose_saturacion_por_tipo(
+    sim_groups: list[set[str]],
+    horarios_map: dict[str, HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]],
+) -> list[dict]:
+    """Para cada grupo de simultaneidad, verifica saturación POR TIPO.
+
+    Refina la cota global de pigeonhole (que mira la unión total) con
+    pools separados por tipo:
+
+    - **Teóricas**: clases que ESTRICTAMENTE requieren aula teórica
+      (tipo_clase="teorica") más aquellas con `tipo_clase=None` que
+      no admiten ir a lab (sin lab compatible para su materia). Estas
+      últimas son las que el LP forzosamente mandará a teórica via R6,
+      por lo que cuentan contra la pool teórica.
+    - **Laboratorios**: por materia. Cada materia tiene su pool propio
+      `materia_lab_map[m]`. Las clases con `tipo_clase=None` que no
+      admiten ir a teórica (sin aulas teóricas/anfiteatros del sistema,
+      caso raro) cuentan contra el pool de su materia.
+
+    El manejo OPTIMISTA de las `None` evita falsos positivos: una
+    clase con `tipo_clase=None` y materia con lab disponible no se
+    cuenta contra teórica porque el LP puede mandarla a lab via R5.
+
+    Args:
+        sim_groups: grupos maximales de simultaneidad.
+        horarios_map: horario_id -> HorarioSlot.
+        aulas: inventario completo de aulas.
+        materia_lab_map: por materia, set de aula_id de labs compatibles.
+
+    Returns:
+        Lista de items con la saturación detectada. Cada item:
+        {tipo, dia, solapan_inicio/fin, ventana_inicio/fin,
+         n_necesarias, n_disponibles, materias, horario_ids,
+         materia (sólo para tipo=lab)}.
+    """
+    aulas_teoricas = {a.id for a in aulas if a.tipo in ("teorica", "anfiteatro")}
+    n_teoricas = len(aulas_teoricas)
+
+    items: list[dict] = []
+
+    for grupo in sim_groups:
+        hs_grupo = [horarios_map[hid] for hid in grupo if hid in horarios_map]
+        if len(hs_grupo) < 2:
+            continue
+
+        # Clases que necesitan teórica: tipo="teorica" + las None sin lab
+        # disponible (R6 las fuerza a teoría).
+        n_teorica_forzadas = []
+        for h in hs_grupo:
+            if h.tipo_clase == "teorica":
+                n_teorica_forzadas.append(h)
+            elif h.tipo_clase is None:
+                lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
+                if not lab_aulas_m:
+                    # No hay labs compatibles: R6 fuerza t[h]=0 (teórica).
+                    n_teorica_forzadas.append(h)
+
+        if len(n_teorica_forzadas) > n_teoricas:
+            solapan_inicio = max(h.hora_inicio for h in hs_grupo)
+            solapan_fin = min(h.hora_fin for h in hs_grupo)
+            ventana_inicio = min(h.hora_inicio for h in hs_grupo)
+            ventana_fin = max(h.hora_fin for h in hs_grupo)
+            items.append({
+                "tipo": "teórica",
+                "dia": hs_grupo[0].dia,
+                "solapan_inicio": solapan_inicio.strftime("%H:%M"),
+                "solapan_fin": solapan_fin.strftime("%H:%M"),
+                "ventana_inicio": ventana_inicio.strftime("%H:%M"),
+                "ventana_fin": ventana_fin.strftime("%H:%M"),
+                "n_necesarias": len(n_teorica_forzadas),
+                "n_disponibles": n_teoricas,
+                "materias": sorted({
+                    h.materia_codigo for h in n_teorica_forzadas
+                }),
+                "horario_ids": sorted([h.id for h in n_teorica_forzadas]),
+            })
+
+        # Saturación de labs POR MATERIA. Si una materia tiene N clases
+        # de lab simultáneas pero su pool tiene < N aulas, falla.
+        # Las None sin teóricas disponibles cuentan también contra lab,
+        # pero en la práctica si no hay teóricas n_teoricas==0 y eso
+        # sería una infeasibility independiente; no enmascaramos.
+        por_materia_lab: dict[str, list[HorarioSlot]] = {}
+        for h in hs_grupo:
+            if h.tipo_clase == "laboratorio":
+                por_materia_lab.setdefault(h.materia_codigo, []).append(h)
+            elif h.tipo_clase is None and n_teoricas == 0:
+                # Forzosamente lab via R6 (no hay aulas teóricas).
+                lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
+                if lab_aulas_m:
+                    por_materia_lab.setdefault(h.materia_codigo, []).append(h)
+
+        for materia, hs_lab in por_materia_lab.items():
+            pool = materia_lab_map.get(materia, set())
+            if len(hs_lab) > len(pool):
+                solapan_inicio = max(h.hora_inicio for h in hs_lab)
+                solapan_fin = min(h.hora_fin for h in hs_lab)
+                ventana_inicio = min(h.hora_inicio for h in hs_lab)
+                ventana_fin = max(h.hora_fin for h in hs_lab)
+                items.append({
+                    "tipo": "laboratorio",
+                    "materia": materia,
+                    "dia": hs_lab[0].dia,
+                    "solapan_inicio": solapan_inicio.strftime("%H:%M"),
+                    "solapan_fin": solapan_fin.strftime("%H:%M"),
+                    "ventana_inicio": ventana_inicio.strftime("%H:%M"),
+                    "ventana_fin": ventana_fin.strftime("%H:%M"),
+                    "n_necesarias": len(hs_lab),
+                    "n_disponibles": len(pool),
+                    "materias": [materia],
+                    "horario_ids": sorted([h.id for h in hs_lab]),
+                })
+
+    return items
+
+
+# =============================================================================
+# Hall violators (matching bipartito)
+# =============================================================================
+
+# Umbral para enumeración exacta de subconjuntos. Por encima de esto
+# usamos matching bipartito clásico (Hopcroft-Karp simplificado, augmenting
+# paths con búsqueda DFS). 8 da 256 subconjuntos por grupo, manejable.
+_HALL_ENUM_LIMIT = 8
+
+
+def _diagnose_hall(
+    sim_groups: list[set[str]],
+    horarios_map: dict[str, HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]],
+) -> list[dict]:
+    """Para cada grupo, verifica el teorema de Hall.
+
+    Para cada subconjunto S del grupo, debe cumplirse |N(S)| >= |S|,
+    donde N(S) es la unión de aulas compatibles de los elementos de S.
+    Si NO se cumple, el grupo no admite emparejamiento perfecto y el
+    LP es infactible.
+
+    Estrategia:
+    - Grupos con |grupo| <= _HALL_ENUM_LIMIT: enumeración exacta de
+      subconjuntos. Reportamos el subconjunto Hall-violador más chico
+      (testigo más informativo).
+    - Grupos más grandes: matching bipartito por augmenting paths. Si
+      el matching máximo es < |grupo|, hay infactibilidad. Reportamos
+      el lado izquierdo no matcheado como subconjunto violador
+      (subóptimo en tamaño pero correcto).
+
+    Items reportados con:
+    - dia, n_horarios, materias (lista de códigos)
+    - n_aulas, aulas (lista de IDs de aulas en N(S))
+    - horario_ids del subconjunto
+
+    Returns:
+        Lista de violaciones detectadas. Vacía si todos los grupos
+        admiten matching.
+    """
+    items: list[dict] = []
+
+    for grupo in sim_groups:
+        hs_grupo = [horarios_map[hid] for hid in grupo if hid in horarios_map]
+        if len(hs_grupo) < 2:
+            continue
+
+        # Build adjacency: horario_idx -> set[aula_id]
+        adj: list[set[str]] = []
+        for h in hs_grupo:
+            lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
+            compat_aulas = {
+                a.id for a in aulas if compute_compat(h, a, lab_aulas_m)
+            }
+            adj.append(compat_aulas)
+
+        n = len(hs_grupo)
+        if n <= _HALL_ENUM_LIMIT:
+            violator = _hall_smallest_violator_enum(adj)
+        else:
+            violator = _hall_violator_via_matching(adj)
+
+        if violator is None:
+            continue
+
+        # `violator` es un set[int] con índices de hs_grupo.
+        sub_hs = [hs_grupo[i] for i in violator]
+        sub_aulas: set[str] = set()
+        for i in violator:
+            sub_aulas |= adj[i]
+        items.append({
+            "dia": hs_grupo[0].dia,
+            "n_horarios": len(violator),
+            "n_aulas": len(sub_aulas),
+            "materias": sorted({h.materia_codigo for h in sub_hs}),
+            "aulas": sorted(sub_aulas),
+            "horario_ids": sorted([h.id for h in sub_hs]),
+        })
+
+    return items
+
+
+def _hall_smallest_violator_enum(adj: list[set[str]]) -> set[int] | None:
+    """Para |grupo| <= _HALL_ENUM_LIMIT: enumera todos los subconjuntos
+    y devuelve el más chico que viola Hall.
+
+    Hall: para todo S, |∪{adj[i] : i ∈ S}| >= |S|.
+    Devuelve None si todos los subconjuntos cumplen.
+
+    Más chico = más informativo para el usuario. Empezamos enumerando
+    por tamaño creciente para encontrar rápido.
+    """
+    n = len(adj)
+    indices = list(range(n))
+    # Probar tamaños de 1 a n. Tamaño 1 sólo viola si algún horario
+    # no tiene ninguna aula compatible (caso ya cubierto por
+    # `horarios_sin_aula_compatible`, lo dejamos pasar para no
+    # duplicar mensaje).
+    for size in range(2, n + 1):
+        for combo in _combinations(indices, size):
+            union: set[str] = set()
+            for i in combo:
+                union |= adj[i]
+            if len(union) < size:
+                return set(combo)
+    return None
+
+
+def _combinations(items: list[int], r: int):
+    """Wrapper de itertools.combinations sin importar al top-level."""
+    from itertools import combinations
+    return combinations(items, r)
+
+
+def _hall_violator_via_matching(adj: list[set[str]]) -> set[int] | None:
+    """Para grupos grandes: matching bipartito vía DFS augmenting paths.
+
+    Si el matching máximo es M < |adj|, entonces hay (al menos) un
+    subconjunto violador. Reportamos los nodos NO emparejados del lado
+    izquierdo (horarios) como aproximación: ese conjunto S tiene
+    |N(S)| <= |adj| - (M de S) que es < |S| en algún caso (no
+    necesariamente el subconjunto Hall-violador más chico, pero
+    suficiente para señalar la infactibilidad).
+
+    Implementación clásica O(V·E), más que suficiente para los
+    tamaños del problema (grupos típicamente ≤ 20).
+    """
+    n_left = len(adj)
+    # Mapping aula_id -> int (canonical idx).
+    aula_ids: list[str] = sorted({a for s in adj for a in s})
+    aula_idx = {a: i for i, a in enumerate(aula_ids)}
+    adj_idx: list[set[int]] = [
+        {aula_idx[a] for a in s} for s in adj
+    ]
+
+    match_l: list[int] = [-1] * n_left
+    match_r: dict[int, int] = {}
+
+    def dfs(u: int, visited: set[int]) -> bool:
+        for v in adj_idx[u]:
+            if v in visited:
+                continue
+            visited.add(v)
+            if v not in match_r or dfs(match_r[v], visited):
+                match_l[u] = v
+                match_r[v] = u
+                return True
+        return False
+
+    matched = 0
+    for u in range(n_left):
+        if dfs(u, set()):
+            matched += 1
+
+    if matched == n_left:
+        return None  # Matching perfecto.
+    # Reportar los no matcheados.
+    no_match = {u for u in range(n_left) if match_l[u] == -1}
+    return no_match if no_match else None
 
 
 # =============================================================================

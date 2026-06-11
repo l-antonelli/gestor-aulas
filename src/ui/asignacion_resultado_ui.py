@@ -10,6 +10,7 @@ una vez que existe un ``LPRunDB`` para el plan.
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -274,10 +275,34 @@ def _render_inventario(inv: dict) -> None:
     st.caption("🏛 Inventario de aulas: " + " · ".join(pieces))
 
 
-def _render_diagnostico_infactibilidad(diag: dict) -> None:
-    """Renderiza el diagnóstico estructural de una corrida infeasible."""
+def _render_diagnostico_infactibilidad(
+    diag: dict, iis: Optional[dict] = None,
+) -> None:
+    """Renderiza el diagnóstico estructural de una corrida infactible.
+
+    Las secciones se muestran en orden de utilidad descendente:
+    1. Horarios sin aula compatible (causa atómica).
+    2. Faltante de aulas por tipo en una franja específica.
+    3. Grupos de clases con compatibilidad muy limitada que se
+       chocan entre sí (Hall).
+    4. Franjas saturadas globales (más débil).
+    5. Horas declaradas vs horarios cargados (partición).
+    6. Diagnóstico cruzado por relajación (cuando 1-5 vinieron
+       vacías y el solver no pudo resolver).
+
+    Args:
+        diag: dict serializado de InfeasibilityDiagnosis.
+        iis: opcional. Resultado de ``_run_iis_relajacion`` cuando se
+            ejecutó. Estructura:
+            ``{"ran": bool, "culpables": list[str], "principal": str,
+               "detalles": {Ri: {"feasible_relajado",
+                                  "es_falso_positivo", "explicacion",
+                                  "materias_problema"?}}}``.
+    """
     sin_aula = diag.get("horarios_sin_aula_compatible", [])
     franjas = diag.get("franjas_saturadas", [])
+    saturacion_tipo = diag.get("saturacion_por_tipo", [])
+    hall_violators = diag.get("hall_violators", [])
     particion = diag.get("particion_problemas", [])
     inventario = diag.get("inventario_aulas", {})
 
@@ -285,8 +310,8 @@ def _render_diagnostico_infactibilidad(diag: dict) -> None:
 
     if particion:
         st.error(
-            f"**{len(particion)} comisión(es) con partición teoría/lab "
-            f"infactible**"
+            f"**{len(particion)} comisión(es) con horas declaradas "
+            f"que no cuadran con sus horarios cargados**"
         )
         df_p = pd.DataFrame(particion)
         if not df_p.empty:
@@ -296,37 +321,46 @@ def _render_diagnostico_infactibilidad(diag: dict) -> None:
                     "suma_teorica_fijada", "suma_lab_fijado", "razon",
                 ]].rename(columns={
                     "materia": "Materia",
-                    "hteo": "hteo",
-                    "hlab": "hlab",
-                    "suma_total": "Σ horas",
-                    "suma_teorica_fijada": "Teo fijada",
-                    "suma_lab_fijado": "Lab fijada",
+                    "hteo": "Horas teoría declaradas",
+                    "hlab": "Horas lab declaradas",
+                    "suma_total": "Total horas en horarios",
+                    "suma_teorica_fijada": "Horas marcadas como teoría",
+                    "suma_lab_fijado": "Horas marcadas como lab",
                     "razon": "Razón",
                 }),
                 width='stretch', hide_index=True,
             )
         st.caption(
-            "🛠 Acciones posibles: (a) ajustar `horas_teoria` / "
-            "`horas_laboratorio` de la materia desde `Materias`, "
-            "(b) cambiar el tipo fijado de algún horario en el "
-            "cronograma, (c) verificar que la suma de duraciones de los "
-            "horarios coincida con el total semanal de la materia."
+            "🛠 Acciones posibles:\n"
+            "- **Ajustar las horas declaradas** de la materia "
+            "(página Materias).\n"
+            "- **Cambiar el tipo (teoría/lab)** de algún horario en "
+            "el cronograma.\n"
+            "- Verificar que **la suma total de duraciones** de los "
+            "horarios coincida con las horas semanales de la materia."
         )
         st.divider()
 
-    if not sin_aula and not franjas and not particion:
-        st.info(
-            "El solver reportó infactibilidad pero no se detectaron "
-            "causas estructurales obvias. Probá con `λ_over = 0, "
-            "λ_under = 0` para descartar problemas de configuración del "
-            "penalty (no debería afectar la factibilidad, pero ayuda "
-            "como sanity check)."
-        )
-        return
+    if (not sin_aula and not franjas and not particion
+            and not saturacion_tipo and not hall_violators):
+        # Si hay IIS, ese es el diagnóstico — saltamos el mensaje
+        # genérico y caemos directo a la sección IIS al final de la
+        # función. Si tampoco hay IIS, mostramos el mensaje y
+        # cerramos.
+        if not (iis and iis.get("ran")):
+            st.info(
+                "El solver no logró asignar aulas pero los chequeos "
+                "rápidos no encontraron una causa obvia. Probá poner "
+                "**λ sobre = 0, λ sub = 0** para descartar problemas "
+                "del penalty (no debería afectar la factibilidad, "
+                "pero ayuda como verificación)."
+            )
+            return
 
     if sin_aula:
         st.error(
-            f"**{len(sin_aula)} horario(s) sin ninguna aula compatible**"
+            f"**{len(sin_aula)} horario(s) que no tienen ninguna "
+            f"aula compatible**"
         )
         df_sin = pd.DataFrame(sin_aula)
         if not df_sin.empty:
@@ -345,29 +379,138 @@ def _render_diagnostico_infactibilidad(diag: dict) -> None:
                 width='stretch', hide_index=True,
             )
         st.caption(
-            "🛠 Acciones posibles: (a) cargar laboratorios compatibles "
-            "para esas materias en `Materias → Laboratorios`, (b) marcar "
-            "el horario como teoría en el cronograma, (c) agregar aulas "
-            "del tipo correcto."
+            "🛠 Acciones posibles:\n"
+            "- **Cargar laboratorios compatibles** para esas materias "
+            "(página Materias → laboratorios compatibles).\n"
+            "- **Marcar el horario como teoría** en el cronograma "
+            "(si en realidad es teoría y no lab).\n"
+            "- **Agregar aulas** del tipo correcto a la sede."
+        )
+
+    if saturacion_tipo:
+        st.divider()
+        st.error(
+            f"**{len(saturacion_tipo)} franja(s) con faltante de aulas "
+            f"de un tipo específico**"
+        )
+        st.caption(
+            "**Cómo leer esta tabla**: cada fila identifica una franja "
+            "horaria donde hacen falta más aulas de un tipo concreto "
+            "(teóricas o un laboratorio puntual) que las que tenés "
+            "cargadas. Por ejemplo: si en un mismo horario hay 5 "
+            "clases simultáneas y tenés 6 aulas en total, suena OK, "
+            "pero si las 5 son teóricas y sólo 4 aulas son teóricas, "
+            "no alcanzan. Las clases sin tipo determinado en el "
+            "cronograma sólo se cuentan acá si no tienen alternativa "
+            "posible (es decir, si no se pueden mandar a un lab)."
+        )
+        df_st = pd.DataFrame(saturacion_tipo)
+        if not df_st.empty:
+            df_view = df_st.copy()
+            df_view["Solapan"] = (
+                df_view["solapan_inicio"] + "–" + df_view["solapan_fin"]
+            )
+            df_view["Materias"] = df_view["materias"].apply(
+                lambda lst: ", ".join(lst)
+            )
+            df_view["Disp."] = (
+                df_view["n_necesarias"].astype(str)
+                + " necesita / "
+                + df_view["n_disponibles"].astype(str) + " disp."
+            )
+            df_view["Detalle"] = df_view.apply(
+                lambda r: (
+                    f"laboratorio para {r['materia']}"
+                    if r["tipo"] == "laboratorio"
+                    else "teóricas/anfiteatros"
+                ),
+                axis=1,
+            )
+            cols = ["dia", "Solapan", "tipo", "Detalle", "Disp.", "Materias"]
+            st.dataframe(
+                df_view[cols].rename(columns={
+                    "dia": "Día", "tipo": "Tipo",
+                }),
+                width='stretch', hide_index=True,
+            )
+        st.caption(
+            "🛠 Acciones posibles:\n"
+            "- **Marcar virtual** algún dictado de recursado u "
+            "optativa que aparezca en el cronograma y no necesite "
+            "aula presencial este cuatri (desde Ciclos → Dictados o "
+            "desde el panel de no esperadas).\n"
+            "- **Agregar aulas** del tipo correcto a la sede "
+            "(página Aulas).\n"
+            "- Para laboratorios: **ampliar la lista de laboratorios "
+            "compatibles** con esa materia (página Materias → "
+            "laboratorios compatibles).\n"
+            "- **Cambiar horarios** para que no caigan todos en la "
+            "misma franja."
+        )
+
+    if hall_violators:
+        st.divider()
+        st.error(
+            f"**{len(hall_violators)} grupo(s) de clases que se "
+            f"chocan entre sí por compatibilidad muy limitada**"
+        )
+        st.caption(
+            "**Cómo leer esta tabla**: cada fila muestra un grupo de "
+            "clases que se dictan al mismo tiempo y que **comparten "
+            "la misma lista chica de aulas posibles**, así que entre "
+            "ellas se pelean por las pocas aulas compatibles. Este "
+            "chequeo detecta casos sutiles donde mirar 'cuántas "
+            "aulas hay en total' no alcanza: aunque haya muchas "
+            "aulas, si el subgrupo de clases listado abajo sólo "
+            "puede ir a las aulas listadas (por tipo o por la lista "
+            "de laboratorios compatibles de la materia), no alcanzan "
+            "para todas."
+        )
+        df_h = pd.DataFrame(hall_violators)
+        if not df_h.empty:
+            df_view = df_h.copy()
+            df_view["Materias"] = df_view["materias"].apply(
+                lambda lst: ", ".join(lst)
+            )
+            df_view["Aulas posibles"] = df_view["aulas"].apply(
+                lambda lst: ", ".join(lst[:6]) + ("…" if len(lst) > 6 else "")
+            )
+            df_view["Cuenta"] = (
+                df_view["n_horarios"].astype(str) + " hor. / "
+                + df_view["n_aulas"].astype(str) + " aulas"
+            )
+            cols = ["dia", "Cuenta", "Materias", "Aulas posibles"]
+            st.dataframe(
+                df_view[cols].rename(columns={"dia": "Día"}),
+                width='stretch', hide_index=True,
+            )
+        st.caption(
+            "🛠 Acciones posibles: la columna **Aulas posibles** te "
+            "dice exactamente qué aulas puede usar ese grupo de "
+            "clases. Para resolver:\n"
+            "- **Agregar más laboratorios compatibles** a alguna de "
+            "las materias del grupo (página Materias).\n"
+            "- **Cargar más aulas** del tipo necesario.\n"
+            "- **Mover algún horario** del grupo a otra franja para "
+            "que no se choquen."
         )
 
     if franjas:
         st.divider()
         st.error(
-            f"**{len(franjas)} franja(s) con más clases simultáneas que "
-            f"aulas compatibles**"
+            f"**{len(franjas)} franja(s) con más clases simultáneas "
+            f"que aulas disponibles**"
         )
         st.caption(
-            "**Cómo leer esta tabla**: cada fila lista N horarios que "
-            "coinciden temporalmente en al menos un instante (intersección "
-            "no vacía). La columna **Solapan** muestra la franja exacta "
-            "donde los N están activos a la vez (último inicio → primer "
-            "fin); **Ventana total** muestra el rango completo desde el "
-            "primer inicio hasta el último fin del grupo. **Aulas compat.** "
-            "es la unión de aulas que podrían recibir a *cualquiera* de los "
-            "N horarios — si ese número es menor que N, no alcanza para "
-            "todos al mismo tiempo (por compatibilidad de tipo o "
-            "MateriaLaboratorioDB)."
+            "**Cómo leer esta tabla**: cada fila lista varios horarios "
+            "que se dictan en el mismo momento. La columna **Solapan** "
+            "muestra la franja exacta donde todos están activos a la "
+            "vez; **Ventana total** muestra el rango completo del "
+            "grupo. **Aulas** muestra cuántas aulas en total podrían "
+            "recibir a alguna de esas clases — si ese número es menor "
+            "que la cantidad de clases simultáneas, no alcanzan para "
+            "todas (por tipo de aula o por la lista de laboratorios "
+            "compatibles)."
         )
         df_fr = pd.DataFrame(franjas)
         if not df_fr.empty:
@@ -407,13 +550,133 @@ def _render_diagnostico_infactibilidad(diag: dict) -> None:
                 width='stretch', hide_index=True,
             )
         st.caption(
-            "🛠 Acciones posibles: (a) mover algún horario a otra franja, "
-            "(b) habilitar más aulas compatibles para alguna de esas "
-            "materias en `Materias → Laboratorios`, (c) verificar si "
-            "todas las clases listadas son del mismo tipo (laboratorio vs "
-            "teoría) — si una es lab y las demás teoría, conviene fijar "
-            "el tipo en el cronograma para que el LP separe los pools."
+            "🛠 Acciones posibles:\n"
+            "- **Mover algún horario** a otra franja menos cargada.\n"
+            "- **Agregar más aulas** o ampliar la **lista de "
+            "laboratorios compatibles** con esas materias.\n"
+            "- **Verificar el tipo de las clases**: si una es "
+            "laboratorio y otras teóricas en la misma franja, "
+            "conviene fijar el tipo en el cronograma (así el LP "
+            "puede usar ambos pools de aulas)."
         )
+
+    # =========================================================================
+    # Diagnóstico cruzado (IIS por relajación)
+    # =========================================================================
+    if iis and iis.get("ran"):
+        st.divider()
+        st.markdown("### 🔍 Diagnóstico cruzado")
+        st.caption(
+            "Cuando los chequeos rápidos de arriba no encuentran "
+            "ninguna causa pero el solver no logra asignar aulas, el "
+            "sistema prueba **ignorar temporalmente cada una de las "
+            "tres reglas blandas** del modelo, una a la vez, y ve si "
+            "el problema se resuelve. La regla que al ignorarse "
+            "permite resolver es la que está causando el conflicto. "
+            "Si más de una regla parece culpable, el sistema te marca "
+            "**la causa probable principal** (las otras suelen ser "
+            "efectos secundarios)."
+        )
+
+        principal = iis.get("principal")
+        descripciones_cortas = {
+            "R4": (
+                "Más clases simultáneas que aulas disponibles "
+                "para recibirlas"
+            ),
+            "R5": (
+                "Horas declaradas teoría/laboratorio no cuadran "
+                "con los horarios cargados"
+            ),
+            "R6": (
+                "Horarios sin tipo determinado sin aula compatible "
+                "ni como teoría ni como lab"
+            ),
+        }
+
+        if principal:
+            st.error(
+                f"**Causa probable: {descripciones_cortas[principal]}**"
+            )
+        else:
+            st.warning(
+                "**No se pudo identificar una sola causa.** Ninguna "
+                "de las tres reglas, al ignorarse por separado, "
+                "permite resolver el modelo. Eso significa que la "
+                "infactibilidad **combina varias condiciones a la "
+                "vez**. Recomendaciones generales: revisá si tenés "
+                "muchas clases en pocas franjas (marcá virtual los "
+                "recursados / dictados por Zoom desde Ciclos → "
+                "Dictados), si hay materias con horas teoría/lab "
+                "incoherentes con sus horarios, y si hay horarios "
+                "sin tipo determinado en el cronograma."
+            )
+
+        st.markdown("**Detalle por regla:**")
+        for ri in ("R4", "R5", "R6"):
+            _det = (iis.get("detalles") or {}).get(ri, {})
+            if not _det:
+                continue
+            _feas = _det.get("feasible_relajado", False)
+            _falso_pos = _det.get("es_falso_positivo", False)
+            _lbl_corta = descripciones_cortas.get(ri, ri)
+
+            if _feas and not _falso_pos:
+                # Culpable real
+                _icon = "❌" if ri == principal else "⚠️"
+                _hdr = (
+                    f"{_icon} **{_lbl_corta}** "
+                    + ("(causa principal)" if ri == principal
+                       else "(también podría aportar)")
+                )
+            elif _feas and _falso_pos:
+                # Falso positivo
+                _hdr = (
+                    f"➖ {_lbl_corta} *(probablemente no es la "
+                    "causa real)*"
+                )
+            else:
+                # No arregló al relajarse
+                _hdr = (
+                    f"✅ {_lbl_corta} *(no es problema por sí sola)*"
+                )
+
+            with st.expander(_hdr, expanded=(_feas and not _falso_pos)):
+                st.markdown(_det.get("explicacion", ""))
+
+                _materias_problema = _det.get("materias_problema") or []
+                if _materias_problema and ri == "R5":
+                    st.markdown(
+                        f"**Materias con desajuste "
+                        f"({len(_materias_problema)}):**"
+                    )
+                    df_mp = pd.DataFrame(_materias_problema)
+                    if not df_mp.empty:
+                        st.dataframe(
+                            df_mp[[
+                                "materia_codigo",
+                                "hlab_declarado",
+                                "lab_resuelto",
+                                "delta",
+                            ]].rename(columns={
+                                "materia_codigo": "Materia",
+                                "hlab_declarado": "Horas lab declaradas",
+                                "lab_resuelto": "Horas lab que el LP usaría",
+                                "delta": "Diferencia",
+                            }),
+                            width='stretch', hide_index=True,
+                        )
+                    st.caption(
+                        "**Cómo leer**: la primera columna son las "
+                        "horas de laboratorio que la materia tiene "
+                        "declaradas en el catálogo; la segunda es "
+                        "cuántas horas el LP asignaría como "
+                        "laboratorio si pudiera elegir libremente. "
+                        "Cuando difieren, hay un desajuste: o bien "
+                        "el catálogo dice una cosa pero los horarios "
+                        "fijados dicen otra, o la suma de duraciones "
+                        "no permite la partición."
+                    )
 
 
 def _render_alpha_propuesto(
@@ -540,11 +803,12 @@ def render_resultado(
     # Diagnóstico SIEMPRE arriba si hay causa estructural detectada,
     # incluso cuando el run resolvió OK (es informativo).
     diag = details.get("infeasibility_diagnosis")
+    iis = details.get("iis")
 
     if run.status != "optimal":
         st.markdown("### 🔍 Diagnóstico")
         if diag:
-            _render_diagnostico_infactibilidad(diag)
+            _render_diagnostico_infactibilidad(diag, iis=iis)
         else:
             st.info("No se generó diagnóstico para esta corrida.")
         return
@@ -556,7 +820,7 @@ def render_resultado(
         or diag.get("particion_problemas")
     ):
         with st.expander("⚠️ Advertencias estructurales detectadas", expanded=False):
-            _render_diagnostico_infactibilidad(diag)
+            _render_diagnostico_infactibilidad(diag, iis=iis)
 
     # Si el run usó α activo y hay propuesta, mostrar el diff y los
     # botones de aplicar/descartar antes del detalle por horario.

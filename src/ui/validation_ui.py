@@ -835,26 +835,70 @@ def _render_dictado_action_selector(
         help=_help,
     )
 
-    if _sel_labels and st.button(
-        f"{'⚪' if action == 'deactivate' else '🟢'} "
-        f"{_verbo} {len(_sel_labels)} dictado(s)",
-        key=_btn_key,
-        type="primary",
-    ):
+    if _sel_labels:
+        # Para "activate" ofrecemos dos botones: presencial y virtual.
+        # Para "deactivate" sigue siendo un único botón.
         _codes = [_options[lbl] for lbl in _sel_labels]
-        _activo = action == "activate"
-        with next(get_session()) as _ds:
-            _n = set_activo_for_materias_in_ciclo(
-                _ds, ciclo_id, _codes, activo=_activo,
+
+        def _aplicar_bulk(activo: bool, marcar_virtual: Optional[bool]) -> None:
+            with next(get_session()) as _ds:
+                _n = set_activo_for_materias_in_ciclo(
+                    _ds, ciclo_id, _codes, activo=activo,
+                    marcar_virtual=marcar_virtual,
+                )
+            for _k in invalidate_cache_keys:
+                st.session_state.pop(_k, None)
+            # El bulk modificó DB sin pasar por los toggles del panel
+            # de Ciclos → Dictados (que es otra página). Si el usuario
+            # después abre esa página, los checkboxes podrían mostrar
+            # valores viejos del session_state. Marcamos resync
+            # pendiente para que el panel de Ciclos los re-sincronice
+            # con DB en su próximo render.
+            st.session_state["dict_resync_pending"] = True
+            st.session_state[pending_revalidate_key] = True
+            if activo and marcar_virtual:
+                _msg = f"{_n} dictado(s) activado(s) como virtual(es)."
+            elif activo:
+                _msg = f"{_n} dictado(s) activado(s)."
+            else:
+                _msg = f"{_n} dictado(s) desactivado(s)."
+            st.toast(_msg)
+            st.rerun()
+
+        if action == "activate":
+            st.caption(
+                "**Activar** marca el dictado como esperado y presencial. "
+                "**Activar y marcar virtual** lo marca como esperado pero "
+                "**virtual sólo en este ciclo** (modalidad puntual): el LP "
+                "de asignación de aulas lo ignorará. Útil para recursados "
+                "u ofertas por Zoom."
             )
-        # Invalidar caches de validacion + marcar para auto-revalidar
-        for _k in invalidate_cache_keys:
-            st.session_state.pop(_k, None)
-        st.session_state[pending_revalidate_key] = True
-        st.toast(
-            f"{_n} dictado(s) {'activado(s)' if _activo else 'desactivado(s)'}."
-        )
-        st.rerun()
+            _bcol_a, _bcol_v = st.columns(2)
+            with _bcol_a:
+                if st.button(
+                    f"🟢 Activar {len(_sel_labels)} dictado(s)",
+                    key=_btn_key, type="primary",
+                    use_container_width=True,
+                ):
+                    _aplicar_bulk(activo=True, marcar_virtual=False)
+            with _bcol_v:
+                if st.button(
+                    f"🌐 Activar y marcar virtual ({len(_sel_labels)})",
+                    key=f"{_btn_key}_virtual",
+                    use_container_width=True,
+                    help=(
+                        "Marca los dictados como activos y virtuales "
+                        "sólo para este ciclo. La materia en el catálogo "
+                        "no se modifica."
+                    ),
+                ):
+                    _aplicar_bulk(activo=True, marcar_virtual=True)
+        else:
+            if st.button(
+                f"⚪ {_verbo} {len(_sel_labels)} dictado(s)",
+                key=_btn_key, type="primary",
+            ):
+                _aplicar_bulk(activo=False, marcar_virtual=None)
 
 
 def _render_resolve_conflicto(
@@ -1270,6 +1314,27 @@ def _render_detalle_por_materia(
         ).all())
         _mat_map = {m.codigo: m for m in _mats}
 
+        # Modalidad virtual a nivel dictado del ciclo. El filtro
+        # "Virtual" del detalle considera materia virtual de catálogo
+        # (`MateriaDB.virtual`) **o** dictado virtual del ciclo
+        # (`DictadoDB.virtual=True`). Esto es coherente con el LP, que
+        # ignora horarios cuyo dictado es virtual aunque la materia
+        # no lo sea (caso típico: recursados por Zoom).
+        from src.database.models import (
+            DictadoDB as _DD,
+            DictadoCicloDB as _DCB,
+        )
+        _dictado_virtual_por_materia: dict[str, bool] = {}
+        if ciclo_id:
+            _dvm_rows = list(session.exec(
+                select(_DD.materia_codigo, _DD.virtual)
+                .join(_DCB, _DD.id == _DCB.dictado_id)  # type: ignore[arg-type]
+                .where(_DCB.ciclo_id == ciclo_id)
+                .where(col(_DD.materia_codigo).in_(_all_codes))
+            ).all())
+            for _mc, _v in _dvm_rows:
+                _dictado_virtual_por_materia[_mc] = bool(_v)
+
         # Materias con laboratorio asignado (para filtro "Solo con lab")
         from src.database.models import MateriaLaboratorioDB as _MLB
         _lab_rows = list(session.exec(
@@ -1376,7 +1441,13 @@ def _render_detalle_por_materia(
             _n_horarios = _entry_count_sched.get(_code, 0)
         _hsem = _m.horas_semanales if _m else None
         _hlab = _m.horas_laboratorio if _m else None
-        _virtual = bool(_m.virtual) if _m else False
+        # `_virtual_catalogo`: la materia es virtual de catálogo.
+        # `_virtual_dictado`: el dictado del ciclo está marcado virtual
+        # (modalidad puntual). El filtro "Virtual" del detalle
+        # combina ambos con OR — coherente con el LP.
+        _virtual_catalogo = bool(_m.virtual) if _m else False
+        _virtual_dictado = _dictado_virtual_por_materia.get(_code, False)
+        _virtual = _virtual_catalogo or _virtual_dictado
         _periodo = _m.periodo if _m else "cuatrimestral"
         _anual = _periodo == "anual"
         _n_carreras = len(_carreras_set)
@@ -1390,6 +1461,8 @@ def _render_detalle_por_materia(
             "cuatri": _cuatri,
             "optativa": _optativa,
             "virtual": _virtual,
+            "virtual_catalogo": _virtual_catalogo,
+            "virtual_dictado": _virtual_dictado,
             "anual": _anual,
             "periodo": _periodo,
             "tiene_lab": _code in _labs_set,
@@ -1495,7 +1568,15 @@ def _render_detalle_por_materia(
             help=(
                 "Filtros por atributo de la materia. Si elegís un par "
                 "contradictorio (ej. Optativa + No optativa) no queda "
-                "ninguna materia. Combinable con los demás filtros."
+                "ninguna materia. Combinable con los demás filtros.\n\n"
+                "**Virtual** filtra materias virtuales por *cualquiera* "
+                "de las dos vías: virtuales de catálogo "
+                "(`MateriaDB.virtual=True`, ej. asignaturas dictadas "
+                "por Zoom siempre) o con dictado virtual del ciclo "
+                "actual (`DictadoDB.virtual=True`, modalidad puntual "
+                "como recursados que excepcionalmente se dictan online "
+                "este cuatri). La columna **Virtual** de la tabla "
+                "distingue cuál de las dos aplica."
             ),
         )
     with _g3:
@@ -1626,6 +1707,15 @@ def _render_detalle_por_materia(
     # =========================================================================
     _disp_rows = []
     for r in _filtered:
+        # "Virtual" en la tabla del detalle distingue entre el flag de
+        # catálogo (la materia siempre es virtual) y el flag del dictado
+        # del ciclo (modalidad puntual).
+        if r.get("virtual_catalogo"):
+            _virt_lbl = "Sí (catálogo)"
+        elif r.get("virtual_dictado"):
+            _virt_lbl = "Sí (dictado)"
+        else:
+            _virt_lbl = "—"
         _disp_rows.append({
             "Estado": _estado_badge(r["estado"]),
             "Código": r["codigo"],
@@ -1640,7 +1730,7 @@ def _render_detalle_por_materia(
                 if r["horas_semanales"] is not None else "—"
             ),
             "Optativa": "Sí" if r["optativa"] else "—",
-            "Virtual": "Sí" if r["virtual"] else "—",
+            "Virtual": _virt_lbl,
             "Lab": "Sí" if r["tiene_lab"] else "—",
         })
     st.dataframe(

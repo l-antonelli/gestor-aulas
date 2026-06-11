@@ -36,6 +36,7 @@ from src.database.models import (
     AulaDB,
     ClaseDB,
     ComisionDB,
+    DictadoDB,
     HorarioDB,
     LPRunDB,
     MateriaDB,
@@ -171,6 +172,25 @@ def build_inputs(
         c.id: float(c.coef_asignacion) for c in comisiones
     }
 
+    # Dictados virtuales del ciclo: si DictadoDB.virtual=True, los horarios
+    # de las materias asociadas se filtran del LP (no necesitan aula).
+    # Permite marcar como "virtual sólo en este ciclo" a recursados u
+    # ofertas excepcionales sin tocar el catálogo MateriaDB.virtual.
+    #
+    # Nota: ComisionDB.dictado_id no está siempre poblado (las comisiones
+    # generadas desde plan generation suelen quedar con None), así que
+    # resolvemos vía (materia_codigo, ciclo_id) usando DictadoCicloDB.
+    from src.database.models import DictadoCicloDB
+    materia_dictado_virtual: dict[str, bool] = {}
+    if plan.ciclo_id is not None:
+        rows = session.exec(
+            select(DictadoDB.materia_codigo, DictadoDB.virtual)
+            .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)  # type: ignore[arg-type]
+            .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
+        ).all()
+        for materia_codigo, es_virtual in rows:
+            materia_dictado_virtual[materia_codigo] = bool(es_virtual)
+
     horarios_db = list(session.exec(
         select(HorarioDB).where(HorarioDB.comision_id.in_(comision_ids))  # type: ignore[attr-defined]
     ).all()) if comision_ids else []
@@ -186,6 +206,15 @@ def build_inputs(
         if materia_virtual.get(h.codigo_materia, False):
             warnings.append(
                 f"Horario {h.id} excluido: materia {h.codigo_materia} es virtual"
+            )
+            continue
+        # Filtrar horarios de dictados virtuales (modalidad del ciclo).
+        # Si el dictado del ciclo está marcado virtual, la materia no
+        # necesita aula este cuatri (caso típico: recursado por Zoom).
+        if materia_dictado_virtual.get(h.codigo_materia, False):
+            warnings.append(
+                f"Horario {h.id} excluido: dictado de "
+                f"{h.codigo_materia} es virtual en este ciclo"
             )
             continue
         horarios.append(HorarioSlot(
@@ -329,15 +358,29 @@ class LPSolution:
 def build_model(
     inputs: LPInputs,
     config: LPConfig,
+    *,
+    relax: Optional[set[str]] = None,
 ) -> tuple[pulp.LpProblem, dict]:
     """Instancia el modelo PuLP con R1, R3 (compatibilidad), R4 (no
     doble booking), R5 (partición teoría/lab), R6 (consistencia
     tipo↔aula), R7 (penalty de capacidad).
 
+    Args:
+        inputs: conjuntos y parámetros precomputados.
+        config: configuración del LP (lambdas, tolerancias, alpha).
+        relax: conjunto opcional de IDs de restricciones a OMITIR del
+            modelo. Valores soportados: ``"R4"``, ``"R5"``, ``"R6"``.
+            Útil para diagnóstico IIS por relajación selectiva: cuando
+            el modelo completo es infactible y las cotas estructurales
+            no detectan causas, se prueba relajar cada Ri por separado
+            para identificar la culpable. Default: ``None`` (sin
+            relajación, todas las restricciones activas).
+
     Returns:
         (problem, vars_dict) donde vars_dict tiene las variables x, t,
         over, under indexadas para que ``solve`` las pueda leer.
     """
+    relax_set = relax or set()
     prob = pulp.LpProblem("asignacion_aulas", pulp.LpMinimize)
 
     # Variables x[h, a] solo para pares compatibles (R3 pre-computada).
@@ -430,18 +473,19 @@ def build_model(
         )
 
     # R4: para cada (aula, grupo de simultaneidad), suma de x ≤ 1.
-    for gi, grupo in enumerate(inputs.sim_groups):
-        for a in inputs.aulas:
-            terms = [
-                x[(hid, a.id)]
-                for hid in grupo
-                if (hid, a.id) in x
-            ]
-            if len(terms) >= 2:
-                prob += (
-                    pulp.lpSum(terms) <= 1,
-                    f"R4_g{gi}_{a.id}",
-                )
+    if "R4" not in relax_set:
+        for gi, grupo in enumerate(inputs.sim_groups):
+            for a in inputs.aulas:
+                terms = [
+                    x[(hid, a.id)]
+                    for hid in grupo
+                    if (hid, a.id) in x
+                ]
+                if len(terms) >= 2:
+                    prob += (
+                        pulp.lpSum(terms) <= 1,
+                        f"R4_g{gi}_{a.id}",
+                    )
 
     # R5: Partición teoría/lab por comisión.
     # Σ_{h ∈ k} dur[h] · t[h] = hlab[materia(k)]
@@ -450,64 +494,66 @@ def build_model(
     for hid, cid in inputs.comision_de_horario.items():
         horarios_por_comision.setdefault(cid, []).append(hid)
 
-    for cid, hids in horarios_por_comision.items():
-        # Materia de la comisión: la sacamos de cualquier horario.
-        if not hids:
-            continue
-        m = inputs.materia_de_horario[hids[0]]
-        hl = inputs.hlab.get(m, 0.0)
-        # Si la comisión no tiene horarios con tipo_clase=None y la
-        # suma fijada ya iguala hlab, no hay nada que el LP decida.
-        # Esa restricción la chequeamos como pre-condición en
-        # validar_particion_factible; acá la agregamos siempre como
-        # restricción para que el LP arroje infactibilidad si los
-        # números no cuadran.
-        terms = []
-        for hid in hids:
-            d = inputs.dur[hid]
-            if hid in t:
-                terms.append(d * t[hid])
-            else:
-                terms.append(d * t_const[hid])
-        prob += (
-            pulp.lpSum(terms) == hl,
-            f"R5_lab_{cid}",
-        )
+    if "R5" not in relax_set:
+        for cid, hids in horarios_por_comision.items():
+            # Materia de la comisión: la sacamos de cualquier horario.
+            if not hids:
+                continue
+            m = inputs.materia_de_horario[hids[0]]
+            hl = inputs.hlab.get(m, 0.0)
+            # Si la comisión no tiene horarios con tipo_clase=None y la
+            # suma fijada ya iguala hlab, no hay nada que el LP decida.
+            # Esa restricción la chequeamos como pre-condición en
+            # validar_particion_factible; acá la agregamos siempre como
+            # restricción para que el LP arroje infactibilidad si los
+            # números no cuadran.
+            terms = []
+            for hid in hids:
+                d = inputs.dur[hid]
+                if hid in t:
+                    terms.append(d * t[hid])
+                else:
+                    terms.append(d * t_const[hid])
+            prob += (
+                pulp.lpSum(terms) == hl,
+                f"R5_lab_{cid}",
+            )
 
     # R6: Pool de aulas para tipo decidido (sólo aplica cuando
     # tipo_clase=None y por lo tanto t[h] es variable).
-    aulas_teoricas = {a.id for a in inputs.aulas if a.tipo == "teorica"}
-    for h in inputs.horarios:
-        if h.id not in t:
-            continue  # tipo fijado, R3 lo cubre
-        lab_aulas_m = inputs.materia_lab_map.get(h.materia_codigo, set())
-        # R6a: si t[h] = 0 (teórica), x[h, a]=0 para a ∉ A_t.
-        # Equivalente: Σ_{a ∈ A_t} x[h, a] ≥ 1 - t[h].
-        terms_teo = [
-            x[(h.id, aid)] for aid in aulas_teoricas
-            if (h.id, aid) in x
-        ]
-        if terms_teo:
-            prob += (
-                pulp.lpSum(terms_teo) >= 1 - t[h.id],
-                f"R6teo_{h.id}",
-            )
-        else:
-            # No hay aulas teóricas: t[h] DEBE ser 1.
-            prob += t[h.id] == 1, f"R6teo_forzado_{h.id}"
-        # R6b: si t[h] = 1 (laboratorio), x[h, a]=0 para a ∉ A_lab(m).
-        terms_lab = [
-            x[(h.id, aid)] for aid in lab_aulas_m
-            if (h.id, aid) in x
-        ]
-        if terms_lab:
-            prob += (
-                pulp.lpSum(terms_lab) >= t[h.id],
-                f"R6lab_{h.id}",
-            )
-        else:
-            # No hay labs compatibles: t[h] DEBE ser 0.
-            prob += t[h.id] == 0, f"R6lab_forzado_{h.id}"
+    if "R6" not in relax_set:
+        aulas_teoricas = {a.id for a in inputs.aulas if a.tipo == "teorica"}
+        for h in inputs.horarios:
+            if h.id not in t:
+                continue  # tipo fijado, R3 lo cubre
+            lab_aulas_m = inputs.materia_lab_map.get(h.materia_codigo, set())
+            # R6a: si t[h] = 0 (teórica), x[h, a]=0 para a ∉ A_t.
+            # Equivalente: Σ_{a ∈ A_t} x[h, a] ≥ 1 - t[h].
+            terms_teo = [
+                x[(h.id, aid)] for aid in aulas_teoricas
+                if (h.id, aid) in x
+            ]
+            if terms_teo:
+                prob += (
+                    pulp.lpSum(terms_teo) >= 1 - t[h.id],
+                    f"R6teo_{h.id}",
+                )
+            else:
+                # No hay aulas teóricas: t[h] DEBE ser 1.
+                prob += t[h.id] == 1, f"R6teo_forzado_{h.id}"
+            # R6b: si t[h] = 1 (laboratorio), x[h, a]=0 para a ∉ A_lab(m).
+            terms_lab = [
+                x[(h.id, aid)] for aid in lab_aulas_m
+                if (h.id, aid) in x
+            ]
+            if terms_lab:
+                prob += (
+                    pulp.lpSum(terms_lab) >= t[h.id],
+                    f"R6lab_{h.id}",
+                )
+            else:
+                # No hay labs compatibles: t[h] DEBE ser 0.
+                prob += t[h.id] == 0, f"R6lab_forzado_{h.id}"
 
     # R7: linealización del penalty de capacidad.
     # Cuando α está activo, insc[h] no es una constante sino la
@@ -786,16 +832,25 @@ def persist_run(
     fecha_desde: date,
     apply_result: ApplyResult,
     diagnosis: Optional[InfeasibilityDiagnosis] = None,
+    iis: Optional[dict] = None,
 ) -> LPRunDB:
     """Inserta una fila en LPRunDB con la corrida y su resumen.
 
     Si ``solution.status != 'optimal'`` y se pasa un ``diagnosis``, el
     detalle estructural se persiste en details_json y se incorpora a
     ``error_message`` un resumen humano.
+
+    Args:
+        iis: opcional. Resultado de ``_run_iis_relajacion`` cuando se
+            ejecutó (sólo cuando el solver dio infactible Y el
+            diagnóstico estructural quedó vacío). Estructura
+            documentada en esa función.
     """
     details = _build_details_json(inputs, solution, config)
     n_sobre = details["n_sobreocupados"]
     n_sub = details["n_subutilizados"]
+    if iis is not None:
+        details["iis"] = iis
 
     error_message = solution.error_message
     if diagnosis is not None:
@@ -803,6 +858,8 @@ def persist_run(
             "horarios_sin_aula_compatible":
                 diagnosis.horarios_sin_aula_compatible,
             "franjas_saturadas": diagnosis.franjas_saturadas,
+            "saturacion_por_tipo": diagnosis.saturacion_por_tipo,
+            "hall_violators": diagnosis.hall_violators,
             "inventario_aulas": diagnosis.inventario_aulas,
             "particion_problemas": diagnosis.particion_problemas,
         }
@@ -816,6 +873,36 @@ def persist_run(
                 + (f"\n— Solver: {solution.error_message}"
                    if solution.error_message else "")
             )
+
+    # Si se ejecutó IIS, anteponer un resumen humano al error_message.
+    # Usamos `principal` (filtrado de falsos positivos) en vez de
+    # listar todas las restricciones que arreglaron al relajarse —
+    # eso confunde al usuario cuando el problema real es solo R4 y
+    # R5/R6 aparecen por libertad extra (efecto secundario).
+    if iis is not None:
+        principal = iis.get("principal")
+        descripciones_cortas = {
+            "R4": "más clases simultáneas que aulas disponibles",
+            "R5": "horas declaradas vs horarios cargados (teoría/lab)",
+            "R6": "horarios sin tipo determinado sin aula compatible",
+        }
+        if principal:
+            desc = descripciones_cortas.get(principal, principal)
+            _iis_resumen = (
+                f"🔍 Causa probable: {desc}. "
+                "Mirá la sección 'Diagnóstico cruzado' abajo para "
+                "detalles y acciones específicas."
+            )
+        else:
+            _iis_resumen = (
+                "🔍 No se pudo identificar una causa única. La "
+                "infactibilidad combina varias condiciones del modelo. "
+                "Mirá el detalle abajo."
+            )
+        error_message = (
+            (error_message + "\n\n" if error_message else "")
+            + _iis_resumen
+        )
 
     run = LPRunDB(
         plan_cursada_id=plan_id,
@@ -854,6 +941,279 @@ def get_latest_run(session: Session, plan_id: str) -> Optional[LPRunDB]:
     ).first()
 
 
+def _run_iis_relajacion(
+    inputs: LPInputs,
+    config: LPConfig,
+) -> dict:
+    """Diagnóstico cruzado por relajación selectiva (IIS).
+
+    Cuando el solver da `infeasible` y las cotas estructurales no
+    detectan ninguna causa, relajamos cada restricción "blanda" (R4,
+    R5, R6) por separado y re-corremos el modelo. Para cada
+    relajación que hace al modelo factible, la marcamos como
+    *candidata* a culpable.
+
+    **Filtro de falsos positivos**: la relajación independiente
+    sufre de un problema conocido — cuando hay una restricción
+    fuertemente saturadora (típicamente R4: muchas clases
+    simultáneas vs pocas aulas), relajar R5 o R6 también arregla,
+    porque eso le da al solver más libertad y la restricción real
+    deja de morder. Para evitar reportar R5/R6 como culpables
+    espurios:
+
+    - **R5** se descarta como culpable si NO hay materias con
+      `hlab_declarado > 0` cuyo `lab_resuelto` haya quedado en otro
+      valor. Es decir: si todas las materias afectadas tienen
+      `hlab=0` y el LP les puso lab solo porque le sirvió, no es
+      problema de catálogo, es libertad recién obtenida.
+    - **R6** se descarta como culpable si todos los horarios con
+      `tipo_clase=None` admiten al menos una alternativa válida (al
+      menos un aula teórica O al menos un lab compatible).
+      Comprobado a priori con `materia_lab_map` y el inventario de
+      teóricas.
+    - **R4** se considera causa principal cuando aparece junto con
+      R5/R6 falsos positivos (los otros sólo "ayudan" porque le
+      dan al solver libertad extra que oculta el problema real).
+
+    Args:
+        inputs: los mismos `LPInputs` del run principal.
+        config: misma config (lambdas, etc) — el toggle alpha se
+            preserva.
+
+    Returns:
+        dict con estructura::
+
+            {
+                "ran": True,
+                "culpables": ["R4", ...],
+                "principal": "R4" | None,
+                "detalles": {
+                    "R4": {"feasible_relajado": bool,
+                           "es_falso_positivo": False,
+                           "explicacion": str},
+                    "R5": {"feasible_relajado": bool,
+                           "es_falso_positivo": bool,
+                           "explicacion": str,
+                           "materias_problema": [...]},
+                    "R6": {"feasible_relajado": bool,
+                           "es_falso_positivo": bool,
+                           "explicacion": str},
+                },
+            }
+
+        - ``culpables`` lista las restricciones que arreglaron Y NO
+          fueron filtradas como falso positivo.
+        - ``principal`` es la causa probable: R4 si aparece, sino la
+          primera de la lista. None si no hay culpables.
+        - ``detalles[Ri]["es_falso_positivo"]`` indica que la
+          relajación arregló pero descartamos esa Ri como causa
+          real por el filtro descrito arriba.
+    """
+    detalles: dict[str, dict] = {}
+
+    # Mensajes accionables en castellano "criollo", sin terminología
+    # técnica (no doble booking, pigeonhole, partición, etc).
+    explicaciones = {
+        "R4": (
+            "Hay franjas horarias con **más clases simultáneas que "
+            "aulas disponibles** para recibirlas. Acciones que suelen "
+            "resolver:\n"
+            "- **Marcar virtual** algún dictado de recursado u optativa "
+            "que no necesite aula presencial este cuatri (desde "
+            "Ciclos → Dictados o desde el panel de no esperadas).\n"
+            "- **Agregar aulas** a la sede correspondiente (página "
+            "Aulas).\n"
+            "- **Mover horarios** a franjas menos cargadas en el "
+            "cronograma."
+        ),
+        "R5": (
+            "Las **horas declaradas de teoría / laboratorio** de "
+            "alguna materia no cuadran con los horarios cargados en "
+            "el cronograma. La materia dice 'tengo X horas de lab' "
+            "pero los horarios fijados como lab no suman X (o "
+            "viceversa con teoría). Acciones:\n"
+            "- **Ajustar las horas declaradas** de la materia desde "
+            "la página Materias (campos `horas_teoria` / "
+            "`horas_laboratorio`).\n"
+            "- **Cambiar el tipo (teoría / lab)** de algún horario "
+            "en el cronograma para que la suma cuadre."
+        ),
+        "R6": (
+            "Hay horarios sin tipo determinado (sin marcar como "
+            "teoría ni como laboratorio en el cronograma) que **no "
+            "encuentran un aula compatible** ni como teóricos ni "
+            "como labs. Acciones:\n"
+            "- **Fijar el tipo** (teoría o laboratorio) del horario "
+            "en el cronograma, así el LP sabe a qué pool de aulas "
+            "asignarlo.\n"
+            "- **Cargar más laboratorios compatibles** para esa "
+            "materia (página Materias → laboratorios)."
+        ),
+    }
+
+    # Pre-checks para detectar falsos positivos a priori.
+    # 1) ¿Hay horarios `tipo_clase=None` que no tengan ninguna
+    #    alternativa? Si todos tienen alternativa, R6 individual no
+    #    debería ser causa.
+    aulas_teoricas_existen = any(
+        a.tipo in ("teorica", "anfiteatro") for a in inputs.aulas
+    )
+    horarios_sin_tipo = [
+        h for h in inputs.horarios if h.tipo_clase is None
+    ]
+    todos_los_none_tienen_alternativa = all(
+        (
+            aulas_teoricas_existen
+            or bool(inputs.materia_lab_map.get(h.materia_codigo))
+        )
+        for h in horarios_sin_tipo
+    )
+
+    for ri in ("R4", "R5", "R6"):
+        prob_r, vars_r = build_model(inputs, config, relax={ri})
+        sol_r = solve(prob_r, vars_r, config)
+        feas = sol_r.status == "optimal"
+        item: dict = {
+            "feasible_relajado": feas,
+            "es_falso_positivo": False,
+            "explicacion": (
+                explicaciones[ri] if feas else
+                f"Sin esta regla el modelo sigue infactible — no es la "
+                f"causa por sí sola."
+            ),
+        }
+        if feas:
+            if ri == "R5":
+                # Identificar las comisiones cuya partición está mal.
+                horarios_por_comision: dict[str, list[str]] = {}
+                for hid, cid in inputs.comision_de_horario.items():
+                    horarios_por_comision.setdefault(cid, []).append(hid)
+                materias_problema: list[dict] = []
+                for cid, hids in horarios_por_comision.items():
+                    if not hids:
+                        continue
+                    m = inputs.materia_de_horario[hids[0]]
+                    hlab_decl = inputs.hlab.get(m, 0.0)
+                    suma_lab = 0.0
+                    for hid in hids:
+                        d = inputs.dur[hid]
+                        if hid in vars_r["t"]:
+                            v = vars_r["t"][hid].value()
+                            t_val = 1.0 if (v is not None and v > 0.5) else 0.0
+                        else:
+                            _h_obj = next(
+                                (hh for hh in inputs.horarios if hh.id == hid),
+                                None,
+                            )
+                            if (
+                                _h_obj is not None
+                                and _h_obj.tipo_clase == "laboratorio"
+                            ):
+                                t_val = 1.0
+                            else:
+                                t_val = 0.0
+                        suma_lab += d * t_val
+                    if abs(suma_lab - hlab_decl) > 1e-3:
+                        materias_problema.append({
+                            "comision_id": cid,
+                            "materia_codigo": m,
+                            "hlab_declarado": hlab_decl,
+                            "lab_resuelto": round(suma_lab, 2),
+                            "delta": round(suma_lab - hlab_decl, 2),
+                        })
+                # Dedupe por materia.
+                vistas: set[str] = set()
+                materias_problema_unicas: list[dict] = []
+                for mp in materias_problema:
+                    if mp["materia_codigo"] in vistas:
+                        continue
+                    vistas.add(mp["materia_codigo"])
+                    materias_problema_unicas.append(mp)
+                item["materias_problema"] = materias_problema_unicas
+
+                # FILTRO DE FALSO POSITIVO PARA R5:
+                # R5 es causa real solo si hay materias con
+                # `hlab_declarado > 0` cuyo `lab_resuelto` quedó
+                # distinto. Si todas las afectadas tienen
+                # `hlab_declarado=0`, el LP les puso lab solo porque
+                # ganó libertad al relajar R5 — no es problema de
+                # catálogo, es ruido.
+                materias_con_hlab_real = [
+                    mp for mp in materias_problema_unicas
+                    if mp["hlab_declarado"] > 0
+                ]
+                if not materias_con_hlab_real:
+                    item["es_falso_positivo"] = True
+                    item["explicacion"] = (
+                        "Esta regla aparece como 'arreglable' al "
+                        "relajarla, pero **probablemente no es la "
+                        "causa real**: ninguna materia con horas "
+                        "de lab declaradas quedó con números "
+                        "incoherentes. Cuando el modelo está "
+                        "infactible por falta de aulas (R4), "
+                        "relajar las horas teoría/lab también "
+                        "ayuda al solver, pero como efecto "
+                        "secundario, no como causa directa. Si "
+                        "querés revisarlo igual: la lista de "
+                        "abajo muestra materias donde el LP usó "
+                        "horas de lab que no estaban declaradas, "
+                        "lo cual es esperable cuando hay libertad "
+                        "extra."
+                    )
+                else:
+                    # Filtrar a sólo las que tienen hlab declarado
+                    # para que el usuario vea las relevantes primero.
+                    item["materias_problema"] = materias_con_hlab_real
+
+            elif ri == "R6":
+                # FILTRO DE FALSO POSITIVO PARA R6:
+                # Si todos los horarios sin tipo determinado tienen
+                # al menos un aula teórica disponible globalmente o
+                # al menos un lab compatible para su materia, R6
+                # individualmente no es la causa.
+                if todos_los_none_tienen_alternativa:
+                    item["es_falso_positivo"] = True
+                    item["explicacion"] = (
+                        "Esta regla aparece como 'arreglable' al "
+                        "relajarla, pero **probablemente no es la "
+                        "causa real**: todos los horarios sin tipo "
+                        "determinado tienen al menos un aula "
+                        "compatible (teórica o laboratorio), así "
+                        "que el LP siempre puede decidir un tipo "
+                        "consistente. Cuando el modelo está "
+                        "infactible por falta de aulas (R4), "
+                        "permitir que un horario teórico vaya a un "
+                        "lab también ayuda al solver, pero como "
+                        "efecto secundario, no como causa directa."
+                    )
+
+        detalles[ri] = item
+
+    # Construir la lista de culpables reales (excluyendo falsos
+    # positivos) y elegir la principal.
+    culpables = [
+        ri for ri in ("R4", "R5", "R6")
+        if detalles[ri]["feasible_relajado"]
+        and not detalles[ri]["es_falso_positivo"]
+    ]
+    # Prioridad: R4 prevalece sobre R5/R6 cuando aparece. Sino, la
+    # primera en orden R5 → R6.
+    principal: Optional[str]
+    if "R4" in culpables:
+        principal = "R4"
+    elif culpables:
+        principal = culpables[0]
+    else:
+        principal = None
+
+    return {
+        "ran": True,
+        "culpables": culpables,
+        "principal": principal,
+        "detalles": detalles,
+    }
+
+
 def run_lp(
     session: Session,
     plan_id: str,
@@ -865,6 +1225,13 @@ def run_lp(
     infeasible o falla, igual se persiste con el status correspondiente
     (sin tocar las ClaseDB), incluyendo el diagnóstico estructural en
     ``details_json``.
+
+    Si el solver tira `infeasible` y `diagnose` no detecta ninguna
+    causa estructural (todas las cotas pigeonhole/Hall/saturación/
+    partición vienen vacías), se ejecuta ``_run_iis_relajacion``
+    automáticamente para identificar qué restricción es la culpable.
+    El resultado se persiste en ``details_json["iis"]`` y se renderea
+    en la UI del panel de resultado.
     """
     cfg = config or LPConfig()
     inputs = build_inputs(session, plan_id, cfg)
@@ -875,6 +1242,17 @@ def run_lp(
 
     prob, vars_dict = build_model(inputs, cfg)
     solution = solve(prob, vars_dict, cfg)
+
+    # IIS automático: solo cuando el solver dice infeasible Y las
+    # cotas estructurales no detectaron causas. Si las cotas detectan
+    # algo, ya hay diagnóstico accionable y no vale la pena gastar
+    # 3× tiempo extra de solver.
+    iis_result: Optional[dict] = None
+    if (
+        solution.status == "infeasible"
+        and not diagnosis.is_infeasible()
+    ):
+        iis_result = _run_iis_relajacion(inputs, cfg)
 
     # Resolver fecha_desde: explícita > fecha más antigua del plan > hoy.
     if cfg.fecha_desde is not None:
@@ -898,7 +1276,7 @@ def run_lp(
 
     return persist_run(
         session, plan_id, cfg, inputs, solution, fecha_desde,
-        apply_result, diagnosis=diagnosis,
+        apply_result, diagnosis=diagnosis, iis=iis_result,
     )
 
 

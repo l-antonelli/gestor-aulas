@@ -482,6 +482,119 @@ Sin embargo, en el **ciclo básico** las comisiones agrupan estudiantes que desp
 
 Si el modelo de datos incorporara explícitamente el concepto de **itinerario de alumno** o **comisión-cohorte** (un grupo identificable que cursa varias materias juntas), tendría sentido reactivar este término del objetivo aplicado sólo a esas comisiones-cohorte. Hoy ese concepto no existe en la base, por lo que el término queda registrado como extensión potencial y fuera del alcance de la implementación.
 
+## 4ter. Diagnóstico estructural de infactibilidad
+
+Cuando el solver tira `infeasible` y no muestra causa, el usuario queda sin acción concreta. Para evitarlo, el sistema computa **antes** del solve un diagnóstico estructural que identifica las causas más comunes y las reporta con mensajes accionables. Esto se ejecuta también si la corrida resulta optimal: el detalle queda persistido en `LPRunDB.details_json["infeasibility_diagnosis"]` aunque no se renderee.
+
+Las técnicas se aplican en orden de costo creciente y se reportan separadamente.
+
+### 4ter.1 Horarios sin aula compatible (R1 + R3)
+
+Para cada horario `h`, se calcula `|{a : compat[h, a] = 1}|`. Si es 0, ningún aula puede recibirlo y el modelo es infactible por R1. Los casos típicos:
+
+- Materia laboratorio sin entradas en `MateriaLaboratorioDB` para esa materia.
+- Horario teórica con inventario sin aulas teóricas/anfiteatros disponibles.
+
+Costo: O(|H| × |A|).
+
+### 4ter.2 Saturación por tipo dentro de una franja
+
+La cota global de pigeonhole sobre la unión total de aulas compatibles es **necesaria** pero no aprovecha la información de tipos. Una franja con 5 clases simultáneas y 6 aulas en total puede sonar OK, pero si las 5 son teóricas y sólo 4 aulas son del tipo correcto, el LP es infactible.
+
+Para cada grupo de simultaneidad `g`, separamos el conteo:
+
+- **Pool teórica**: clases de `g` que estrictamente necesitan aula teórica. Incluye:
+  - `tipo_clase = "teorica"` (estricto).
+  - `tipo_clase = None` cuya materia NO tiene labs compatibles. R6 forzosamente las manda a teórica (`t[h] = 0` por `R6lab_forzado`).
+- Si `|pool teórica| > |aulas teóricas + anfiteatros|`, infactible por tipo.
+
+- **Pool laboratorio por materia**: cada materia `m` tiene su lista propia `materia_lab_map[m]`. Para cada `m` con clases lab simultáneas en `g`, si `|clases lab de m en g| > |materia_lab_map[m]|`, infactible.
+
+**Manejo optimista de `tipo_clase = None`**: una clase con tipo sin determinar y materia con lab disponible NO se cuenta contra teórica (R5+R6 podrían mandarla a lab). Sólo se cuenta como teórica forzada cuando *no admite* ir a lab. Análogamente para lab. Esto evita falsos positivos que confundan al usuario.
+
+Costo: O(|sim_groups| × |H_grupo| × |A|).
+
+### 4ter.3 Hall violators (matching bipartito)
+
+La cota pigeonhole sobre la unión `|N(grupo)| ≥ |grupo|` es necesaria pero no suficiente. Ejemplo:
+
+> Grupo `{h1, h2, h3}`. h1 admite `{a, b, c}`, h2 admite `{a}`, h3 admite `{a}`. La unión es `{a, b, c}` de tamaño 3 ≥ 3, pero el subconjunto `{h2, h3}` tiene `N = {a}` de tamaño 1 < 2: el LP es infactible.
+
+El test correcto es el **teorema de Hall**: existe matching perfecto sii para todo subconjunto `S ⊆ grupo`, `|N(S)| ≥ |S|`. Implementación:
+
+- **Grupos con `|grupo| ≤ 8`** (umbral configurable): enumeración exacta de todos los `2^|grupo|` subconjuntos por tamaño creciente. Reporta el subconjunto Hall-violador **más chico** como testigo (más informativo que reportar el grupo completo).
+- **Grupos más grandes**: matching bipartito clásico por DFS augmenting paths (O(V·E)). Si el matching máximo es `M < |grupo|`, hay infactibilidad. Como testigo se reporta el conjunto de horarios no matcheados (suficiente para señalar la causa, no necesariamente el subconjunto Hall-violador minimal).
+
+El reporte incluye los `aula_id` del lado derecho del subconjunto violador (la lista exacta de aulas posibles). Esto es accionable: el usuario sabe que esas materias tienen sólo esas opciones y puede ampliar `MateriaLaboratorioDB` o agregar aulas del tipo correcto.
+
+Costo: peor caso `O(2^|grupo|)` para grupos chicos, `O(|grupo|² × |A|)` para grupos grandes.
+
+### 4ter.4 Partición teoría/lab infactible (R5)
+
+Para cada comisión `k` con materia `m`, se verifica que existe una bipartición de las duraciones de los horarios de `k` que sume exactamente `hteo[m]` y `hlab[m]` respectivamente. Es un subset-sum sobre las duraciones de los horarios "libres" (`tipo_clase = None`), respetando los fijados.
+
+Si no existe, ningún resolución de R5 es válida y el LP es infactible. Causa típica: `hteo + hlab` declarado en el catálogo no coincide con la suma de duraciones de los horarios cargados, o los horarios fijados ya exceden uno de los dos.
+
+Costo: O(|comisiones| × DP de subset-sum).
+
+### 4ter.5 IIS por relajación selectiva (con filtro de falsos positivos)
+
+Cuando las cotas (1) a (4) vienen vacías y la pre-validación de partición tampoco detecta nada, pero el solver tira `infeasible`, el sistema ejecuta automáticamente un **IIS (Irreducible Infeasible Subset) approximation por relajación selectiva**. La idea: relajar **una sola restricción del modelo a la vez** y volver a resolver. La que al ser relajada permite que el modelo resuelva es la **culpable** (o una de las culpables, si el problema es combinado).
+
+Implementación en `build_model(inputs, config, *, relax: set[str] | None)`. El parámetro `relax` acepta los IDs `"R4"`, `"R5"`, `"R6"`, que omiten respectivamente los bloques de constraints de no-doble-booking, partición teoría/lab y consistencia tipo↔aula.
+
+Las tres relajaciones que se prueban:
+
+- **R4** (no doble booking): si arregla, hay saturación temporal residual que las cotas pigeonhole/Hall no detectaron.
+- **R5** (partición teoría/lab): si arregla, la suma de horas declaradas (`hteo + hlab`) de alguna materia no admite partición consistente con las duraciones de los horarios cargados.
+- **R6** (consistencia tipo↔aula para horarios sin tipo): si arregla, hay un horario con `tipo_clase=None` que no admite ninguna decisión consistente.
+
+#### Problema: falsos positivos por libertad ganada
+
+La relajación independiente sufre de un problema bien conocido: **cuando hay una restricción fuertemente saturadora (típicamente R4: muchas clases simultáneas vs pocas aulas), relajar R5 o R6 también arregla el modelo** — pero no porque sean la causa, sino porque le da al solver libertad extra que enmascara el problema real.
+
+Ejemplo concreto: 50 clases simultáneas en una franja con 42 aulas teóricas. R4 las limita a 1 por aula → infactible.
+- Relajar R4: arregla (la causa real).
+- Relajar R5: el LP gana libertad de marcar horarios como lab para usar las 8 aulas lab → arregla, pero los `hlab` quedan incoherentes.
+- Relajar R6: el LP puede meter horarios teóricos en aulas lab → arregla, pero por motivos no relacionados con horarios sin tipo determinado.
+
+Reportar las tres como culpables confunde al usuario, especialmente cuando R5/R6 son falsos positivos.
+
+#### Filtro de falsos positivos
+
+Para distinguir causas reales de espurias, el sistema aplica los siguientes filtros tras evaluar cada relajación:
+
+- **R5 → falso positivo si** ninguna materia con `hlab_declarado > 0` quedó con desajuste. Es decir: si todas las materias afectadas tienen `hlab=0` declarado y el LP les puso lab solo porque ganó libertad, no es problema de catálogo. Si hay materias con `hlab > 0` y desajuste real, R5 es causa genuina.
+- **R6 → falso positivo si** todos los horarios con `tipo_clase=None` tienen al menos una alternativa válida (al menos un aula teórica disponible globalmente o al menos un lab compatible para su materia). Si todos tienen alternativa, R6 individualmente no puede ser la causa: el LP siempre puede decidir un tipo consistente.
+- **R4 → siempre se considera causa real** cuando arregla. Es la restricción "saturadora" típica que aparece en problemas de capacidad.
+
+Si tras filtrar quedan varias culpables, se elige una **causa principal**: R4 prevalece sobre R5/R6 (típicamente cuando las tres "arreglan", R4 es la causa real y las otras son efectos secundarios). En ausencia de R4, la primera de la lista en orden R5 → R6.
+
+#### Reporte al usuario
+
+El IIS devuelve un dict con tres campos clave:
+
+- `culpables`: lista de Ri que arreglaron Y NO fueron filtradas como falso positivo.
+- `principal`: la causa probable única (R4 prevalece). `None` si no hay culpables.
+- `detalles[Ri]`: por cada Ri probada, incluye `feasible_relajado`, `es_falso_positivo`, `explicacion` y opcionalmente `materias_problema` (sólo R5).
+
+La UI usa estas categorías para renderear con tres niveles visuales:
+
+- **Causa principal** (❌, expandida por default): la restricción identificada.
+- **Causa secundaria** (⚠️, expandida): otras Ri que también podrían aportar.
+- **Falso positivo** (➖, colapsada): la relajación arregla pero el filtro la descartó. Se muestra colapsada con explicación de por qué se considera no causal.
+- **No es problema individualmente** (✅, colapsada): la relajación NO arregla el modelo.
+
+Si **ninguna** relajación arregla (después de filtros), la infactibilidad es genuinamente combinada y se reporta como "no concluyente" con sugerencias generales.
+
+**Costo**: hasta 3× tiempo de solver extra. Para el caso típico de FCEIA (~600 horarios, ~50 aulas), el LP infactible resuelve en 6-8s, así que el IIS suma ~20s en peor caso. Aceptable como "no me das diagnóstico, dame algo".
+
+**Trigger automático**: el IIS sólo se ejecuta cuando el solver dice `infeasible` Y todas las cotas estructurales vinieron vacías. Si las cotas detectan algo, ya hay diagnóstico accionable y no vale la pena gastar tiempo extra.
+
+### 4ter.6 Pendiente para iteración futura
+
+- **Inventario y pico siempre visible**: incluso cuando el LP da factible, mostrar la franja con mayor presión por tipo es útil para anticipar problemas si se agregan dictados. Hoy se calcula el heatmap de carga pero no hay un panel resumen "estás al N% de capacidad teórica en el peor pico".
+
 ## 5. Sección específica de implementación
 
 ### 5.1 Stack

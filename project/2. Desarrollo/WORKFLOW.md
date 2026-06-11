@@ -154,18 +154,42 @@ ciclo, crea un `DictadoDB` con:
   `dicta_recursado=False` (override por carrera o por materia)
   o que sea anual y este sea el 2C (linkea a la versión del 1C).
 
-### 3.2 Toggle activo/inactivo (con edición a mano)
+### 3.2 Toggle activo/inactivo (con edición a mano, modo batch)
 
 Cada fila de la grilla de dictados tiene un toggle "Activo".
 **Activo = la materia es esperada este cuatri**. Inactivo = la
 materia NO se considera para validaciones de cobertura.
 
-**Auto-save + marca de edición a mano**: cuando el usuario cambia el
-toggle, el cambio se persiste inmediatamente en `DictadoDB.activo`
-y además queda registrado en `DictadoDB.activo_override_manual` (con
-el mismo valor) como marca de "esto lo editó el usuario". El
-indicador 🟢/⚪ a la izquierda del nombre se actualiza al instante,
-y aparece la etiqueta **✋ editado a mano** que lo deja explícito.
+**Modo batch + marca de edición a mano**: cuando el usuario cambia el
+toggle, el cambio NO se persiste al instante. Se acumula en una
+sección **⏳ Cambios pendientes** que aparece arriba de la grilla
+con una tabla resumen (materia, atributo, actual → nuevo) y dos
+botones: **💾 Aplicar N cambios** y **🚫 Descartar**. Al apretar
+Aplicar, se persiste todo en una transacción y la próxima
+recalculación respeta `DictadoDB.activo_override_manual` como
+marca de edición a mano.
+
+> **Por qué batch y no auto-save**: Streamlit interrumpe los reruns
+> en curso cuando el usuario hace clicks rápidos en sucesión. El
+> patrón viejo (commit + rerun por cada toggle) provocaba que esos
+> reruns interrumpidos cancelaran commits intermedios, perdiéndose
+> cambios. El batch evita esto porque hay una única transacción al
+> apretar Aplicar.
+
+> **Indicador visual**: el badge a la izquierda del nombre muestra
+> el estado **actual en DB** (no el del session_state). Cuando hay
+> un cambio pendiente para esa fila, aparece la marca
+> `⏳ pendiente` para que el usuario sepa que el toggle está en un
+> valor distinto al de la DB.
+
+> **Bloqueo de operaciones globales**: mientras hay cambios
+> pendientes, los botones **Crear Dictados** y **Recalcular según
+> reglas** quedan bloqueados (muestran un mensaje pidiendo aplicar
+> o descartar primero) para evitar que pisen el batch.
+
+El indicador 🟢/⚪ a la izquierda del nombre se actualiza tras
+aplicar los cambios. La etiqueta **✋ editado a mano** queda
+visible para los dictados con `activo_override_manual` seteado.
 
 **Por qué importa la marca**: la próxima ejecución de "Recalcular
 según reglas" **respeta las ediciones manuales por default** (no las
@@ -182,6 +206,28 @@ evaluar la regla para ese dictado.
 > para "qué materias se esperan en el cuatri". El campo
 > `activo_override_manual` sólo afecta cómo se comporta "Recalcular
 > según reglas" frente a esa entrada.
+
+> **Materias compartidas y separación visual**: una misma materia
+> (ej. "Cálculo I") puede aparecer en varios planes de carrera. La
+> UI las separa en dos buckets para evitar widgets duplicados:
+>
+> - Los **expanders por carrera** muestran sólo materias **exclusivas**
+>   a esa carrera (las que aparecen en un único plan del ciclo).
+> - Un **expander adicional "🔗 Comunes"** al final lista las
+>   materias **compartidas** (en 2+ carreras) una sola vez por
+>   materia, con su propio set de filtros — incluye un filtro extra
+>   por carrera con lógica O: si elegís "Industrial" + "Mecánica",
+>   se muestran todas las comunes que pertenecen a *cualquiera* de
+>   las dos.
+>
+> Cada `DictadoDB` se renderea una única vez por run (sin importar
+> cuántas carreras compartan la materia). Los toggles Activo,
+> Virtual y Recursado de las comunes afectan a todas las carreras
+> donde aparece la materia (los flags viven en `DictadoDB` /
+> `MateriaDB`, no por carrera). Esto elimina las race conditions
+> que existían cuando se renderizaba la misma materia en cada
+> carrera con keys de widget distintas pero apuntando al mismo
+> dictado.
 
 ### 3.3 Recalcular según reglas
 
@@ -207,6 +253,48 @@ que el modo default no toca porque tienen
 cuando está activo, las ediciones manuales se descartan y la regla
 se aplica a todo. Útil cuando se acumularon muchas ediciones
 obsoletas y se quiere limpiar el estado del ciclo.
+
+### 3.4 Toggle Virtual (modalidad puntual del ciclo)
+
+Cada fila tiene además una columna **Virtual**. Marca el dictado
+como **virtual sólo en este ciclo** (modalidad puntual), sin
+modificar el catálogo `MateriaDB.virtual`.
+
+**Qué cambia cuando un dictado está marcado virtual**:
+
+- El **LP de asignación de aulas** ignora todos los horarios de la
+  materia: no consume aula, no entra en grupos de simultaneidad ni
+  contribuye al penalty de capacidad.
+- El **cronograma del plan** los muestra con el ícono `🌐 virtual`
+  para que sea visible.
+- La **prevalidación de cobertura** los considera **cubiertos**
+  (presentes), no como faltantes ni como extras: están en la oferta
+  oficial, sólo que no son presenciales este cuatri.
+- La generación de `ClaseDB` los crea normalmente con `aula_id=None`
+  (igual que las virtuales del catálogo).
+
+**Cuándo conviene usarlo**:
+
+- Recursados que se dictan por Zoom este cuatrimestre.
+- Materias del 2C que aparecen en el cronograma del 1C como
+  recursado virtual: en lugar de dejar el dictado **inactivo** (que
+  marcaría todo como faltante en validaciones) o tener que marcar
+  cada horario uno por uno, basta con activar el dictado y
+  marcarlo virtual. Esto **alinea** los datos del ciclo con los
+  del plan y el cronograma sin generar ruido.
+
+> **Persistencia**: el flag vive en `DictadoDB.virtual` (a nivel
+> ciclo). Al regenerar el plan desde el cronograma, la marca se
+> mantiene. Al crear un nuevo ciclo, los dictados nuevos heredan
+> `virtual=False` (presencial) por default, salvo que la materia
+> sea virtual de catálogo, en cuyo caso heredan True.
+
+> **Modo batch**: igual que el toggle Activo y el selector
+> Recursado, los cambios al toggle Virtual NO se aplican al
+> instante. Se acumulan en la sección **⏳ Cambios pendientes** y
+> se persisten todos juntos al apretar **💾 Aplicar cambios**.
+> Esto evita la pérdida de cambios cuando se hacen clicks rápidos
+> consecutivos.
 
 ---
 
@@ -349,6 +437,26 @@ con todas las features del cronograma + extras del plan:
 - **Activación gate**: botón "Activar plan" deshabilitado si hay
   conflictos no ignorados; al activar genera `ClaseDB` para todo
   el cuatri.
+- **Bulk activate sobre "no esperadas"**: cada lista de materias
+  no esperadas (las que aparecen en el cronograma del plan pero
+  no tienen dictado activo) ofrece dos botones:
+  - **🟢 Activar**: marca el dictado como esperado y presencial.
+  - **🌐 Activar y marcar virtual**: marca el dictado como
+    esperado pero **virtual sólo en este ciclo** (modalidad
+    puntual). El LP de asignación lo ignora; queda alineado con
+    el cronograma sin meter presión sobre las aulas. Caso típico:
+    materias del 2C que aparecen como recursado por Zoom en el
+    cronograma del 1C. Internamente: `set_activo_for_materias_in_ciclo`
+    con `marcar_virtual=True` setea ambos flags en bulk.
+- **Filtro Virtual del detalle por materia**: la lista de materias
+  filtrable del panel de validación combina **dos vías** de
+  virtualidad: virtuales de catálogo (`MateriaDB.virtual=True`) y
+  con dictado virtual del ciclo (`DictadoDB.virtual=True`). Una
+  materia matchea el filtro **Virtual** si cualquiera de las dos
+  es True. La columna **Virtual** de la tabla resumen distingue
+  visualmente cuál de las dos aplica: `Sí (catálogo)` vs
+  `Sí (dictado)`. Esto refleja la misma semántica que el LP, que
+  ignora horarios virtuales por cualquiera de los dos motivos.
 
 #### Detalle por materia → editor inline (`plan_materia_editor`)
 
@@ -425,7 +533,13 @@ Cuando el plan no tiene conflictos no-ignorados y el usuario aprieta
    - Materias anuales heredan ambas mitades (1C + 2C).
    - Las virtuales **se generan también** (la asignación de aula
      posterior las saltea, pero se necesitan en la planificación
-     general).
+     general). Una clase es virtual si la materia es virtual de
+     catálogo (`MateriaDB.virtual=True`) **o** si su dictado del
+     ciclo está marcado virtual (`DictadoDB.virtual=True`). El
+     segundo caso permite marcar como "virtual sólo en este ciclo"
+     a recursados u ofertas excepcionales sin tocar el catálogo
+     de la materia (que sigue siendo presencial). El toggle vive
+     en `📆 Ciclos → 📚 Dictados`, columna **Virtual**.
 
 El plan queda con `activo=True` y aparece como `[ACTIVO]` en la
 lista. Las clases generadas son visibles en

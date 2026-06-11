@@ -14,7 +14,7 @@ from sqlmodel import col
 from src.database.models import (
     ScheduleEntryDB, PlanificacionCursadaDB, ComisionDB, HorarioDB,
     MateriaDB, ScheduleDB, ConfiguracionHoraria,
-    PlanEstudioDB, CicloPlanVersionDB,
+    PlanEstudioDB, CicloPlanVersionDB, DictadoDB,
 )
 from src.database.crud import schedule_crud, planificacion_crud, materia_crud
 from src.services.horario_loading_service import derive_comision_count
@@ -827,6 +827,27 @@ def build_timetable_grid(
     ).all()
     mat_info = {m.codigo: m for m in materias_db}
 
+    # Modalidad virtual del dictado del ciclo: si el dictado de la materia
+    # está marcado virtual en este ciclo, los bloques se renderean como
+    # virtuales aunque la materia en sí no lo sea (caso típico:
+    # recursados que se dictan por Zoom). Esto es independiente del flag
+    # de catálogo MateriaDB.virtual: la materia sigue siendo presencial,
+    # sólo este dictado puntual del ciclo es virtual.
+    #
+    # Resolvemos vía (materia_codigo, ciclo_id) porque ComisionDB.dictado_id
+    # suele estar None — el plan se genera desde el cronograma, no
+    # desde el dictado.
+    from src.database.models import DictadoCicloDB
+    materia_dictado_virtual: dict[str, bool] = {}
+    if ciclo_id:
+        rows = session.exec(
+            select(DictadoDB.materia_codigo, DictadoDB.virtual)
+            .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)  # type: ignore[arg-type]
+            .where(DictadoCicloDB.ciclo_id == ciclo_id)
+        ).all()
+        for materia_codigo, es_virtual in rows:
+            materia_dictado_virtual[materia_codigo] = bool(es_virtual)
+
     # Build periodo map if ciclo provided
     periodo_map: dict[str, Optional[bool]] = {}
     if ciclo_id:
@@ -845,7 +866,12 @@ def build_timetable_grid(
             continue
         materia = mat_info.get(com.materia_codigo)
         mat_nombre = materia.nombre if materia else com.materia_codigo
-        is_virtual = materia.virtual if materia else False
+        # Una clase es virtual si la materia es virtual de catálogo o
+        # si el dictado del ciclo está marcado virtual en este ciclo.
+        is_virtual = (
+            (materia.virtual if materia else False)
+            or materia_dictado_virtual.get(com.materia_codigo, False)
+        )
 
         block = TimetableBlock(
             materia_codigo=com.materia_codigo,

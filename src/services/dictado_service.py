@@ -616,10 +616,22 @@ def clear_activo_override(
 
 def set_activo_for_materias_in_ciclo(
     session: Session, ciclo_id: str, materia_codigos: list[str], activo: bool,
+    *, marcar_virtual: Optional[bool] = None,
 ) -> int:
     """Setear `activo` en bulk para los dictados de las materias indicadas
     dentro de un ciclo. Crea el dictado si no existe (cuando `activo=True`
     y la materia es del plan).
+
+    Args:
+        session: SQLAlchemy session.
+        ciclo_id: ciclo donde aplicar el bulk update.
+        materia_codigos: códigos de materia objetivo.
+        activo: nuevo valor del flag `DictadoDB.activo`.
+        marcar_virtual: si se pasa, también setea `DictadoDB.virtual` con
+            ese valor. None (default) = no se toca el flag virtual. Útil
+            cuando el usuario "activa y marca virtual" desde el panel de
+            no esperadas para indicar que la modalidad de esos dictados
+            es virtual sólo en este ciclo (recursados por Zoom, etc.).
 
     Returns:
         cantidad de dictados efectivamente actualizados/creados.
@@ -644,11 +656,20 @@ def set_activo_for_materias_in_ciclo(
                 # Crear on-the-fly
                 created = create_dictado_for_materia(session, ciclo_id, mc)
                 if created is not None:
+                    if marcar_virtual is not None:
+                        created.virtual = marcar_virtual
+                        session.add(created)
                     n_changed += 1
             # Si activo=False y no existe, no hacemos nada
             continue
+        cambia = False
         if d.activo != activo:
             d.activo = activo
+            cambia = True
+        if marcar_virtual is not None and d.virtual != marcar_virtual:
+            d.virtual = marcar_virtual
+            cambia = True
+        if cambia:
             session.add(d)
             n_changed += 1
 

@@ -166,7 +166,16 @@ estaban.
 Cuando el solver devuelve `infeasible`, **sin diagnóstico estructural el
 mensaje es inútil**. El servicio computa `diagnose_infeasibility` siempre
 (no sólo cuando el LP falla) y persiste el resultado en
-`LPRunDB.details_json`. La UI muestra:
+`LPRunDB.details_json`. El diagnóstico aplica cinco técnicas en orden
+de informatividad creciente — la lectura de cada item del reporte está
+ordenada para que el usuario vea primero las causas más concretas y
+accionables.
+
+> **Documento de diseño**: `project/1. Diseño/asignacion-aulas-LP.md`
+> § 4ter detalla el planteo formal y las cotas matemáticas de cada
+> técnica. Este documento describe la implementación.
+
+La UI muestra:
 
 1. **Inventario de aulas**: total y desglose por tipo
    (`teorica`, `laboratorio`, `anfiteatro`).
@@ -176,18 +185,58 @@ mensaje es inútil**. El servicio computa `diagnose_infeasibility` siempre
    (escala lineal blanco→rojo). Las celdas en cero quedan transparentes
    y los huecos entre clases consecutivas no solapadas se ven
    claramente.
-3. **Horarios sin aula compatible**: tabla con materia, día, franja,
+3. **Comisiones con partición infactible** (R5): tabla con materia,
+   `hteo`, `hlab`, sumas fijadas, sumas totales, y razón concreta
+   (suma no coincide / lab fijado excede / subset-sum infactible).
+4. **Horarios sin aula compatible**: tabla con materia, día, franja,
    tipo y razón concreta (ej. "sin laboratorios en
    `MateriaLaboratorioDB` para QUI"). Acción sugerida: cargar labs
    compatibles, marcar el horario como teoría, agregar aulas.
-4. **Franjas saturadas**: tabla con día, franja exacta de
-   intersección, ventana total, cantidad de clases simultáneas,
-   cantidad de aulas compatibles, desglose por tipo (`T:23 L:6` =
-   23 teóricas + 6 labs en ese choque), y materias afectadas. Ver §
-   6 para por qué la cota es conservadora.
-5. **Comisiones con partición infactible** (R5): tabla con materia,
-   `hteo`, `hlab`, sumas fijadas, sumas totales, y razón concreta
-   (suma no coincide / lab fijado excede / subset-sum infactible).
+5. **Saturación por tipo dentro de una franja**: refina la cota
+   pigeonhole global mirando por separado teóricas y labs. Por cada
+   franja saturada por tipo, la tabla muestra día, franja, tipo
+   problemático (`teórica` o `laboratorio` con la materia indicada),
+   `n_necesarias / n_disponibles` y materias afectadas. Manejo
+   **optimista** de `tipo_clase = None`: una clase sin tipo
+   determinado sólo se cuenta contra el pool teórico si NO admite
+   ir a lab (`materia_lab_map[m]` vacío); análogamente para lab.
+   Esto evita falsos positivos. Acción sugerida: marcar virtual algún
+   dictado de recursado, agregar aulas del tipo correcto, ampliar
+   `MateriaLaboratorioDB`.
+6. **Hall violators**: matching bipartito por grupo. Para grupos
+   chicos (≤8) enumeración exacta de subconjuntos por tamaño
+   creciente; para grupos más grandes, augmenting paths clásicos
+   O(V·E). Reporta el subconjunto Hall-violador más chico (testigo
+   minimal), incluyendo las aulas exactas a las que ese subconjunto
+   está restringido. Detecta casos que pigeonhole no ve, ej.
+   `{h1,h2,h3}` con `h1→{a,b,c}, h2→{a}, h3→{a}`: |union|=3 ✓ pero
+   `{h2,h3}→{a}` viola Hall.
+7. **Franjas saturadas (pigeonhole)**: tabla con día, franja exacta
+   de intersección, ventana total, cantidad de clases simultáneas,
+   cantidad de aulas compatibles, desglose por tipo (`T:23 L:6`).
+   Cota más débil que (5) y (6) pero útil cuando ambas pasan y igual
+   hay saturación residual.
+8. **IIS por relajación selectiva** (sólo cuando 1-7 vienen vacías y
+   el solver tiró infactible): el sistema relaja R4, R5 y R6 por
+   separado y vuelve a resolver. La relajación que arregla el modelo
+   identifica la restricción culpable. Implementado en
+   `_run_iis_relajacion`; agrega el parámetro `relax: set[str]` a
+   `build_model` para omitir las constraints correspondientes. Para
+   R5 además identifica las **materias específicas** problemáticas
+   comparando `Σ dur·t[h]` resuelto vs `hlab[m]` declarado.
+   Costo: hasta 3× tiempo de solver extra. Trigger automático
+   (no opt-in): sólo se ejecuta cuando hace falta. Si ninguna
+   relajación arregla, la infactibilidad es combinada y se reporta
+   como "no concluyente".
+
+### 4.1 Pendientes documentados
+
+Las técnicas (1)-(8) cubren las causas estructurales atómicas, de
+fronteras y combinadas. Queda pendiente para iteración futura:
+
+- **Pico de simultaneidad por tipo siempre visible**: incluso si el
+  LP da factible, mostrar la franja con mayor presión por tipo para
+  anticipar problemas si se agregan dictados.
 
 ## 5. Edición manual de aula
 

@@ -457,6 +457,32 @@ with tab_dictados:
                                 st.toast(f"{_del_n} huérfano(s) eliminado(s).")
                                 st.rerun()
 
+            # Guard: si hay cambios pendientes en batch, bloquear las
+            # operaciones globales (Crear Dictados, Recalcular según
+            # reglas) que pisarían los toggles. El usuario debe aplicar
+            # o descartar primero. Leemos un flag persistido por el
+            # render anterior porque en este punto del flujo todavía no
+            # se cargaron los dictados (se cargan más abajo).
+            _has_pending_for_guard = bool(
+                st.session_state.get("dict_pending_count", 0) > 0
+            )
+
+            if _do_create:
+                if _has_pending_for_guard:
+                    st.error(
+                        "Tenés cambios pendientes sin aplicar. Apretá "
+                        "**💾 Aplicar cambios** abajo o **🚫 Descartar** "
+                        "antes de crear/recalcular dictados."
+                    )
+                    _do_create = False
+            if _do_recompute and _has_pending_for_guard:
+                st.error(
+                    "Tenés cambios pendientes sin aplicar. Apretá "
+                    "**💾 Aplicar cambios** abajo o **🚫 Descartar** "
+                    "antes de crear/recalcular dictados."
+                )
+                _do_recompute = False
+
             if _do_create:
                 with next(get_session()) as session:
                     result = create_dictados_for_ciclo(session, sel_ciclo_dict)
@@ -476,6 +502,10 @@ with tab_dictados:
                     if result.skipped:
                         msg_parts.append(f"{result.skipped} ya existentes")
                     st.success(f"Dictados: {', '.join(msg_parts)}")
+                    # Por las dudas: dictados nuevos no tienen
+                    # session_state previo, pero `linked` sí puede
+                    # haber tocado dictados anuales existentes.
+                    st.session_state["dict_resync_pending"] = True
                     st.rerun()
 
             # Checkbox "pisar ediciones manuales" debe estar disponible
@@ -634,6 +664,16 @@ with tab_dictados:
                                 st.session_state.pop(
                                     "dict_recompute_preview", None,
                                 )
+                                st.session_state.pop(
+                                    "dict_pending_count", None,
+                                )
+                                # El recompute mutó DB sin pasar por los
+                                # toggles → marcamos resync pendiente
+                                # para que el próximo render alinee
+                                # session_state con DB. Ver bloque
+                                # "Resync de session_state tras
+                                # operaciones bulk" más arriba.
+                                st.session_state["dict_resync_pending"] = True
                                 st.rerun()
                         with _ac2:
                             if st.button(
@@ -708,26 +748,114 @@ with tab_dictados:
                 for pe in pe_rows:
                     materia_carreras.setdefault(pe.materia_codigo, set()).add(pe.carrera_codigo)
 
+                # Separamos items en dos buckets:
+                # - items_by_carrera: SOLO materias exclusivas a la carrera
+                #   (las que aparecen en una única carrera del ciclo).
+                # - items_comunes_by_mat: materias compartidas (en >=2 carreras),
+                #   indexadas por materia_codigo. Una sola entrada por materia
+                #   (no por carrera donde aparece). Esto evita duplicar
+                #   widgets para el mismo dictado, lo que antes causaba race
+                #   conditions con auto-save.
                 items_by_carrera: dict[str, list[dict]] = {}
+                items_comunes_by_mat: dict[str, dict] = {}
                 for pe in pe_rows:
                     mat = mat_map.get(pe.materia_codigo)
                     if not mat:
                         continue
                     d = dict_by_mat.get(pe.materia_codigo)
-                    items_by_carrera.setdefault(pe.carrera_codigo, []).append({
-                        "materia": mat,
-                        "pe": pe,
-                        "dictado": d,
-                        "otras": sorted(
-                            materia_carreras[pe.materia_codigo] - {pe.carrera_codigo}
-                        ),
-                    })
+                    _carreras_de_mat = materia_carreras[pe.materia_codigo]
+                    if len(_carreras_de_mat) >= 2:
+                        # Compartida: una sola entrada por materia.
+                        # Si ya está, mantenemos la primera vista de pe
+                        # (solo cambia anio_plan/cuatrimestre_plan
+                        # potencialmente — debería ser igual entre carreras
+                        # o documentar que tomamos la primera por orden
+                        # alfabético de carrera). En la práctica las
+                        # comunes tienen mismo anio/cuatri en todos los
+                        # planes; si difieren, mostramos la representativa.
+                        if pe.materia_codigo not in items_comunes_by_mat:
+                            items_comunes_by_mat[pe.materia_codigo] = {
+                                "materia": mat,
+                                "pe": pe,
+                                "dictado": d,
+                                "carreras": sorted(_carreras_de_mat),
+                            }
+                    else:
+                        # Exclusiva.
+                        items_by_carrera.setdefault(
+                            pe.carrera_codigo, [],
+                        ).append({
+                            "materia": mat,
+                            "pe": pe,
+                            "dictado": d,
+                            "otras": [],
+                        })
 
                 # Skipped materias (para razones)
                 skipped_list = get_skipped_materias_for_ciclo(session, sel_ciclo_dict)
                 skipped_razones = {sm.materia_codigo: sm.razon for sm in skipped_list}
 
-            if not items_by_carrera:
+            # =========================================================
+            # Resync de session_state tras operaciones bulk
+            # =========================================================
+            #
+            # Streamlit retiene los valores del session_state de cada
+            # widget mientras la página vive. Si una operación bulk
+            # (Recalcular, Crear Dictados, bulk activate desde
+            # Validaciones) modificó `DictadoDB.activo`/`.virtual` en
+            # DB sin pasar por el flujo del checkbox, el session_state
+            # queda stuck con el valor viejo. El siguiente render del
+            # toggle muestra ese valor stuck (Streamlit ignora
+            # `value=` cuando hay session_state), divergiendo del
+            # badge que sí lee de DB.
+            #
+            # NO podemos hacer este resync siempre: en un render
+            # normal, después de que el usuario toca un toggle,
+            # session_state ≠ DB es esperado (el toggle entra al batch
+            # de "Cambios pendientes"). Si borráramos session_state
+            # ahí, perderíamos el cambio del usuario.
+            #
+            # Solución: cada operación bulk setea un flag
+            # `dict_resync_pending=True` antes del st.rerun(). En el
+            # próximo render lo consumimos: re-sincronizamos
+            # session_state con DB para todos los toggles del ciclo
+            # actual y limpiamos el flag.
+            if st.session_state.pop("dict_resync_pending", False):
+                _dictado_id_to_db = {d.id: d for d in dictados}
+                _materia_to_db = {m.codigo: m for m in mats}
+                for _k in list(st.session_state.keys()):
+                    if not isinstance(_k, str):
+                        continue
+                    if _k.startswith("activo_"):
+                        _did = _k.rsplit("_", 1)[-1]
+                        _d = _dictado_id_to_db.get(_did)
+                        if _d is not None:
+                            st.session_state[_k] = _d.activo
+                    elif _k.startswith("virtual_"):
+                        _did = _k.rsplit("_", 1)[-1]
+                        _d = _dictado_id_to_db.get(_did)
+                        if _d is not None:
+                            st.session_state[_k] = _d.virtual
+                    elif _k.startswith("rec_mat_"):
+                        # rec_mat_{ns}_{carrera}_{materia_codigo}
+                        # materia_codigo puede tener underscores; el
+                        # split por "_" no es trivial. Inferimos: la
+                        # materia_codigo es lo que viene después del
+                        # cuarto "_".
+                        parts = _k.split("_", 4)
+                        if len(parts) >= 5:
+                            _mc = parts[4]
+                            _m = _materia_to_db.get(_mc)
+                            if _m is not None:
+                                st.session_state[_k] = (
+                                    "Según Carrera"
+                                    if _m.dicta_recursado is None
+                                    else (
+                                        "Sí" if _m.dicta_recursado else "No"
+                                    )
+                                )
+
+            if not items_by_carrera and not items_comunes_by_mat:
                 st.info(
                     "Las versiones de plan asignadas a este ciclo no tienen "
                     "materias cargadas. Cargá los planes de estudio primero."
@@ -767,6 +895,36 @@ with tab_dictados:
                 "**Esperadas en prevalidación = Activos.** Las inactivas se "
                 "excluyen del set de materias esperadas."
             )
+
+            with st.expander(
+                "ℹ️ Cómo usar los toggles de cada materia", expanded=False,
+            ):
+                st.markdown(
+                    "Cada fila tiene tres toggles que combinan "
+                    "**modalidad efectiva** y **excepciones manuales**:\n\n"
+                    "- **🟢/⚪ Activo**: si la materia se dicta en este "
+                    "ciclo. Las inactivas se excluyen del set esperado "
+                    "en prevalidaciones de cronograma. El indicador "
+                    "**✋ editado a mano** aparece cuando vos forzaste "
+                    "el valor, y se respeta al volver a apretar "
+                    "*Recalcular según reglas* (salvo que actives "
+                    "*Pisar ediciones manuales*).\n"
+                    "- **Recursado fijado a mano**: override del flag "
+                    "`dicta_recursado` de la carrera para esta materia "
+                    "(útil cuando una materia particular se ofrece "
+                    "como recursado aunque la carrera en general no lo "
+                    "haga, o viceversa).\n"
+                    "- **🌐 Virtual**: marca el dictado como virtual "
+                    "**sólo en este ciclo**. La materia sigue figurando "
+                    "en el plan, validaciones de cobertura la cuentan "
+                    "como cubierta, pero **no necesita aula** — el LP "
+                    "de asignación la ignora. Útil para recursados o "
+                    "materias que se dictan por Zoom este cuatrimestre. "
+                    "El catálogo de la materia (campo "
+                    "`MateriaDB.virtual`) **no** se modifica: si en otro "
+                    "ciclo la materia es presencial, su dictado de ese "
+                    "ciclo aparecerá presencial por default."
+                )
 
             st.divider()
 
@@ -842,6 +1000,247 @@ with tab_dictados:
                     st.rerun()
             _force_state = st.session_state.get("dict_force_open")
 
+            # =========================================================
+            # Detección de cambios pendientes (batch)
+            # =========================================================
+            #
+            # Los toggles Activo/Virtual y el selector Recursado NO
+            # commitean al instante. Ese diseño se eligió porque
+            # Streamlit interrumpe los reruns en curso cuando el usuario
+            # hace clicks rápidos en sucesión, lo que cancelaba commits
+            # intermedios y hacía "perder" cambios. Acá detectamos diff
+            # entre `session_state` y DB para mostrar un panel de
+            # "Cambios pendientes" + botón único de aplicación.
+            #
+            # Set de prefijos de keys que monitoreamos.
+            _BATCH_PREFIXES = ("activo_", "virtual_", "rec_mat_")
+
+            def _detectar_pendientes() -> list[dict]:
+                """Inspecciona session_state y devuelve la lista de
+                cambios pendientes vs DB.
+
+                Cada item:
+                  {tipo: 'activo'|'virtual'|'recursado',
+                   dictado_id: str | None (recursado no tiene dictado),
+                   materia_codigo: str,
+                   nombre: str,
+                   actual: bool|None|str,
+                   nuevo: bool|None|str,
+                   key: str}
+                """
+                pendientes: list[dict] = []
+                for _k in list(st.session_state.keys()):
+                    if not isinstance(_k, str):
+                        continue
+                    if not _k.startswith(_BATCH_PREFIXES):
+                        continue
+                    # Parseo de la key.
+                    # activo_{ns}_{carrera}_{dictado_id}
+                    # virtual_{ns}_{carrera}_{dictado_id}
+                    # rec_mat_{ns}_{carrera}_{materia_codigo}
+                    parts = _k.split("_")
+                    if _k.startswith("activo_") and len(parts) >= 4:
+                        _did = "_".join(parts[3:])
+                        # Recuperar dictado actual del map cargado
+                        _dd = next(
+                            (
+                                d for d in dictados if d.id == _did
+                            ),
+                            None,
+                        )
+                        if _dd is None:
+                            continue
+                        _new = bool(st.session_state[_k])
+                        if _new != _dd.activo:
+                            pendientes.append({
+                                "tipo": "activo",
+                                "dictado_id": _did,
+                                "materia_codigo": _dd.materia_codigo,
+                                "nombre": (
+                                    mat_map[_dd.materia_codigo].nombre
+                                    if _dd.materia_codigo in mat_map else ""
+                                ),
+                                "actual": _dd.activo,
+                                "nuevo": _new,
+                                "key": _k,
+                            })
+                    elif _k.startswith("virtual_") and len(parts) >= 4:
+                        _did = "_".join(parts[3:])
+                        _dd = next(
+                            (d for d in dictados if d.id == _did), None,
+                        )
+                        if _dd is None:
+                            continue
+                        _new = bool(st.session_state[_k])
+                        if _new != _dd.virtual:
+                            pendientes.append({
+                                "tipo": "virtual",
+                                "dictado_id": _did,
+                                "materia_codigo": _dd.materia_codigo,
+                                "nombre": (
+                                    mat_map[_dd.materia_codigo].nombre
+                                    if _dd.materia_codigo in mat_map else ""
+                                ),
+                                "actual": _dd.virtual,
+                                "nuevo": _new,
+                                "key": _k,
+                            })
+                    elif _k.startswith("rec_mat_") and len(parts) >= 5:
+                        _mc = "_".join(parts[4:])
+                        _m = mat_map.get(_mc)
+                        if _m is None:
+                            continue
+                        _curr_lbl = (
+                            "Según Carrera" if _m.dicta_recursado is None
+                            else ("Sí" if _m.dicta_recursado else "No")
+                        )
+                        _new_lbl = st.session_state[_k]
+                        if _new_lbl != _curr_lbl:
+                            pendientes.append({
+                                "tipo": "recursado",
+                                "dictado_id": None,
+                                "materia_codigo": _mc,
+                                "nombre": _m.nombre,
+                                "actual": _curr_lbl,
+                                "nuevo": _new_lbl,
+                                "key": _k,
+                            })
+                # Deduplicar por (tipo, dictado_id|materia_codigo) — cuando
+                # una misma materia se renderea en múltiples expanders
+                # (ej. modo legacy) o en varios scopes (key_ns), nos
+                # quedamos con uno solo. La key es la dimensión que
+                # discrimina; deduplicamos por (tipo, target_id).
+                _seen: set[tuple] = set()
+                _dedup: list[dict] = []
+                for p in pendientes:
+                    _target = p["dictado_id"] or p["materia_codigo"]
+                    _id = (p["tipo"], _target)
+                    if _id in _seen:
+                        continue
+                    _seen.add(_id)
+                    _dedup.append(p)
+                return _dedup
+
+            _pendientes = _detectar_pendientes()
+            # Persistir conteo para guard del próximo render (Recalcular
+            # / Crear Dictados leen este flag al inicio del flujo).
+            st.session_state["dict_pending_count"] = len(_pendientes)
+            if _pendientes:
+                with st.container(border=True):
+                    st.markdown(
+                        f"### ⏳ Cambios pendientes ({len(_pendientes)})"
+                    )
+                    st.caption(
+                        "Los toggles **no se aplican al instante**: "
+                        "se acumulan acá hasta que apretes "
+                        "**💾 Aplicar cambios**. Esto evita que Streamlit "
+                        "pierda cambios cuando hacés clicks rápidos "
+                        "consecutivos (cada cambio dispararía un rerun "
+                        "que interrumpe el commit anterior)."
+                    )
+                    _rows_pend = []
+                    for p in _pendientes:
+                        if p["tipo"] == "recursado":
+                            _attr_lbl = "Recursado"
+                            _act = str(p["actual"])
+                            _new = str(p["nuevo"])
+                        elif p["tipo"] == "activo":
+                            _attr_lbl = "Activo"
+                            _act = "Activo" if p["actual"] else "Inactivo"
+                            _new = "Activo" if p["nuevo"] else "Inactivo"
+                        else:
+                            _attr_lbl = "Virtual"
+                            _act = "Sí" if p["actual"] else "No"
+                            _new = "Sí" if p["nuevo"] else "No"
+                        _rows_pend.append({
+                            "Materia": (
+                                f"{p['materia_codigo']} — {p['nombre']}"
+                            ),
+                            "Atributo": _attr_lbl,
+                            "Actual": _act,
+                            "Nuevo": _new,
+                        })
+                    st.dataframe(
+                        _rows_pend,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    _ap1, _ap2, _ap3 = st.columns([1.4, 1.4, 4])
+                    with _ap1:
+                        if st.button(
+                            f"💾 Aplicar {len(_pendientes)} cambio(s)",
+                            type="primary",
+                            key="btn_apply_batch_pending",
+                        ):
+                            _ok = 0
+                            _fail: list[str] = []
+                            with next(get_session()) as _ds:
+                                for p in _pendientes:
+                                    try:
+                                        if p["tipo"] == "activo":
+                                            set_activo_manual(
+                                                _ds, p["dictado_id"],
+                                                bool(p["nuevo"]),
+                                            )
+                                        elif p["tipo"] == "virtual":
+                                            update_dictado(
+                                                _ds, p["dictado_id"],
+                                                virtual=bool(p["nuevo"]),
+                                            )
+                                        elif p["tipo"] == "recursado":
+                                            _new_val = (
+                                                None if p["nuevo"] == "Según Carrera"
+                                                else (
+                                                    True if p["nuevo"] == "Sí"
+                                                    else False
+                                                )
+                                            )
+                                            _m_db = _ds.get(
+                                                MateriaDB,
+                                                p["materia_codigo"],
+                                            )
+                                            if _m_db is not None:
+                                                _m_db.dicta_recursado = _new_val
+                                                _ds.add(_m_db)
+                                                _ds.commit()
+                                        _ok += 1
+                                    except Exception as _e:
+                                        _fail.append(
+                                            f"{p['materia_codigo']} "
+                                            f"({p['tipo']}): {_e}"
+                                        )
+                            # Limpiar las keys aplicadas + marcar resync
+                            # para que el próximo render alinee el resto
+                            # del session_state (por las dudas) con DB.
+                            for p in _pendientes:
+                                st.session_state.pop(p["key"], None)
+                            st.session_state["dict_resync_pending"] = True
+                            if _fail:
+                                st.error(
+                                    f"{_ok} aplicados, {len(_fail)} con "
+                                    "error:\n" + "\n".join(_fail)
+                                )
+                            else:
+                                st.toast(
+                                    f"✅ {_ok} cambio(s) aplicados."
+                                )
+                            st.rerun()
+                    with _ap2:
+                        if st.button(
+                            "🚫 Descartar cambios",
+                            key="btn_discard_batch_pending",
+                            help=(
+                                "Limpia el session_state de los widgets "
+                                "modificados, así vuelven a mostrar el "
+                                "valor actual de DB."
+                            ),
+                        ):
+                            for p in _pendientes:
+                                st.session_state.pop(p["key"], None)
+                            st.toast("Cambios descartados.")
+                            st.rerun()
+
             def _matches(item: dict) -> bool:
                 pe = item["pe"]
                 mat = item["materia"]
@@ -881,20 +1280,79 @@ with tab_dictados:
             # =========================================================
             # Per-carrera expanders
             # =========================================================
-            # Nota: cambios al toggle Activo/Virtual son auto-save
-            # (set_activo_manual / update_dictado). El override manual
-            # queda registrado en DictadoDB.activo_override_manual.
+            # Auto-save por widget: cada toggle dispara commit + rerun
+            # cuando su valor difiere del valor en DB. Funciona porque
+            # cada `dictado_id` se renderea **una sola vez** en el run
+            # (las exclusivas dentro del expander de su carrera; las
+            # comunes en un expander aparte). Eso garantiza que NO hay
+            # widgets duplicados leyendo/escribiendo el mismo dictado
+            # en el mismo render — lo que antes provocaba race
+            # conditions con materias compartidas.
 
-            def _render_item(item: dict, carrera_cod: str) -> None:
-                """Render one materia row inside a carrera expander."""
+            def _render_item(
+                item: dict, carrera_cod: str, *,
+                key_ns: str = "exc",
+                carreras_label: str | None = None,
+            ) -> None:
+                """Render one materia row.
+
+                Args:
+                    item: dict con materia/pe/dictado/otras.
+                    carrera_cod: código de la carrera del expander que
+                        está renderando (para keys; para exclusivas es
+                        la única carrera; para comunes una representativa).
+                    key_ns: namespace de keys de widget. Por default
+                        ``"exc"`` (expander por carrera). El expander
+                        de comunes pasa ``"com"`` para tener su propio
+                        scope.
+                    carreras_label: si se pasa, se incluye en la línea
+                        de info ("🎓 IA, IM, IS"). Se usa en el expander
+                        de comunes; en los expanders por carrera no
+                        hace falta porque está implícito.
+                """
                 mat = item["materia"]
                 pe = item["pe"]
                 d = item["dictado"]
-                otras = item["otras"]
+                # `otras` queda como atributo legacy de items exclusivos
+                # (vacío). En items de comunes no existe; usamos
+                # `carreras_label` para mostrar las carreras.
+                otras = item.get("otras", [])
 
                 col_info, col_meta, col_rec, col_activo, col_virtual = st.columns(
                     [4, 1.6, 1.4, 1, 1]
                 )
+
+                # Detectar diff session_state vs DB para mostrar
+                # marca de "pendiente" en el badge. Los toggles son
+                # batch: NO commitean al instante; sólo escriben a
+                # session_state. Streamlit interrumpe reruns cuando el
+                # usuario hace clicks rápidos en sucesión, lo que puede
+                # cancelar commits intermedios y hacer "perder" cambios.
+                # El batch evita eso porque hay una única transacción al
+                # apretar "Aplicar cambios" abajo.
+                _activo_key = (
+                    f"activo_{key_ns}_{carrera_cod}_{d.id}"
+                    if d is not None else ""
+                )
+                _virtual_key = (
+                    f"virtual_{key_ns}_{carrera_cod}_{d.id}"
+                    if d is not None else ""
+                )
+                _rec_key = f"rec_mat_{key_ns}_{carrera_cod}_{mat.codigo}"
+                _has_pending = False
+                if d is not None and _activo_key in st.session_state:
+                    if bool(st.session_state[_activo_key]) != d.activo:
+                        _has_pending = True
+                if d is not None and _virtual_key in st.session_state:
+                    if bool(st.session_state[_virtual_key]) != d.virtual:
+                        _has_pending = True
+                if _rec_key in st.session_state:
+                    _curr_lbl = (
+                        "Según Carrera" if mat.dicta_recursado is None
+                        else ("Sí" if mat.dicta_recursado else "No")
+                    )
+                    if st.session_state[_rec_key] != _curr_lbl:
+                        _has_pending = True
 
                 with col_info:
                     # Estado tag
@@ -911,25 +1369,27 @@ with tab_dictados:
                     ) else ""
                     _opt = " · 📘 optativa" if pe.optativa else ""
                     _anu = " · 📅 anual" if mat.periodo == "anual" else ""
+                    _pend_marker = (
+                        " · <span style='color:#f0ad4e'>⏳ pendiente</span>"
+                        if _has_pending else ""
+                    )
                     st.markdown(
                         f"**{mat.codigo}** — {mat.nombre}  \n"
                         f"<span style='color:#888;font-size:0.85em'>"
-                        f"{_badge}{_virt}{_opt}{_anu}"
+                        f"{_badge}{_virt}{_opt}{_anu}{_pend_marker}"
                         f"</span>",
                         unsafe_allow_html=True,
                     )
-                    _shared_msg = (
-                        f"compartida con: {', '.join(otras)}" if otras else ""
-                    )
-                    if d is None:
-                        _sm_razon = skipped_razones.get(mat.codigo, "")
-                        _line = " · ".join(
-                            x for x in (_sm_razon, _shared_msg) if x
-                        )
+                    if carreras_label:
+                        # Caso comunes: muestro las carreras donde aparece.
+                        st.caption(f"🎓 {carreras_label}")
                     else:
-                        _line = _shared_msg
-                    if _line:
-                        st.caption(_line)
+                        # Caso exclusivas: la materia no se comparte; las
+                        # comunes ya quedan filtradas a su propio expander.
+                        if d is None:
+                            _sm_razon = skipped_razones.get(mat.codigo, "")
+                            if _sm_razon:
+                                st.caption(_sm_razon)
 
                 with col_meta:
                     _anio = f"{pe.anio_plan}°" if pe.anio_plan else "—"
@@ -939,75 +1399,39 @@ with tab_dictados:
                         f"h/sem: {mat.horas_semanales or '—'}"
                     )
 
-                # Override de dicta_recursado por materia (3 estados)
+                # Override de dicta_recursado por materia (3 estados).
+                # Sin commit aquí: el valor queda en session_state[_rec_key]
+                # y se aplica desde el botón "Aplicar cambios" abajo.
                 with col_rec:
                     _rec_options = ["Según Carrera", "Sí", "No"]
                     _curr_idx = (
                         0 if mat.dicta_recursado is None
                         else (1 if mat.dicta_recursado else 2)
                     )
-                    _new_rec_lbl = st.selectbox(
+                    st.selectbox(
                         "Recursado",
                         options=_rec_options,
                         index=_curr_idx,
-                        key=f"rec_mat_{carrera_cod}_{mat.codigo}",
-                        help=(
-                            "Override de la bandera de recursado de la carrera. "
-                            "Según Carrera = usa la bandera de la carrera. "
-                            "Sí/No fuerza para esta materia (se aplica al recalcular)."
-                        ),
+                        key=_rec_key,
                         label_visibility="visible",
                     )
-                    _new_rec_val = (
-                        None if _new_rec_lbl == "Según Carrera"
-                        else (True if _new_rec_lbl == "Sí" else False)
-                    )
-                    if _new_rec_val != mat.dicta_recursado:
-                        with next(get_session()) as _ds:
-                            _m_db = _ds.get(MateriaDB, mat.codigo)
-                            if _m_db:
-                                _m_db.dicta_recursado = _new_rec_val
-                                _ds.add(_m_db)
-                                _ds.commit()
-                        st.toast(
-                            f"{mat.codigo}: recursado fijado a mano = "
-                            f"{_new_rec_lbl}. 🔄 Recalculá para aplicar."
-                        )
-                        st.rerun()
 
                 if d is not None:
                     with col_activo:
-                        new_activo = st.checkbox(
+                        st.checkbox(
                             "Activo",
                             value=d.activo,
-                            key=f"activo_{carrera_cod}_{d.id}",
-                            help=(
-                                "Cambiar este toggle queda como una "
-                                "edición a mano: la próxima vez que "
-                                "corras 'Recalcular según reglas' "
-                                "respetará tu decisión."
-                            ),
+                            key=_activo_key,
                         )
-                        if new_activo != d.activo:
-                            with next(get_session()) as _ds:
-                                set_activo_manual(_ds, d.id, new_activo)
-                            st.toast(
-                                f"{mat.codigo}: "
-                                f"{'Activo' if new_activo else 'Inactivo'} "
-                                "(editado a mano)"
-                            )
-                            st.rerun()
                         # Botón para limpiar la edición manual y volver
-                        # a alinear el dictado con la regla.
+                        # a alinear el dictado con la regla. Mantenemos
+                        # commit inmediato porque es una acción puntual
+                        # del usuario, no parte del batch.
                         if d.activo_override_manual is not None:
                             if st.button(
                                 "Quitar edición manual",
-                                key=f"clear_ovr_{carrera_cod}_{d.id}",
-                                help=(
-                                    "Descarta la edición a mano de este "
-                                    "dictado: en la próxima "
-                                    "recalculación, volverá a alinearse "
-                                    "con la regla."
+                                key=(
+                                    f"clear_ovr_{key_ns}_{carrera_cod}_{d.id}"
                                 ),
                             ):
                                 with next(get_session()) as _ds:
@@ -1018,19 +1442,11 @@ with tab_dictados:
                                 )
                                 st.rerun()
                     with col_virtual:
-                        new_virtual = st.checkbox(
+                        st.checkbox(
                             "Virtual",
                             value=d.virtual,
-                            key=f"virtual_{carrera_cod}_{d.id}",
+                            key=_virtual_key,
                         )
-                        if new_virtual != d.virtual:
-                            with next(get_session()) as _ds:
-                                update_dictado(_ds, d.id, virtual=new_virtual)
-                            st.toast(
-                                f"{mat.codigo}: virtual="
-                                f"{'sí' if new_virtual else 'no'}"
-                            )
-                            st.rerun()
                 else:
                     # Caso raro: materia del plan sin dictado todavia. Suele
                     # pasar solo en estado intermedio (DB pre-migracion).
@@ -1182,6 +1598,147 @@ with tab_dictados:
                         ))
                         for it in optativas:
                             _render_item(it, carrera_cod)
+
+            # =========================================================
+            # Expander de Comunes (materias compartidas entre 2+ carreras)
+            # =========================================================
+            #
+            # Las comunes se renderean una vez sola, con su propio set
+            # de filtros (incluye un filtro extra por carrera: si elegís
+            # "Industrial" + "Mecánica", se muestran las comunes que
+            # pertenecen a *cualquiera* de las dos — lógica OR).
+            #
+            # Diseño: una sola entrada por materia (no por carrera),
+            # garantizando que cada `dictado_id` se renderea una sola
+            # vez por run. Esto elimina las race conditions entre
+            # widgets duplicados que existían cuando renderábamos la
+            # misma materia compartida en cada carrera donde aparecía.
+            if items_comunes_by_mat:
+                _items_comunes = list(items_comunes_by_mat.values())
+                # Filtros base (los del top) + filtro por carrera
+                # exclusivo del expander de Comunes.
+                _all_carreras_de_comunes = sorted({
+                    cc for it in _items_comunes
+                    for cc in it["carreras"]
+                })
+                _carreras_de_comunes_filt = st.multiselect(
+                    "Filtrar comunes por carrera (lógica O — pertenece a "
+                    "cualquiera de las elegidas)",
+                    options=_all_carreras_de_comunes,
+                    default=_all_carreras_de_comunes,
+                    format_func=lambda cc: (
+                        f"{cc} — {carrera_nombres.get(cc, cc)}"
+                    ),
+                    key="dict_com_carreras_filt",
+                    help=(
+                        "Sólo muestra materias comunes que pertenecen "
+                        "al menos a una de las carreras seleccionadas. "
+                        "Combinable con los demás filtros de arriba."
+                    ),
+                )
+                _carr_filt_set = set(_carreras_de_comunes_filt)
+
+                # Aplicamos los filtros generales + el de carrera específico.
+                _items_comunes_filt = [
+                    it for it in _items_comunes
+                    if _matches(it)
+                    and (set(it["carreras"]) & _carr_filt_set)
+                ]
+
+                # Stats del header del expander
+                _n_obl = sum(
+                    1 for it in _items_comunes_filt if not it["pe"].optativa
+                )
+                _n_opt = sum(
+                    1 for it in _items_comunes_filt if it["pe"].optativa
+                )
+                _n_act = sum(
+                    1 for it in _items_comunes_filt
+                    if it["dictado"] and it["dictado"].activo
+                )
+                _n_inact = sum(
+                    1 for it in _items_comunes_filt
+                    if it["dictado"] and not it["dictado"].activo
+                )
+                _n_sd = sum(
+                    1 for it in _items_comunes_filt
+                    if it["dictado"] is None
+                )
+                _hdr_com = (
+                    f"🔗 Comunes — {len(_items_comunes_filt)} materia(s) "
+                    f"(🟢 {_n_act} · ⚪ {_n_inact} · 🔘 {_n_sd})"
+                )
+                if _force_state is True:
+                    _expanded_com = True
+                elif _force_state is False:
+                    _expanded_com = False
+                else:
+                    _expanded_com = True
+
+                with st.expander(_hdr_com, expanded=_expanded_com):
+                    st.caption(
+                        "Materias compartidas entre dos o más carreras "
+                        "del ciclo. Al ser un único `DictadoDB` por "
+                        "materia, los toggles aquí afectan a todas las "
+                        "carreras donde la materia aparece. "
+                        f"Total sin filtrar: {len(_items_comunes)} "
+                        f"materia(s) · obligatorias: {_n_obl} · "
+                        f"optativas: {_n_opt}."
+                    )
+
+                    if not _items_comunes_filt:
+                        st.caption(
+                            "No hay materias comunes que cumplan los filtros."
+                        )
+                    else:
+                        # Split obligatorias / optativas
+                        _obl = [
+                            it for it in _items_comunes_filt
+                            if not it["pe"].optativa
+                        ]
+                        _opt = [
+                            it for it in _items_comunes_filt
+                            if it["pe"].optativa
+                        ]
+
+                        if _obl:
+                            if _opt:
+                                st.markdown(
+                                    f"**Obligatorias ({len(_obl)})**"
+                                )
+                            _obl.sort(key=lambda it: (
+                                it["pe"].anio_plan or 99,
+                                it["pe"].cuatrimestre_plan or "",
+                                it["materia"].codigo,
+                            ))
+                            for it in _obl:
+                                _render_item(
+                                    it,
+                                    carrera_cod=it["carreras"][0],
+                                    key_ns="com",
+                                    carreras_label=", ".join(it["carreras"]),
+                                )
+
+                        if _opt:
+                            if _obl:
+                                st.markdown(
+                                    f"**Optativas ({len(_opt)})**"
+                                )
+                            else:
+                                st.caption(
+                                    f"{len(_opt)} optativa(s)."
+                                )
+                            _opt.sort(key=lambda it: (
+                                it["pe"].anio_plan or 99,
+                                it["materia"].codigo,
+                            ))
+                            for it in _opt:
+                                _render_item(
+                                    it,
+                                    carrera_cod=it["carreras"][0],
+                                    key_ns="com",
+                                    carreras_label=", ".join(it["carreras"]),
+                                )
 
             # Nota: ya no hay batch save. Los toggles Activo/Virtual
             # se persisten on-change. El toggle Activo además registra

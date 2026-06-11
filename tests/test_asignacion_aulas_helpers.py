@@ -189,6 +189,198 @@ class TestDiagnoseInfeasibility:
         assert "Lunes" in msgs[0]
 
 
+class TestSaturacionPorTipo:
+    """Cota refinada de pigeonhole: por tipo de aula."""
+
+    def test_saturacion_teoricas_estrictas(self):
+        """5 horarios teóricos simultáneos, sólo 4 aulas teóricas → falla."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia=f"M{i}", tipo="teorica")
+            for i in range(5)
+        ]
+        aulas = [_a(f"a{i}", tipo="teorica") for i in range(4)]
+        # No labs, no anfiteatros.
+        sim = [{f"h{i}" for i in range(5)}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        assert len(diag.saturacion_por_tipo) == 1
+        item = diag.saturacion_por_tipo[0]
+        assert item["tipo"] == "teórica"
+        assert item["n_necesarias"] == 5
+        assert item["n_disponibles"] == 4
+
+    def test_anfiteatro_cuenta_como_teorica(self):
+        """3 teóricas, 2 aulas teóricas + 1 anfiteatro: alcanzan."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="A", tipo="teorica"),
+            _h("h2", "Lunes", 8, 10, materia="B", tipo="teorica"),
+            _h("h3", "Lunes", 8, 10, materia="C", tipo="teorica"),
+        ]
+        aulas = [
+            _a("t1", tipo="teorica"),
+            _a("t2", tipo="teorica"),
+            _a("anf", tipo="anfiteatro"),
+        ]
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        assert diag.saturacion_por_tipo == []
+
+    def test_none_optimista_no_cuenta_a_teorica_si_hay_lab(self):
+        """horario tipo_clase=None pero la materia tiene lab compatible:
+        NO debe contarse contra el pool teórico (el LP la mandará a lab).
+        """
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="A", tipo="teorica"),
+            _h("h2", "Lunes", 8, 10, materia="B", tipo="teorica"),
+            _h("h3", "Lunes", 8, 10, materia="LAB", tipo=None),
+        ]
+        aulas = [
+            _a("t1", tipo="teorica"),
+            _a("t2", tipo="teorica"),  # 2 teóricas
+            _a("L", tipo="laboratorio"),  # 1 lab para materia LAB
+        ]
+        materia_lab_map = {"LAB": {"L"}}
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, materia_lab_map, sim)
+        # 2 teóricas estrictas vs 2 disponibles → no satura.
+        # h3 puede ir al lab → no se cuenta como teórica.
+        assert diag.saturacion_por_tipo == []
+
+    def test_none_se_fuerza_teorica_si_no_hay_lab(self):
+        """Sin lab para la materia, una clase None DEBE ir a teórica
+        (R6) y entonces sí cuenta contra el pool teórico."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="A", tipo="teorica"),
+            _h("h2", "Lunes", 8, 10, materia="B", tipo="teorica"),
+            _h("h3", "Lunes", 8, 10, materia="C", tipo=None),
+        ]
+        aulas = [
+            _a("t1", tipo="teorica"),
+            _a("t2", tipo="teorica"),
+        ]
+        # C no tiene labs → forzosamente teórica.
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        # 3 teóricas forzadas vs 2 disponibles → satura.
+        assert len(diag.saturacion_por_tipo) == 1
+        assert diag.saturacion_por_tipo[0]["tipo"] == "teórica"
+        assert diag.saturacion_por_tipo[0]["n_necesarias"] == 3
+
+    def test_saturacion_lab_por_materia(self):
+        """Materia QUI tiene 3 horarios de lab simultáneos pero sólo
+        1 lab compatible → falla."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="QUI", tipo="laboratorio"),
+            _h("h2", "Lunes", 8, 10, materia="QUI", tipo="laboratorio"),
+            _h("h3", "Lunes", 8, 10, materia="QUI", tipo="laboratorio"),
+        ]
+        aulas = [_a("L", tipo="laboratorio")]
+        materia_lab_map = {"QUI": {"L"}}
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, materia_lab_map, sim)
+        items_lab = [
+            i for i in diag.saturacion_por_tipo if i["tipo"] == "laboratorio"
+        ]
+        assert len(items_lab) == 1
+        assert items_lab[0]["materia"] == "QUI"
+        assert items_lab[0]["n_necesarias"] == 3
+        assert items_lab[0]["n_disponibles"] == 1
+
+    def test_saturacion_lab_separa_por_materia(self):
+        """Dos materias distintas con labs diferentes: una sí satura,
+        la otra no."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="QUI", tipo="laboratorio"),
+            _h("h2", "Lunes", 8, 10, materia="QUI", tipo="laboratorio"),
+            _h("h3", "Lunes", 8, 10, materia="FIS", tipo="laboratorio"),
+        ]
+        aulas = [_a("LQ", tipo="laboratorio"), _a("LF", tipo="laboratorio")]
+        materia_lab_map = {"QUI": {"LQ"}, "FIS": {"LF"}}
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, materia_lab_map, sim)
+        # QUI: 2 horarios vs 1 lab → satura. FIS: 1 horario vs 1 lab → ok.
+        items_lab = [
+            i for i in diag.saturacion_por_tipo if i["tipo"] == "laboratorio"
+        ]
+        assert len(items_lab) == 1
+        assert items_lab[0]["materia"] == "QUI"
+
+
+class TestHallViolators:
+    """Test del teorema de Hall (matching bipartito) por grupo."""
+
+    def test_no_violation_caso_simple(self):
+        """3 clases, 3 aulas, todas compatibles → matching trivial."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia=f"M{i}", tipo="teorica")
+            for i in range(3)
+        ]
+        aulas = [_a(f"a{i}", tipo="teorica") for i in range(3)]
+        sim = [{"h0", "h1", "h2"}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        assert diag.hall_violators == []
+
+    def test_pigeonhole_falla_y_hall_tambien(self):
+        """3 horarios pero 2 aulas teóricas: ambos detectan."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia=f"M{i}", tipo="teorica")
+            for i in range(3)
+        ]
+        aulas = [_a("t1"), _a("t2")]
+        sim = [{"h0", "h1", "h2"}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        assert diag.franjas_saturadas  # pigeonhole detecta
+        assert diag.hall_violators  # hall también detecta
+        v = diag.hall_violators[0]
+        assert v["n_horarios"] >= 2
+        assert v["n_aulas"] < v["n_horarios"]
+
+    def test_hall_detecta_caso_que_pigeonhole_no(self):
+        """Caso clásico: pigeonhole pasa pero Hall falla.
+
+        h1 va a {a, b, c}. h2, h3 van solo a {a}. Pigeonhole sobre la
+        unión total: 3 horarios, 3 aulas, |union|=3 ≥ 3 ✓.
+        Pero el subconjunto {h2, h3} sólo conecta a {a}: Hall falla.
+        Modelado: h1 = lab de M1 que admite a/b/c; h2, h3 = labs de
+        M2 que sólo admite el lab `a`.
+        """
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio"),
+            _h("h2", "Lunes", 8, 10, materia="M2", tipo="laboratorio"),
+            _h("h3", "Lunes", 8, 10, materia="M2", tipo="laboratorio"),
+        ]
+        aulas = [
+            _a("a", tipo="laboratorio"),
+            _a("b", tipo="laboratorio"),
+            _a("c", tipo="laboratorio"),
+        ]
+        materia_lab_map = {
+            "M1": {"a", "b", "c"},
+            "M2": {"a"},
+        }
+        sim = [{"h1", "h2", "h3"}]
+        diag = diagnose_infeasibility(hs, aulas, materia_lab_map, sim)
+        # Pigeonhole pasa (3 ≥ 3).
+        assert diag.franjas_saturadas == []
+        # Hall detecta el subconjunto {h2,h3} con N(S)={a}.
+        assert diag.hall_violators
+        v = diag.hall_violators[0]
+        assert v["n_horarios"] == 2
+        assert v["n_aulas"] == 1
+        assert "M2" in v["materias"]
+
+    def test_grupo_grande_usa_matching_no_explota(self):
+        """Sanity: con grupo de 12 horarios (>8) usa matching y no
+        revienta. Caso factible."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia=f"M{i}", tipo="teorica")
+            for i in range(12)
+        ]
+        aulas = [_a(f"a{i}", tipo="teorica") for i in range(12)]
+        sim = [{f"h{i}" for i in range(12)}]
+        diag = diagnose_infeasibility(hs, aulas, {}, sim)
+        assert diag.hall_violators == []  # matching perfecto
+
+
 class TestValidarParticion:
 
     def test_particion_factible_sin_tipo_fijado(self):

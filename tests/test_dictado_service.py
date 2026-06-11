@@ -834,6 +834,61 @@ class TestSetActivoForMaterias:
         )
         assert n == 0
 
+    def test_activate_y_marcar_virtual_setea_ambos_flags(
+        self, session, ciclo_1c, materias,
+    ):
+        """Caso de uso: el usuario aprieta 'Activar y marcar virtual'
+        en el panel de no esperadas. Ambos flags quedan en True."""
+        create_dictados_for_ciclo(session, "2025-1C")
+        # Pre-condicion: lo desactivamos para que el bulk activate tenga efecto.
+        set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"], activo=False,
+        )
+        n = set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"],
+            activo=True, marcar_virtual=True,
+        )
+        assert n == 1
+        ds = get_dictados_for_ciclo(session, "2025-1C")
+        d = next(d for d in ds if d.materia_codigo == "MAT101")
+        assert d.activo is True
+        assert d.virtual is True
+
+    def test_marcar_virtual_none_no_toca_flag_existente(
+        self, session, ciclo_1c, materias,
+    ):
+        """Si marcar_virtual=None (default), el flag virtual no se altera."""
+        create_dictados_for_ciclo(session, "2025-1C")
+        # Setear virtual=True manualmente.
+        ds = get_dictados_for_ciclo(session, "2025-1C")
+        d = next(d for d in ds if d.materia_codigo == "MAT101")
+        d.virtual = True
+        session.add(d)
+        session.commit()
+
+        # Bulk desactivar sin tocar virtual: queda virtual=True.
+        set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"], activo=False,
+        )
+        session.refresh(d)
+        assert d.activo is False
+        assert d.virtual is True  # se preserva
+
+    def test_activate_creates_with_virtual_flag(
+        self, session, ciclo_1c, materias,
+    ):
+        """Si el dictado no existe, se crea con virtual=True cuando se
+        pasa marcar_virtual=True."""
+        n = set_activo_for_materias_in_ciclo(
+            session, "2025-1C", ["MAT101"],
+            activo=True, marcar_virtual=True,
+        )
+        assert n == 1
+        ds = get_dictados_for_ciclo(session, "2025-1C")
+        assert len(ds) == 1
+        assert ds[0].activo is True
+        assert ds[0].virtual is True
+
 
 class TestUpdateDictado:
     """Tests for update_dictado."""

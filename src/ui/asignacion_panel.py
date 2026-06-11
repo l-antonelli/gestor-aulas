@@ -218,6 +218,27 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             st.error(p)
         return
 
+    with st.expander(
+        "ℹ️ Qué horarios entran al LP", expanded=False,
+    ):
+        st.markdown(
+            "El LP intenta asignar un aula a cada horario presencial del "
+            "plan. **No** entran al LP (se ignoran sin error):\n\n"
+            "- Horarios de materias **virtuales** del catálogo "
+            "(`MateriaDB.virtual = True`).\n"
+            "- Horarios cuyo **dictado del ciclo** está marcado "
+            "**virtual** (`DictadoDB.virtual = True`). Útil para "
+            "recursados que se dictan por Zoom este cuatrimestre — "
+            "el dictado figura activo en el ciclo y la cobertura del "
+            "cronograma lo cuenta como cubierto, pero no consume aula. "
+            "Configurable desde **Ciclos → 📚 Dictados**, columna "
+            "**Virtual**.\n\n"
+            "Si el LP da **infactible**, lo más común es que haya "
+            "horarios del 2C en el cronograma del plan que en realidad "
+            "deberían estar marcados como virtuales (recursados). "
+            "Revisalos en Dictados antes de jugar con las tolerancias."
+        )
+
     cfg = _render_config_form(session, plan_id, key_ns)
 
     if cfg is not None:
