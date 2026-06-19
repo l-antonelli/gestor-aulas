@@ -6,6 +6,8 @@ from src.services.asignacion_aulas_helpers import (
     AulaSlot,
     HorarioSlot,
     compute_compat,
+    compute_heatmap_demanda_oferta,
+    compute_impacto_r10,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
     validar_particion_factible,
@@ -457,3 +459,161 @@ class TestValidarParticion:
         )
         assert len(problemas) == 1
         assert "fijadas como laboratorio" in problemas[0]["razon"]
+
+
+# =============================================================================
+# Heatmap demanda vs oferta
+# =============================================================================
+
+
+def _build_compat_R3(
+    horarios: list[HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]] | None = None,
+) -> dict[tuple[str, str], bool]:
+    """Helper: arma compat usando solo R3 (sin R10)."""
+    materia_lab_map = materia_lab_map or {}
+    out: dict[tuple[str, str], bool] = {}
+    for h in horarios:
+        lab = materia_lab_map.get(h.materia_codigo, set())
+        for a in aulas:
+            out[(h.id, a.id)] = compute_compat(h, a, lab)
+    return out
+
+
+class TestHeatmapDemandaOferta:
+
+    def test_celda_sin_demanda_es_cero(self):
+        h = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h], aulas)
+        out = compute_heatmap_demanda_oferta([h], aulas, compat)
+        # Lunes 14:00-14:30 no debería tener demanda.
+        slot_idx = out["slots"].index("14:00-14:30")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["demanda"][slot_idx][dia_idx] == 0
+        assert out["ratio"][slot_idx][dia_idx] == 0.0
+
+    def test_demanda_uno_oferta_dos_ratio_05(self):
+        h = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h], aulas)
+        out = compute_heatmap_demanda_oferta([h], aulas, compat)
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["demanda"][slot_idx][dia_idx] == 1
+        assert out["oferta"][slot_idx][dia_idx] == 2
+        assert out["ratio"][slot_idx][dia_idx] == 0.5
+
+    def test_saturacion_3_horarios_2_aulas(self):
+        h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="OTRA", tipo="teorica")
+        h3 = _h("h3", "Lunes", 8, 10, materia="TERC", tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h1, h2, h3], aulas)
+        out = compute_heatmap_demanda_oferta([h1, h2, h3], aulas, compat)
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["demanda"][slot_idx][dia_idx] == 3
+        assert out["oferta"][slot_idx][dia_idx] == 2
+        assert out["ratio"][slot_idx][dia_idx] == 1.5
+        assert out["categoria"][slot_idx][dia_idx] == "teorica"
+
+    def test_lab_se_cuenta_por_materia(self):
+        # Dos labs simultáneos pero de materias distintas: cada uno
+        # tiene su pool propio. Si cada pool tiene 1 aula y hay 1
+        # demanda para cada materia, ratio = 1.0 (no saturado).
+        h1 = _h("h1", "Lunes", 8, 10, materia="QUIM", tipo="laboratorio")
+        h2 = _h("h2", "Lunes", 8, 10, materia="FIS", tipo="laboratorio")
+        aulas = [_a("L1", tipo="laboratorio"), _a("L2", tipo="laboratorio")]
+        materia_lab_map = {"QUIM": {"L1"}, "FIS": {"L2"}}
+        compat = _build_compat_R3([h1, h2], aulas, materia_lab_map)
+        out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        # Peor caso: cualquiera de las dos categorías. Ratio = 1.0.
+        assert out["ratio"][slot_idx][dia_idx] == 1.0
+        assert out["demanda"][slot_idx][dia_idx] == 1
+        assert out["oferta"][slot_idx][dia_idx] == 1
+
+    def test_horarios_filtrados_recorta_demanda(self):
+        h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="OTRA", tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h1, h2], aulas)
+        # Filtramos sólo h1: demanda baja a 1, oferta sigue siendo 2.
+        out = compute_heatmap_demanda_oferta(
+            [h1, h2], aulas, compat, horarios_filtrados=[h1],
+        )
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["demanda"][slot_idx][dia_idx] == 1
+        assert out["ratio"][slot_idx][dia_idx] == 0.5
+
+    def test_detalle_incluye_materias_y_aulas(self):
+        h1 = _h("h1", "Lunes", 8, 10, materia="MAT_A", tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="MAT_B", tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h1, h2], aulas)
+        out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        det = out["detalle"][slot_idx][dia_idx]
+        assert set(det["materias"]) == {"MAT_A", "MAT_B"}
+        assert set(det["aulas_disponibles_ids"]) == {"a1", "a2"}
+
+
+# =============================================================================
+# Impacto de R10
+# =============================================================================
+
+
+class TestImpactoR10:
+
+    def test_sin_r10_no_hay_excluidas(self):
+        h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        aulas = [_a("a1"), _a("a2")]
+        compat = _build_compat_R3([h1], aulas)
+        out = compute_impacto_r10([h1], aulas, {}, compat)
+        assert len(out) == 1
+        row = out[0]
+        assert row["materia_codigo"] == "MAT"
+        assert row["aulas_admisibles_pre_r10"] == 2
+        assert row["aulas_admisibles_post_r10"] == 2
+        assert row["aulas_excluidas_por_r10"] == 0
+
+    def test_r10_excluye_aulas(self):
+        h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
+        aulas = [_a("a1"), _a("a2"), _a("a3")]
+        # compat post-R10: solo a1 admite a h1.
+        compat = {
+            ("h1", "a1"): True,
+            ("h1", "a2"): False,
+            ("h1", "a3"): False,
+        }
+        out = compute_impacto_r10([h1], aulas, {}, compat)
+        row = out[0]
+        assert row["aulas_admisibles_pre_r10"] == 3
+        assert row["aulas_admisibles_post_r10"] == 1
+        assert row["aulas_excluidas_por_r10"] == 2
+        assert set(row["ids_excluidas"]) == {"a2", "a3"}
+
+    def test_orden_por_mayor_impacto(self):
+        h1 = _h("h1", "Lunes", 8, 10, materia="MAT_A", tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="MAT_B", tipo="teorica")
+        aulas = [_a("a1"), _a("a2"), _a("a3")]
+        # MAT_B excluye más aulas que MAT_A.
+        compat = {
+            ("h1", "a1"): True,
+            ("h1", "a2"): True,
+            ("h1", "a3"): False,
+            ("h2", "a1"): True,
+            ("h2", "a2"): False,
+            ("h2", "a3"): False,
+        }
+        out = compute_impacto_r10([h1, h2], aulas, {}, compat)
+        # Primero MAT_B (excluye 2), después MAT_A (excluye 1).
+        assert out[0]["materia_codigo"] == "MAT_B"
+        assert out[0]["aulas_excluidas_por_r10"] == 2
+        assert out[1]["materia_codigo"] == "MAT_A"
+        assert out[1]["aulas_excluidas_por_r10"] == 1

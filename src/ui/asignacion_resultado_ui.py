@@ -261,6 +261,209 @@ def _render_heatmap_carga(heatmap: dict, key_ns: str) -> None:
     st.altair_chart(chart, use_container_width=True)
 
 
+def _render_heatmap_demanda_oferta(
+    heatmap_do: dict, key_ns: str,
+) -> None:
+    """Heatmap día × franja con la **peor saturación** por celda
+    (demanda / oferta de aulas admisibles).
+
+    A diferencia de ``_render_heatmap_carga`` (que sólo cuenta
+    simultáneas), este contrasta la demanda con la oferta real de
+    aulas que cada categoría admite tras R3 + R10. Identifica el
+    cuello de botella concreto: dónde falta aulas y de qué tipo.
+    """
+    if not heatmap_do or not heatmap_do.get("slots"):
+        return
+
+    st.markdown("**🔥 Mapa de saturación: demanda vs oferta de aulas**")
+    st.caption(
+        "Cada celda muestra la **peor saturación** entre las "
+        "categorías de horarios activos en esa franja: cantidad "
+        "de horarios simultáneos sobre cantidad de aulas admisibles "
+        "(considerando R3 — tipo — y R10 — sede). Verde ≤ 80% de "
+        "uso · amarillo 80–100% · rojo > 100% (saturación segura: "
+        "más horarios que aulas)."
+    )
+
+    import altair as alt
+    import pandas as pd
+
+    slots = heatmap_do["slots"]
+    dias = heatmap_do["dias"]
+    ratio = heatmap_do["ratio"]
+    demanda = heatmap_do["demanda"]
+    oferta = heatmap_do["oferta"]
+    categoria = heatmap_do["categoria"]
+
+    # Recorte de extremos vacíos para no llenar la pantalla con filas
+    # de ratio = 0.
+    row_sums = [sum(ratio[i]) for i in range(len(slots))]
+    nonzero_idx = [i for i, s in enumerate(row_sums) if s > 0]
+    if not nonzero_idx:
+        st.info("No hay demanda en ninguna franja (panel sin horarios).")
+        return
+    i0, i1 = nonzero_idx[0], nonzero_idx[-1]
+    slots_v = slots[i0:i1 + 1]
+    ratio_v = ratio[i0:i1 + 1]
+    demanda_v = demanda[i0:i1 + 1]
+    oferta_v = oferta[i0:i1 + 1]
+    categoria_v = categoria[i0:i1 + 1]
+
+    long_rows = []
+    for si, slot_label in enumerate(slots_v):
+        for di, dia in enumerate(dias):
+            r = float(ratio_v[si][di])
+            d = int(demanda_v[si][di])
+            o = int(oferta_v[si][di])
+            cat = categoria_v[si][di]
+            long_rows.append({
+                "slot": slot_label,
+                "dia": dia,
+                "ratio": r,
+                "demanda": d,
+                "oferta": o,
+                "categoria": cat,
+                "etiqueta": (f"{d}/{o}" if d > 0 else ""),
+            })
+    df_long = pd.DataFrame(long_rows)
+
+    # Escala de color discreta: verde / amarillo / rojo / rojo intenso.
+    def _bucket(r: float) -> str:
+        if r <= 0:
+            return "vacío"
+        if r <= 0.8:
+            return "OK (≤80%)"
+        if r <= 1.0:
+            return "ajustado (80–100%)"
+        return "saturado (>100%)"
+
+    df_long["bucket"] = df_long["ratio"].apply(_bucket)
+
+    color_scale = alt.Scale(
+        domain=["vacío", "OK (≤80%)", "ajustado (80–100%)", "saturado (>100%)"],
+        range=["#1e1e1e", "#2e7d32", "#f9a825", "#c62828"],
+    )
+
+    base = alt.Chart(df_long).encode(
+        x=alt.X(
+            "dia:N", title=None, sort=dias,
+            axis=alt.Axis(orient="top", labelAngle=0, labelFontSize=12),
+        ),
+        y=alt.Y(
+            "slot:N", title=None, sort=slots_v,
+            axis=alt.Axis(labelFontSize=11),
+        ),
+    )
+    rect = base.mark_rect(stroke="#444", strokeWidth=0.5).encode(
+        color=alt.Color(
+            "bucket:N",
+            scale=color_scale,
+            legend=alt.Legend(title="Saturación"),
+        ),
+        tooltip=[
+            alt.Tooltip("dia:N", title="Día"),
+            alt.Tooltip("slot:N", title="Franja"),
+            alt.Tooltip("demanda:Q", title="Horarios simultáneos"),
+            alt.Tooltip("oferta:Q", title="Aulas admisibles"),
+            alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+            alt.Tooltip("categoria:N", title="Categoría peor caso"),
+        ],
+    )
+    text = base.mark_text(fontSize=10, fontWeight="bold").encode(
+        text=alt.Text("etiqueta:N"),
+        color=alt.condition(
+            "datum.ratio > 0.5",
+            alt.value("white"),
+            alt.value("#bbb"),
+        ),
+    )
+    chart = (rect + text).properties(
+        width="container",
+        height=max(400, len(slots_v) * 26),
+        title="Mapa de saturación (peor caso por celda)",
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # Tabla de drill-down: las celdas saturadas, ordenadas por ratio.
+    saturadas = [
+        r for r in long_rows
+        if r["ratio"] > 1.0
+    ]
+    if saturadas:
+        st.markdown("**Detalle de franjas saturadas (ratio > 1)**")
+        saturadas.sort(key=lambda r: -r["ratio"])
+        rows_pretty = []
+        for r in saturadas:
+            cat = r["categoria"] or "—"
+            if cat.startswith("laboratorio:"):
+                cat = f"Lab de {cat.split(':', 1)[1]}"
+            elif cat == "teorica":
+                cat = "Teórica"
+            elif cat == "sin_determinar":
+                cat = "Tipo sin determinar"
+            rows_pretty.append({
+                "Día": r["dia"],
+                "Franja": r["slot"],
+                "Demanda": r["demanda"],
+                "Oferta": r["oferta"],
+                "Ratio": f"{r['ratio']:.2f}",
+                "Categoría": cat,
+            })
+        st.dataframe(
+            rows_pretty,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.success(
+            "✅ Ninguna franja muestra saturación dura "
+            "(demanda > oferta) en este corte."
+        )
+
+
+def _render_impacto_r10(impacto: list[dict], key_ns: str) -> None:
+    """Tabla con cuántas aulas perdió cada materia por la
+    restricción R10 (sede por carrera/materia).
+
+    Sirve para responder: '¿el resultado infactible/apretado se debe a
+    R10 o al inventario de aulas en general?'.
+    """
+    if not impacto:
+        return
+    # Filtramos: si NINGUNA materia perdió aulas, no mostramos nada.
+    con_perdida = [r for r in impacto if r.get("aulas_excluidas_por_r10", 0) > 0]
+    if not con_perdida:
+        st.caption(
+            "ℹ️ R10 (restricción de sede) no excluye aulas para "
+            "ninguna materia: la oferta admisible coincide con el "
+            "inventario disponible por tipo."
+        )
+        return
+
+    st.markdown("**📍 Impacto de R10 (restricción de sede por carrera)**")
+    st.caption(
+        "Cantidad de aulas que cada materia ya **no** puede usar "
+        "por la restricción de sede, comparado con su pool por tipo. "
+        "Si hay materias con muchas aulas excluidas y el LP es "
+        "infactible, considerá agregar más sedes a esa carrera o "
+        "marcar otra como sede default de comunes."
+    )
+    rows_pretty = [
+        {
+            "Materia": r["materia_codigo"],
+            "Admisibles (sin R10)": r["aulas_admisibles_pre_r10"],
+            "Admisibles (con R10)": r["aulas_admisibles_post_r10"],
+            "Excluidas por R10": r["aulas_excluidas_por_r10"],
+        }
+        for r in con_perdida
+    ]
+    st.dataframe(
+        rows_pretty,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def _render_inventario(inv: dict) -> None:
     """Una tira con cantidad de aulas por tipo."""
     if not inv:
@@ -797,8 +1000,30 @@ def render_resultado(
     # como para ver los picos cuando todo resuelve OK.
     heatmap = details.get("heatmap_carga")
     if heatmap:
-        with st.expander("📊 Heatmap de carga (día × franja)", expanded=(run.status != "optimal")):
+        with st.expander("📊 Heatmap de carga (día × franja)", expanded=False):
             _render_heatmap_carga(heatmap, key_ns=key_ns)
+
+    # Mapa de saturación demanda vs oferta: por default expandido si el
+    # LP es infactible (es la herramienta principal para encontrar el
+    # cuello de botella).
+    heatmap_do = details.get("heatmap_demanda_oferta")
+    if heatmap_do:
+        with st.expander(
+            "🔥 Mapa de saturación demanda vs oferta",
+            expanded=(run.status != "optimal"),
+        ):
+            _render_heatmap_demanda_oferta(heatmap_do, key_ns=key_ns)
+
+    # Impacto de R10 (restricción de sede): expandido si el LP es
+    # infactible para que el operador entienda si la causa es la
+    # configuración de sedes.
+    impacto = details.get("impacto_r10")
+    if impacto:
+        with st.expander(
+            "📍 Impacto de la restricción R10 (sedes)",
+            expanded=(run.status != "optimal"),
+        ):
+            _render_impacto_r10(impacto, key_ns=key_ns)
 
     # Diagnóstico SIEMPRE arriba si hay causa estructural detectada,
     # incluso cuando el run resolvió OK (es informativo).

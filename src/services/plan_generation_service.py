@@ -731,6 +731,10 @@ class TimetableBlock:
     hora_fin: time
     virtual: bool
     en_periodo: Optional[bool] = None  # True=en su cuatrimestre planificado, False=fuera, None=indeterminado
+    # Etiqueta corta del aula asignada al patrón ("Sede · Aula"). Si es
+    # None, el horario no tiene aula del patron asignada; el render
+    # muestra "Sin aula" en el bloque.
+    aula_label: Optional[str] = None
 
 
 def _build_periodo_map(

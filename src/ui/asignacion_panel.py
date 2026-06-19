@@ -239,6 +239,27 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             "Revisalos en Dictados antes de jugar con las tolerancias."
         )
 
+    # Sugerencia: si hay horarios cuyo tipo se podría auto-completar,
+    # avisamos antes de correr el LP. No bloquea (la red de seguridad
+    # del LP los infiere igual en memoria), pero recomendamos
+    # persistirlos para que las vistas e informes los muestren bien.
+    from src.services.plan_actions_service import (
+        preview_auto_completar_tipos,
+    )
+    _autotipos_prev = preview_auto_completar_tipos(session, plan_id)
+    if _autotipos_prev.total > 0:
+        st.warning(
+            f"💡 Hay **{_autotipos_prev.total} horario(s)** con tipo "
+            "todavía sin determinar que se podrían auto-completar a "
+            "partir de las horas declaradas en sus materias "
+            f"({len(_autotipos_prev.a_teorica)} a teórica, "
+            f"{len(_autotipos_prev.a_laboratorio)} a laboratorio). "
+            "Aplicalo desde **🔧 Acciones del plan → Auto-completar "
+            "tipo de horarios** para que las vistas e informes los "
+            "muestren bien. El LP igual los infiere en memoria al "
+            "correr, así que no bloquea esta corrida."
+        )
+
     cfg = _render_config_form(session, plan_id, key_ns)
 
     if cfg is not None:

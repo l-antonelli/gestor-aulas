@@ -143,6 +143,7 @@ def build_inputs(
         AulaSlot(id=a.id, tipo=a.tipo, capacidad=a.capacidad)
         for a in aulas_db
     ]
+    aula_sede_id: dict[str, str] = {a.id: a.sede_id for a in aulas_db}
 
     # Map materia_codigo -> set[aula_id] desde MateriaLaboratorioDB.
     matlab_pairs = list(session.exec(select(MateriaLaboratorioDB)).all())
@@ -217,13 +218,27 @@ def build_inputs(
                 f"{h.codigo_materia} es virtual en este ciclo"
             )
             continue
+        # Red de seguridad: si el horario tiene tipo_clase=None pero la
+        # materia declara una sola modalidad (hteo>0 y hlab=0, o
+        # viceversa), inferimos el tipo en memoria. No persistimos: si
+        # el operador quiere ver el cambio reflejado en la DB, debe
+        # correr la acción "Auto-completar tipos" en el panel del plan.
+        # Esto evita variables binarias t[h] redundantes en el LP.
+        tipo_efectivo = h.tipo_clase
+        if tipo_efectivo is None:
+            mat_hteo = hteo.get(h.codigo_materia, 0.0)
+            mat_hlab = hlab.get(h.codigo_materia, 0.0)
+            if mat_hteo > 0 and mat_hlab == 0:
+                tipo_efectivo = "teorica"
+            elif mat_hlab > 0 and mat_hteo == 0:
+                tipo_efectivo = "laboratorio"
         horarios.append(HorarioSlot(
             id=h.id,
             dia=h.dia,
             hora_inicio=h.hora_inicio,
             hora_fin=h.hora_fin,
             materia_codigo=h.codigo_materia,
-            tipo_clase=h.tipo_clase,
+            tipo_clase=tipo_efectivo,
         ))
         materia_de_horario[h.id] = h.codigo_materia
         comision_de_horario[h.id] = h.comision_id
@@ -271,12 +286,42 @@ def build_inputs(
             elif f_cuatri is not None:
                 total_esp[mc] = float(f_cuatri.valor)
 
-    # Compatibilidad pre-computada.
+    # Compatibilidad pre-computada (R3 sin sede).
     compat: dict[tuple[str, str], bool] = {}
     for h in horarios:
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas:
             compat[(h.id, a.id)] = compute_compat(h, a, lab_aulas_m)
+
+    # R10 — Restriccion de sede por carrera. Se aplica como filtro
+    # adicional sobre `compat`: si el aula no esta en una sede admisible
+    # para la materia, se descarta el par. Excepcion: cuando el aula esta
+    # en MateriaLaboratorioDB para la materia, prevalece la
+    # compatibilidad de laboratorio sobre la restriccion de sede (un
+    # lab compatible se puede usar aunque no este en la sede default
+    # de la carrera/comunes).
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_materia,
+    )
+    materias_unicas_sede = sorted({h.materia_codigo for h in horarios})
+    sedes_admisibles_por_materia: dict[str, set[str] | None] = {
+        mc: sedes_admisibles_para_materia(session, mc)
+        for mc in materias_unicas_sede
+    }
+    for h in horarios:
+        admisibles = sedes_admisibles_por_materia.get(h.materia_codigo)
+        if admisibles is None:
+            # Sin restriccion de sede para esta materia (fallback "todas").
+            continue
+        lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
+        for a in aulas:
+            if not compat[(h.id, a.id)]:
+                continue
+            if a.id in lab_aulas_m:
+                # Lab compatible prevalece sobre restriccion de sede.
+                continue
+            if aula_sede_id.get(a.id) not in admisibles:
+                compat[(h.id, a.id)] = False
 
     sim_groups = compute_simultaneidad_groups(horarios)
 
@@ -308,6 +353,7 @@ def diagnose(inputs: LPInputs) -> InfeasibilityDiagnosis:
         aulas=inputs.aulas,
         materia_lab_map=inputs.materia_lab_map,
         sim_groups=inputs.sim_groups,
+        compat_override=inputs.compat,
     )
     # Pre-validación R5 (partición factible).
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
@@ -384,7 +430,10 @@ def build_model(
     prob = pulp.LpProblem("asignacion_aulas", pulp.LpMinimize)
 
     # Variables x[h, a] solo para pares compatibles (R3 pre-computada).
+    # tuplado (hid, aid) -> variable binaria. Si un par no es compatible, no hay variable y el modelo no puede asignar esa aula a ese horario.
+    # o sea basicamente la variable x se lee como "x[h,a] existe y es 1" <=> "h se asigna a a", y si el par no es compatible, x[h,a] no existe y por lo tanto h no puede asignarse a a.
     x: dict[tuple[str, str], pulp.LpVariable] = {}
+    #     horario_id, aula_id , valor de x (var. de asignacion)
     for (hid, aid), is_compat in inputs.compat.items():
         if not is_compat:
             continue
@@ -721,17 +770,21 @@ def apply_solution(
     fecha_desde: date,
     respetar_manuales: bool = True,
 ) -> ApplyResult:
-    """Propaga la asignación de la semana modelo a las ClaseDB del plan.
+    """Aplica la solución del LP al PATRÓN (HorarioDB) y propaga a ClaseDB.
 
-    Para cada (horario_id, aula_id) en ``solution.x_assignments``:
-    selecciona las ClaseDB con ``horario_id`` igual, ``fecha >= fecha_desde``,
-    ``executed = False``. Si ``respetar_manuales=True`` además filtra
-    ``aula_asignada_manualmente = False``.
+    Para cada ``(horario_id, aula_id)`` en ``solution.x_assignments``:
 
-    A las clases seleccionadas se les setea ``aula_id`` y se deja el flag
-    ``aula_asignada_manualmente = False`` (porque viene del LP, no del
-    usuario). Si el flag estaba en True y respetar_manuales=False, se
-    resetea a False (el LP toma el control).
+    1. Setea ``HorarioDB.aula_id = aula_id`` y, si el LP resolvió el
+       ``tipo_clase`` y el horario lo tenía en None, también lo
+       persiste a nivel patrón.
+    2. Propaga el aula a las ``ClaseDB`` del plan que cumplen
+       ``fecha >= fecha_desde`` y ``executed=False``. Si
+       ``respetar_manuales=True``, no toca las que tienen
+       ``aula_asignada_manualmente=True`` (excepciones puntuales del
+       usuario). Si False, el LP retoma el control y el flag se baja.
+
+    De este modo el "patrón" queda explícito en ``HorarioDB`` y las
+    ``ClaseDB`` actúan como instancias que heredan, salvo excepciones.
     """
     if solution.status != "optimal":
         return ApplyResult()
@@ -739,6 +792,16 @@ def apply_solution(
     apply_result = ApplyResult()
 
     for horario_id, aula_id in solution.x_assignments.items():
+        # 1) Escribir al patron.
+        horario = session.get(HorarioDB, horario_id)
+        tipo_nuevo = solution.tipo_resuelto.get(horario_id)
+        if horario is not None:
+            horario.aula_id = aula_id
+            if tipo_nuevo is not None and horario.tipo_clase is None:
+                horario.tipo_clase = tipo_nuevo
+            session.add(horario)
+
+        # 2) Propagar a clases (herencia).
         query = select(ClaseDB).where(
             ClaseDB.horario_id == horario_id,
             ClaseDB.fecha >= fecha_desde,
@@ -746,7 +809,6 @@ def apply_solution(
             ClaseDB.plan_cursada_id == plan_id,
         )
         clases = list(session.exec(query).all())
-        tipo_nuevo = solution.tipo_resuelto.get(horario_id)
         for c in clases:
             if respetar_manuales and c.aula_asignada_manualmente:
                 apply_result.n_ediciones_manuales_respetadas += 1
@@ -801,6 +863,19 @@ def _build_details_json(
             "estado": estado,
         })
     heatmap = compute_heatmap_carga(inputs.horarios)
+    # Heatmap demanda vs oferta (cuello de botella: clases simultáneas
+    # vs aulas admisibles). Incorpora R3 + R10 vía ``inputs.compat``.
+    from src.services.asignacion_aulas_helpers import (
+        compute_heatmap_demanda_oferta,
+        compute_impacto_r10,
+    )
+    heatmap_demanda_oferta = compute_heatmap_demanda_oferta(
+        inputs.horarios, inputs.aulas, inputs.compat,
+    )
+    impacto_r10 = compute_impacto_r10(
+        inputs.horarios, inputs.aulas, inputs.materia_lab_map,
+        inputs.compat,
+    )
     # Si hubo redistribución de α, registramos la propuesta junto con
     # el coef actual para que la UI pueda mostrar el diff sin re-correr
     # el LP.
@@ -819,6 +894,8 @@ def _build_details_json(
         "n_sobreocupados": n_sobre,
         "n_subutilizados": n_sub,
         "heatmap_carga": heatmap,
+        "heatmap_demanda_oferta": heatmap_demanda_oferta,
+        "impacto_r10": impacto_r10,
         "alpha_propuestos": alpha_diff,
     }
 
@@ -1324,10 +1401,11 @@ def get_aulas_disponibles(
     clase_ids: list[str],
     *,
     excluir_ediciones_manuales_propias: bool = True,
+    tipo_objetivo: Optional[str] = None,
 ) -> list[AulaDB]:
     """Para un conjunto de ClaseDB que se quieren editar simultáneamente,
     devuelve las aulas que están libres en TODAS sus fechas y franjas, y
-    son compatibles por tipo con el ``tipo_clase`` de las clases.
+    son compatibles por tipo con el ``tipo_clase`` requerido.
 
     Args:
         session: SQLAlchemy session.
@@ -1338,6 +1416,11 @@ def get_aulas_disponibles(
             usuario las está liberando para reasignar).
         excluir_ediciones_manuales_propias: si True, no filtra por
             choques con las propias clases de ``clase_ids``.
+        tipo_objetivo: si se especifica ('teorica' | 'laboratorio'),
+            filtra aulas compatibles con ese tipo en lugar del
+            ``tipo_clase`` actual de las clases. Útil para previsualizar
+            aulas disponibles cuando se está por cambiar el tipo de
+            clase puntual.
 
     Returns:
         Lista de AulaDB candidatas, ordenadas por capacidad ascendente.
@@ -1349,12 +1432,15 @@ def get_aulas_disponibles(
     ).all())
     if not clases:
         return []
-    # Tipo de clase requerido. Si las clases no tienen el mismo tipo,
-    # algo raro pasa — devolvemos vacío para no asignar mal.
-    tipos = {c.tipo_clase for c in clases}
-    if len(tipos) > 1:
-        return []
-    tipo_clase = tipos.pop()
+    # Tipo de clase requerido. Si tipo_objetivo está dado lo usamos;
+    # si no, derivamos del tipo_clase actual de las clases.
+    if tipo_objetivo is not None:
+        tipo_clase = tipo_objetivo
+    else:
+        tipos = {c.tipo_clase for c in clases}
+        if len(tipos) > 1:
+            return []
+        tipo_clase = tipos.pop()
 
     # Materia (necesaria para A_lab si tipo=lab).
     com_ids = {c.comision_id for c in clases}
@@ -1553,6 +1639,134 @@ def aplicar_edicion_manual(
     return n
 
 
+def cambiar_tipo_clase_puntual(
+    session: Session,
+    clase_id: str,
+    nuevo_tipo: str,
+    aula_nueva_id: str,
+) -> ValidationResult:
+    """Cambia el ``tipo_clase`` de UNA clase puntual y reasigna a un aula
+    compatible con el nuevo tipo. La aula previa de la clase queda
+    liberada (la clase apunta ahora al aula nueva).
+
+    Casos soportados (bidireccional):
+        - teorica → laboratorio: ``aula_nueva_id`` debe estar en
+          ``MateriaLaboratorioDB`` para la materia de la comisión.
+        - laboratorio → teorica: ``aula_nueva_id`` debe ser un aula de
+          tipo 'teorica' o 'anfiteatro'.
+
+    Persiste solamente si la validación pasa:
+        - ``clase.tipo_clase = nuevo_tipo``
+        - ``clase.aula_id = aula_nueva_id``
+        - ``clase.aula_asignada_manualmente = True`` (preserva el cambio
+          frente a futuras corridas del LP que respeten manuales)
+
+    NO modifica ``HorarioDB``: la excepción es a nivel ClaseDB. Las
+    otras semanas del mismo horario mantienen su tipo y aula.
+
+    Args:
+        session: sesión SQLAlchemy.
+        clase_id: ID de la clase puntual a modificar.
+        nuevo_tipo: 'teorica' o 'laboratorio'.
+        aula_nueva_id: aula destino.
+
+    Returns:
+        ValidationResult con ``ok=True`` si el cambio se aplicó. En caso
+        contrario, ``errores`` indica el motivo y NO se persiste nada.
+        Puede incluir ``warnings`` no bloqueantes (capacidad).
+    """
+    res = ValidationResult(ok=True)
+    if nuevo_tipo not in ("teorica", "laboratorio"):
+        res.ok = False
+        res.errores.append(
+            f"Tipo de clase '{nuevo_tipo}' inválido. Debe ser "
+            "'teorica' o 'laboratorio'."
+        )
+        return res
+    clase = session.get(ClaseDB, clase_id)
+    if clase is None:
+        res.ok = False
+        res.errores.append(f"Clase '{clase_id}' no encontrada.")
+        return res
+    aula = session.get(AulaDB, aula_nueva_id)
+    if aula is None:
+        res.ok = False
+        res.errores.append(f"Aula '{aula_nueva_id}' no encontrada.")
+        return res
+    comision = session.get(ComisionDB, clase.comision_id)
+    if comision is None:
+        res.ok = False
+        res.errores.append("Comisión de la clase no encontrada.")
+        return res
+
+    # Compatibilidad tipo↔aula contra el NUEVO tipo.
+    if nuevo_tipo == "laboratorio":
+        compat_set = {
+            ml.aula_id for ml in session.exec(
+                select(MateriaLaboratorioDB).where(
+                    MateriaLaboratorioDB.materia_codigo
+                    == comision.materia_codigo
+                )
+            ).all()
+        }
+        if aula.id not in compat_set:
+            res.ok = False
+            res.errores.append(
+                f"El aula '{aula.nombre}' no es laboratorio compatible "
+                f"con la materia {comision.materia_codigo}."
+            )
+            return res
+    else:  # nuevo_tipo == "teorica"
+        if aula.tipo not in ("teorica", "anfiteatro"):
+            res.ok = False
+            res.errores.append(
+                f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
+                "no admite clase teórica."
+            )
+            return res
+
+    # No doble booking en la misma fecha/franja, excluyendo la propia
+    # clase (que es la que vamos a reubicar).
+    choque = session.exec(
+        select(ClaseDB).where(
+            ClaseDB.aula_id == aula.id,
+            ClaseDB.fecha == clase.fecha,
+            ClaseDB.hora_inicio < clase.hora_fin,
+            ClaseDB.hora_fin > clase.hora_inicio,
+            ClaseDB.id != clase.id,
+        ).limit(1)
+    ).first()
+    if choque is not None:
+        res.ok = False
+        res.errores.append(
+            f"El aula '{aula.nombre}' está ocupada el "
+            f"{clase.fecha.isoformat()} de "
+            f"{clase.hora_inicio.strftime('%H:%M')} a "
+            f"{clase.hora_fin.strftime('%H:%M')} por otra clase."
+        )
+        return res
+
+    # Warning de capacidad (no bloquea).
+    insc_por_com = get_inscriptos_esperados_por_comision(
+        session, clase.plan_cursada_id,
+    )
+    esperados = insc_por_com.get(clase.comision_id)
+    if esperados is not None and aula.capacidad < esperados:
+        res.warnings.append(
+            f"⚠️ Capacidad ({aula.capacidad}) menor que esperados "
+            f"({esperados:.0f}). El cambio es válido pero generará "
+            "sobre-ocupación."
+        )
+
+    # Persistir el cambio.
+    clase.tipo_clase = nuevo_tipo
+    clase.aula_id = aula.id
+    clase.aula_asignada_manualmente = True
+    session.add(clase)
+    session.commit()
+    return res
+
+
 def aplicar_alpha_propuesto(
     session: Session,
     plan_id: str,
@@ -1587,3 +1801,265 @@ def aplicar_alpha_propuesto(
         n += 1
     session.commit()
     return n
+
+
+# =============================================================================
+# Edición del PATRÓN (HorarioDB.aula_id)
+# =============================================================================
+
+
+def _validar_aula_para_horario(
+    session: Session,
+    horario: HorarioDB,
+    aula: AulaDB,
+    *,
+    tipo_objetivo: Optional[str] = None,
+) -> ValidationResult:
+    """Valida que ``aula`` sea compatible con ``horario`` (tipo_clase) y
+    no tenga choque temporal con OTROS horarios del mismo plan en la
+    misma franja semanal.
+
+    Si ``tipo_objetivo`` se especifica, valida contra ese tipo en vez
+    del actual del horario (útil cuando se cambia el tipo del patrón
+    en simultáneo).
+    """
+    res = ValidationResult(ok=True)
+    tipo_clase = tipo_objetivo if tipo_objetivo is not None else horario.tipo_clase
+
+    # Compatibilidad tipo<->aula.
+    if tipo_clase == "laboratorio":
+        comision = session.get(ComisionDB, horario.comision_id)
+        if comision is None:
+            res.ok = False
+            res.errores.append("Comisión del horario no encontrada.")
+            return res
+        compat_set = {
+            ml.aula_id for ml in session.exec(
+                select(MateriaLaboratorioDB).where(
+                    MateriaLaboratorioDB.materia_codigo
+                    == comision.materia_codigo
+                )
+            ).all()
+        }
+        if aula.id not in compat_set:
+            res.ok = False
+            res.errores.append(
+                f"El aula '{aula.nombre}' no es laboratorio compatible "
+                f"con la materia {comision.materia_codigo}."
+            )
+            return res
+    elif tipo_clase == "teorica":
+        if aula.tipo not in ("teorica", "anfiteatro"):
+            res.ok = False
+            res.errores.append(
+                f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
+                "no admite clase teórica."
+            )
+            return res
+
+    # No doble booking a nivel patrón: ningún OTRO horario del mismo
+    # plan (vía las comisiones del plan) puede tener este aula en una
+    # franja superpuesta el mismo día.
+    comision = session.get(ComisionDB, horario.comision_id)
+    plan_id = comision.plan_cursada_id if comision else None
+    if plan_id is None:
+        return res
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids_plan:
+        return res
+    choque = session.exec(
+        select(HorarioDB).where(
+            HorarioDB.aula_id == aula.id,
+            HorarioDB.dia == horario.dia,
+            HorarioDB.hora_inicio < horario.hora_fin,
+            HorarioDB.hora_fin > horario.hora_inicio,
+            HorarioDB.id != horario.id,
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+        ).limit(1)
+    ).first()
+    if choque is not None:
+        res.ok = False
+        res.errores.append(
+            f"El aula '{aula.nombre}' ya está asignada a otro horario "
+            f"del plan ({horario.dia} "
+            f"{choque.hora_inicio.strftime('%H:%M')}–"
+            f"{choque.hora_fin.strftime('%H:%M')})."
+        )
+    return res
+
+
+def cambiar_aula_horario(
+    session: Session,
+    horario_id: str,
+    aula_id: Optional[str],
+    *,
+    nuevo_tipo: Optional[str] = None,
+    propagar_a_clases: bool = True,
+) -> ValidationResult:
+    """Cambia el aula del PATRÓN (``HorarioDB.aula_id``) y propaga a
+    las ``ClaseDB`` que heredan (las que tienen
+    ``aula_asignada_manualmente=False``).
+
+    Args:
+        horario_id: id del HorarioDB a modificar.
+        aula_id: aula nueva. Si ``None``, deja el patrón sin asignar
+          (las clases que heredaban quedan también con aula NULL).
+        nuevo_tipo: si se especifica, también modifica el ``tipo_clase``
+          del patrón antes de validar.
+        propagar_a_clases: si True (default), propaga el cambio a las
+          ClaseDB del horario que no son excepciones manuales.
+
+    Returns:
+        ValidationResult con ``ok=True`` si el cambio se aplicó. Si
+        falla, no persiste nada y devuelve ``errores``.
+    """
+    res = ValidationResult(ok=True)
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        res.ok = False
+        res.errores.append(f"Horario '{horario_id}' no encontrado.")
+        return res
+
+    if aula_id is None:
+        # Limpiar el patrón.
+        horario.aula_id = None
+        if nuevo_tipo is not None:
+            horario.tipo_clase = nuevo_tipo
+        session.add(horario)
+        if propagar_a_clases:
+            clases = list(session.exec(
+                select(ClaseDB).where(
+                    ClaseDB.horario_id == horario_id,
+                    ClaseDB.executed == False,  # noqa: E712
+                    ClaseDB.aula_asignada_manualmente == False,  # noqa: E712
+                )
+            ).all())
+            for c in clases:
+                c.aula_id = None
+                if nuevo_tipo is not None:
+                    c.tipo_clase = nuevo_tipo
+                session.add(c)
+        session.commit()
+        return res
+
+    aula = session.get(AulaDB, aula_id)
+    if aula is None:
+        res.ok = False
+        res.errores.append(f"Aula '{aula_id}' no encontrada.")
+        return res
+
+    val = _validar_aula_para_horario(
+        session, horario, aula, tipo_objetivo=nuevo_tipo,
+    )
+    if not val.ok:
+        return val
+
+    horario.aula_id = aula.id
+    if nuevo_tipo is not None:
+        horario.tipo_clase = nuevo_tipo
+    session.add(horario)
+
+    if propagar_a_clases:
+        clases = list(session.exec(
+            select(ClaseDB).where(
+                ClaseDB.horario_id == horario_id,
+                ClaseDB.executed == False,  # noqa: E712
+                ClaseDB.aula_asignada_manualmente == False,  # noqa: E712
+            )
+        ).all())
+        for c in clases:
+            c.aula_id = aula.id
+            if nuevo_tipo is not None:
+                c.tipo_clase = nuevo_tipo
+            session.add(c)
+    session.commit()
+    return res
+
+
+def get_aulas_disponibles_para_horario(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    *,
+    tipo_objetivo: Optional[str] = None,
+) -> list[AulaDB]:
+    """Aulas candidatas para asignar al PATRÓN ``horario_id`` del plan.
+
+    Filtra:
+      - Compatibilidad tipo<->aula contra ``tipo_objetivo`` (si dado)
+        o el ``HorarioDB.tipo_clase`` actual.
+      - Sin choque con OTROS HorarioDB del mismo plan en la misma
+        franja (mismo día y solapamiento horario).
+
+    Devuelve aulas ordenadas por capacidad ascendente.
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        return []
+    tipo_clase = (
+        tipo_objetivo if tipo_objetivo is not None else horario.tipo_clase
+    )
+    comision = session.get(ComisionDB, horario.comision_id)
+    materia_codigo = comision.materia_codigo if comision else None
+
+    aulas_db = list(session.exec(
+        select(AulaDB).order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
+    ).all())
+
+    # Filtrado por tipo.
+    compat: list[AulaDB] = []
+    if tipo_clase == "laboratorio":
+        if materia_codigo:
+            lab_ids = {
+                ml.aula_id for ml in session.exec(
+                    select(MateriaLaboratorioDB).where(
+                        MateriaLaboratorioDB.materia_codigo == materia_codigo
+                    )
+                ).all()
+            }
+            compat = [a for a in aulas_db if a.id in lab_ids]
+    elif tipo_clase == "teorica":
+        compat = [a for a in aulas_db if a.tipo in ("teorica", "anfiteatro")]
+    else:
+        compat = list(aulas_db)
+
+    # Filtrado por choque con otros HorarioDB del plan en la misma franja.
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids_plan:
+        return compat
+    horarios_otros = list(session.exec(
+        select(HorarioDB).where(
+            HorarioDB.id != horario_id,
+            HorarioDB.dia == horario.dia,
+            HorarioDB.hora_inicio < horario.hora_fin,
+            HorarioDB.hora_fin > horario.hora_inicio,
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+            HorarioDB.aula_id.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all())
+    aulas_ocupadas = {h.aula_id for h in horarios_otros if h.aula_id}
+    return [a for a in compat if a.id not in aulas_ocupadas]
+
+
+def clear_aula_horario(session: Session, horario_id: str) -> bool:
+    """Limpia el ``aula_id`` del patrón. Útil cuando se edita el slot
+    (día/hora) del horario y la asignación del LP queda inválida.
+
+    Devuelve True si limpió algo, False si el horario no existía o ya
+    estaba en None.
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None or horario.aula_id is None:
+        return False
+    cambiar_aula_horario(
+        session, horario_id, aula_id=None, propagar_a_clases=True,
+    )
+    return True

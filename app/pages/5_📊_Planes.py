@@ -298,7 +298,14 @@ def _render_plan_editor(
     s5.metric("Con Aula", n_clases_con_aula)
     
     st.divider()
-    
+
+    # --- Acciones del plan ---
+    _render_acciones_del_plan(
+        session, sel_plan_id, key_ns=f"plan_acciones_{key_ns}_{sel_plan_id}",
+    )
+
+    st.divider()
+
     # --- Validations panel ---
     st.markdown("#### Validaciones")
     from src.ui.validation_ui import render_validation
@@ -307,6 +314,121 @@ def _render_plan_editor(
         plan_id=sel_plan_id,
         key_ns=f"plan_val_{key_ns}_{sel_plan_id}",
     )
+
+
+def _render_acciones_del_plan(
+    session, plan_id: str, key_ns: str,
+) -> None:
+    """Panel '🔧 Acciones del plan': agrupa botones que disparan
+    operaciones derivadas sobre el plan (auto-completar tipos, etc.).
+    """
+    from src.services.plan_actions_service import (
+        aplicar_auto_completar_tipos,
+        preview_auto_completar_tipos,
+    )
+    st.markdown("#### 🔧 Acciones del plan")
+
+    with st.expander("✏️ Auto-completar tipo de horarios por materia", expanded=False):
+        st.caption(
+            "Cuando una materia declara sólo horas de teoría (`hlab=0`) "
+            "o sólo de laboratorio (`hteo=0`), el tipo de cada horario "
+            "queda determinado de antemano. Esta acción persiste ese "
+            "tipo en `HorarioDB.tipo_clase` para que las vistas y el "
+            "LP no tengan que inferirlo cada vez. Sólo afecta horarios "
+            "con tipo todavía sin determinar."
+        )
+        prev_key = f"{key_ns}_autotipos_preview"
+        if st.button(
+            "🔍 Previsualizar cambios",
+            key=f"{key_ns}_autotipos_preview_btn",
+        ):
+            preview = preview_auto_completar_tipos(session, plan_id)
+            st.session_state[prev_key] = preview
+
+        prev = st.session_state.get(prev_key)
+        if prev is not None:
+            if prev.total == 0:
+                if prev.materias_sin_horas or prev.materias_mixtas:
+                    msg_parts = []
+                    if prev.materias_mixtas:
+                        msg_parts.append(
+                            f"{len(prev.materias_mixtas)} materia(s) "
+                            "con teoría y laboratorio: el tipo lo "
+                            "decide el LP"
+                        )
+                    if prev.materias_sin_horas:
+                        msg_parts.append(
+                            f"{len(prev.materias_sin_horas)} materia(s) "
+                            "sin horas declaradas"
+                        )
+                    st.info(
+                        "No hay nada para auto-completar. "
+                        + " · ".join(msg_parts) + "."
+                    )
+                else:
+                    st.success(
+                        "✅ Todos los horarios del plan ya tienen "
+                        "tipo asignado o no son inferibles."
+                    )
+            else:
+                st.warning(
+                    f"Se actualizarían **{prev.total} horario(s)**: "
+                    f"{len(prev.a_teorica)} a teórica, "
+                    f"{len(prev.a_laboratorio)} a laboratorio."
+                )
+                if prev.a_teorica:
+                    st.markdown("**A teórica**")
+                    st.dataframe(
+                        [
+                            {
+                                "Materia": f"{it.materia_codigo} - {it.materia_nombre}",
+                                "Comisión": it.comision_nombre,
+                                "Día/Hora": f"{it.dia} {it.hora_inicio}-{it.hora_fin}",
+                                "Razón": it.razon,
+                            }
+                            for it in prev.a_teorica
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                if prev.a_laboratorio:
+                    st.markdown("**A laboratorio**")
+                    st.dataframe(
+                        [
+                            {
+                                "Materia": f"{it.materia_codigo} - {it.materia_nombre}",
+                                "Comisión": it.comision_nombre,
+                                "Día/Hora": f"{it.dia} {it.hora_inicio}-{it.hora_fin}",
+                                "Razón": it.razon,
+                            }
+                            for it in prev.a_laboratorio
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                col_ok, col_no = st.columns([1, 1])
+                with col_ok:
+                    if st.button(
+                        "✅ Confirmar y aplicar",
+                        type="primary",
+                        key=f"{key_ns}_autotipos_apply",
+                    ):
+                        aplicado = aplicar_auto_completar_tipos(
+                            session, plan_id,
+                        )
+                        st.session_state.pop(prev_key, None)
+                        st.success(
+                            f"Aplicado: {aplicado.total} horario(s) "
+                            "actualizados."
+                        )
+                        st.rerun()
+                with col_no:
+                    if st.button(
+                        "Cancelar",
+                        key=f"{key_ns}_autotipos_cancel",
+                    ):
+                        st.session_state.pop(prev_key, None)
+                        st.rerun()
 
 
 

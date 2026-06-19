@@ -19,3 +19,6 @@
 8. Document and write everything in "Rio Platenese" Spanish also known as Argentinan "Castellano". Maintain a formal, academic tone while sounding natural. Any text that is displayed in the UI should also be in rio platense spanish AND NOT ENGLISH.
 
 9. **Carga de datos iniciales:** Para reinicializar la base de datos desde los Excel de entrada, correr `python -m scripts.load_initial_data --reset`. Esto borra la DB y recarga aulas, materias, carreras y planes de estudio. Despues de un reset hay que recrear desde la UI: nombres/atributos de carreras, ciclos, dictados, cronogramas y planes de cursada. La documentacion completa del proceso esta en `project/2. Desarrollo/CARGA_DATOS_INICIALES.md`.
+
+
+10. A medida que se mencionen requerimientos, ir agregandolos a un archivo project/requerimientos.md. Mantener este documento bien actualizado y consistente de manera de trackear bien los requerimientos del projecto y que no entren en conflicto entre si y evitar descumplir un requerimiento viejo por cumplir con uno viejo.

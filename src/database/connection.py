@@ -74,6 +74,18 @@ def _run_migrations(eng):
         # mapea más; se limpiará en una recreación posterior de la tabla.
         "ALTER TABLE aulas ADD COLUMN sede_id VARCHAR DEFAULT NULL",
         "ALTER TABLE aulas ADD COLUMN codigo_aula VARCHAR DEFAULT NULL",
+        # LP asigna ahora al PATRON (HorarioDB) en vez de a cada
+        # ClaseDB. Las clases heredan el aula del patron al generarse.
+        "ALTER TABLE horarios ADD COLUMN aula_id VARCHAR DEFAULT NULL",
+        # Restriccion de sede por carrera (R10):
+        # - es_default_comunes en sedes: marca la sede a la que se
+        #   mandan las materias comunes (>=2 carreras). Como mucho una
+        #   sede tiene este flag activado a la vez (lo asegura el
+        #   service layer).
+        # - tabla carrera_sede: M:N entre carreras y sedes habilitadas
+        #   para sus materias exclusivas.
+        "ALTER TABLE sedes ADD COLUMN es_default_comunes BOOLEAN NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS ix_sedes_es_default_comunes ON sedes (es_default_comunes)",
     ]
     with eng.connect() as conn:
         for sql in migrations:

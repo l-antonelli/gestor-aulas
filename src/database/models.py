@@ -227,14 +227,37 @@ class SedeDB(SQLModel, table=True):
     """Sede física donde se ubican las aulas.
 
     Modelada como entidad propia (en vez de un string libre en `AulaDB.sede`)
-    para permitir referenciarla desde otras entidades (por ejemplo, futuras
-    restricciones del LP del tipo "esta materia solo se puede cursar en estas
-    sedes"). El nombre es único globalmente.
+    para permitir referenciarla desde otras entidades. El nombre es único
+    globalmente.
+
+    El flag ``es_default_comunes`` marca a la sede que recibe por default
+    todas las **materias comunes** (las que pertenecen a más de una
+    carrera). El servicio garantiza que como mucho UNA sede tenga este
+    flag en True a la vez (al activarlo en otra sede, el flag previo se
+    desactiva).
     """
     __tablename__ = "sedes"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     nombre: str = Field(min_length=1, unique=True, index=True)
+    es_default_comunes: bool = Field(default=False, index=True)
+
+
+class CarreraSedeDB(SQLModel, table=True):
+    """Tabla M:N entre carreras y sedes habilitadas para sus materias.
+
+    Una materia *exclusiva* (que pertenece a una sola carrera) sólo puede
+    asignarse a aulas que estén en alguna de las sedes asociadas a esa
+    carrera vía esta tabla. Las materias *comunes* (≥2 carreras) ignoran
+    esta tabla y se rigen por ``SedeDB.es_default_comunes``.
+
+    Si una carrera no tiene ninguna fila en esta tabla, el LP asume "todas
+    las sedes" como fallback (ver R10 en asignacion-aulas-LP.md).
+    """
+    __tablename__ = "carrera_sede"
+
+    carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
+    sede_id: str = Field(foreign_key="sedes.id", primary_key=True)
 
 
 class AulaDB(SQLModel, table=True):
@@ -257,7 +280,13 @@ class AulaDB(SQLModel, table=True):
 
 
 class HorarioDB(SQLModel, table=True):
-    """Horario de dictado: asocia una comisión con un día y rango horario."""
+    """Horario de dictado: asocia una comisión con un día y rango horario.
+
+    El ``aula_id`` representa el AULA DEL PATRÓN: el LP la asigna y las
+    ``ClaseDB`` heredan por default ese aula. Las excepciones puntuales
+    por fecha se modelan en ``ClaseDB.aula_id`` con
+    ``aula_asignada_manualmente=True``.
+    """
     __tablename__ = "horarios"
 
     id: str = Field(primary_key=True)
@@ -267,6 +296,13 @@ class HorarioDB(SQLModel, table=True):
     hora_inicio: time
     hora_fin: time
     tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
+    # Aula del patron: la que el LP asigna al horario semanal. Las
+    # ClaseDB heredan este valor al generarse (`generate_clases_for_plan`)
+    # y al editarse el patron via `cambiar_aula_horario`. Si None, el
+    # patron no tiene aula asignada (LP no corrio o se edito el slot).
+    aula_id: Optional[str] = Field(
+        default=None, foreign_key="aulas.id", index=True,
+    )
 
     # Relationships
     comision: Optional[ComisionDB] = Relationship(back_populates="horarios")

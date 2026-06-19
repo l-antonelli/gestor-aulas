@@ -278,6 +278,7 @@ def diagnose_infeasibility(
     aulas: list[AulaSlot],
     materia_lab_map: dict[str, set[str]],
     sim_groups: list[set[str]],
+    compat_override: dict[tuple[str, str], bool] | None = None,
 ) -> InfeasibilityDiagnosis:
     """Detecta causas estructurales de infactibilidad antes del solve.
 
@@ -287,6 +288,11 @@ def diagnose_infeasibility(
         materia_lab_map: para cada materia, el set de IDs de aulas
             compatibles para laboratorio.
         sim_groups: grupos de simultaneidad maximales.
+        compat_override: si se pasa, este dict (computado por
+            ``build_inputs`` y que YA incluye filtros adicionales como
+            R10 — restricción de sede) se usa en lugar de
+            ``compute_compat``. Permite que el diagnóstico reporte
+            causas reales del problema posterior al filtrado.
 
     Returns:
         InfeasibilityDiagnosis con las causas detectadas (si las hay).
@@ -303,14 +309,32 @@ def diagnose_infeasibility(
         "por_tipo": inv,
     }
 
-    # 1. Horarios sin ninguna aula compatible (R1 + R3 estructural).
+    def _es_compat(h: HorarioSlot, a: AulaSlot) -> bool:
+        if compat_override is not None:
+            return bool(compat_override.get((h.id, a.id), False))
+        return compute_compat(h, a, materia_lab_map.get(h.materia_codigo, set()))
+
+    # 1. Horarios sin ninguna aula compatible (R1 + R3 estructural; +R10
+    #    si compat_override viene).
     for h in horarios:
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
-        compat_count = sum(
-            1 for a in aulas if compute_compat(h, a, lab_aulas_m)
-        )
+        compat_count = sum(1 for a in aulas if _es_compat(h, a))
         if compat_count == 0:
-            if h.tipo_clase == "laboratorio":
+            # ¿Sería compatible si no fuera por R10? Si sin override
+            # también queda en 0, es la causa "clásica" R1+R3.
+            compat_sin_r10 = sum(
+                1 for a in aulas if compute_compat(h, a, lab_aulas_m)
+            )
+            es_r10 = compat_override is not None and compat_sin_r10 > 0
+
+            if es_r10:
+                razon = (
+                    "ningún aula admisible por R10 (restricción de "
+                    "sede por carrera/materia). Revisá las sedes "
+                    "habilitadas para la carrera o la sede default "
+                    f"para materias comunes ({h.materia_codigo})."
+                )
+            elif h.tipo_clase == "laboratorio":
                 razon = (
                     f"sin laboratorios en MateriaLaboratorioDB para "
                     f"{h.materia_codigo}"
@@ -750,6 +774,262 @@ def compute_heatmap_carga(
         "laboratorio": lab,
         "sin_determinar": sin_det,
     }
+
+
+# =============================================================================
+# Heatmap demanda vs oferta (cuello de botella por franja)
+# =============================================================================
+
+def compute_heatmap_demanda_oferta(
+    horarios: list[HorarioSlot],
+    aulas: list[AulaSlot],
+    compat: dict[tuple[str, str], bool],
+    *,
+    granularidad_minutos: int = 30,
+    hora_inicio: int = 7,
+    hora_fin: int = 23,
+    horarios_filtrados: list[HorarioSlot] | None = None,
+) -> dict:
+    """Para cada celda (día × franja) calcula la **peor saturación** entre
+    los horarios activos en esa celda y las aulas que admiten cada uno.
+
+    Definiciones:
+
+    - ``demanda(celda, tipo)``: cuántos horarios del tipo (teorica /
+      laboratorio_de_materia_m / sin_determinar) están activos en la celda.
+    - ``oferta(celda, tipo)``: cuántas aulas del catalogo son admisibles
+      (segun ``compat``) para algún horario de ese tipo en la celda.
+    - ``ratio = demanda / oferta``. ratio > 1 ⇒ saturación segura
+      (más horarios que aulas), ratio = 1 ⇒ frontera, ratio < 1 ⇒ holgura.
+
+    El ``compat`` se asume ya filtrado por R10 (sede), R3 (tipo) y lab
+    compatible. Si el caller pasa un compat sin esos filtros, el heatmap
+    seguirá funcionando pero con cobertura distinta.
+
+    Args:
+        horarios: TODOS los horarios del plan (para detectar conflicto con
+            la oferta global).
+        aulas: catalogo de aulas.
+        compat: ``compat[(h_id, a_id)] = True/False`` ya filtrado.
+        horarios_filtrados: si se pasa, sólo estos horarios se cuentan
+            como demanda. La oferta sigue mirando todos. Util para
+            mostrar "saturacion para los horarios que matchean los filtros
+            del panel".
+
+    Devuelve un dict con:
+
+    - ``slots``: ["07:00-07:30", ...].
+    - ``dias``: ["Lunes", ...].
+    - ``ratio``: matriz [slot][dia] -> float. peor saturacion en la celda
+      (max sobre las "categorias" de tipo: teorica, laboratorio_m, sin_det).
+    - ``demanda``: matriz [slot][dia] -> int. count del peor caso.
+    - ``oferta``: matriz [slot][dia] -> int. aulas disponibles para el peor caso.
+    - ``categoria``: matriz [slot][dia] -> str. cual fue el peor caso
+      (e.g. "teorica", "laboratorio:MIX", "sin_determinar").
+    - ``detalle``: matriz [slot][dia] -> dict con materias_demandantes,
+      aulas_disponibles_ids para drill-down.
+    """
+    DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+    start = hora_inicio * 60
+    end = hora_fin * 60
+    slot_bounds: list[tuple[int, int]] = []
+    s = start
+    while s + granularidad_minutos <= end:
+        slot_bounds.append((s, s + granularidad_minutos))
+        s += granularidad_minutos
+    slots_label = [
+        f"{a // 60:02d}:{a % 60:02d}-{b // 60:02d}:{b % 60:02d}"
+        for a, b in slot_bounds
+    ]
+
+    n_slots = len(slot_bounds)
+    n_dias = len(DIAS)
+    dia_idx = {d: i for i, d in enumerate(DIAS)}
+
+    def _zeros_f() -> list[list[float]]:
+        return [[0.0] * n_dias for _ in range(n_slots)]
+
+    def _zeros_i() -> list[list[int]]:
+        return [[0] * n_dias for _ in range(n_slots)]
+
+    def _empty_str() -> list[list[str]]:
+        return [[""] * n_dias for _ in range(n_slots)]
+
+    def _empty_dict() -> list[list[dict]]:
+        return [[{} for _ in range(n_dias)] for _ in range(n_slots)]
+
+    ratio = _zeros_f()
+    demanda = _zeros_i()
+    oferta = _zeros_i()
+    categoria = _empty_str()
+    detalle = _empty_dict()
+
+    # Pre-computo, para cada horario, en qué celdas está activo.
+    def _celdas_de_horario(h: HorarioSlot) -> list[tuple[int, int]]:
+        di = dia_idx.get(h.dia)
+        if di is None:
+            return []
+        h_start = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_end = h.hora_fin.hour * 60 + h.hora_fin.minute
+        out = []
+        for si, (a, b) in enumerate(slot_bounds):
+            if h_start < b and h_end > a:
+                out.append((si, di))
+        return out
+
+    horarios_demanda = horarios_filtrados if horarios_filtrados is not None else horarios
+
+    # Para cada celda, agrupo horarios por categoria y mido demanda/oferta.
+    # Estructura: por (si, di) -> {categoria -> {"horarios": [h_ids],
+    # "materias": set[str]}}
+    por_celda: dict[tuple[int, int], dict[str, dict]] = {}
+    for h in horarios_demanda:
+        if h.tipo_clase == "teorica":
+            cat = "teorica"
+        elif h.tipo_clase == "laboratorio":
+            cat = f"laboratorio:{h.materia_codigo}"
+        else:
+            cat = "sin_determinar"
+        for si, di in _celdas_de_horario(h):
+            celda = por_celda.setdefault((si, di), {})
+            grupo = celda.setdefault(cat, {
+                "horario_ids": [],
+                "materias": set(),
+            })
+            grupo["horario_ids"].append(h.id)
+            grupo["materias"].add(h.materia_codigo)
+
+    # Para la oferta: por categoria, qué aulas son admisibles.
+    # - "teorica": aulas tipo {teorica, anfiteatro} — pero la oferta
+    #   real es la cardinalidad del set de aulas a las que algún
+    #   horario de la celda se podría asignar (segun compat). Tomamos
+    #   la union de aulas admisibles para horarios de esa categoria
+    #   en la celda.
+    # - "laboratorio:m": aulas en materia_lab_map[m] que ademas pasan
+    #   el filtro de compat con esos horarios.
+    # - "sin_determinar": union de aulas admisibles para los horarios
+    #   sin tipo (R6 deja la decision al LP, pero acotamos por compat).
+
+    aula_ids = [a.id for a in aulas]
+
+    def _oferta_para_grupo(horario_ids: list[str]) -> set[str]:
+        """Aulas que admiten al menos uno de los horarios del grupo.
+
+        Para una cota de saturacion, lo correcto seria calcular un
+        matching: pero la cota |union| >= |grupo| es la pigeonhole
+        clasica y alcanza para detectar 'mas demanda que oferta total'.
+        """
+        out: set[str] = set()
+        for h_id in horario_ids:
+            for a_id in aula_ids:
+                if compat.get((h_id, a_id), False):
+                    out.add(a_id)
+        return out
+
+    for (si, di), grupos in por_celda.items():
+        peor_ratio = 0.0
+        peor_demanda = 0
+        peor_oferta = 0
+        peor_cat = ""
+        peor_materias: set[str] = set()
+        peor_aulas: set[str] = set()
+        for cat, datos in grupos.items():
+            d = len(datos["horario_ids"])
+            o = len(_oferta_para_grupo(datos["horario_ids"]))
+            r = (d / o) if o > 0 else (float("inf") if d > 0 else 0.0)
+            if r > peor_ratio or (
+                r == peor_ratio and d > peor_demanda
+            ):
+                peor_ratio = r
+                peor_demanda = d
+                peor_oferta = o
+                peor_cat = cat
+                peor_materias = datos["materias"]
+                peor_aulas = _oferta_para_grupo(datos["horario_ids"])
+        ratio[si][di] = peor_ratio if peor_ratio != float("inf") else 999.0
+        demanda[si][di] = peor_demanda
+        oferta[si][di] = peor_oferta
+        categoria[si][di] = peor_cat
+        detalle[si][di] = {
+            "materias": sorted(peor_materias),
+            "aulas_disponibles_ids": sorted(peor_aulas),
+            "horarios_simultaneos": peor_demanda,
+            "categoria": peor_cat,
+        }
+
+    return {
+        "slots": slots_label,
+        "dias": DIAS,
+        "ratio": ratio,
+        "demanda": demanda,
+        "oferta": oferta,
+        "categoria": categoria,
+        "detalle": detalle,
+    }
+
+
+# =============================================================================
+# Impacto de R10 (restriccion de sede por carrera)
+# =============================================================================
+
+def compute_impacto_r10(
+    horarios: list[HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]],
+    compat: dict[tuple[str, str], bool],
+) -> list[dict]:
+    """Para cada materia presente en ``horarios``, mide cuantas aulas
+    quedaron afuera por R10 (vs. el inventario que la materia podria
+    usar por su tipo solamente).
+
+    Devuelve una lista de dicts ordenada por mayor impacto (mas aulas
+    perdidas), uno por materia. Cada dict tiene:
+
+    - ``materia_codigo``
+    - ``aulas_admisibles_post_r10``: cantidad de aulas que aceptan al
+      menos un horario de la materia despues de R10 (segun ``compat``).
+    - ``aulas_admisibles_pre_r10``: cantidad que aceptarian sin R10
+      (sólo R3: tipo + lab compatible).
+    - ``aulas_excluidas_por_r10``: diferencia.
+    - ``ids_excluidas``: lista de aula_ids descartadas por R10.
+
+    Materias con ``aulas_excluidas_por_r10 == 0`` igual aparecen en la
+    lista (con 0) — el caller decide si las muestra.
+    """
+    # horarios por materia (para iterar)
+    horarios_por_materia: dict[str, list[HorarioSlot]] = {}
+    for h in horarios:
+        horarios_por_materia.setdefault(h.materia_codigo, []).append(h)
+
+    out: list[dict] = []
+    for materia_codigo, hs in horarios_por_materia.items():
+        # Pre-R10: usando compute_compat (sólo R3 + lab).
+        lab_aulas_m = materia_lab_map.get(materia_codigo, set())
+        ids_pre: set[str] = set()
+        for h in hs:
+            for a in aulas:
+                if compute_compat(h, a, lab_aulas_m):
+                    ids_pre.add(a.id)
+        # Post-R10: usando el compat ya filtrado.
+        ids_post: set[str] = set()
+        for h in hs:
+            for a in aulas:
+                if compat.get((h.id, a.id), False):
+                    ids_post.add(a.id)
+        excluidas = ids_pre - ids_post
+        out.append({
+            "materia_codigo": materia_codigo,
+            "aulas_admisibles_pre_r10": len(ids_pre),
+            "aulas_admisibles_post_r10": len(ids_post),
+            "aulas_excluidas_por_r10": len(excluidas),
+            "ids_excluidas": sorted(excluidas),
+        })
+
+    out.sort(
+        key=lambda r: (-r["aulas_excluidas_por_r10"], r["materia_codigo"]),
+    )
+    return out
 
 
 # =============================================================================

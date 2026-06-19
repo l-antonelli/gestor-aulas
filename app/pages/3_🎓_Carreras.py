@@ -72,14 +72,58 @@ def render_custom_carrera_page():
                                 except Exception as e:
                                     st.error(f"Error al cargar estado: {str(e)}")
                             
+                            # Sedes habilitadas para materias exclusivas (R10).
+                            from src.database.models import SedeDB as _SedeDB
+                            from src.services.carrera_sede_service import (
+                                get_sedes_de_carrera as _get_sedes_de_carrera,
+                                set_sedes_de_carrera as _set_sedes_de_carrera,
+                            )
+                            from sqlmodel import select as _select, col as _col
+                            st.divider()
+                            st.markdown("**🏛️ Sedes habilitadas (R10)**")
+                            st.caption(
+                                "Las materias exclusivas de esta carrera "
+                                "(no compartidas) sólo se asignan a aulas "
+                                "que estén en estas sedes. Si no seleccionás "
+                                "ninguna, el LP asume 'todas las sedes' "
+                                "como fallback."
+                            )
+                            _sedes_db = list(session.exec(
+                                _select(_SedeDB).order_by(_col(_SedeDB.nombre))
+                            ).all())
+                            _opts_ids = [s.id for s in _sedes_db]
+                            _label_by_id = {s.id: s.nombre for s in _sedes_db}
+                            _actuales = _get_sedes_de_carrera(session, carrera.codigo)
+                            _default = [sid for sid in _opts_ids if sid in _actuales]
+                            _sel = st.multiselect(
+                                "Sedes",
+                                options=_opts_ids,
+                                default=_default,
+                                format_func=lambda sid: str(
+                                    _label_by_id.get(sid) or sid
+                                ),
+                                key=f"carrera_sedes_{carrera.codigo}",
+                            )
+                            if set(_sel) != _actuales:
+                                if st.button(
+                                    "💾 Guardar sedes",
+                                    key=f"carrera_sedes_save_{carrera.codigo}",
+                                    type="primary",
+                                ):
+                                    _set_sedes_de_carrera(
+                                        session, carrera.codigo, _sel,
+                                    )
+                                    st.success("Sedes actualizadas.")
+                                    st.rerun()
+
                             # Action buttons
                             col_edit, col_delete = st.columns(2)
-                            
+
                             with col_edit:
                                 if st.button("✏️ Editar", key=f"edit_{carrera.codigo}"):
                                     st.session_state["edit_carrera"] = carrera.codigo
                                     st.rerun()
-                            
+
                             with col_delete:
                                 if st.button("🗑️ Eliminar", key=f"delete_{carrera.codigo}"):
                                     st.session_state["delete_carrera"] = carrera.codigo

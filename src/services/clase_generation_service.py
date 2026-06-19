@@ -122,7 +122,10 @@ def generate_clases_for_plan(
                     hora_inicio=horario.hora_inicio,
                     hora_fin=horario.hora_fin,
                     executed=False,
-                    aula_id=None,
+                    # Hereda el aula del PATRON (HorarioDB.aula_id). Si
+                    # el LP no corrio todavia, sera None y se completara
+                    # cuando el LP asigne al patron.
+                    aula_id=horario.aula_id,
                     tipo_clase=horario.tipo_clase,
                 )
                 session.add(clase)

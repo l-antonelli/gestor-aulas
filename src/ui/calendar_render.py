@@ -294,7 +294,17 @@ def render_timetable_calendar(
             bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
 
             v_tag = " [V]" if b.virtual else ""
-            title = f"{b.materia_codigo}{v_tag} - {b.comision_nombre}"
+            # Titulo multilinea: materia (codigo + nombre), comision y
+            # aula del patron. FullCalendar respeta los \n cuando el
+            # tema permite eventos altos.
+            aula_line = (
+                b.aula_label if b.aula_label else "Sin aula"
+            )
+            title = (
+                f"{b.materia_codigo}{v_tag} — {b.materia_nombre}\n"
+                f"{b.comision_nombre}\n"
+                f"🏛️ {aula_line}"
+            )
 
             border_color = "#FF9800" if b.en_periodo is False else bg
 
