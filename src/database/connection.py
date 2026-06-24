@@ -7,6 +7,7 @@ import re
 import uuid as uuid_mod
 from typing import Generator
 
+from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel, Session, create_engine
 
 logger = logging.getLogger(__name__)
@@ -14,11 +15,21 @@ logger = logging.getLogger(__name__)
 # Default to local SQLite file in data directory
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/database.db")
 
-# Create engine with SQLite-specific settings
+# Create engine with SQLite-specific settings.
+#
+# Usamos NullPool: cada Session() abre una conexión SQLite nueva al
+# archivo y la cierra al salir. Esto evita un bug observado en el
+# entorno Streamlit donde el pool default mantiene conexiones con
+# transacciones de lectura abiertas que bloquean el flush a disco
+# de los commits hechos en otras sesiones, generando lecturas stale
+# aún después de session.commit() y engine.dispose() explícitos.
+# Para SQLite + Streamlit el costo de abrir/cerrar conexión por
+# request es despreciable.
 engine = create_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL debugging
-    connect_args={"check_same_thread": False}  # Needed for SQLite + Streamlit
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},  # Needed for SQLite + Streamlit
 )
 
 
@@ -104,20 +115,17 @@ def _run_migrations(eng):
         )
         conn.commit()
 
-    # Data migration: limpiar tipo_clase='teorica' heredado del DEFAULT de la
-    # migracion ALTER TABLE. Ninguno fue seteado manualmente; el default correcto
-    # ahora es NULL (sin determinar, el LP decide).
-    with eng.connect() as conn:
-        conn.exec_driver_sql(
-            "UPDATE schedule_entries SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
-        )
-        conn.exec_driver_sql(
-            "UPDATE horarios SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
-        )
-        conn.exec_driver_sql(
-            "UPDATE clases SET tipo_clase = NULL WHERE tipo_clase = 'teorica'"
-        )
-        conn.commit()
+    # NOTA: aca antes habia una "data migration" que ejecutaba en CADA
+    # arranque (y por lo tanto en cada rerun de Streamlit):
+    #   UPDATE schedule_entries SET tipo_clase = NULL WHERE tipo_clase = 'teorica'
+    #   UPDATE horarios          SET tipo_clase = NULL WHERE tipo_clase = 'teorica'
+    #   UPDATE clases            SET tipo_clase = NULL WHERE tipo_clase = 'teorica'
+    # Esa migracion era one-shot para limpiar un DEFAULT='teorica' de una
+    # migracion ALTER TABLE vieja. El problema: como se ejecuta en CADA
+    # init_db(), pisaba CUALQUIER tipo_clase='teorica' seteado a mano por
+    # el operador (ej. via la accion "Auto-completar tipo de horarios"
+    # del panel del plan), volviendolos a NULL en el siguiente rerun de
+    # la pagina. Removida.
 
     # Migration: make schedules.ciclo_id nullable (SQLite requires table recreation)
     _migrate_schedules_nullable_ciclo(eng)

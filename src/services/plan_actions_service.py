@@ -218,4 +218,8 @@ def aplicar_auto_completar_tipos(
         h.tipo_clase = ids_to_tipo[h.id]
         session.add(h)
     session.commit()
+
+    # Invalidar pool por si hay sesiones cacheadas.
+    from src.database.connection import engine as _engine
+    _engine.dispose()
     return preview

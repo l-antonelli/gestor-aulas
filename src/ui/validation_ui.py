@@ -1853,12 +1853,20 @@ def _render_detalle_por_materia(
             st.session_state[f"{key_ns}_dpm_force_expand"] = "close"
             st.rerun()
     with _bc3:
+        # Si el state ya existe y queda fuera de rango (porque cambió
+        # _total_pages), lo clampeamos ANTES de instanciar el widget
+        # para que respete el state. NO se puede pasar `value=` cuando
+        # el widget ya tiene state guardado: streamlit lanza warning
+        # y descarta uno de los dos. La forma robusta es ajustar el
+        # session_state directamente.
+        _cur = st.session_state.get(_page_key, 1)
+        if _cur > _total_pages:
+            st.session_state[_page_key] = _total_pages
+        elif _cur < 1:
+            st.session_state[_page_key] = 1
         _page = st.number_input(
             f"Página (de {_total_pages})",
             min_value=1, max_value=_total_pages,
-            value=min(
-                st.session_state.get(_page_key, 1), _total_pages
-            ),
             step=1,
             key=_page_key,
             label_visibility="collapsed",

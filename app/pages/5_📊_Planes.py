@@ -301,7 +301,7 @@ def _render_plan_editor(
 
     # --- Acciones del plan ---
     _render_acciones_del_plan(
-        session, sel_plan_id, key_ns=f"plan_acciones_{key_ns}_{sel_plan_id}",
+        sel_plan_id, key_ns=f"plan_acciones_{key_ns}_{sel_plan_id}",
     )
 
     st.divider()
@@ -317,15 +317,23 @@ def _render_plan_editor(
 
 
 def _render_acciones_del_plan(
-    session, plan_id: str, key_ns: str,
+    plan_id: str, key_ns: str,
 ) -> None:
     """Panel '🔧 Acciones del plan': agrupa botones que disparan
     operaciones derivadas sobre el plan (auto-completar tipos, etc.).
+
+    Abre su propia ``session`` para preview y para apply (no reusa la
+    del scope envolvente, que ya está cerrada en este punto del render).
     """
-    from src.services.plan_actions_service import (
-        aplicar_auto_completar_tipos,
-        preview_auto_completar_tipos,
-    )
+    # Forzar reload del módulo de acciones para que cualquier cambio en
+    # el service sea efectivo sin reiniciar streamlit (Python cachea
+    # módulos en sys.modules; los imports normales devuelven el objeto
+    # viejo).
+    import importlib
+    import src.services.plan_actions_service as _pas_module
+    _pas_module = importlib.reload(_pas_module)
+    aplicar_auto_completar_tipos = _pas_module.aplicar_auto_completar_tipos
+    preview_auto_completar_tipos = _pas_module.preview_auto_completar_tipos
     st.markdown("#### 🔧 Acciones del plan")
 
     with st.expander("✏️ Auto-completar tipo de horarios por materia", expanded=False):
@@ -337,47 +345,58 @@ def _render_acciones_del_plan(
             "LP no tengan que inferirlo cada vez. Sólo afecta horarios "
             "con tipo todavía sin determinar."
         )
-        prev_key = f"{key_ns}_autotipos_preview"
-        if st.button(
-            "🔍 Previsualizar cambios",
-            key=f"{key_ns}_autotipos_preview_btn",
-        ):
-            preview = preview_auto_completar_tipos(session, plan_id)
-            st.session_state[prev_key] = preview
 
-        prev = st.session_state.get(prev_key)
-        if prev is not None:
-            if prev.total == 0:
-                if prev.materias_sin_horas or prev.materias_mixtas:
-                    msg_parts = []
-                    if prev.materias_mixtas:
-                        msg_parts.append(
-                            f"{len(prev.materias_mixtas)} materia(s) "
-                            "con teoría y laboratorio: el tipo lo "
-                            "decide el LP"
-                        )
-                    if prev.materias_sin_horas:
-                        msg_parts.append(
-                            f"{len(prev.materias_sin_horas)} materia(s) "
-                            "sin horas declaradas"
-                        )
-                    st.info(
-                        "No hay nada para auto-completar. "
-                        + " · ".join(msg_parts) + "."
-                    )
-                else:
-                    st.success(
-                        "✅ Todos los horarios del plan ya tienen "
-                        "tipo asignado o no son inferibles."
-                    )
+        # Mostrar cualquier resultado/error de la última corrida.
+        result_key = f"{key_ns}_autotipos_lastresult"
+        last_result = st.session_state.pop(result_key, None)
+        if last_result:
+            kind, msg = last_result
+            if kind == "ok":
+                st.success(msg)
+            elif kind == "info":
+                st.info(msg)
             else:
-                st.warning(
-                    f"Se actualizarían **{prev.total} horario(s)**: "
-                    f"{len(prev.a_teorica)} a teórica, "
-                    f"{len(prev.a_laboratorio)} a laboratorio."
+                st.error(msg)
+
+        # Preview "live": en cada render mostramos qué pasaría si se
+        # corre la acción. No requiere botón previo. Si total=0
+        # informamos. Si total>0 mostramos un botón único para aplicar.
+        with next(get_session()) as _ps:
+            preview = preview_auto_completar_tipos(_ps, plan_id)
+
+        if preview.total == 0:
+            if preview.materias_sin_horas or preview.materias_mixtas:
+                _parts = []
+                if preview.materias_mixtas:
+                    _parts.append(
+                        f"{len(preview.materias_mixtas)} materia(s) "
+                        "con teoría y laboratorio (lo decide el LP)"
+                    )
+                if preview.materias_sin_horas:
+                    _parts.append(
+                        f"{len(preview.materias_sin_horas)} materia(s) "
+                        "sin horas declaradas"
+                    )
+                st.info(
+                    "No hay nada para auto-completar. "
+                    + " · ".join(_parts) + "."
                 )
-                if prev.a_teorica:
-                    st.markdown("**A teórica**")
+            else:
+                st.success(
+                    "✅ Todos los horarios del plan ya tienen tipo "
+                    "asignado o no son inferibles."
+                )
+        else:
+            st.warning(
+                f"Hay **{preview.total} horario(s)** auto-completables: "
+                f"{len(preview.a_teorica)} a teórica, "
+                f"{len(preview.a_laboratorio)} a laboratorio."
+            )
+            if preview.a_teorica:
+                with st.expander(
+                    f"Ver detalle 'A teórica' ({len(preview.a_teorica)})",
+                    expanded=False,
+                ):
                     st.dataframe(
                         [
                             {
@@ -386,13 +405,16 @@ def _render_acciones_del_plan(
                                 "Día/Hora": f"{it.dia} {it.hora_inicio}-{it.hora_fin}",
                                 "Razón": it.razon,
                             }
-                            for it in prev.a_teorica
+                            for it in preview.a_teorica
                         ],
                         hide_index=True,
                         use_container_width=True,
                     )
-                if prev.a_laboratorio:
-                    st.markdown("**A laboratorio**")
+            if preview.a_laboratorio:
+                with st.expander(
+                    f"Ver detalle 'A laboratorio' ({len(preview.a_laboratorio)})",
+                    expanded=False,
+                ):
                     st.dataframe(
                         [
                             {
@@ -401,34 +423,43 @@ def _render_acciones_del_plan(
                                 "Día/Hora": f"{it.dia} {it.hora_inicio}-{it.hora_fin}",
                                 "Razón": it.razon,
                             }
-                            for it in prev.a_laboratorio
+                            for it in preview.a_laboratorio
                         ],
                         hide_index=True,
                         use_container_width=True,
                     )
-                col_ok, col_no = st.columns([1, 1])
-                with col_ok:
-                    if st.button(
-                        "✅ Confirmar y aplicar",
-                        type="primary",
-                        key=f"{key_ns}_autotipos_apply",
-                    ):
+
+            if st.button(
+                f"✅ Aplicar auto-completado ({preview.total} cambios)",
+                type="primary",
+                key=f"{key_ns}_autotipos_apply",
+            ):
+                try:
+                    with next(get_session()) as _as:
                         aplicado = aplicar_auto_completar_tipos(
-                            session, plan_id,
+                            _as, plan_id,
                         )
-                        st.session_state.pop(prev_key, None)
-                        st.success(
-                            f"Aplicado: {aplicado.total} horario(s) "
-                            "actualizados."
-                        )
-                        st.rerun()
-                with col_no:
-                    if st.button(
-                        "Cancelar",
-                        key=f"{key_ns}_autotipos_cancel",
-                    ):
-                        st.session_state.pop(prev_key, None)
-                        st.rerun()
+                    # Invalidar state del data_editor de horarios para que
+                    # el próximo render lea la DB fresca y no muestre los
+                    # tipos viejos cacheados.
+                    for _k in list(st.session_state.keys()):
+                        if "_de_horarios_" in _k:
+                            st.session_state.pop(_k, None)
+                    st.session_state[result_key] = (
+                        "ok",
+                        f"✅ Aplicado: {aplicado.total} horario(s) "
+                        f"actualizado(s) "
+                        f"({len(aplicado.a_teorica)} a teórica, "
+                        f"{len(aplicado.a_laboratorio)} a laboratorio).",
+                    )
+                except Exception as _e:
+                    import traceback
+                    st.session_state[result_key] = (
+                        "error",
+                        f"❌ Error al aplicar: {_e}\n\n"
+                        f"```\n{traceback.format_exc()}\n```",
+                    )
+                st.rerun()
 
 
 
