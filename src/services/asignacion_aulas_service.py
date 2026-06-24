@@ -830,6 +830,7 @@ def _build_details_json(
     inputs: LPInputs,
     solution: LPSolution,
     config: LPConfig,
+    session: Session,
 ) -> dict:
     """Arma el dict que se serializa en LPRunDB.details_json."""
     cap_por_aula = {a.id: a.capacidad for a in inputs.aulas}
@@ -863,18 +864,32 @@ def _build_details_json(
             "estado": estado,
         })
     heatmap = compute_heatmap_carga(inputs.horarios)
-    # Heatmap demanda vs oferta (cuello de botella: clases simultáneas
-    # vs aulas admisibles). Incorpora R3 + R10 vía ``inputs.compat``.
+    # Heatmap PARTICIONADO POR SEDE — reemplaza al heatmap demanda/oferta
+    # global y al panel de impacto R10. Permite ver exactamente en qué
+    # sede × franja × tipo de aula falta capacidad: la herramienta
+    # principal cuando la restricción de sedes (R10) genera saturación.
     from src.services.asignacion_aulas_helpers import (
-        compute_heatmap_demanda_oferta,
-        compute_impacto_r10,
+        compute_heatmap_por_sede,
     )
-    heatmap_demanda_oferta = compute_heatmap_demanda_oferta(
-        inputs.horarios, inputs.aulas, inputs.compat,
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_materia,
     )
-    impacto_r10 = compute_impacto_r10(
+    from src.database.models import AulaDB as _AulaDB
+    from src.database.models import SedeDB as _SedeDB
+    from sqlmodel import select as _select
+    # Pre-cargas necesarias para el heatmap por sede.
+    materias_unicas_sede = sorted({h.materia_codigo for h in inputs.horarios})
+    sedes_admis_por_mat: dict[str, set[str] | None] = {
+        mc: sedes_admisibles_para_materia(session, mc)
+        for mc in materias_unicas_sede
+    }
+    aulas_db = list(session.exec(_select(_AulaDB)).all())
+    aula_sede_id_map: dict[str, str] = {a.id: a.sede_id for a in aulas_db}
+    sedes_db = list(session.exec(_select(_SedeDB)).all())
+    sede_nombre_map: dict[str, str] = {s.id: s.nombre for s in sedes_db}
+    heatmap_por_sede = compute_heatmap_por_sede(
         inputs.horarios, inputs.aulas, inputs.materia_lab_map,
-        inputs.compat,
+        sedes_admis_por_mat, aula_sede_id_map, sede_nombre_map,
     )
     # Si hubo redistribución de α, registramos la propuesta junto con
     # el coef actual para que la UI pueda mostrar el diff sin re-correr
@@ -894,8 +909,7 @@ def _build_details_json(
         "n_sobreocupados": n_sobre,
         "n_subutilizados": n_sub,
         "heatmap_carga": heatmap,
-        "heatmap_demanda_oferta": heatmap_demanda_oferta,
-        "impacto_r10": impacto_r10,
+        "heatmap_por_sede": heatmap_por_sede,
         "alpha_propuestos": alpha_diff,
     }
 
@@ -923,7 +937,7 @@ def persist_run(
             diagnóstico estructural quedó vacío). Estructura
             documentada en esa función.
     """
-    details = _build_details_json(inputs, solution, config)
+    details = _build_details_json(inputs, solution, config, session)
     n_sobre = details["n_sobreocupados"]
     n_sub = details["n_subutilizados"]
     if iis is not None:

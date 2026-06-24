@@ -973,6 +973,235 @@ def compute_heatmap_demanda_oferta(
 # Impacto de R10 (restriccion de sede por carrera)
 # =============================================================================
 
+def compute_heatmap_por_sede(
+    horarios: list[HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]],
+    sedes_admisibles_por_materia: dict[str, set[str] | None],
+    aula_sede_id: dict[str, str],
+    sede_nombre: dict[str, str],
+    *,
+    granularidad_minutos: int = 30,
+    hora_inicio: int = 7,
+    hora_fin: int = 23,
+) -> dict:
+    """Mapa de saturación particionado por SEDE.
+
+    Para cada combinación (sede × día × franja × tipo), computa:
+
+    - **demanda**: cuántos horarios activos en esa franja **necesitan**
+      una aula de esa sede. Un horario "necesita" una sede si esa sede
+      es admisible para él (según R10 o por ser lab compatible).
+    - **oferta**: cuántas aulas de la sede son del tipo necesario y
+      admiten al menos uno de esos horarios.
+    - **ratio**: demanda / oferta. Verde ≤0.8, amarillo 0.8–1, rojo >1.
+
+    Las categorías son: ``teorica``, ``laboratorio:<materia>``, y
+    ``sin_determinar``. Para evitar saturar la pantalla, el caller
+    decide qué categorías mostrar (filtro UI).
+
+    Args:
+        horarios: horarios del plan (no virtuales).
+        aulas: catálogo de aulas.
+        materia_lab_map: aulas compatibles para lab por materia.
+        sedes_admisibles_por_materia: por cada materia, set de
+            sede_ids admisibles según R10. Si la materia no está en el
+            dict o el valor es None, se asume que admite todas las sedes.
+        aula_sede_id: mapping aula_id → sede_id.
+        sede_nombre: mapping sede_id → nombre legible.
+        granularidad_minutos, hora_inicio, hora_fin: idem otros heatmaps.
+
+    Returns:
+        ``{
+            "sedes": [{"sede_id", "sede_nombre", "n_aulas_teoricas",
+                       "n_aulas_laboratorio", "tiene_demanda"}, ...],
+            "dias": [...],
+            "slots": [...],
+            "data": {
+                sede_id: {
+                    "teorica":    {"ratio": [[float]], "demanda": [[int]],
+                                   "oferta": [[int]]},
+                    "laboratorio": {... idem ...},
+                    "peor":        {... peor caso entre las categorías ...},
+                }, ...
+            }
+        }``
+    """
+    DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+    start = hora_inicio * 60
+    end = hora_fin * 60
+    slot_bounds: list[tuple[int, int]] = []
+    s = start
+    while s + granularidad_minutos <= end:
+        slot_bounds.append((s, s + granularidad_minutos))
+        s += granularidad_minutos
+    slots_label = [
+        f"{a // 60:02d}:{a % 60:02d}-{b // 60:02d}:{b % 60:02d}"
+        for a, b in slot_bounds
+    ]
+    n_slots = len(slot_bounds)
+    n_dias = len(DIAS)
+    dia_idx = {d: i for i, d in enumerate(DIAS)}
+
+    # Aulas por sede, separadas por tipo.
+    aulas_por_sede: dict[str, dict[str, list[AulaSlot]]] = {}
+    for a in aulas:
+        sede = aula_sede_id.get(a.id)
+        if sede is None:
+            continue
+        bucket = aulas_por_sede.setdefault(
+            sede, {"teorica": [], "laboratorio": []},
+        )
+        if a.tipo in ("teorica", "anfiteatro"):
+            bucket["teorica"].append(a)
+        elif a.tipo == "laboratorio":
+            bucket["laboratorio"].append(a)
+
+    # Pre-computo: en qué celdas está activo cada horario.
+    def _celdas_de_horario(h: HorarioSlot) -> list[tuple[int, int]]:
+        di = dia_idx.get(h.dia)
+        if di is None:
+            return []
+        h_s = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_e = h.hora_fin.hour * 60 + h.hora_fin.minute
+        out_c = []
+        for si, (a, b) in enumerate(slot_bounds):
+            if h_s < b and h_e > a:
+                out_c.append((si, di))
+        return out_c
+
+    def _zeros_f() -> list[list[float]]:
+        return [[0.0] * n_dias for _ in range(n_slots)]
+
+    def _zeros_i() -> list[list[int]]:
+        return [[0] * n_dias for _ in range(n_slots)]
+
+    def _empty_categoria() -> dict:
+        return {
+            "ratio": _zeros_f(),
+            "demanda": _zeros_i(),
+            "oferta": _zeros_i(),
+        }
+
+    # Inicializo data por sede.
+    data: dict[str, dict[str, dict]] = {}
+    sedes_con_aulas = list(aulas_por_sede.keys())
+    for sede in sedes_con_aulas:
+        data[sede] = {
+            "teorica": _empty_categoria(),
+            "laboratorio": _empty_categoria(),
+            "peor": _empty_categoria(),
+        }
+
+    # Para cada celda × sede, agrupar horarios por categoría.
+    # Estructura: por_celda_sede[(si,di,sede)][cat] = {"horarios":[ids],
+    # "materias":set}
+    por_celda_sede: dict[tuple[int, int, str], dict[str, dict]] = {}
+    for h in horarios:
+        admis = sedes_admisibles_por_materia.get(h.materia_codigo)
+        # Lab compatible: su sede siempre cuenta como admisible.
+        labs = materia_lab_map.get(h.materia_codigo, set())
+        for si, di in _celdas_de_horario(h):
+            for sede in sedes_con_aulas:
+                # ¿Esta sede es admisible para este horario?
+                tiene_lab_en_sede = any(
+                    aula_sede_id.get(a_id) == sede for a_id in labs
+                )
+                if admis is None:
+                    sede_admisible = True
+                else:
+                    sede_admisible = (sede in admis) or tiene_lab_en_sede
+                if not sede_admisible:
+                    continue
+                # Categoría según tipo del horario.
+                if h.tipo_clase == "teorica":
+                    cat = "teorica"
+                elif h.tipo_clase == "laboratorio":
+                    # Sólo cuenta si la sede tiene labs compatibles
+                    # con esta materia. Si no, no aporta a esta sede.
+                    if not tiene_lab_en_sede:
+                        continue
+                    cat = "laboratorio"
+                else:
+                    # tipo_clase=None: lo contamos como teorica
+                    # (decisión del LP es lo más probable). Si la
+                    # materia tiene lab y sede tiene lab compatible,
+                    # también podría ir a lab — caso optimista
+                    # ignorado por simplicidad.
+                    cat = "teorica"
+                key = (si, di, sede)
+                grupo = por_celda_sede.setdefault(key, {}).setdefault(
+                    cat, {"horarios": [], "materias": set()},
+                )
+                grupo["horarios"].append(h.id)
+                grupo["materias"].add(h.materia_codigo)
+
+    # Computar oferta por (sede, categoría): es la cantidad de aulas
+    # del tipo. Para lab, idealmente se mide por materia (cada materia
+    # tiene su pool propio), pero acá agregamos todas las labs de la
+    # sede. Como cota la usamos como referencia.
+    oferta_estatica: dict[tuple[str, str], int] = {}
+    for sede in sedes_con_aulas:
+        oferta_estatica[(sede, "teorica")] = len(
+            aulas_por_sede[sede]["teorica"]
+        )
+        oferta_estatica[(sede, "laboratorio")] = len(
+            aulas_por_sede[sede]["laboratorio"]
+        )
+
+    # Llenar data.
+    for (si, di, sede), grupos in por_celda_sede.items():
+        peor_ratio_cell = 0.0
+        peor_dem_cell = 0
+        peor_of_cell = 0
+        for cat, datos in grupos.items():
+            d = len(datos["horarios"])
+            o = oferta_estatica.get((sede, cat), 0)
+            r = (d / o) if o > 0 else (float("inf") if d > 0 else 0.0)
+            r_safe = r if r != float("inf") else 999.0
+            data[sede][cat]["demanda"][si][di] = d
+            data[sede][cat]["oferta"][si][di] = o
+            data[sede][cat]["ratio"][si][di] = r_safe
+            if r_safe > peor_ratio_cell or (
+                r_safe == peor_ratio_cell and d > peor_dem_cell
+            ):
+                peor_ratio_cell = r_safe
+                peor_dem_cell = d
+                peor_of_cell = o
+        data[sede]["peor"]["demanda"][si][di] = peor_dem_cell
+        data[sede]["peor"]["oferta"][si][di] = peor_of_cell
+        data[sede]["peor"]["ratio"][si][di] = peor_ratio_cell
+
+    # Metadata de sedes.
+    sedes_meta = []
+    for sede in sedes_con_aulas:
+        nombre = sede_nombre.get(sede, sede)
+        n_teo = len(aulas_por_sede[sede]["teorica"])
+        n_lab = len(aulas_por_sede[sede]["laboratorio"])
+        # ¿Hay alguna celda con demanda > 0 para esta sede?
+        tiene_demanda = any(
+            data[sede]["peor"]["demanda"][si][di] > 0
+            for si in range(n_slots)
+            for di in range(n_dias)
+        )
+        sedes_meta.append({
+            "sede_id": sede,
+            "sede_nombre": nombre,
+            "n_aulas_teoricas": n_teo,
+            "n_aulas_laboratorio": n_lab,
+            "tiene_demanda": tiene_demanda,
+        })
+    # Orden alfabético.
+    sedes_meta.sort(key=lambda s: s["sede_nombre"])
+
+    return {
+        "sedes": sedes_meta,
+        "dias": DIAS,
+        "slots": slots_label,
+        "data": data,
+    }
+
+
 def compute_impacto_r10(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],

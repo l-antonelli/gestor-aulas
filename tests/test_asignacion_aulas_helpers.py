@@ -7,6 +7,7 @@ from src.services.asignacion_aulas_helpers import (
     HorarioSlot,
     compute_compat,
     compute_heatmap_demanda_oferta,
+    compute_heatmap_por_sede,
     compute_impacto_r10,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
@@ -617,3 +618,134 @@ class TestImpactoR10:
         assert out[0]["aulas_excluidas_por_r10"] == 2
         assert out[1]["materia_codigo"] == "MAT_A"
         assert out[1]["aulas_excluidas_por_r10"] == 1
+
+
+# =============================================================================
+# Heatmap por sede
+# =============================================================================
+
+
+class TestHeatmapPorSede:
+
+    def _build_aulas_dos_sedes(self):
+        """Sede S1: 2 aulas teóricas + 1 lab. Sede S2: 1 teórica + 1 lab."""
+        return [
+            AulaSlot(id="t1_S1", tipo="teorica", capacidad=30),
+            AulaSlot(id="t2_S1", tipo="teorica", capacidad=30),
+            AulaSlot(id="L_S1", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="t1_S2", tipo="teorica", capacidad=30),
+            AulaSlot(id="L_S2", tipo="laboratorio", capacidad=30),
+        ]
+
+    def _aula_sede_id(self):
+        return {
+            "t1_S1": "S1", "t2_S1": "S1", "L_S1": "S1",
+            "t1_S2": "S2", "L_S2": "S2",
+        }
+
+    def _sede_nombre(self):
+        return {"S1": "Sede 1", "S2": "Sede 2"}
+
+    def test_sede_sin_demanda_aparece_en_meta(self):
+        # Un horario en S1 (sólo admite S1). S2 no recibe demanda.
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={"M1": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        meta = {s["sede_id"]: s for s in out["sedes"]}
+        assert meta["S1"]["tiene_demanda"] is True
+        assert meta["S2"]["tiene_demanda"] is False
+        assert meta["S1"]["n_aulas_teoricas"] == 2
+        assert meta["S1"]["n_aulas_laboratorio"] == 1
+
+    def test_demanda_teorica_en_sede_admisible(self):
+        h1 = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="M2", tipo="teorica")
+        h3 = _h("h3", "Lunes", 8, 10, materia="M3", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h1, h2, h3], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={
+                "M1": {"S1"}, "M2": {"S1"}, "M3": {"S1"},
+            },
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        # En S1 lunes 08:00-08:30, demanda teórica = 3 (h1, h2, h3),
+        # oferta = 2 → ratio 1.5.
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        s1 = out["data"]["S1"]
+        assert s1["teorica"]["demanda"][slot_idx][dia_idx] == 3
+        assert s1["teorica"]["oferta"][slot_idx][dia_idx] == 2
+        assert s1["teorica"]["ratio"][slot_idx][dia_idx] == 1.5
+        # S2 no tiene demanda.
+        s2 = out["data"]["S2"]
+        assert s2["teorica"]["demanda"][slot_idx][dia_idx] == 0
+
+    def test_lab_solo_cuenta_si_sede_tiene_lab_compatible(self):
+        # M1 lab: lab compatible solo en S2.
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas,
+            materia_lab_map={"M1": {"L_S2"}},
+            # M1 en teoría solo admite S1 según R10, pero el lab está
+            # en S2: la sede S2 cuenta como admisible vía lab compatible.
+            sedes_admisibles_por_materia={"M1": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        # En S2 hay demanda de lab (1 horario, 1 aula → ratio 1).
+        s2_lab = out["data"]["S2"]["laboratorio"]
+        assert s2_lab["demanda"][slot_idx][dia_idx] == 1
+        assert s2_lab["oferta"][slot_idx][dia_idx] == 1
+        # En S1 la materia es admisible por R10 pero NO tiene lab
+        # compatible con M1, así que no aparece como demanda de lab.
+        s1_lab = out["data"]["S1"]["laboratorio"]
+        assert s1_lab["demanda"][slot_idx][dia_idx] == 0
+
+    def test_peor_caso_es_max_de_categorias(self):
+        # En S1: 1 teórica con demanda 3/2=1.5 y 1 lab con demanda 1/1=1.
+        # peor = 1.5.
+        h_teo1 = _h("h1", "Lunes", 8, 10, materia="MT1", tipo="teorica")
+        h_teo2 = _h("h2", "Lunes", 8, 10, materia="MT2", tipo="teorica")
+        h_teo3 = _h("h3", "Lunes", 8, 10, materia="MT3", tipo="teorica")
+        h_lab = _h("h4", "Lunes", 8, 10, materia="ML", tipo="laboratorio")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h_teo1, h_teo2, h_teo3, h_lab], aulas=aulas,
+            materia_lab_map={"ML": {"L_S1"}},
+            sedes_admisibles_por_materia={
+                "MT1": {"S1"}, "MT2": {"S1"}, "MT3": {"S1"},
+                "ML": {"S1"},
+            },
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        s1_peor = out["data"]["S1"]["peor"]
+        assert s1_peor["ratio"][slot_idx][dia_idx] == 1.5
+
+    def test_admisibles_none_significa_todas_las_sedes(self):
+        # Sin restricción de sede: el horario aparece en todas las sedes.
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={"M1": None},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:30")
+        dia_idx = out["dias"].index("Lunes")
+        # Demanda = 1 en ambas sedes.
+        assert out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
+        assert out["data"]["S2"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
