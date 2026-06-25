@@ -705,7 +705,7 @@ def _hall_violator_via_matching(adj: list[set[str]]) -> set[int] | None:
 def compute_heatmap_carga(
     horarios: list[HorarioSlot],
     *,
-    granularidad_minutos: int = 30,
+    granularidad_minutos: int = 15,
     hora_inicio: int = 7,
     hora_fin: int = 23,
 ) -> dict:
@@ -785,7 +785,7 @@ def compute_heatmap_demanda_oferta(
     aulas: list[AulaSlot],
     compat: dict[tuple[str, str], bool],
     *,
-    granularidad_minutos: int = 30,
+    granularidad_minutos: int = 15,
     hora_inicio: int = 7,
     hora_fin: int = 23,
     horarios_filtrados: list[HorarioSlot] | None = None,
@@ -981,7 +981,7 @@ def compute_heatmap_por_sede(
     aula_sede_id: dict[str, str],
     sede_nombre: dict[str, str],
     *,
-    granularidad_minutos: int = 30,
+    granularidad_minutos: int = 15,
     hora_inicio: int = 7,
     hora_fin: int = 23,
 ) -> dict:

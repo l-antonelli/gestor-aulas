@@ -15,15 +15,12 @@ class TestSchemaIntrospector:
     def test_get_fields_returns_all_fields(self):
         """Test that get_fields returns all model fields."""
         fields = SchemaIntrospector.get_fields(Materia)
-        assert "codigo" in fields
-        assert "nombre" in fields
-        assert "cupo" in fields
-        assert "horas_semanales" in fields
-        assert "periodo" in fields
-        assert "codigo_guarani" in fields
-        assert "active" in fields
-        assert "virtual" in fields
-        assert len(fields) == 8
+        expected = {
+            "codigo", "nombre", "codigo_guarani", "cupo",
+            "horas_semanales", "horas_teoria", "horas_laboratorio",
+            "periodo", "active", "virtual", "optativa", "dicta_recursado",
+        }
+        assert set(fields.keys()) == expected
 
     def test_get_field_type_string(self):
         """Test get_field_type for string fields."""

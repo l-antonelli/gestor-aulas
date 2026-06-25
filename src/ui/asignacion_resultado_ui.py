@@ -367,67 +367,92 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
         demanda_v = demanda[i0:i1 + 1]
         oferta_v = oferta[i0:i1 + 1]
 
-        long_rows = []
-        for si, slot_label in enumerate(slots_v):
-            for di, dia in enumerate(dias):
-                d = int(demanda_v[si][di])
-                o = int(oferta_v[si][di])
-                r_ = float(ratio_v[si][di])
-                long_rows.append({
-                    "slot": slot_label,
-                    "dia": dia,
-                    "demanda": d,
-                    "oferta": o,
-                    "ratio": r_,
-                    "bucket": _bucket(r_),
-                    "etiqueta": (f"{d}/{o}" if d > 0 else ""),
-                })
-        df_long = pd.DataFrame(long_rows)
-
-        # Header de la sede.
-        st.markdown(
-            f"**🏛 {sede_nombre}** · {n_teo} aula(s) teórica(s) · "
-            f"{n_lab} laboratorio(s)"
+        # Resumen para el header del expander: max ratio + un emoji
+        # según el peor bucket de la sede. Expandido por default sólo
+        # si hay saturación (ratio > 1), para que la primera mirada
+        # destaque los problemas y el usuario pueda colapsar lo que
+        # no le interesa.
+        max_ratio = 0.0
+        max_demanda = 0
+        max_oferta = 0
+        for si in range(len(slots_v)):
+            for di in range(len(dias)):
+                if ratio_v[si][di] > max_ratio:
+                    max_ratio = ratio_v[si][di]
+                    max_demanda = int(demanda_v[si][di])
+                    max_oferta = int(oferta_v[si][di])
+        if max_ratio > 1.0:
+            emoji = "🔴"
+        elif max_ratio > 0.8:
+            emoji = "🟡"
+        else:
+            emoji = "🟢"
+        if max_oferta > 0:
+            resumen = f"peor {max_demanda}/{max_oferta} ({max_ratio:.2f})"
+        else:
+            resumen = "sin oferta"
+        header = (
+            f"{emoji} 🏛 {sede_nombre} · {n_teo} teórica(s) · "
+            f"{n_lab} laboratorio(s) · {resumen}"
         )
 
-        base = alt.Chart(df_long).encode(
-            x=alt.X(
-                "dia:N", title=None, sort=dias,
-                axis=alt.Axis(orient="top", labelAngle=0, labelFontSize=11),
-            ),
-            y=alt.Y(
-                "slot:N", title=None, sort=slots_v,
-                axis=alt.Axis(labelFontSize=10),
-            ),
-        )
-        rect = base.mark_rect(stroke="#444", strokeWidth=0.5).encode(
-            color=alt.Color(
-                "bucket:N",
-                scale=color_scale,
-                legend=alt.Legend(title="Saturación"),
-            ),
-            tooltip=[
-                alt.Tooltip("dia:N", title="Día"),
-                alt.Tooltip("slot:N", title="Franja"),
-                alt.Tooltip("demanda:Q", title="Horarios"),
-                alt.Tooltip("oferta:Q", title="Aulas"),
-                alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
-            ],
-        )
-        text = base.mark_text(fontSize=9, fontWeight="bold").encode(
-            text=alt.Text("etiqueta:N"),
-            color=alt.condition(
-                "datum.ratio > 0.5",
-                alt.value("white"),
-                alt.value("#bbb"),
-            ),
-        )
-        chart = (rect + text).properties(
-            width="container",
-            height=max(280, len(slots_v) * 22),
-        )
-        st.altair_chart(chart, use_container_width=True)
-        st.divider()
+        with st.expander(header, expanded=max_ratio > 1.0):
+            long_rows = []
+            for si, slot_label in enumerate(slots_v):
+                for di, dia in enumerate(dias):
+                    d = int(demanda_v[si][di])
+                    o = int(oferta_v[si][di])
+                    r_ = float(ratio_v[si][di])
+                    long_rows.append({
+                        "slot": slot_label,
+                        "dia": dia,
+                        "demanda": d,
+                        "oferta": o,
+                        "ratio": r_,
+                        "bucket": _bucket(r_),
+                        "etiqueta": (f"{d}/{o}" if d > 0 else ""),
+                    })
+            df_long = pd.DataFrame(long_rows)
+
+            base = alt.Chart(df_long).encode(
+                x=alt.X(
+                    "dia:N", title=None, sort=dias,
+                    axis=alt.Axis(
+                        orient="top", labelAngle=0, labelFontSize=11,
+                    ),
+                ),
+                y=alt.Y(
+                    "slot:N", title=None, sort=slots_v,
+                    axis=alt.Axis(labelFontSize=10),
+                ),
+            )
+            rect = base.mark_rect(stroke="#444", strokeWidth=0.5).encode(
+                color=alt.Color(
+                    "bucket:N",
+                    scale=color_scale,
+                    legend=alt.Legend(title="Saturación"),
+                ),
+                tooltip=[
+                    alt.Tooltip("dia:N", title="Día"),
+                    alt.Tooltip("slot:N", title="Franja"),
+                    alt.Tooltip("demanda:Q", title="Horarios"),
+                    alt.Tooltip("oferta:Q", title="Aulas"),
+                    alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+                ],
+            )
+            text = base.mark_text(fontSize=9, fontWeight="bold").encode(
+                text=alt.Text("etiqueta:N"),
+                color=alt.condition(
+                    "datum.ratio > 0.5",
+                    alt.value("white"),
+                    alt.value("#bbb"),
+                ),
+            )
+            chart = (rect + text).properties(
+                width="container",
+                height=max(280, len(slots_v) * 22),
+            )
+            st.altair_chart(chart, use_container_width=True)
 
     if sedes_sin_demanda:
         with st.expander(
@@ -767,7 +792,7 @@ def _render_inspector_franja(
     DIAS_LIST = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
     st.caption(
-        "Seleccioná uno o más días y una o más franjas (30 min) para "
+        "Seleccioná uno o más días y una o más franjas (15 min) para "
         "inspeccionar. El cronograma muestra cada horario **completo** "
         "(no recortado al rango) coloreado por **carrera** — bloques "
         "del mismo color son de la misma carrera y no se pueden mover "
@@ -814,7 +839,7 @@ def _render_inspector_franja(
     with c3:
         slots_all = heatmap_sede.get("slots", [])
         sel_slots = st.multiselect(
-            "Franja(s) (30 min)",
+            "Franja(s) (15 min)",
             options=slots_all,
             default=[],
             key=f"{key_ns}_inspect_slots",
@@ -930,10 +955,23 @@ def _render_inspector_franja(
             )
         ).all()) if materias_codes else []
         materia_carreras: dict[str, set[str]] = {}
+        # Ubicacion curricular (anio, cuatri) por (materia, carrera).
+        # Usamos la primera row encontrada — si hay varias versiones de
+        # plan para la misma carrera, el dato suele coincidir; si no,
+        # la mas reciente queda priorizada al ordenar por fecha.
+        materia_carrera_ubic: dict[tuple[str, str], tuple[int | None, str | None]] = {}
         for pe in pe_rows:
             materia_carreras.setdefault(pe.materia_codigo, set()).add(
                 pe.carrera_codigo,
             )
+            key = (pe.materia_codigo, pe.carrera_codigo)
+            # Sólo escribir si todavía no tenemos un dato no-vacío.
+            existente = materia_carrera_ubic.get(key)
+            if (
+                existente is None
+                or (existente[0] is None and existente[1] is None)
+            ):
+                materia_carrera_ubic[key] = (pe.anio_plan, pe.cuatrimestre_plan)
         carreras_codes = sorted({
             c for cs in materia_carreras.values() for c in cs
         })
@@ -1029,14 +1067,27 @@ def _render_inspector_franja(
         com = com_map.get(h_db.comision_id)
         mat = mat_map.get(h_db.codigo_materia)
         carreras_de_mat = materia_carreras.get(h_db.codigo_materia, set())
+        ubicacion_label = "—"
         if len(carreras_de_mat) == 1:
             (car_codigo,) = tuple(carreras_de_mat)
             car_label = carrera_nombre.get(car_codigo, car_codigo)
             car_pretty = car_label
+            anio, cuatri = materia_carrera_ubic.get(
+                (h_db.codigo_materia, car_codigo), (None, None),
+            )
+            # Format: "3° 1C" / "5° Anual" / "1°" si falta cuatri /
+            # "1C" si falta año / "—" si ambos None.
+            if anio is not None and cuatri is not None:
+                ubicacion_label = f"{anio}° {cuatri}"
+            elif anio is not None:
+                ubicacion_label = f"{anio}°"
+            elif cuatri is not None:
+                ubicacion_label = cuatri
         elif len(carreras_de_mat) >= 2:
             car_codigo = None
             car_label = None
             car_pretty = "— Común (varias carreras) —"
+            # Para comunes no mostramos ubicacion (varia entre carreras).
         else:
             car_codigo = None
             car_label = None
@@ -1068,6 +1119,7 @@ def _render_inspector_franja(
             "Comisión": com.nombre if com else "?",
             "Tipo": h_db.tipo_clase or "sin determinar",
             "Carrera": car_pretty,
+            "Ubicación": ubicacion_label,
         })
 
     # Rango horario acotado al min de hora_inicio y max de hora_fin
@@ -1165,21 +1217,18 @@ def _render_inspector_franja(
     )
 
     # Header.
-    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns(
-        [1, 1, 1, 3, 2, 1.5, 2, 1]
-    )
+    col_widths = [1, 1, 1, 3, 2, 1.5, 2, 1.2, 1]
+    h1, h2, h3, h4, h5, h6, h7, h8, h9 = st.columns(col_widths)
     for col, txt in zip(
-        (h1, h2, h3, h4, h5, h6, h7, h8),
+        (h1, h2, h3, h4, h5, h6, h7, h8, h9),
         ("Día", "Inicio", "Fin", "Materia", "Comisión",
-         "Tipo", "Carrera", ""),
+         "Tipo", "Carrera", "Ubicación", ""),
     ):
         col.markdown(f"**{txt}**")
     st.divider()
 
     for row in tabla_rows:
-        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
-            [1, 1, 1, 3, 2, 1.5, 2, 1]
-        )
+        c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(col_widths)
         c1.write(row["Día"])
         c2.write(row["Inicio"])
         c3.write(row["Fin"])
@@ -1187,7 +1236,8 @@ def _render_inspector_franja(
         c5.write(row["Comisión"])
         c6.write(row["Tipo"])
         c7.write(row["Carrera"])
-        if c8.button(
+        c8.write(row["Ubicación"])
+        if c9.button(
             "✏️ Editar",
             key=f"{key_ns}_edit_{row['horario_id']}",
         ):

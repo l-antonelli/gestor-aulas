@@ -489,8 +489,8 @@ class TestHeatmapDemandaOferta:
         aulas = [_a("a1"), _a("a2")]
         compat = _build_compat_R3([h], aulas)
         out = compute_heatmap_demanda_oferta([h], aulas, compat)
-        # Lunes 14:00-14:30 no debería tener demanda.
-        slot_idx = out["slots"].index("14:00-14:30")
+        # Lunes 14:00-14:15 no debería tener demanda.
+        slot_idx = out["slots"].index("14:00-14:15")
         dia_idx = out["dias"].index("Lunes")
         assert out["demanda"][slot_idx][dia_idx] == 0
         assert out["ratio"][slot_idx][dia_idx] == 0.0
@@ -500,7 +500,7 @@ class TestHeatmapDemandaOferta:
         aulas = [_a("a1"), _a("a2")]
         compat = _build_compat_R3([h], aulas)
         out = compute_heatmap_demanda_oferta([h], aulas, compat)
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         assert out["demanda"][slot_idx][dia_idx] == 1
         assert out["oferta"][slot_idx][dia_idx] == 2
@@ -513,7 +513,7 @@ class TestHeatmapDemandaOferta:
         aulas = [_a("a1"), _a("a2")]
         compat = _build_compat_R3([h1, h2, h3], aulas)
         out = compute_heatmap_demanda_oferta([h1, h2, h3], aulas, compat)
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         assert out["demanda"][slot_idx][dia_idx] == 3
         assert out["oferta"][slot_idx][dia_idx] == 2
@@ -530,7 +530,7 @@ class TestHeatmapDemandaOferta:
         materia_lab_map = {"QUIM": {"L1"}, "FIS": {"L2"}}
         compat = _build_compat_R3([h1, h2], aulas, materia_lab_map)
         out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         # Peor caso: cualquiera de las dos categorías. Ratio = 1.0.
         assert out["ratio"][slot_idx][dia_idx] == 1.0
@@ -546,7 +546,7 @@ class TestHeatmapDemandaOferta:
         out = compute_heatmap_demanda_oferta(
             [h1, h2], aulas, compat, horarios_filtrados=[h1],
         )
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         assert out["demanda"][slot_idx][dia_idx] == 1
         assert out["ratio"][slot_idx][dia_idx] == 0.5
@@ -557,7 +557,7 @@ class TestHeatmapDemandaOferta:
         aulas = [_a("a1"), _a("a2")]
         compat = _build_compat_R3([h1, h2], aulas)
         out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         det = out["detalle"][slot_idx][dia_idx]
         assert set(det["materias"]) == {"MAT_A", "MAT_B"}
@@ -675,9 +675,9 @@ class TestHeatmapPorSede:
             aula_sede_id=self._aula_sede_id(),
             sede_nombre=self._sede_nombre(),
         )
-        # En S1 lunes 08:00-08:30, demanda teórica = 3 (h1, h2, h3),
+        # En S1 lunes 08:00-08:15, demanda teórica = 3 (h1, h2, h3),
         # oferta = 2 → ratio 1.5.
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         s1 = out["data"]["S1"]
         assert s1["teorica"]["demanda"][slot_idx][dia_idx] == 3
@@ -700,7 +700,7 @@ class TestHeatmapPorSede:
             aula_sede_id=self._aula_sede_id(),
             sede_nombre=self._sede_nombre(),
         )
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         # En S2 hay demanda de lab (1 horario, 1 aula → ratio 1).
         s2_lab = out["data"]["S2"]["laboratorio"]
@@ -729,7 +729,7 @@ class TestHeatmapPorSede:
             aula_sede_id=self._aula_sede_id(),
             sede_nombre=self._sede_nombre(),
         )
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         s1_peor = out["data"]["S1"]["peor"]
         assert s1_peor["ratio"][slot_idx][dia_idx] == 1.5
@@ -744,7 +744,7 @@ class TestHeatmapPorSede:
             aula_sede_id=self._aula_sede_id(),
             sede_nombre=self._sede_nombre(),
         )
-        slot_idx = out["slots"].index("08:00-08:30")
+        slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
         # Demanda = 1 en ambas sedes.
         assert out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
