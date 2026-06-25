@@ -1202,6 +1202,131 @@ def compute_heatmap_por_sede(
     }
 
 
+def horarios_que_intersectan_rango(
+    horarios: list[HorarioSlot],
+    dias_seleccionados: list[str],
+    slots_seleccionados: list[str],
+    sedes_admisibles_por_materia: dict[str, set[str] | None],
+    sede_id_inspeccionada: str,
+    materia_lab_map: dict[str, set[str]],
+    aula_sede_id: dict[str, str],
+    *,
+    incluir_no_demandantes: bool = False,
+) -> dict:
+    """Para el inspector de franja: devuelve los horarios que
+    intersectan alguno de los días/slots seleccionados, marcando si
+    cada uno demanda la sede inspeccionada (R10 + lab compatible).
+
+    Cada horario se devuelve **completo** (de su ``hora_inicio`` a su
+    ``hora_fin``), aunque el rango seleccionado sólo cubra parte.
+
+    Args:
+        horarios: todos los horarios del plan (los del LP infactible
+            son los del input del LP).
+        dias_seleccionados: lista de días tipo
+            ``["Lunes", "Martes"]``.
+        slots_seleccionados: lista de slots de 30 min en formato
+            ``"HH:MM-HH:MM"`` (mismo formato que ``compute_heatmap_por_sede``).
+        sedes_admisibles_por_materia: por materia, set de sede_ids
+            admisibles según R10 (None = sin restricción).
+        sede_id_inspeccionada: la sede que se está inspeccionando.
+        materia_lab_map: aulas-lab compatibles por materia.
+        aula_sede_id: mapping aula_id → sede_id.
+        incluir_no_demandantes: si True, devuelve también horarios que
+            intersectan el rango pero NO demandan la sede inspeccionada
+            (contexto). Si False, solo los demandantes.
+
+    Returns:
+        ``{
+            "horarios": [
+                {
+                    "horario_id", "dia", "hora_inicio", "hora_fin",
+                    "materia_codigo", "tipo_clase",
+                    "demanda_sede": bool,
+                    "intersecta_directamente": bool,
+                }, ...
+            ],
+            "n_demandantes": int,
+            "n_contexto": int,
+        }``
+    """
+    if not dias_seleccionados or not slots_seleccionados:
+        return {"horarios": [], "n_demandantes": 0, "n_contexto": 0}
+
+    # Convertir slots "HH:MM-HH:MM" a (start_min, end_min) y unirlos en
+    # rangos contiguos para chequear intersección.
+    rangos: list[tuple[int, int]] = []
+    for slot in slots_seleccionados:
+        try:
+            inicio, fin = slot.split("-")
+            h_i, m_i = inicio.split(":")
+            h_f, m_f = fin.split(":")
+            rangos.append((
+                int(h_i) * 60 + int(m_i),
+                int(h_f) * 60 + int(m_f),
+            ))
+        except (ValueError, IndexError):
+            continue
+    if not rangos:
+        return {"horarios": [], "n_demandantes": 0, "n_contexto": 0}
+
+    dias_set = set(dias_seleccionados)
+
+    def _demanda_sede(h: HorarioSlot) -> bool:
+        """¿El horario admite la sede inspeccionada (R10 + lab)?"""
+        admis = sedes_admisibles_por_materia.get(h.materia_codigo)
+        if admis is None:
+            return True
+        if sede_id_inspeccionada in admis:
+            return True
+        # Lab compatible en la sede prevalece.
+        labs = materia_lab_map.get(h.materia_codigo, set())
+        return any(
+            aula_sede_id.get(a_id) == sede_id_inspeccionada
+            for a_id in labs
+        )
+
+    def _intersecta(h: HorarioSlot) -> bool:
+        if h.dia not in dias_set:
+            return False
+        h_s = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_e = h.hora_fin.hour * 60 + h.hora_fin.minute
+        for (a, b) in rangos:
+            if h_s < b and h_e > a:
+                return True
+        return False
+
+    out_items: list[dict] = []
+    n_dem = 0
+    n_ctx = 0
+    for h in horarios:
+        if not _intersecta(h):
+            continue
+        dem = _demanda_sede(h)
+        if not dem and not incluir_no_demandantes:
+            continue
+        out_items.append({
+            "horario_id": h.id,
+            "dia": h.dia,
+            "hora_inicio": h.hora_inicio,
+            "hora_fin": h.hora_fin,
+            "materia_codigo": h.materia_codigo,
+            "tipo_clase": h.tipo_clase,
+            "demanda_sede": dem,
+            "intersecta_directamente": True,
+        })
+        if dem:
+            n_dem += 1
+        else:
+            n_ctx += 1
+
+    return {
+        "horarios": out_items,
+        "n_demandantes": n_dem,
+        "n_contexto": n_ctx,
+    }
+
+
 def compute_impacto_r10(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],

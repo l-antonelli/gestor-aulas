@@ -28,6 +28,12 @@ PALETTE = [
 ]
 TEXT_COLOR = "#FFFFFF"
 
+# Color fijo para "materias comunes" (compartidas por ≥2 carreras) cuando
+# se colorea por carrera. No tienen una carrera única que las identifique,
+# así que se las agrupa visualmente en un mismo color neutro.
+COMUN_COLOR = ("#757575", TEXT_COLOR)
+COMUN_LABEL = "Común (varias carreras)"
+
 # ---------------------------------------------------------------------------
 # Mapeo dia castellano <-> dow FullCalendar (0=domingo, 1=lunes, ..., 6=sabado)
 # ---------------------------------------------------------------------------
@@ -273,11 +279,25 @@ def render_timetable_calendar(
     grid_data: dict[str, list[TimetableBlock]],
     config: ConfiguracionHoraria,
     key: str = "timetable_cal",
+    color_by_carrera: bool = False,
+    dias_visibles: Optional[list[str]] = None,
+    hora_min_override: Optional[time] = None,
+    hora_max_override: Optional[time] = None,
+    titulo_compacto: bool = False,
 ) -> Optional[dict]:
     """Renderiza un plan de cursada como calendario semanal FullCalendar (read-only).
 
     Similar a render_schedule_calendar pero con informacion de comision,
     indicadores de virtual y de periodo.
+
+    Args:
+        color_by_carrera: si True, los bloques se colorean por
+            ``carrera_codigo`` (en vez de por materia, default). Util
+            cuando se quiere ver visualmente "todos los horarios de una
+            misma carrera son del mismo color" — por ejemplo en el
+            inspector de franja para detectar bloques que NO se pueden
+            mover entre si por ser de la misma carrera/cohorte.
+            Bloques con carrera_codigo=None caen al color por materia.
     """
     if not grid_data:
         st.info("No hay horarios para mostrar.")
@@ -285,26 +305,66 @@ def render_timetable_calendar(
 
     mat_colors, mat_names = _assign_colors(grid_data)
 
+    # Coloreo por carrera (opcional): mapping carrera_codigo -> color.
+    # Los bloques sin carrera (materias comunes a ≥2 carreras) se colorean
+    # con COMUN_COLOR y se agrupan bajo una sola entrada en la leyenda.
+    car_colors: dict[str, tuple[str, str]] = {}
+    car_names: dict[str, str] = {}
+    hay_comunes = False
+    if color_by_carrera:
+        carreras = sorted({
+            b.carrera_codigo
+            for blocks in grid_data.values() for b in blocks
+            if b.carrera_codigo
+        })
+        for i, c in enumerate(carreras):
+            car_colors[c] = (PALETTE[i % len(PALETTE)], TEXT_COLOR)
+        for blocks in grid_data.values():
+            for b in blocks:
+                if b.carrera_codigo and b.carrera_codigo not in car_names:
+                    car_names[b.carrera_codigo] = (
+                        b.carrera_label or b.carrera_codigo
+                    )
+                if not b.carrera_codigo:
+                    hay_comunes = True
+
     events = []
     for dia, blocks in grid_data.items():
         dow = DIA_TO_DOW.get(dia)
         if dow is None:
             continue
         for b in blocks:
-            bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
+            if color_by_carrera:
+                if b.carrera_codigo and b.carrera_codigo in car_colors:
+                    bg, fg = car_colors[b.carrera_codigo]
+                else:
+                    # Materia común a varias carreras: color neutro fijo.
+                    bg, fg = COMUN_COLOR
+            else:
+                bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
 
             v_tag = " [V]" if b.virtual else ""
-            # Titulo multilinea: materia (codigo + nombre), comision y
-            # aula del patron. FullCalendar respeta los \n cuando el
-            # tema permite eventos altos.
-            aula_line = (
-                b.aula_label if b.aula_label else "Sin aula"
-            )
-            title = (
-                f"{b.materia_codigo}{v_tag} — {b.materia_nombre}\n"
-                f"{b.comision_nombre}\n"
-                f"🏛️ {aula_line}"
-            )
+            if titulo_compacto:
+                # Modo compacto: solo código + comisión, una sola línea.
+                # Pensado para vistas con muchos bloques solapados
+                # (inspector de franja) donde el ancho de la columna
+                # es chico y el detalle completo va en la tabla.
+                title = (
+                    f"{b.materia_codigo}{v_tag} · "
+                    f"{b.comision_nombre}"
+                )
+            else:
+                # Modo completo: materia (codigo + nombre), comision y
+                # aula del patron. FullCalendar respeta los \n cuando
+                # el tema permite eventos altos.
+                aula_line = (
+                    b.aula_label if b.aula_label else "Sin aula"
+                )
+                title = (
+                    f"{b.materia_codigo}{v_tag} — {b.materia_nombre}\n"
+                    f"{b.comision_nombre}\n"
+                    f"🏛️ {aula_line}"
+                )
 
             border_color = "#FF9800" if b.en_periodo is False else bg
 
@@ -319,7 +379,23 @@ def render_timetable_calendar(
             })
 
     hidden_days = _compute_hidden_days(config)
+    if dias_visibles is not None:
+        # Restringir adicionalmente a los dias_visibles solicitados.
+        # Domingo (0) siempre oculto; el resto, sólo los pedidos.
+        visibles_dow = {
+            DIA_TO_DOW[d] for d in dias_visibles if d in DIA_TO_DOW
+        }
+        hidden_days = [
+            dow for dow in range(7) if dow not in visibles_dow
+        ]
     options = _build_calendar_options(config, hidden_days)
+    # Override del rango horario visible (independiente de la
+    # ConfiguracionHoraria). Util para el inspector de franja, que
+    # quiere acotar la vista a los horarios efectivamente mostrados.
+    if hora_min_override is not None:
+        options["slotMinTime"] = _fmt_time(hora_min_override)
+    if hora_max_override is not None:
+        options["slotMaxTime"] = _fmt_time(hora_max_override)
 
     _inject_tab_fix(options["height"])
     result = calendar(
@@ -329,7 +405,17 @@ def render_timetable_calendar(
         key=key,
     )
 
-    _render_legend(mat_colors, mat_names)
+    if color_by_carrera and (car_colors or hay_comunes):
+        legend_colors = dict(car_colors)
+        legend_names = dict(car_names)
+        if hay_comunes:
+            # Usamos el label como "código" para que la leyenda quede
+            # legible (no muestra "__comun__ — ...").
+            legend_colors[COMUN_LABEL] = COMUN_COLOR
+            legend_names[COMUN_LABEL] = ""
+        _render_legend(legend_colors, legend_names, title="Carreras:")
+    else:
+        _render_legend(mat_colors, mat_names)
 
     st.markdown(
         '<div style="font-size:0.85em;margin-top:8px;">'

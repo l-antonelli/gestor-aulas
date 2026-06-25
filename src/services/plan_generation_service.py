@@ -735,6 +735,14 @@ class TimetableBlock:
     # None, el horario no tiene aula del patron asignada; el render
     # muestra "Sin aula" en el bloque.
     aula_label: Optional[str] = None
+    # Codigo y label de carrera. Cuando una materia es exclusiva de una
+    # carrera, esto identifica al "dueno" de la materia. Para materias
+    # comunes (>=2 carreras) se deja None y el color se asigna por
+    # materia (caso ambiguo). Usado por el render con
+    # color_by_carrera=True para colorear bloques por carrera y
+    # detectar visualmente cohortes de la misma carrera.
+    carrera_codigo: Optional[str] = None
+    carrera_label: Optional[str] = None
 
 
 def _build_periodo_map(

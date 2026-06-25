@@ -443,6 +443,765 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                 )
 
 
+@st.dialog("Editar horario")
+def _dialog_editar_horario(
+    plan_id: str, horario_id: str,
+    materia_label: str, comision_label: str,
+    heatmap_sede: Optional[dict] = None,
+    sede_id_inspeccionada: Optional[str] = None,
+    tipo_filtro: str = "Todas",
+) -> None:
+    """Modal para cambiar día/hora de un horario, con preview de
+    validaciones antes de persistir.
+
+    Sólo permite editar día, hora_inicio y hora_fin. NO toca comisión
+    ni tipo (eso se hace desde otras vistas).
+    """
+    from datetime import time as _time
+    from src.database.connection import get_session
+    from src.database.models import HorarioDB as _HorarioDB
+    from src.services.plan_actions_service import (
+        aplicar_cambio_horario,
+        preview_cambio_horario,
+    )
+
+    with next(get_session()) as _sess:
+        h = _sess.get(_HorarioDB, horario_id)
+        if h is None:
+            st.error("Horario no encontrado.")
+            return
+        actual_dia = h.dia
+        actual_hi = h.hora_inicio
+        actual_hf = h.hora_fin
+
+    st.markdown(
+        f"**Materia:** {materia_label}  \n"
+        f"**Comisión:** {comision_label}  \n"
+        f"**Actual:** {actual_dia} "
+        f"{actual_hi.strftime('%H:%M')}–{actual_hf.strftime('%H:%M')}"
+    )
+    st.divider()
+
+    DIAS_LIST = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        nuevo_dia = st.selectbox(
+            "Nuevo día",
+            options=DIAS_LIST,
+            index=DIAS_LIST.index(actual_dia)
+            if actual_dia in DIAS_LIST else 0,
+            key=f"edith_{horario_id}_dia",
+        )
+    with c2:
+        nuevo_hi = st.time_input(
+            "Inicio",
+            value=actual_hi,
+            step=900,  # 15 min
+            key=f"edith_{horario_id}_hi",
+        )
+    with c3:
+        nuevo_hf = st.time_input(
+            "Fin",
+            value=actual_hf,
+            step=900,
+            key=f"edith_{horario_id}_hf",
+        )
+
+    sin_cambio = (
+        nuevo_dia == actual_dia
+        and nuevo_hi == actual_hi
+        and nuevo_hf == actual_hf
+    )
+
+    # Preview de validaciones (sólo si hay cambio).
+    preview = None
+    if not sin_cambio:
+        with next(get_session()) as _sess:
+            preview = preview_cambio_horario(
+                _sess, plan_id, horario_id,
+                nuevo_dia, nuevo_hi, nuevo_hf,
+            )
+
+    # Saturación de las franjas destino — para confirmar que no
+    # estamos trasladando el problema a otra franja también saturada.
+    # Sólo aplica si tenemos heatmap_sede e info de sede.
+    if (
+        not sin_cambio
+        and heatmap_sede is not None
+        and sede_id_inspeccionada is not None
+        and preview is not None
+        and preview.error is None
+    ):
+        _slots_all = heatmap_sede.get("slots", [])
+        _dias_hm = heatmap_sede.get("dias", [])
+        _cat_destino = {
+            "Todas": "peor",
+            "Sólo teóricas": "teorica",
+            "Sólo laboratorios": "laboratorio",
+        }.get(tipo_filtro, "peor")
+        _data_destino = (
+            heatmap_sede["data"]
+            .get(sede_id_inspeccionada, {})
+            .get(_cat_destino)
+        )
+        if _data_destino is not None:
+            # Identificar las celdas que el horario nuevo cubre
+            # (excluyendo el propio horario que se va a mover).
+            _h_ini_min = nuevo_hi.hour * 60 + nuevo_hi.minute
+            _h_fin_min = nuevo_hf.hour * 60 + nuevo_hf.minute
+            _di_destino = None
+            for i, d in enumerate(_dias_hm):
+                if d == nuevo_dia:
+                    _di_destino = i
+                    break
+            _filas_dest = []
+            if _di_destino is not None:
+                for si, slot in enumerate(_slots_all):
+                    try:
+                        ini, fin = slot.split("-")
+                        s_h, s_m = ini.split(":")
+                        f_h, f_m = fin.split(":")
+                        s_min = int(s_h) * 60 + int(s_m)
+                        f_min = int(f_h) * 60 + int(f_m)
+                    except (ValueError, IndexError):
+                        continue
+                    if s_min < _h_fin_min and f_min > _h_ini_min:
+                        d_act = _data_destino["demanda"][si][_di_destino]
+                        o_act = _data_destino["oferta"][si][_di_destino]
+                        # Si el horario YA está en este día, la celda
+                        # ya cuenta su demanda; al moverlo dentro del
+                        # mismo día, no agregaría +1. Si se mueve a
+                        # OTRO día, sí.
+                        suma_propio = 0 if preview.actual.get("dia") == nuevo_dia else 1
+                        d_post = d_act + suma_propio
+                        ratio_post = (d_post / o_act) if o_act > 0 else 999.0
+                        if ratio_post > 1.0:
+                            estado = "🔴 saturado"
+                        elif ratio_post > 0.8:
+                            estado = "🟡 ajustado"
+                        else:
+                            estado = "🟢 OK"
+                        _filas_dest.append({
+                            "Franja": slot,
+                            "Demanda actual": d_act,
+                            "Demanda post-cambio": d_post,
+                            "Oferta": o_act,
+                            "Estado post-cambio": estado,
+                        })
+            if _filas_dest:
+                _hay_saturada = any(
+                    "🔴" in r["Estado post-cambio"] for r in _filas_dest
+                )
+                if _hay_saturada:
+                    st.warning(
+                        f"⚠️ Algunas franjas destino ({nuevo_dia} "
+                        f"{nuevo_hi.strftime('%H:%M')}–"
+                        f"{nuevo_hf.strftime('%H:%M')}) **ya están "
+                        "saturadas**. Mover el horario podría sólo "
+                        "trasladar el problema."
+                    )
+                else:
+                    st.info(
+                        f"ℹ️ Estado de saturación en las franjas "
+                        f"destino ({nuevo_dia} "
+                        f"{nuevo_hi.strftime('%H:%M')}–"
+                        f"{nuevo_hf.strftime('%H:%M')}):"
+                    )
+                st.dataframe(
+                    _filas_dest,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+    if preview is not None:
+        if preview.error:
+            st.error(f"❌ {preview.error}")
+        else:
+            # Advertencia de duplicado mismo día (independiente de los
+            # conflictos formales): si ya hay otro horario de la misma
+            # comisión ese día, probablemente sea un error operativo.
+            if preview.duplicados_mismo_dia:
+                st.warning(
+                    f"⚠️ La comisión ya tiene "
+                    f"**{len(preview.duplicados_mismo_dia)} clase(s)** "
+                    f"el {preview.propuesto['dia']}. "
+                    "Una comisión normalmente tiene una sola clase por "
+                    "día. ¿Seguro querés moverla acá?"
+                )
+                with st.expander(
+                    "Ver horarios existentes de la comisión "
+                    f"el {preview.propuesto['dia']}",
+                    expanded=False,
+                ):
+                    st.dataframe(
+                        [
+                            {
+                                "Día": d["dia"],
+                                "Inicio": d["hora_inicio"],
+                                "Fin": d["hora_fin"],
+                            }
+                            for d in preview.duplicados_mismo_dia
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+            if preview.conflictos_agregados:
+                st.warning(
+                    f"⚠️ Este cambio agregaría "
+                    f"**{len(preview.conflictos_agregados)} conflicto(s) "
+                    "nuevo(s)** de paralelismo en cohortes."
+                )
+                with st.expander(
+                    f"Ver detalle ({len(preview.conflictos_agregados)})",
+                    expanded=True,
+                ):
+                    rows = []
+                    for c in preview.conflictos_agregados:
+                        rows.append({
+                            "Carrera": c.get("carrera_codigo"),
+                            "Año": c.get("anio_plan"),
+                            "Cuatri": c.get("cuatrimestre_plan"),
+                            "Día": c.get("dia"),
+                            "Materia A": c.get("materia_a"),
+                            "Horario A": (
+                                f"{c.get('hora_inicio_a')}–"
+                                f"{c.get('hora_fin_a')}"
+                            ),
+                            "Materia B": c.get("materia_b"),
+                            "Horario B": (
+                                f"{c.get('hora_inicio_b')}–"
+                                f"{c.get('hora_fin_b')}"
+                            ),
+                        })
+                    st.dataframe(
+                        rows, hide_index=True, use_container_width=True,
+                    )
+
+            if preview.es_seguro:
+                msg_partes = [
+                    "✅ El cambio NO agrega conflictos nuevos ni "
+                    "duplica el día de la comisión."
+                ]
+                if preview.conflictos_resueltos:
+                    msg_partes.append(
+                        f"Además **resuelve "
+                        f"{len(preview.conflictos_resueltos)} "
+                        "conflicto(s) existente(s)**."
+                    )
+                st.success(" ".join(msg_partes))
+            elif preview.conflictos_resueltos:
+                st.info(
+                    f"ℹ️ Pero también **resuelve "
+                    f"{len(preview.conflictos_resueltos)} "
+                    "conflicto(s) existente(s)**."
+                )
+
+    st.divider()
+    col_ok, col_cancel = st.columns(2)
+    with col_ok:
+        # Texto del botón cambia según si hay conflictos.
+        if sin_cambio:
+            st.button(
+                "Sin cambios",
+                disabled=True,
+                use_container_width=True,
+                key=f"edith_{horario_id}_save_disabled",
+            )
+        elif preview is None or preview.error:
+            st.button(
+                "Confirmar y aplicar",
+                disabled=True,
+                use_container_width=True,
+                key=f"edith_{horario_id}_save_blocked",
+            )
+        else:
+            label = (
+                "✅ Confirmar y aplicar"
+                if preview.es_seguro
+                else "⚠️ Aplicar igual (con conflictos)"
+            )
+            btn_type = "primary" if preview.es_seguro else "secondary"
+            if st.button(
+                label,
+                type=btn_type,
+                use_container_width=True,
+                key=f"edith_{horario_id}_save",
+            ):
+                with next(get_session()) as _sess:
+                    ok = aplicar_cambio_horario(
+                        _sess, horario_id,
+                        nuevo_dia, nuevo_hi, nuevo_hf,
+                    )
+                if ok:
+                    st.success("Horario actualizado.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo actualizar (horario inexistente).")
+    with col_cancel:
+        if st.button(
+            "Cancelar",
+            use_container_width=True,
+            key=f"edith_{horario_id}_cancel",
+        ):
+            st.rerun()
+
+
+def _render_inspector_franja(
+    heatmap_sede: dict, plan_id: str, key_ns: str,
+) -> None:
+    """Inspector de franja: dado uno o más días + slots, muestra los
+    horarios que intersectan en un calendario semanal, coloreados por
+    carrera (para detectar visualmente cohortes que no se pueden
+    mover entre sí).
+
+    Permite ver si una saturación se puede resolver moviendo algún
+    horario a otra franja/día con menos demanda.
+    """
+    sedes_meta = heatmap_sede.get("sedes", [])
+    sedes_con_demanda = [s for s in sedes_meta if s.get("tiene_demanda")]
+    if not sedes_con_demanda:
+        st.caption("No hay sedes con demanda; nada para inspeccionar.")
+        return
+
+    DIAS_LIST = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+    st.caption(
+        "Seleccioná uno o más días y una o más franjas (30 min) para "
+        "inspeccionar. El cronograma muestra cada horario **completo** "
+        "(no recortado al rango) coloreado por **carrera** — bloques "
+        "del mismo color son de la misma carrera y no se pueden mover "
+        "entre sí. Útil para evaluar si un horario se puede mover a "
+        "una franja con disponibilidad."
+    )
+
+    c1, c_tipo, c2, c3 = st.columns([2, 1.5, 2, 3])
+    with c1:
+        sel_sede_id = st.selectbox(
+            "Sede",
+            options=[s["sede_id"] for s in sedes_con_demanda],
+            format_func=lambda sid: next(
+                s["sede_nombre"] for s in sedes_con_demanda
+                if s["sede_id"] == sid
+            ),
+            key=f"{key_ns}_inspect_sede",
+        )
+    with c_tipo:
+        sel_tipo = st.selectbox(
+            "Tipo de aula",
+            options=["Todas", "Sólo teóricas", "Sólo laboratorios"],
+            index=0,
+            key=f"{key_ns}_inspect_tipo",
+            help=(
+                "Filtra los horarios mostrados según el tipo de aula "
+                "que requieren. Útil cuando el problema está en un "
+                "solo tipo (p.ej. faltan teóricas)."
+            ),
+        )
+    with c2:
+        sel_dia = st.selectbox(
+            "Día",
+            options=["— elegir —"] + DIAS_LIST,
+            index=0,
+            key=f"{key_ns}_inspect_dia",
+            help=(
+                "Sólo un día por vez para que el calendario tenga "
+                "espacio suficiente. Para comparar días, hay que "
+                "cambiar el día y mirar otra vez."
+            ),
+        )
+        sel_dias = [sel_dia] if sel_dia != "— elegir —" else []
+    with c3:
+        slots_all = heatmap_sede.get("slots", [])
+        sel_slots = st.multiselect(
+            "Franja(s) (30 min)",
+            options=slots_all,
+            default=[],
+            key=f"{key_ns}_inspect_slots",
+            help=(
+                "Podés seleccionar varias franjas adyacentes para "
+                "una saturación extendida, o una sola para puntual."
+            ),
+        )
+    if not sel_dias or not sel_slots:
+        st.info(
+            "Seleccioná al menos un día y una franja para inspeccionar."
+        )
+        return
+
+    # ─── Lógica real: cargar datos del plan ───
+    from sqlmodel import select as _select
+    from src.database.connection import get_session
+    from src.database.models import (
+        AulaDB as _AulaDB,
+        CarreraDB as _CarreraDB,
+        ComisionDB as _ComisionDB,
+        DictadoCicloDB as _DictadoCicloDB,
+        DictadoDB as _DictadoDB,
+        HorarioDB as _HorarioDB,
+        MateriaDB as _MateriaDB,
+        MateriaLaboratorioDB as _MateriaLabDB,
+        PlanEstudioDB as _PlanEstudioDB,
+        PlanificacionCursadaDB as _PlanificacionCursadaDB,
+    )
+    from src.services.asignacion_aulas_helpers import (
+        HorarioSlot as _HorarioSlot,
+        horarios_que_intersectan_rango,
+    )
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_materia as _sedes_admis,
+    )
+    from src.services.plan_generation_service import TimetableBlock
+    from src.ui.calendar_render import render_timetable_calendar
+    from src.database.crud import get_or_create_config
+
+    with next(get_session()) as _s:
+        # Comisiones del plan → horarios.
+        com_ids = list(_s.exec(
+            _select(_ComisionDB.id).where(
+                _ComisionDB.plan_cursada_id == plan_id,
+            )
+        ).all())
+        if not com_ids:
+            st.warning("El plan no tiene comisiones cargadas.")
+            return
+        coms = list(_s.exec(
+            _select(_ComisionDB).where(
+                _ComisionDB.id.in_(com_ids)  # type: ignore[attr-defined]
+            )
+        ).all())
+        com_map = {c.id: c for c in coms}
+        horarios_db_all = list(_s.exec(
+            _select(_HorarioDB).where(
+                _HorarioDB.comision_id.in_(com_ids)  # type: ignore[attr-defined]
+            )
+        ).all())
+        materias_codes = sorted({h.codigo_materia for h in horarios_db_all})
+        materias_db = list(_s.exec(
+            _select(_MateriaDB).where(
+                _MateriaDB.codigo.in_(materias_codes)  # type: ignore[attr-defined]
+            )
+        ).all()) if materias_codes else []
+        mat_map = {m.codigo: m for m in materias_db}
+
+        # Filtrar horarios virtuales — mismo criterio que build_inputs del LP:
+        # (a) MateriaDB.virtual=True, (b) DictadoDB.virtual=True para este ciclo.
+        # Sin este filtro, el inspector cuenta más horarios que el heatmap.
+        materia_virtual = {m.codigo: m.virtual for m in materias_db}
+        plan_obj = _s.get(_PlanificacionCursadaDB, plan_id)
+        materia_dictado_virtual: dict[str, bool] = {}
+        if plan_obj is not None and plan_obj.ciclo_id is not None:
+            dict_rows = _s.exec(
+                _select(_DictadoDB.materia_codigo, _DictadoDB.virtual)
+                .join(
+                    _DictadoCicloDB,
+                    _DictadoDB.id == _DictadoCicloDB.dictado_id,  # type: ignore[arg-type]
+                )
+                .where(_DictadoCicloDB.ciclo_id == plan_obj.ciclo_id)
+            ).all()
+            for mc, es_virt in dict_rows:
+                materia_dictado_virtual[mc] = bool(es_virt)
+        horarios_db = [
+            h for h in horarios_db_all
+            if not materia_virtual.get(h.codigo_materia, False)
+            and not materia_dictado_virtual.get(h.codigo_materia, False)
+        ]
+
+        # Sedes admisibles por materia.
+        sedes_admis_por_mat: dict[str, set[str] | None] = {
+            mc: _sedes_admis(_s, mc) for mc in materias_codes
+        }
+
+        # Lab compatibles por materia.
+        lab_pairs = list(_s.exec(_select(_MateriaLabDB)).all())
+        materia_lab_map: dict[str, set[str]] = {}
+        for ml in lab_pairs:
+            materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
+
+        # Aula → sede.
+        aulas_db = list(_s.exec(_select(_AulaDB)).all())
+        aula_sede_id_map = {a.id: a.sede_id for a in aulas_db}
+
+        # Carrera por materia: una materia es exclusiva de una carrera
+        # si aparece en una sola; común si en >=2.
+        pe_rows = list(_s.exec(
+            _select(_PlanEstudioDB).where(
+                _PlanEstudioDB.materia_codigo.in_(materias_codes)  # type: ignore[attr-defined]
+            )
+        ).all()) if materias_codes else []
+        materia_carreras: dict[str, set[str]] = {}
+        for pe in pe_rows:
+            materia_carreras.setdefault(pe.materia_codigo, set()).add(
+                pe.carrera_codigo,
+            )
+        carreras_codes = sorted({
+            c for cs in materia_carreras.values() for c in cs
+        })
+        carreras_db = list(_s.exec(
+            _select(_CarreraDB).where(
+                _CarreraDB.codigo.in_(carreras_codes)  # type: ignore[attr-defined]
+            )
+        ).all()) if carreras_codes else []
+        carrera_nombre = {c.codigo: c.nombre for c in carreras_db}
+
+        config = get_or_create_config(_s)
+
+    # Convertir a HorarioSlot para reusar el helper.
+    horario_slots = [
+        _HorarioSlot(
+            id=h.id, dia=h.dia,
+            hora_inicio=h.hora_inicio, hora_fin=h.hora_fin,
+            materia_codigo=h.codigo_materia, tipo_clase=h.tipo_clase,
+        )
+        for h in horarios_db
+    ]
+    horario_slot_map = {h.id: h for h in horario_slots}
+
+    # Sólo demandantes de la sede inspeccionada — alinea exactamente con
+    # la demanda que cuenta el heatmap por sede. Los horarios cuya R10
+    # no admite esta sede no aparecen (no aportan al diagnóstico).
+    res = horarios_que_intersectan_rango(
+        horarios=horario_slots,
+        dias_seleccionados=sel_dias,
+        slots_seleccionados=sel_slots,
+        sedes_admisibles_por_materia=sedes_admis_por_mat,
+        sede_id_inspeccionada=sel_sede_id,
+        materia_lab_map=materia_lab_map,
+        aula_sede_id=aula_sede_id_map,
+        incluir_no_demandantes=False,
+    )
+    items = res["horarios"]
+
+    # Filtro por tipo de aula requerido.
+    # - "Sólo teóricas": horarios con tipo_clase=teorica o None (los
+    #   None caen en teórica si la materia tiene hlab=0, caso típico).
+    # - "Sólo laboratorios": horarios con tipo_clase=laboratorio.
+    # - "Todas": sin filtro.
+    if sel_tipo == "Sólo teóricas":
+        items = [
+            it for it in items
+            if it["tipo_clase"] != "laboratorio"
+        ]
+    elif sel_tipo == "Sólo laboratorios":
+        items = [
+            it for it in items
+            if it["tipo_clase"] == "laboratorio"
+        ]
+
+    sede_nom = next(
+        s["sede_nombre"] for s in sedes_con_demanda
+        if s["sede_id"] == sel_sede_id
+    )
+    st.markdown(
+        f"**Inspeccionando:** {sede_nom} · "
+        f"{', '.join(sel_dias)} · "
+        f"{len(sel_slots)} franja(s) "
+        f"({sel_slots[0]}"
+        + (f" → {sel_slots[-1]}" if len(sel_slots) > 1 else "")
+        + ")"
+        + (f" · filtro: {sel_tipo}" if sel_tipo != "Todas" else "")
+    )
+    st.caption(
+        f"**{len(items)} horario(s)** demandan {sede_nom} en este "
+        "rango. Mismo criterio que el mapa de saturación: se "
+        "excluyen virtuales y horarios cuya carrera no usa esta "
+        "sede (R10). Cada bloque se muestra **completo** (de su "
+        "hora_inicio a hora_fin) aunque cubra parcialmente el "
+        "rango. Color por **carrera** — bloques del mismo color "
+        "son de la misma carrera y por lo tanto NO se pueden "
+        "mover entre sí (rompería la cohorte)."
+    )
+
+    if not items:
+        st.success(
+            "✅ Ningún horario intersecta el rango seleccionado."
+        )
+        return
+
+    # Construir grid_data para el calendario y filas para tabla.
+    grid_data: dict[str, list[TimetableBlock]] = {}
+    tabla_rows: list[dict] = []
+    for it in items:
+        h_id = it["horario_id"]
+        h_db = next((h for h in horarios_db if h.id == h_id), None)
+        if h_db is None:
+            continue
+        com = com_map.get(h_db.comision_id)
+        mat = mat_map.get(h_db.codigo_materia)
+        carreras_de_mat = materia_carreras.get(h_db.codigo_materia, set())
+        if len(carreras_de_mat) == 1:
+            (car_codigo,) = tuple(carreras_de_mat)
+            car_label = carrera_nombre.get(car_codigo, car_codigo)
+            car_pretty = car_label
+        elif len(carreras_de_mat) >= 2:
+            car_codigo = None
+            car_label = None
+            car_pretty = "— Común (varias carreras) —"
+        else:
+            car_codigo = None
+            car_label = None
+            car_pretty = "—"
+
+        block = TimetableBlock(
+            materia_codigo=h_db.codigo_materia,
+            materia_nombre=mat.nombre if mat else h_db.codigo_materia,
+            comision_nombre=com.nombre if com else "?",
+            hora_inicio=h_db.hora_inicio,
+            hora_fin=h_db.hora_fin,
+            virtual=False,
+            en_periodo=True,
+            aula_label=None,
+            carrera_codigo=car_codigo,
+            carrera_label=car_label,
+        )
+        grid_data.setdefault(h_db.dia, []).append(block)
+
+        tabla_rows.append({
+            "horario_id": h_db.id,
+            "Día": h_db.dia,
+            "Inicio": h_db.hora_inicio.strftime("%H:%M"),
+            "Fin": h_db.hora_fin.strftime("%H:%M"),
+            "Materia": (
+                f"{h_db.codigo_materia} — {mat.nombre}"
+                if mat else h_db.codigo_materia
+            ),
+            "Comisión": com.nombre if com else "?",
+            "Tipo": h_db.tipo_clase or "sin determinar",
+            "Carrera": car_pretty,
+        })
+
+    # Rango horario acotado al min de hora_inicio y max de hora_fin
+    # de los bloques mostrados (con un padding de 30 min de cada lado
+    # para que no quede el bloque pegado al borde). Si los items
+    # quedaron vacíos por el filtro, omitimos el override.
+    from datetime import time as _time_for_range
+    _h_min = None
+    _h_max = None
+    if items:
+        all_blocks = [b for blocks in grid_data.values() for b in blocks]
+        if all_blocks:
+            _min_mins = min(
+                b.hora_inicio.hour * 60 + b.hora_inicio.minute
+                for b in all_blocks
+            )
+            _max_mins = max(
+                b.hora_fin.hour * 60 + b.hora_fin.minute
+                for b in all_blocks
+            )
+            # Padding de 30 min, sin salirse de [00:00, 23:59].
+            _min_mins = max(0, _min_mins - 30)
+            _max_mins = min(23 * 60 + 59, _max_mins + 30)
+            _h_min = _time_for_range(_min_mins // 60, _min_mins % 60)
+            _h_max = _time_for_range(_max_mins // 60, _max_mins % 60)
+
+    render_timetable_calendar(
+        grid_data=grid_data,
+        config=config,
+        key=f"{key_ns}_inspect_cal",
+        color_by_carrera=True,
+        dias_visibles=sel_dias,
+        hora_min_override=_h_min,
+        hora_max_override=_h_max,
+        titulo_compacto=True,
+    )
+
+    # Contador de exceso: cuántos horarios sobran en las franjas
+    # seleccionadas (max sobre las celdas del rango). Esto da una
+    # cota inferior de cuántos horarios habría que mover para
+    # descomprimir la franja.
+    cat_para_exceso = {
+        "Todas": "peor",
+        "Sólo teóricas": "teorica",
+        "Sólo laboratorios": "laboratorio",
+    }.get(sel_tipo, "peor")
+    data_sede_cat = heatmap_sede["data"][sel_sede_id].get(cat_para_exceso)
+    exceso_max = 0
+    exceso_total_celdas = 0
+    if data_sede_cat:
+        dias_idx_map = {d: i for i, d in enumerate(heatmap_sede["dias"])}
+        slot_idx_map = {s: i for i, s in enumerate(slots_all)}
+        for slot in sel_slots:
+            si = slot_idx_map.get(slot)
+            if si is None:
+                continue
+            for dia in sel_dias:
+                di = dias_idx_map.get(dia)
+                if di is None:
+                    continue
+                d = data_sede_cat["demanda"][si][di]
+                o = data_sede_cat["oferta"][si][di]
+                exc = max(0, d - o)
+                exceso_max = max(exceso_max, exc)
+                exceso_total_celdas += exc
+    if exceso_max > 0:
+        st.error(
+            f"⚠️ Faltan **{exceso_max} aula(s)** en la franja más "
+            f"saturada del rango. Habría que mover **al menos "
+            f"{exceso_max} horario(s)** fuera de esa franja para "
+            "descomprimir."
+        )
+    else:
+        st.success(
+            "✅ No hay exceso de horarios sobre aulas disponibles "
+            "en el rango seleccionado (para este tipo)."
+        )
+
+    # Tabla de detalle abajo del calendario.
+    st.markdown("**Detalle de horarios**")
+    st.caption(
+        "Botón **Editar** en cada fila → modal con preview de "
+        "validaciones antes de persistir."
+    )
+    DIAS_ORDER = {
+        "Lunes": 0, "Martes": 1, "Miércoles": 2,
+        "Jueves": 3, "Viernes": 4, "Sábado": 5,
+    }
+    tabla_rows.sort(
+        key=lambda r: (
+            DIAS_ORDER.get(r["Día"], 99),
+            r["Inicio"],
+            r["Materia"],
+        )
+    )
+
+    # Header.
+    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns(
+        [1, 1, 1, 3, 2, 1.5, 2, 1]
+    )
+    for col, txt in zip(
+        (h1, h2, h3, h4, h5, h6, h7, h8),
+        ("Día", "Inicio", "Fin", "Materia", "Comisión",
+         "Tipo", "Carrera", ""),
+    ):
+        col.markdown(f"**{txt}**")
+    st.divider()
+
+    for row in tabla_rows:
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
+            [1, 1, 1, 3, 2, 1.5, 2, 1]
+        )
+        c1.write(row["Día"])
+        c2.write(row["Inicio"])
+        c3.write(row["Fin"])
+        c4.write(row["Materia"])
+        c5.write(row["Comisión"])
+        c6.write(row["Tipo"])
+        c7.write(row["Carrera"])
+        if c8.button(
+            "✏️ Editar",
+            key=f"{key_ns}_edit_{row['horario_id']}",
+        ):
+            _dialog_editar_horario(
+                plan_id=plan_id,
+                horario_id=row["horario_id"],
+                materia_label=row["Materia"],
+                comision_label=row["Comisión"],
+                heatmap_sede=heatmap_sede,
+                sede_id_inspeccionada=sel_sede_id,
+                tipo_filtro=sel_tipo,
+            )
+
+
 def _render_inventario(inv: dict) -> None:
     """Una tira con cantidad de aulas por tipo."""
     if not inv:
@@ -1008,6 +1767,20 @@ def render_resultado(
             expanded=(run.status != "optimal" or _hay_saturacion),
         ):
             _render_heatmap_por_sede(heatmap_sede, key_ns=key_ns)
+
+        # Inspector de franja: dado uno o más días + slots, muestra
+        # los horarios que intersectan en un calendario semanal
+        # coloreado por carrera. Útil para evaluar movimientos
+        # manuales del cronograma cuando una franja está saturada.
+        with st.expander(
+            "🔍 Inspeccionar franja",
+            expanded=False,
+        ):
+            _render_inspector_franja(
+                heatmap_sede,
+                plan_id=run.plan_cursada_id,
+                key_ns=key_ns,
+            )
 
     # Diagnóstico SIEMPRE arriba si hay causa estructural detectada,
     # incluso cuando el run resolvió OK (es informativo).

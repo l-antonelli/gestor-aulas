@@ -195,3 +195,106 @@ class TestAplicarAutoCompletar:
         aplicar_auto_completar_tipos(session, plan_id)
         h = session.get(HorarioDB, "MIX-h0")
         assert h is not None and h.tipo_clase is None
+
+
+# =============================================================================
+# Cambio de horario con preview de validaciones
+# =============================================================================
+
+
+from src.services.plan_actions_service import (
+    aplicar_cambio_horario,
+    preview_cambio_horario,
+)
+
+
+class TestCambioHorario:
+
+    def test_preview_horario_inexistente(self, session):
+        plan_id = _seed(session)
+        prev = preview_cambio_horario(
+            session, plan_id, "noexiste", "Lunes",
+            time(8, 0), time(10, 0),
+        )
+        assert prev.error is not None
+        assert prev.es_seguro is False
+
+    def test_preview_hora_fin_invalida(self, session):
+        plan_id = _seed(session)
+        h = _add_materia_con_horarios(
+            session, plan_id, "M1",
+            hteo=4, hlab=0, horarios_tipos=[None],
+        )[0]
+        prev = preview_cambio_horario(
+            session, plan_id, h.id, "Martes",
+            time(10, 0), time(8, 0),  # fin < inicio
+        )
+        assert prev.error is not None
+        assert "fin" in prev.error.lower()
+
+    def test_preview_sin_conflictos_es_seguro(self, session):
+        plan_id = _seed(session)
+        h = _add_materia_con_horarios(
+            session, plan_id, "M1",
+            hteo=4, hlab=0, horarios_tipos=[None],
+        )[0]
+        # Mover a otro día/franja, sin otras comisiones del plan.
+        prev = preview_cambio_horario(
+            session, plan_id, h.id, "Miércoles",
+            time(14, 0), time(16, 0),
+        )
+        assert prev.error is None
+        assert prev.es_seguro is True
+        assert prev.conflictos_agregados == []
+        # Y NO se persistió el cambio.
+        h_after = session.get(HorarioDB, h.id)
+        assert h_after is not None
+        assert h_after.dia != "Miércoles"
+
+    def test_aplicar_persiste(self, session):
+        plan_id = _seed(session)
+        h = _add_materia_con_horarios(
+            session, plan_id, "M1",
+            hteo=4, hlab=0, horarios_tipos=[None],
+        )[0]
+        ok = aplicar_cambio_horario(
+            session, h.id, "Viernes", time(15, 0), time(17, 0),
+        )
+        assert ok is True
+        h_after = session.get(HorarioDB, h.id)
+        assert h_after is not None
+        assert h_after.dia == "Viernes"
+        assert h_after.hora_inicio == time(15, 0)
+        assert h_after.hora_fin == time(17, 0)
+
+    def test_aplicar_horario_inexistente(self, session):
+        plan_id = _seed(session)
+        ok = aplicar_cambio_horario(
+            session, "noexiste", "Lunes",
+            time(8, 0), time(10, 0),
+        )
+        assert ok is False
+
+    def test_preview_duplicado_mismo_dia(self, session):
+        plan_id = _seed(session)
+        # Materia con dos horarios el lunes (h0 8-10, h1 10-12) — caso
+        # típico de comisión con dos clases mismo día (no es lo normal).
+        hs = _add_materia_con_horarios(
+            session, plan_id, "M1",
+            hteo=4, hlab=0, horarios_tipos=[None, None],
+        )
+        h0, h1 = hs[0], hs[1]
+        # Intento mover h0 al jueves donde está libre → no debería detectar duplicado.
+        prev = preview_cambio_horario(
+            session, plan_id, h0.id, "Jueves",
+            time(14, 0), time(16, 0),
+        )
+        assert prev.duplicados_mismo_dia == []
+        # Ahora intento mover h0 al lunes (donde sigue h1) → debería detectar.
+        prev2 = preview_cambio_horario(
+            session, plan_id, h0.id, "Lunes",
+            time(14, 0), time(16, 0),
+        )
+        assert len(prev2.duplicados_mismo_dia) == 1
+        assert prev2.duplicados_mismo_dia[0]["horario_id"] == h1.id
+        assert prev2.es_seguro is False
