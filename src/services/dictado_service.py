@@ -134,23 +134,18 @@ def _should_skip_for_recursado(
 ) -> bool:
     """Check if a cuatrimestral materia should be skipped due to dicta_recursado=False.
 
-    Logic (override jerarquico):
-    1. `MateriaDB.dicta_recursado` — si esta seteado (True/False), gana
-       sobre el flag de la carrera. None = caer al default de carrera.
-    2. Si la materia aparece en multiples carreras → nunca skip (compartida).
-    3. Si es exclusiva de una carrera y esa carrera tiene
-       `dicta_recursado=False`, evalua el cuatrimestre_plan:
-       - matches al cuatri del ciclo o "Anual" → no skip.
-       - opuesto → skip.
+    Aplica la regla "nivel más específico manda" para
+    ``dicta_recursado`` (materia > carrera, ver
+    ``resolve_dicta_recursado``), con dos matices propios del contexto
+    de creación de dictados:
+
+    1. Si la materia es compartida por múltiples carreras, nunca se
+       skippea (no hay una "carrera dueña" para heredar).
+    2. El flag ``dicta_recursado=False`` (sea heredado o explícito)
+       solo skippea si el cuatrimestre del plan de la materia es
+       *opuesto* al del ciclo. Si coincide o es anual, se dicta.
     """
-    # Override por materia (gana sobre todo)
-    if materia.dicta_recursado is True:
-        return False
-    # Si la materia explicitamente NO recursa, evaluamos cuatrimestre vs ciclo
-    if materia.dicta_recursado is False:
-        return _is_opposite_cuatrimestre(
-            session, materia, ciclo, plan_version_ids,
-        )
+    from src.services.resolucion_jerarquica import resolve_dicta_recursado
 
     # Get the plan_estudio entries for this materia within the ciclo's plan versions
     entries = session.exec(
@@ -162,26 +157,25 @@ def _should_skip_for_recursado(
     # Collect unique carreras
     carrera_codigos = list({e.carrera_codigo for e in entries})
 
+    # Compartida por múltiples carreras → nunca skip.
     if len(carrera_codigos) != 1:
-        # Shared across multiple carreras → always create dictado
         return False
 
-    # Exclusive to one carrera — check dicta_recursado
+    # Exclusiva de una carrera — resolver `dicta_recursado` con jerarquía.
     carrera = session.get(CarreraDB, carrera_codigos[0])
-    if carrera is None or carrera.dicta_recursado:
-        # carrera allows recursado or not found → don't skip
+    carrera_flag = carrera.dicta_recursado if carrera is not None else True
+    dicta = resolve_dicta_recursado(materia.dicta_recursado, carrera_flag)
+    if dicta:
         return False
 
-    # carrera.dicta_recursado == False — check cuatrimestre_plan
+    # dicta_recursado=False resuelto → evaluar cuatrimestre del plan
+    # contra el del ciclo. Si es opuesto, skippear.
     cuatrimestre_ciclo = f"{ciclo.numero}C"
-
     for entry in entries:
         cuatri = entry.cuatrimestre_plan
         if cuatri is None or cuatri.lower() == "anual" or cuatri == cuatrimestre_ciclo:
-            # Matches current ciclo or is annual → don't skip
             return False
 
-    # All entries are for the opposite cuatrimestre → skip
     return True
 
 
