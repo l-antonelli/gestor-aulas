@@ -97,6 +97,9 @@ def _run_migrations(eng):
         #   para sus materias exclusivas.
         "ALTER TABLE sedes ADD COLUMN es_default_comunes BOOLEAN NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_sedes_es_default_comunes ON sedes (es_default_comunes)",
+        # Override de virtualidad a nivel horario. None=heredar dictado,
+        # True/False=forzar. Ver `resolve_virtual`.
+        "ALTER TABLE horarios ADD COLUMN virtual BOOLEAN DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:

@@ -303,6 +303,14 @@ class HorarioDB(SQLModel, table=True):
     aula_id: Optional[str] = Field(
         default=None, foreign_key="aulas.id", index=True,
     )
+    # Override de virtualidad a nivel horario. Sigue la regla "nivel
+    # mas especifico manda" (ver `resolve_virtual`):
+    #   None  = heredar del dictado (default).
+    #   True  = forzar virtual, aunque el dictado sea presencial.
+    #   False = forzar presencial, aunque el dictado sea virtual.
+    # Permite mezclar modalidades dentro de un mismo dictado (ej. una
+    # comision con 2 horarios: 1 virtual + 1 presencial).
+    virtual: Optional[bool] = Field(default=None)
 
     # Relationships
     comision: Optional[ComisionDB] = Relationship(back_populates="horarios")
