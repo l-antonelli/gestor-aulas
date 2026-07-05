@@ -118,6 +118,14 @@ def _run_migrations(eng):
         )
         conn.commit()
 
+    # Data migration: DictadoDB.virtual paso a Optional[bool] con
+    # semantica "None = heredar de materia". Los dictados cuyo `virtual`
+    # coincide con el de la materia se pasan a NULL (heredan). Los que
+    # difieren se conservan (override real del usuario). Solo aplica una
+    # vez: en corridas siguientes las filas migradas ya son NULL y no
+    # entran al UPDATE.
+    _migrate_dictado_virtual_a_nullable(eng)
+
     # NOTA: aca antes habia una "data migration" que ejecutaba en CADA
     # arranque (y por lo tanto en cada rerun de Streamlit):
     #   UPDATE schedule_entries SET tipo_clase = NULL WHERE tipo_clase = 'teorica'
@@ -436,6 +444,83 @@ def _migrate_aulas_drop_legacy_sede(eng):
             "CREATE INDEX IF NOT EXISTS ix_aulas_codigo_aula ON aulas (codigo_aula)"
         )
         conn.commit()
+
+
+def _migrate_dictado_virtual_a_nullable(eng):
+    """Migra DictadoDB.virtual de NOT NULL a nullable + pasa a NULL las
+    filas cuyo valor coincide con MateriaDB.virtual (heredan del padre).
+
+    Dos pasos:
+    1. Recrear la tabla si `virtual` sigue siendo NOT NULL (SQLite no
+       soporta ALTER COLUMN).
+    2. UPDATE de los coincidentes a NULL.
+
+    Idempotente: si `virtual` ya es nullable y no hay filas para pasar
+    a NULL, es no-op.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(dictados)").fetchall()
+        cols_info = {r[1]: r for r in rows}
+        if "virtual" not in cols_info:
+            return
+        virtual_col = cols_info["virtual"]
+        # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+        es_not_null = virtual_col[3] == 1
+
+        # Paso 1: recrear si sigue NOT NULL.
+        if es_not_null:
+            logger.info(
+                "Migrating dictados table: making `virtual` column nullable"
+            )
+            conn.exec_driver_sql("""
+                CREATE TABLE dictados_tmp (
+                    id VARCHAR NOT NULL PRIMARY KEY,
+                    materia_codigo VARCHAR NOT NULL,
+                    dictado_codigo VARCHAR NOT NULL DEFAULT '',
+                    inicio_dictado DATE,
+                    fin_dictado DATE,
+                    activo BOOLEAN NOT NULL DEFAULT 1,
+                    activo_override_manual BOOLEAN,
+                    virtual BOOLEAN,
+                    FOREIGN KEY (materia_codigo) REFERENCES materias (codigo)
+                )
+            """)
+            conn.exec_driver_sql("""
+                INSERT INTO dictados_tmp
+                    (id, materia_codigo, dictado_codigo, inicio_dictado,
+                     fin_dictado, activo, activo_override_manual, virtual)
+                SELECT id, materia_codigo, dictado_codigo, inicio_dictado,
+                       fin_dictado, activo, activo_override_manual, virtual
+                FROM dictados
+            """)
+            conn.exec_driver_sql("DROP TABLE dictados")
+            conn.exec_driver_sql("ALTER TABLE dictados_tmp RENAME TO dictados")
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_dictados_materia_codigo "
+                "ON dictados (materia_codigo)"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_dictados_dictado_codigo "
+                "ON dictados (dictado_codigo)"
+            )
+            conn.commit()
+
+        # Paso 2: pasar a NULL los que coinciden con la materia (heredan).
+        result = conn.exec_driver_sql(
+            "UPDATE dictados SET virtual = NULL "
+            "WHERE virtual IS NOT NULL AND EXISTS ("
+            "  SELECT 1 FROM materias m "
+            "  WHERE m.codigo = dictados.materia_codigo "
+            "    AND CAST(m.virtual AS INTEGER) = CAST(dictados.virtual AS INTEGER)"
+            ")"
+        )
+        conn.commit()
+        if result.rowcount:
+            logger.info(
+                "Migration: dictado.virtual → NULL en %d filas "
+                "(coinciden con materia.virtual, heredan).",
+                result.rowcount,
+            )
 
 
 def _seed_default_sede_if_empty(conn):

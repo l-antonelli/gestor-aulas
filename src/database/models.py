@@ -131,7 +131,12 @@ class DictadoDB(SQLModel, table=True):
     # (sólo se borra cuando el usuario activa el toggle "Pisar overrides
     # manuales").
     activo_override_manual: Optional[bool] = Field(default=None)
-    virtual: bool = Field(default=False)
+    # Override de virtualidad a nivel dictado. Sigue "nivel mas
+    # especifico manda" (ver `resolve_virtual`):
+    #   None  = heredar de la materia (default).
+    #   True  = forzar virtual, aunque la materia sea presencial.
+    #   False = forzar presencial, aunque la materia sea virtual.
+    virtual: Optional[bool] = Field(default=None)
 
     # Relationships
     materia: Optional["MateriaDB"] = Relationship(back_populates="dictados")
