@@ -855,6 +855,18 @@ def _render_tabla_editable_por_materia(
     max_com = max(c.numero for c in coms) if coms else 1
     com_options = list(range(1, max_com + 3))
 
+    def _virtual_to_label(v: bool | None) -> str:
+        if v is None:
+            return "Heredar"
+        return "Sí" if v else "No"
+
+    def _label_to_virtual(lbl: str) -> bool | None:
+        if lbl == "Sí":
+            return True
+        if lbl == "No":
+            return False
+        return None
+
     df = pd.DataFrame([
         {
             "horario_id": h.id,
@@ -863,10 +875,14 @@ def _render_tabla_editable_por_materia(
             "Fin": h.hora_fin,
             "Comisión": (com_by_id[h.comision_id].numero if h.comision_id in com_by_id else 1),
             "Tipo": h.tipo_clase or "sin determinar",
+            "Virtual": _virtual_to_label(h.virtual),
         }
         for h in hs
     ]) if hs else pd.DataFrame(
-        columns=["horario_id", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
+        columns=[
+            "horario_id", "Día", "Inicio", "Fin",
+            "Comisión", "Tipo", "Virtual",
+        ]
     )
 
     de_key = f"{key_ns}_de_{plan_id}_{materia_codigo}_{len(hs)}"
@@ -919,9 +935,40 @@ def _render_tabla_editable_por_materia(
                     cambios["tipo_clase"] = (
                         None if tv == "sin determinar" else tv
                     )
+                if "Virtual" in changes:
+                    cambios["virtual"] = _label_to_virtual(
+                        changes["Virtual"]
+                    )
                 if cambios:
                     db_h = sess.get(HorarioDB, h.id)
                     if db_h is not None:
+                        # HorarioDB no esta en TRACKED_ENTITIES (evita
+                        # ruido cuando se generan 600 filas de golpe).
+                        # Para el cambio de `virtual` — que afecta al
+                        # LP — emitimos evento explicito con reason.
+                        if "virtual" in cambios and db_h.virtual != cambios["virtual"]:
+                            from src.services.change_log_service import (
+                                emit_event,
+                            )
+                            emit_event(
+                                sess,
+                                entity_type="HorarioDB",
+                                entity_id=db_h.id,
+                                entity_label=(
+                                    f"{materia_codigo} · "
+                                    f"{db_h.dia} "
+                                    f"{db_h.hora_inicio.strftime('%H:%M')}"
+                                ),
+                                action="updated",
+                                field="virtual",
+                                old_value=db_h.virtual,
+                                new_value=cambios["virtual"],
+                                reason=(
+                                    f"Edición inline en grilla del "
+                                    f"plan {plan_id}"
+                                ),
+                                origin="ui:planes",
+                            )
                         for k, v in cambios.items():
                             setattr(db_h, k, v)
                         sess.add(db_h)
@@ -944,6 +991,9 @@ def _render_tabla_editable_por_materia(
                         if (not tipo_raw or tipo_raw == "sin determinar")
                         else tipo_raw
                     )
+                    virtual_val = _label_to_virtual(
+                        row.get("Virtual") or "Heredar"
+                    )
                     new_h = HorarioDB(
                         id=str(uuid.uuid4()),
                         comision_id=new_com.id,
@@ -952,6 +1002,7 @@ def _render_tabla_editable_por_materia(
                         hora_inicio=_coerce_time(row["Inicio"]),
                         hora_fin=_coerce_time(row["Fin"]),
                         tipo_clase=tipo_val,
+                        virtual=virtual_val,
                     )
                     sess.add(new_h)
                     created += 1
@@ -986,6 +1037,18 @@ def _render_tabla_editable_por_materia(
                 default="sin determinar",
                 help=(
                     "sin determinar (LP decide), teorica o laboratorio"
+                ),
+                width="small",
+            ),
+            "Virtual": column_config.SelectboxColumn(
+                options=["Heredar", "Sí", "No"],
+                default="Heredar",
+                help=(
+                    "Modalidad de este horario específico. "
+                    "Heredar = usa el flag del dictado/materia. "
+                    "Sí = fuerza virtual (el LP no asigna aula). "
+                    "No = fuerza presencial (aunque el dictado sea "
+                    "virtual)."
                 ),
                 width="small",
             ),
