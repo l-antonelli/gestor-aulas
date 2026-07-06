@@ -14,6 +14,7 @@ from src.database.models import (
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
     borrar_dictado_de_ciclo,
+    create_dictado_for_materia,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_drift_summary,
@@ -1302,11 +1303,56 @@ with tab_dictados:
                             ),
                         )
                 else:
-                    # Materia del plan sin dictado — desde acá NO se puede
-                    # crear (el flujo correcto es el panel de divergencias
-                    # arriba con acciones fila-a-fila).
+                    # Materia del plan sin dictado. Puede ser porque:
+                    # - la regla la autoriza pero todavía no se creó
+                    #   (aparece en panel de divergencias → to_create), o
+                    # - la regla dice omitirla (no aparece en
+                    #   divergencias). En ese caso ofrecemos crear
+                    #   excepcionalmente desde acá; el dictado creado
+                    #   aparecerá en `rule_says_skip_but_exists` del
+                    #   panel para que quede trazado como excepción.
                     with col_activo:
-                        st.caption("(Sin dictado — ver divergencias)")
+                        if st.button(
+                            "✅ Crear",
+                            key=(
+                                f"btn_crear_excep_{key_ns}_{carrera_cod}"
+                                f"_{mat.codigo}"
+                            ),
+                            help=(
+                                "Crear dictado excepcional en el ciclo. "
+                                "Si la regla actual dice omitirla, "
+                                "aparecerá en el panel de divergencias "
+                                "como 'existe pero la regla dice que no'."
+                            ),
+                            use_container_width=True,
+                        ):
+                            from src.services.change_log_service import (
+                                change_context,
+                            )
+                            with next(get_session()) as _cs:
+                                with change_context(
+                                    origin="ui:ciclos",
+                                    reason=(
+                                        f"Crear dictado excepcional "
+                                        f"({mat.codigo}) desde grilla "
+                                        f"del ciclo {sel_ciclo_dict}"
+                                    ),
+                                ):
+                                    _created = create_dictado_for_materia(
+                                        _cs, sel_ciclo_dict, mat.codigo,
+                                    )
+                            if _created is not None:
+                                st.session_state["dict_resync_pending"] = True
+                                st.toast(
+                                    f"✅ Dictado creado: {mat.codigo}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error(
+                                    "No se pudo crear el dictado. "
+                                    "Verificá que la materia esté en el "
+                                    "plan asignado al ciclo."
+                                )
                     with col_virtual:
                         st.caption("—")
 
