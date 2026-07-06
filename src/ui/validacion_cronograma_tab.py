@@ -42,16 +42,17 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
 
             **Materias esperadas = `Dictados` activos del ciclo**. Los dictados
             se gestionan en **📆 Ciclos → 📚 Dictados**: ahi se decide para
-            cada materia del plan si se va a dictar este cuatrimestre y como
-            (`activo`, `virtual`). Si una materia esta marcada `activo=False`,
-            no aparece en faltantes ni se considera esperada.
+            cada materia del plan si se va a dictar este cuatrimestre y cómo
+            (existencia del dictado, flag `virtual`). Si una materia **no
+            tiene dictado** en el ciclo, no aparece en faltantes ni se
+            considera esperada.
 
-            **Que se controla**:
+            **Qué se controla**:
 
-            - **Cobertura**: cuantas materias esperadas (dictados activos) estan
-              cubiertas, cuales faltan (con detalle por carrera y dictado
-              codigo), y cuales aparecen en el cronograma sin tener un dictado
-              activo en el ciclo (extras).
+            - **Cobertura**: cuántas materias esperadas (con dictado en
+              el ciclo) están cubiertas, cuáles faltan (con detalle por
+              carrera y `dictado_codigo`), y cuáles aparecen en el
+              cronograma sin tener dictado creado en el ciclo (extras).
             - **Laboratorios**: cuantas materias del cronograma tienen
               laboratorios compatibles asignados, y como esta configurado su
               modo:

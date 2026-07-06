@@ -356,23 +356,23 @@ def _razon_para_dictado(
 ) -> str:
     """Devuelve una razón humana del estado esperado de un dictado.
 
-    Verbaliza la lógica de ``_should_skip_for_recursado`` + el caso anual
-    para que la UI de "Recalcular según reglas" muestre el motivo legible
-    detrás de cada cambio.
+    Verbaliza la lógica de ``_should_skip_for_recursado`` + el caso
+    anual para que la UI de "Sincronizar según reglas" muestre el
+    motivo legible detrás de cada divergencia.
     """
     if materia.periodo == "anual":
-        return "Materia anual → siempre activa"
+        return "Materia anual → se dicta"
     if materia.dicta_recursado is True:
-        return "Override de la materia: dicta_recursado=Sí → activa"
+        return "Override de la materia: dicta_recursado=Sí → se dicta"
     if materia.dicta_recursado is False:
         if _is_opposite_cuatrimestre(session, materia, ciclo, plan_version_ids):
             return (
                 "Override de la materia: dicta_recursado=No y la materia "
-                "es del cuatrimestre opuesto al ciclo → inactiva"
+                "es del cuatrimestre opuesto al ciclo → no se dicta"
             )
         return (
             "Override de la materia: dicta_recursado=No pero el ciclo "
-            "coincide con su cuatrimestre del plan → activa"
+            "coincide con su cuatrimestre del plan → se dicta"
         )
     entries = list(session.exec(
         select(PlanEstudioDB)
@@ -383,26 +383,26 @@ def _razon_para_dictado(
     if len(carrera_codigos) > 1:
         return (
             f"Materia compartida entre {len(carrera_codigos)} carreras "
-            f"({', '.join(carrera_codigos)}) → activa"
+            f"({', '.join(carrera_codigos)}) → se dicta"
         )
     if not carrera_codigos:
         return "Materia sin entradas en planes asignados al ciclo"
     carrera = session.get(CarreraDB, carrera_codigos[0])
     if carrera is None:
-        return f"Carrera {carrera_codigos[0]} no encontrada → activa"
+        return f"Carrera {carrera_codigos[0]} no encontrada → se dicta"
     if carrera.dicta_recursado:
-        return f"Carrera {carrera.codigo} dicta recursado → activa"
+        return f"Carrera {carrera.codigo} dicta recursado → se dicta"
     cuatri_ciclo = f"{ciclo.numero}C"
     cuatris_plan = sorted({e.cuatrimestre_plan or "?" for e in entries})
     if any(c == cuatri_ciclo or c.lower() == "anual" for c in cuatris_plan):
         return (
             f"Carrera {carrera.codigo} no dicta recursado pero la materia "
-            f"figura en el cuatri actual ({cuatri_ciclo}) → activa"
+            f"figura en el cuatri actual ({cuatri_ciclo}) → se dicta"
         )
     return (
         f"Carrera {carrera.codigo} no dicta recursado y la materia es del "
         f"cuatri opuesto ({', '.join(cuatris_plan)} vs ciclo {cuatri_ciclo}) "
-        f"→ inactiva"
+        f"→ no se dicta"
     )
 
 

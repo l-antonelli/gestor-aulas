@@ -681,10 +681,10 @@ def render_schedule_materia_detail(
     # Caso especial: materia sin horarios (Faltante)
     # =========================================================================
     # Si la materia no tiene ninguna entry en el cronograma, es una
-    # "Faltante" (esperada por dictado activo pero sin horarios cargados).
-    # En ese caso muchos checks no aplican (n_com derivado, comisiones
-    # vacias, etc) y solo confunden. Mostramos un check unico que es
-    # consistente con el badge "📭 Faltante" de la tabla resumen.
+    # "Faltante" (dictado creado en el ciclo pero sin horarios
+    # cargados). En ese caso muchos checks no aplican (n_com derivado,
+    # comisiones vacías, etc.) y sólo confunden. Mostramos un check
+    # único consistente con el badge "📭 Faltante" de la tabla resumen.
     sin_entries = len(valid_df) == 0
 
     if sin_entries:
@@ -693,11 +693,11 @@ def render_schedule_materia_detail(
             "label": "Faltante",
             "status": "faltante",
             "detail": (
-                "Esta materia tiene un dictado activo en el ciclo pero no "
+                "Esta materia tiene un dictado en el ciclo pero no "
                 "tiene horarios cargados en el cronograma. Cargá las "
                 "clases con el calendario de arriba (drag sobre celdas "
-                "vacías) o desactivá el dictado si la materia no se va a "
-                "dictar."
+                "vacías) o **borrá el dictado desde el panel de Ciclos** "
+                "si la materia no se va a dictar."
             ),
         }]
     else:

@@ -731,8 +731,8 @@ def _render_carrera_subexpander(
 
                 if g["extras"]:
                     st.markdown(
-                        f"**No esperadas — comisiones sin dictado activo "
-                        f"({_n_ec})**"
+                        f"**No esperadas — comisiones sin dictado en "
+                        f"el ciclo ({_n_ec})**"
                     )
                     _ex_rows = []
                     for _ex in g["extras"]:
@@ -1266,11 +1266,11 @@ def _estado_de_materia(data: dict) -> str:
     """Devuelve un estado descriptivo para una materia del plan.
 
     Categorias:
-    - "Faltante": esperada pero sin comisiones
-    - "No esperada": tiene comisiones pero sin dictado activo
-    - "Conflictiva": con comisiones y conflictos sin ignorar
-    - "Sin datos": esperada con dictado pero falta info de horas
-    - "OK": cubierta sin issues
+    - "Faltante": esperada (con dictado en el ciclo) pero sin comisiones.
+    - "No esperada": tiene comisiones pero sin dictado en el ciclo.
+    - "Conflictiva": con comisiones y conflictos sin ignorar.
+    - "Sin datos": esperada con dictado pero falta info de horas.
+    - "OK": cubierta sin issues.
     """
     if data.get("es_faltante"):
         return "Faltante"

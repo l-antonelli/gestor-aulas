@@ -327,10 +327,10 @@ with tab_dictados:
                 "`dicta_recursado` en una carrera o cambiar la versión del "
                 "plan). Divergencias con acciones fila-a-fila más abajo."
             )
-            # Drift summary: detecta recompute pendiente, materias sin
-            # dictado y dictados huerfanos. Se muestra como un chip al lado
-            # del boton Recalcular para que el usuario sepa si hay cambios
-            # pendientes despues de tocar configuracion.
+            # Drift summary: detecta divergencias (to_create, to_delete,
+            # rule_says_skip_but_exists). Se muestra como un warning al
+            # lado del botón Sincronizar para que el usuario sepa si hay
+            # cambios pendientes después de tocar configuración.
             with next(get_session()) as _drift_sess:
                 _drift = get_drift_summary(_drift_sess, sel_ciclo_dict)
 
@@ -380,11 +380,11 @@ with tab_dictados:
                 render_panel_divergencias(sel_ciclo_dict, _drift)
 
             # Guard: si hay cambios pendientes en batch, bloquear las
-            # operaciones globales (Crear Dictados, Recalcular según
-            # reglas) que pisarían los toggles. El usuario debe aplicar
-            # o descartar primero. Leemos un flag persistido por el
-            # render anterior porque en este punto del flujo todavía no
-            # se cargaron los dictados (se cargan más abajo).
+            # operaciones globales (Crear Dictados, Sincronizar) que
+            # pisarían los toggles. El usuario debe aplicar o descartar
+            # primero. Leemos un flag persistido por el render anterior
+            # porque en este punto del flujo todavía no se cargaron los
+            # dictados (se cargan más abajo).
             _has_pending_for_guard = bool(
                 st.session_state.get("dict_pending_count", 0) > 0
             )
@@ -394,14 +394,14 @@ with tab_dictados:
                     st.error(
                         "Tenés cambios pendientes sin aplicar. Apretá "
                         "**💾 Aplicar cambios** abajo o **🚫 Descartar** "
-                        "antes de crear/recalcular dictados."
+                        "antes de crear/sincronizar dictados."
                     )
                     _do_create = False
             if _do_recompute and _has_pending_for_guard:
                 st.error(
                     "Tenés cambios pendientes sin aplicar. Apretá "
                     "**💾 Aplicar cambios** abajo o **🚫 Descartar** "
-                    "antes de crear/recalcular dictados."
+                    "antes de crear/sincronizar dictados."
                 )
                 _do_recompute = False
 
@@ -1193,15 +1193,18 @@ with tab_dictados:
                     # Estado tag
                     if d is None:
                         _badge = "🔘 Sin dictado"
-                    elif True:
-                        _badge = "🟢 Activo"
                     else:
-                        _badge = "⚪ Inactivo"
-                    if d is not None and False:
-                        _badge += " · ✋ editado a mano"
-                    _virt = " · 🌐 virtual" if (
-                        (d.virtual if d else mat.virtual)
-                    ) else ""
+                        _badge = "🟢 Con dictado"
+                    # Modalidad efectiva a nivel dictado (resuelve
+                    # override si lo hay, si no hereda de la materia).
+                    if d is not None:
+                        _dict_virtual = (
+                            d.virtual if d.virtual is not None
+                            else mat.virtual
+                        )
+                    else:
+                        _dict_virtual = mat.virtual
+                    _virt = " · 🌐 virtual" if _dict_virtual else ""
                     _opt = " · 📘 optativa" if pe.optativa else ""
                     _anu = " · 📅 anual" if mat.periodo == "anual" else ""
                     _pend_marker = (

@@ -103,9 +103,10 @@ def _get_faltantes_por_carrera(
 
     NOTA: La fuente de verdad para faltantes ahora es
     `src/services/cronograma_validation_service.py::_get_faltantes_por_carrera`,
-    que toma como base los dictados activos del ciclo. Este helper queda
-    sin uso aca (la pestaña Validacion se movio a Cronogramas) pero se
-    deja por si algun consumidor externo lo importaba.
+    que toma como base los dictados del ciclo (semántica nueva:
+    existencia = activación). Este helper queda sin uso acá (la
+    pestaña Validación se movió a Cronogramas) pero se deja por si
+    algún consumidor externo lo importaba.
     """
     ciclo = ciclo_crud.get(session, ciclo_id)
     if not ciclo:
