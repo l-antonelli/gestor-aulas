@@ -51,6 +51,8 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-DICT-06 | Sincronización dictados ↔ regla vigente (`sync_dictados_para_ciclo`): diff con `to_create` (faltantes), `to_delete` (huérfanos) y `rule_says_skip_but_exists` (existen pero la regla dice que no; no se borran automáticamente). Modo preview + apply. | ✅ | `src/services/dictado_service.py:sync_dictados_para_ciclo` |
 | RF-DICT-07 | Panel de divergencias con acciones fila-a-fila (`[✅ Crear]` / `[🗑️ Borrar]` / `[⬆️ Promover a regla]` / `[⏭️ Omitir en regla]`) + bulk masivos con confirmación en 2 pasos. | ✅ | `src/ui/divergencias_panel.py`, `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` |
 | RF-DICT-08 | Promover una decisión del ciclo a regla general en `MateriaDB.dicta_recursado` (`promover_a_regla`): setea True (crear-en-regla) o False (omitir-en-regla). Sólo modifica el catálogo, no toca dictados existentes. | ✅ | `src/services/dictado_service.py:promover_a_regla` |
+| RF-DICT-09 | Virtualidad por horario individual en cronogramas: columna "Virtual" (3 estados: Heredar / Sí / No) en el data_editor de entries. Se persiste en `ScheduleEntryDB.virtual: Optional[bool]` y se propaga a `HorarioDB.virtual` al generar el plan. Permite mezclar modalidades dentro de un dictado (ej. teoría virtual + laboratorio presencial). | ✅ | `app/pages/6_📅_Cronogramas.py`, `src/services/plan_generation_service.py` |
+| RF-DICT-10 | Edición inline de `HorarioDB.virtual` en la grilla del plan (`plan_grilla_editor`), con misma UX de 3 estados. Cambios explícitos al flag emiten evento al change log con `origin=ui:planes` (HorarioDB no está en TRACKED_ENTITIES para evitar ruido al generar planes masivos). | ✅ | `src/ui/plan_grilla_editor.py` |
 
 ### RF-PLAN — Plan de cursada (cronograma + comisiones)
 
