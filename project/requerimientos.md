@@ -43,11 +43,14 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 |---|---|---|---|
 | RF-CICLO-01 | Definición de ciclos lectivos (año + número 1C/2C, fecha inicio/fin). | ✅ | `2. Desarrollo/WORKFLOW.md` |
 | RF-CICLO-02 | Asociación de planes de estudio a un ciclo (`CicloPlanVersionDB`). | ✅ | modelo |
-| RF-DICT-01 | Generación automática de dictados a partir de las materias de los planes asociados al ciclo. | ✅ | `src/services/dictado_service.py` |
-| RF-DICT-02 | Cálculo automático del flag `activo` por materia según reglas de recursado por carrera y cuatrimestre. | ✅ | `src/services/dictado_service.py:_should_skip_for_recursado` |
-| RF-DICT-03 | Override manual de `activo` con flag `activo_override_manual` que sobrevive al recálculo. | ✅ | `2. Desarrollo/WORKFLOW.md` |
-| RF-DICT-04 | Modalidad virtual a nivel `DictadoDB` (puntual del ciclo, distinto al catálogo). | ✅ | `2. Desarrollo/WORKFLOW.md` |
+| RF-DICT-01 | Generación automática de dictados a partir de las materias de los planes asociados al ciclo. Semántica "existencia = activación": si la regla de recursado dice omitir, el dictado NO se crea (aparece como skipped). | ✅ | `src/services/dictado_service.py:create_dictados_for_ciclo` |
+| RF-DICT-02 | Regla de recursado jerárquica: `MateriaDB.dicta_recursado` (Optional[bool], override) prevalece sobre `CarreraDB.dicta_recursado`. Se resuelve con `resolve_dicta_recursado`. | ✅ | `src/services/resolucion_jerarquica.py`, `src/services/dictado_service.py:_should_skip_for_recursado` |
+| RF-DICT-03 | Un dictado existe ↔ se dicta en ese ciclo. Para "desactivar" hay que borrar la fila (`borrar_dictado_de_ciclo`). Semántica reemplaza al viejo flag `DictadoDB.activo` que fue eliminado. | ✅ | `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` |
+| RF-DICT-04 | Virtualidad jerárquica en 3 niveles: `HorarioDB.virtual > DictadoDB.virtual > MateriaDB.virtual`. Los dos primeros son `Optional[bool]` (None = heredar). El nivel más específico manda. Se resuelve con `resolve_virtual`. | ✅ | `src/services/resolucion_jerarquica.py`, `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` |
 | RF-DICT-05 | Bridge `DictadoCicloDB` para soportar dictados anuales que cubren dos ciclos. | ✅ | modelo |
+| RF-DICT-06 | Sincronización dictados ↔ regla vigente (`sync_dictados_para_ciclo`): diff con `to_create` (faltantes), `to_delete` (huérfanos) y `rule_says_skip_but_exists` (existen pero la regla dice que no; no se borran automáticamente). Modo preview + apply. | ✅ | `src/services/dictado_service.py:sync_dictados_para_ciclo` |
+| RF-DICT-07 | Panel de divergencias con acciones fila-a-fila (`[✅ Crear]` / `[🗑️ Borrar]` / `[⬆️ Promover a regla]` / `[⏭️ Omitir en regla]`) + bulk masivos con confirmación en 2 pasos. | ✅ | `src/ui/divergencias_panel.py`, `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` |
+| RF-DICT-08 | Promover una decisión del ciclo a regla general en `MateriaDB.dicta_recursado` (`promover_a_regla`): setea True (crear-en-regla) o False (omitir-en-regla). Sólo modifica el catálogo, no toca dictados existentes. | ✅ | `src/services/dictado_service.py:promover_a_regla` |
 
 ### RF-PLAN — Plan de cursada (cronograma + comisiones)
 
@@ -103,6 +106,15 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-DIAG-03 | Filtrado de falsos positivos en IIS y selección de causa principal. | ✅ | `1. Diseño/asignacion-aulas-LP.md` § 4ter.5 |
 | RF-DIAG-04 | Validación de cobertura por carrera/año/cuatri con clasificación de discrepancias (faltantes, no esperadas, conflictos). | ✅ | `2. Desarrollo/VALIDACIONES.md` |
 
+### RF-AUDIT — Trazabilidad de cambios (change log)
+
+| ID | Descripción | Estado | Doc canónico |
+|---|---|---|---|
+| RF-AUDIT-01 | Registro automático de mutaciones en entidades trackeadas (MateriaDB, CarreraDB, DictadoDB, DictadoCicloDB, SedeDB) vía hooks SQLAlchemy `after_insert/update/delete`. Solo auditamos catálogo/política; HorarioDB/ComisionDB/ClaseDB quedan afuera (datos de operación). | ✅ | `src/services/change_log_service.py` |
+| RF-AUDIT-02 | Whitelist de campos por entidad (ej. MateriaDB → `virtual`, `active`, `dicta_recursado`, `optativa`, `horas_teoria`, `horas_laboratorio`). Cambios en campos fuera de la lista no generan ruido. | ✅ | `TRACKED_ENTITIES` en `change_log_service.py` |
+| RF-AUDIT-03 | Eventos de dominio explícitos con `reason` y `origin` (`emit_event`, `change_context`) para trazar la intención detrás del cambio ("Promoción a regla desde el ciclo X", "Aceptar materia del cronograma"). | ✅ | `src/services/change_log_service.py:emit_event` |
+| RF-AUDIT-04 | Página **📜 Historial** con dos vistas: feed global filtrable por tipo de entidad y origen, y vista por entidad puntual. | ✅ | `app/pages/8_📜_Historial.py`, `src/ui/historial_widget.py` |
+
 ### RF-UI — Interfaz de usuario
 
 | ID | Descripción | Estado | Doc canónico |
@@ -132,7 +144,11 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 |---|---|---|
 | `src/services/asignacion_aulas_service.py` | RF-LP-01..08, RF-ADHOC-01..05 | `tests/test_asignacion_aulas_service.py` |
 | `src/services/asignacion_aulas_helpers.py` | RF-DIAG-01..03 | `tests/test_asignacion_aulas_helpers.py` |
-| `src/services/dictado_service.py` | RF-DICT-01..05 | `tests/test_dictado_service.py` |
+| `src/services/dictado_service.py` | RF-DICT-01..08 | `tests/test_dictado_service.py` |
+| `src/services/resolucion_jerarquica.py` | RF-DICT-02, RF-DICT-04 | `tests/test_resolucion_jerarquica.py` |
+| `src/services/change_log_service.py` | RF-AUDIT-01..03 | `tests/test_change_log_service.py` |
+| `src/ui/divergencias_panel.py` | RF-DICT-07 | (UI) |
+| `src/ui/historial_widget.py` | RF-AUDIT-04 | (UI) |
 | `src/services/forecast_service.py` | RF-PLAN-06 | `tests/test_forecast_service.py` |
 | `src/services/plan_generation_service.py` | RF-PLAN-02 | `tests/test_plan_generation_service.py` |
 | `src/services/clase_generation_service.py` | RF-PLAN-03 | `tests/test_clase_generation_service.py` |
