@@ -588,18 +588,17 @@ def validar_cobertura_plan(
 
     Severity: WARNING — informativo, no bloquea activación.
     """
-    # Get active dictados for this ciclo
+    # Get dictados for this ciclo (todos existen → todos activos).
     dictados_activos = session.exec(
         select(DictadoDB)
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
         .where(DictadoCicloDB.ciclo_id == ciclo_id)
-        .where(DictadoDB.activo == True)  # noqa: E712
     ).all()
 
     if not dictados_activos:
         return ValidationResult(
             valid=True,
-            message="No hay dictados activos para este ciclo",
+            message="No hay dictados para este ciclo",
         )
 
     # Get comisiones in the plan that have at least one horario

@@ -618,7 +618,7 @@ class TestValidarCoberturaPlan:
         # Create dictado for this materia
         dictado = DictadoDB(
             id=str(uuid.uuid4()), materia_codigo="COV1",
-            dictado_codigo="COV1-2025-1C", activo=True,
+            dictado_codigo="COV1-2025-1C",
         )
         session.add(dictado)
         session.flush()
@@ -660,7 +660,7 @@ class TestValidarCoberturaPlan:
 
         dictado = DictadoDB(
             id=str(uuid.uuid4()), materia_codigo="MISS1",
-            dictado_codigo="MISS1-2025-1C", activo=True,
+            dictado_codigo="MISS1-2025-1C",
         )
         session.add(dictado)
         session.flush()
@@ -678,6 +678,13 @@ class TestValidarCoberturaPlan:
         assert result.valid is False
         assert "MISS1" in result.details[0]
 
+    @pytest.mark.skip(
+        reason=(
+            "DictadoDB.activo fue eliminado. Semantica nueva: si el "
+            "dictado no debe dictarse, no debe existir. Este test "
+            "asumia dictado inactivo pero linkeado."
+        ),
+    )
     def test_inactive_dictado_not_checked(self, session, base_data):
         """An inactive dictado should not trigger a coverage warning."""
         ciclo = base_data["ciclo"]
@@ -688,7 +695,7 @@ class TestValidarCoberturaPlan:
 
         dictado = DictadoDB(
             id=str(uuid.uuid4()), materia_codigo="INACT1",
-            dictado_codigo="INACT1-2025-1C", activo=False,
+            dictado_codigo="INACT1-2025-1C",
         )
         session.add(dictado)
         session.flush()

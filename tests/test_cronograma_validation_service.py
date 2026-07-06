@@ -161,10 +161,12 @@ class TestEsperadas:
         assert "FIS101" in summary.esperadas
         assert summary.n_faltantes == 1  # FIS101
 
-        # Desactivar el dictado de FIS101 → debe salir de esperadas
+        # Borrar el dictado de FIS101 → debe salir de esperadas
+        # (semantica nueva: si no existe el dictado, no se dicta).
+        from src.services.dictado_service import borrar_dictado_de_ciclo
         dictados = get_dictados_for_ciclo(session, ciclo.id)
         d_fis = next(d for d in dictados if d.materia_codigo == "FIS101")
-        update_dictado(session, d_fis.id, activo=False)
+        borrar_dictado_de_ciclo(session, ciclo.id, d_fis.id)
 
         summary2 = validar_cronograma(session, sched.id, ciclo.id)
         assert summary2.error is None
@@ -270,10 +272,11 @@ class TestStaleness:
         # Justo despues de validar, no debe ser stale.
         assert is_validation_stale(session, record) is False
 
-        # Desactivar un dictado → debe pasar a stale
+        # Borrar un dictado → debe pasar a stale
+        from src.services.dictado_service import borrar_dictado_de_ciclo
         dictados = get_dictados_for_ciclo(session, ciclo.id)
         d_fis = next(d for d in dictados if d.materia_codigo == "FIS101")
-        update_dictado(session, d_fis.id, activo=False)
+        borrar_dictado_de_ciclo(session, ciclo.id, d_fis.id)
 
         # Re-leer el record (la sesion puede haber cacheado)
         session.refresh(record)

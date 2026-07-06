@@ -18,17 +18,15 @@ class DictadoCreationResult:
     """Result of creating dictados for a ciclo.
 
     Notas:
-    - `created`: total de dictados nuevos (cualquier estado).
-    - `created_inactive`: subset de `created` que arranco con `activo=False`
-      por aplicar la regla de `dicta_recursado`. Quedan persistidos para que
-      el usuario pueda activarlos manualmente o re-correr `recompute_activo`.
+    - `created`: total de dictados nuevos.
     - `linked`: anuales reutilizados desde el 1C.
     - `skipped`: ya existian (idempotencia).
-    - `skipped_recursado`: deprecated, queda en 0; conservamos el campo por
-      compat. Las que antes caian aca ahora son `created_inactive`.
+    - `skipped_recursado`: materias omitidas porque la regla de
+      recursado dice que no se dictan en este ciclo. Aparecen en
+      `get_skipped_materias_for_ciclo` con la razon; si el usuario
+      quiere activarlas puede hacerlo desde la UI.
     """
     created: int = 0
-    created_inactive: int = 0
     linked: int = 0
     skipped: int = 0
     skipped_recursado: int = 0
@@ -45,33 +43,30 @@ class SkippedMateria:
 
 @dataclass
 class DriftSummary:
-    """Diagnostico del estado del set de dictados de un ciclo vs el plan
-    + reglas vigentes. Usado para mostrar un indicador de "cambios pendientes"
-    al lado del boton de Recalcular.
+    """Diagnostico del set de dictados de un ciclo vs el plan + reglas
+    vigentes. Usado para mostrar un indicador de "cambios pendientes" al
+    lado del boton de Sincronizar.
 
-    - `recompute_to_activate` / `recompute_to_deactivate`: dictados que
-      quedarian `activo=True/False` si se corre Recalcular ahora. Surgen
-      cuando se cambio `dicta_recursado` (carrera o materia) sin alinear.
-    - `missing_materias`: materias del plan que NO tienen dictado linkeado.
-      Surgen al swap de plan o al agregar materias al plan despues de
-      "Crear Dictados".
-    - `orphan_dictados`: dictados que existen para materias que ya NO estan
-      en ningun plan asignado al ciclo. Surgen al swap de plan a otra
-      version sin las mismas materias.
+    Semantica nueva: los dictados existen (se dictan) o no existen.
+    - `to_create`: materias del plan cuyo dictado NO existe y la regla
+      de recursado dice que deberia existir. Sync proponemos crearlos.
+    - `to_delete`: dictados existentes cuya materia YA NO esta en
+      ningun plan del ciclo (huerfanos). Sync propone borrarlos.
+    - `rule_says_skip_but_exists`: dictados existentes cuya regla de
+      recursado dice que NO deberian existir. El usuario los creo a
+      mano (override implicito). Sync no los toca por defecto; los
+      lista como divergencia.
     """
-    # Items enriquecidos del recompute (mismo shape que RecomputeResult).
-    recompute_to_activate: list[dict] = field(default_factory=list)
-    recompute_to_deactivate: list[dict] = field(default_factory=list)
-    missing_materias: list[tuple[str, str]] = field(default_factory=list)
-    orphan_dictados: list[tuple[str, str]] = field(default_factory=list)
+    to_create: list[dict] = field(default_factory=list)
+    to_delete: list[dict] = field(default_factory=list)
+    rule_says_skip_but_exists: list[dict] = field(default_factory=list)
 
     @property
     def n_total(self) -> int:
         return (
-            len(self.recompute_to_activate)
-            + len(self.recompute_to_deactivate)
-            + len(self.missing_materias)
-            + len(self.orphan_dictados)
+            len(self.to_create)
+            + len(self.to_delete)
+            + len(self.rule_says_skip_but_exists)
         )
 
     @property
@@ -80,28 +75,20 @@ class DriftSummary:
 
 
 @dataclass
-class RecomputeResult:
-    """Diff de un recompute de `activo` segun reglas de recursado.
+class SyncResult:
+    """Resultado de `sync_dictados_para_ciclo`.
 
-    Cada lista contiene dicts con metadata enriquecida (nombre de
-    materia, carrera, año/cuatri del plan, razón). Ver
-    ``_build_recompute_item`` para el shape exacto.
-
-    `overrides_respetados` lista los dictados con
-    ``activo_override_manual is not None`` cuando se corrió en modo
-    default (sin pisar overrides). `applied=True` si el cambio fue
-    persistido.
+    Contiene el mismo diff que `DriftSummary` mas metadata de la
+    operacion. Si `apply=False`, `applied=False` y nada se persistio.
     """
-    to_activate: list[dict] = field(default_factory=list)
-    to_deactivate: list[dict] = field(default_factory=list)
-    overrides_respetados: list[dict] = field(default_factory=list)
-    unchanged: int = 0
+    to_create: list[dict] = field(default_factory=list)
+    to_delete: list[dict] = field(default_factory=list)
+    rule_says_skip_but_exists: list[dict] = field(default_factory=list)
     applied: bool = False
-    pisar_overrides: bool = False
 
     @property
     def n_changes(self) -> int:
-        return len(self.to_activate) + len(self.to_deactivate)
+        return len(self.to_create) + len(self.to_delete)
 
 
 def _is_opposite_cuatrimestre(
@@ -277,7 +264,6 @@ def _create_cuatrimestral_dictado(
         dictado_codigo=dictado_codigo,
         inicio_dictado=ciclo.fecha_inicio,
         fin_dictado=ciclo.fecha_fin,
-        activo=True,
         virtual=None,
     )
     session.add(dictado)
@@ -307,7 +293,6 @@ def _create_anual_dictado_1c(
         dictado_codigo=dictado_codigo,
         inicio_dictado=ciclo.fecha_inicio,
         fin_dictado=None,
-        activo=True,
         virtual=None,
     )
     session.add(dictado)
@@ -344,7 +329,6 @@ def _link_anual_dictado_2c(
             dictado_codigo=dictado_codigo_anual,
             inicio_dictado=ciclo.fecha_inicio,
             fin_dictado=ciclo.fecha_fin,
-            activo=True,
             virtual=None,
         )
         session.add(dictado)
@@ -422,16 +406,20 @@ def _razon_para_dictado(
     )
 
 
-def _build_recompute_item(
+def _build_dictado_item(
     session: Session,
-    dictado: DictadoDB,
+    dictado: Optional[DictadoDB],
     materia: MateriaDB,
     plan_version_ids: list[str],
-    estado_actual: bool,
-    estado_nuevo: bool,
     ciclo: CicloDB,
+    accion: str,
 ) -> dict:
-    """Arma el dict de detalle para una entrada del RecomputeResult."""
+    """Arma el dict de detalle para una entrada de SyncResult/DriftSummary.
+
+    Args:
+        dictado: la fila existente (None si `accion='create'`).
+        accion: "create" | "delete" | "keep_but_rule_says_skip".
+    """
     entries = list(session.exec(
         select(PlanEstudioDB)
         .where(PlanEstudioDB.materia_codigo == materia.codigo)
@@ -448,49 +436,48 @@ def _build_recompute_item(
     else:
         carrera_codigo = "—"
         carrera_nombre = "—"
-    # Año/cuatri del primer entry (con cualquiera de las carreras de la materia).
     anio_plan = entries[0].anio_plan if entries else None
     cuatri_plan = entries[0].cuatrimestre_plan if entries else None
     razon = _razon_para_dictado(session, materia, ciclo, plan_version_ids)
     return {
-        "dictado_id": dictado.id,
+        "dictado_id": dictado.id if dictado else None,
         "materia_codigo": materia.codigo,
         "materia_nombre": materia.nombre,
-        "dictado_codigo": dictado.dictado_codigo,
+        "dictado_codigo": (
+            dictado.dictado_codigo if dictado
+            else f"{materia.codigo}-{ciclo.anio}-{ciclo.numero}C"
+        ),
         "carrera_codigo": carrera_codigo,
         "carrera_nombre": carrera_nombre,
         "anio_plan": anio_plan,
         "cuatrimestre_plan": cuatri_plan,
-        "estado_actual": estado_actual,
-        "estado_nuevo": estado_nuevo,
+        "accion": accion,
         "razon": razon,
-        "tiene_override": dictado.activo_override_manual is not None,
     }
 
 
-def recompute_activo_for_ciclo(
+def sync_dictados_para_ciclo(
     session: Session,
     ciclo_id: str,
     apply: bool = False,
-    *,
-    pisar_overrides: bool = False,
-) -> RecomputeResult:
-    """Recalcula `activo` de cada dictado del ciclo segun las reglas vigentes.
+) -> SyncResult:
+    """Sincroniza el set de dictados del ciclo con el plan + reglas
+    vigentes. Semantica nueva: los dictados existen (se dictan) o no
+    existen (no se dictan).
 
-    Por default, los dictados con ``activo_override_manual`` seteado se
-    respetan: aparecen en ``result.overrides_respetados`` y no se
-    modifican. Si ``pisar_overrides=True``, el override se borra y la
-    regla se aplica como a cualquier otro dictado.
+    Diff que computa:
+    - `to_create`: materias del plan sin dictado en el ciclo y cuya
+      regla de recursado dice que deberian existir. `apply=True` los
+      crea.
+    - `to_delete`: dictados huerfanos (su materia ya NO esta en ningun
+      plan del ciclo). `apply=True` los borra.
+    - `rule_says_skip_but_exists`: dictados existentes cuya regla dice
+      que NO deberian existir (override implicito del usuario). NUNCA
+      se borran automaticamente; siempre se listan para revisar.
 
-    Si ``apply=False`` sólo devuelve el diff (preview). Si ``apply=True``
-    persiste los cambios.
-
-    Returns:
-        RecomputeResult con listas enriquecidas (``to_activate``,
-        ``to_deactivate``, ``overrides_respetados``), ``unchanged``, y
-        ``applied=True`` si se persistió.
+    Si ``apply=False`` solo devuelve el diff (preview).
     """
-    result = RecomputeResult(pisar_overrides=pisar_overrides)
+    result = SyncResult()
 
     ciclo = ciclo_crud.get(session, ciclo_id)
     if ciclo is None:
@@ -503,137 +490,115 @@ def recompute_activo_for_ciclo(
     if not plan_version_ids:
         return result
 
-    dictados = list(session.exec(
+    # Set de materias del plan.
+    materias_plan = list(session.exec(
+        select(MateriaDB)
+        .join(PlanEstudioDB, MateriaDB.codigo == PlanEstudioDB.materia_codigo)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))  # type: ignore[attr-defined]
+        .distinct()
+    ).all())
+    materias_plan_by_codigo = {m.codigo: m for m in materias_plan}
+
+    # Set de dictados existentes en el ciclo.
+    dictados_existentes = list(session.exec(
         select(DictadoDB)
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
         .where(DictadoCicloDB.ciclo_id == ciclo_id)
     ).all())
+    dictados_by_codigo = {d.materia_codigo: d for d in dictados_existentes}
 
-    for d in dictados:
+    # to_create: en el plan, sin dictado, y regla no dice skippear.
+    for materia in materias_plan:
+        if materia.codigo in dictados_by_codigo:
+            continue
+        if materia.periodo == "cuatrimestral" and _should_skip_for_recursado(
+            session, materia, ciclo, plan_version_ids,
+        ):
+            continue
+        result.to_create.append(_build_dictado_item(
+            session, None, materia, plan_version_ids, ciclo, "create",
+        ))
+
+    # to_delete: dictado existe pero la materia ya no esta en el plan.
+    # rule_says_skip_but_exists: dictado existe y esta en el plan pero
+    # la regla dice skippear.
+    for d in dictados_existentes:
         materia = session.get(MateriaDB, d.materia_codigo)
         if materia is None:
             continue
-
-        # Override manual y modo default → respetar.
-        if d.activo_override_manual is not None and not pisar_overrides:
-            result.overrides_respetados.append(_build_recompute_item(
-                session, d, materia, plan_version_ids,
-                estado_actual=d.activo, estado_nuevo=d.activo, ciclo=ciclo,
+        if d.materia_codigo not in materias_plan_by_codigo:
+            result.to_delete.append(_build_dictado_item(
+                session, d, materia, plan_version_ids, ciclo, "delete",
             ))
             continue
-
-        # Anuales no se ven afectadas por la regla de recursado
-        if materia.periodo == "anual":
-            expected_activo = True
-        else:
-            expected_activo = not _should_skip_for_recursado(
-                session, materia, ciclo, plan_version_ids,
-            )
-
-        # Si pisamos overrides y el dictado tenía uno, lo borramos (al
-        # aplicar). En preview también lo reportamos como cambio si la
-        # regla difiere del estado actual.
-        if expected_activo == d.activo:
-            result.unchanged += 1
-            if pisar_overrides and apply and d.activo_override_manual is not None:
-                d.activo_override_manual = None
-                session.add(d)
-            continue
-        item = _build_recompute_item(
-            session, d, materia, plan_version_ids,
-            estado_actual=d.activo, estado_nuevo=expected_activo, ciclo=ciclo,
-        )
-        if expected_activo:
-            result.to_activate.append(item)
-            if apply:
-                d.activo = True
-                if pisar_overrides:
-                    d.activo_override_manual = None
-                session.add(d)
-        else:
-            result.to_deactivate.append(item)
-            if apply:
-                d.activo = False
-                if pisar_overrides:
-                    d.activo_override_manual = None
-                session.add(d)
+        if materia.periodo == "cuatrimestral" and _should_skip_for_recursado(
+            session, materia, ciclo, plan_version_ids,
+        ):
+            result.rule_says_skip_but_exists.append(_build_dictado_item(
+                session, d, materia, plan_version_ids, ciclo,
+                "keep_but_rule_says_skip",
+            ))
 
     if apply:
-        # Commit aunque n_changes==0 si pisar_overrides limpió banderas
-        # en dictados que ya estaban alineados (el flag activo sigue
-        # igual pero el override se borró).
+        # Crear los faltantes.
+        for item in result.to_create:
+            create_dictado_for_materia(
+                session, ciclo_id, item["materia_codigo"],
+            )
+        # Borrar los huerfanos.
+        for item in result.to_delete:
+            d_id = item["dictado_id"]
+            if d_id is None:
+                continue
+            # Borrar el bridge primero (FK).
+            bridges = list(session.exec(
+                select(DictadoCicloDB).where(
+                    DictadoCicloDB.dictado_id == d_id,
+                )
+            ).all())
+            for b in bridges:
+                session.delete(b)
+            # Nullificar clases huerfanas.
+            from src.database.models import ClaseDB
+            for cl in session.exec(
+                select(ClaseDB).where(ClaseDB.dictado_id == d_id)
+            ).all():
+                cl.dictado_id = None
+                session.add(cl)
+            d = session.get(DictadoDB, d_id)
+            if d is not None:
+                session.delete(d)
         session.commit()
         result.applied = True
 
     return result
 
 
-def set_activo_manual(
-    session: Session, dictado_id: str, activo: bool,
-) -> Optional[DictadoDB]:
-    """Setea ``activo`` y persiste el override manual en el mismo paso.
-
-    A diferencia de ``update_dictado``, esta función deja constancia del
-    override en ``activo_override_manual`` para que la próxima ejecución
-    de ``recompute_activo_for_ciclo`` (en modo default) lo respete.
-
-    Útil como auto-save del toggle en la UI del panel de dictados.
-    """
-    d = session.get(DictadoDB, dictado_id)
-    if d is None:
-        return None
-    d.activo = activo
-    d.activo_override_manual = activo
-    session.add(d)
-    session.commit()
-    session.refresh(d)
-    return d
-
-
-def clear_activo_override(
-    session: Session, dictado_id: str,
-) -> Optional[DictadoDB]:
-    """Borra el override manual de un dictado, sin tocar ``activo``.
-
-    Útil si el usuario quiere volver a alinear ese dictado a la regla
-    sin necesariamente cambiar su estado actual.
-    """
-    d = session.get(DictadoDB, dictado_id)
-    if d is None:
-        return None
-    d.activo_override_manual = None
-    session.add(d)
-    session.commit()
-    session.refresh(d)
-    return d
-
-
-def set_activo_for_materias_in_ciclo(
-    session: Session, ciclo_id: str, materia_codigos: list[str], activo: bool,
-    *, marcar_virtual: Optional[bool] = None,
+def aceptar_materias_en_ciclo(
+    session: Session,
+    ciclo_id: str,
+    materia_codigos: list[str],
+    *,
+    marcar_virtual: Optional[bool] = None,
 ) -> int:
-    """Setear `activo` en bulk para los dictados de las materias indicadas
-    dentro de un ciclo. Crea el dictado si no existe (cuando `activo=True`
-    y la materia es del plan).
+    """Crea (o linkea) dictados para las materias indicadas en el ciclo.
+
+    Uso principal: aceptar materias que aparecieron como "extras" en la
+    prevalidacion de cronograma. La existencia del dictado indica que
+    esa materia se dicta este ciclo.
 
     Args:
-        session: SQLAlchemy session.
-        ciclo_id: ciclo donde aplicar el bulk update.
-        materia_codigos: códigos de materia objetivo.
-        activo: nuevo valor del flag `DictadoDB.activo`.
-        marcar_virtual: si se pasa, también setea `DictadoDB.virtual` con
-            ese valor. None (default) = no se toca el flag virtual. Útil
-            cuando el usuario "activa y marca virtual" desde el panel de
-            no esperadas para indicar que la modalidad de esos dictados
-            es virtual sólo en este ciclo (recursados por Zoom, etc.).
+        marcar_virtual: si se pasa, tambien setea `DictadoDB.virtual` con
+            ese valor (override explicito). None (default) = no toca el
+            flag virtual del dictado creado (queda None → hereda de la
+            materia via `resolve_virtual`).
 
     Returns:
-        cantidad de dictados efectivamente actualizados/creados.
+        Cantidad de dictados creados o modificados.
     """
     if not materia_codigos:
         return 0
 
-    # Pull dictados existentes para esas materias en el ciclo
     existing = list(session.exec(
         select(DictadoDB)
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
@@ -646,30 +611,70 @@ def set_activo_for_materias_in_ciclo(
     for mc in materia_codigos:
         d = existing_by_mat.get(mc)
         if d is None:
-            if activo:
-                # Crear on-the-fly
-                created = create_dictado_for_materia(session, ciclo_id, mc)
-                if created is not None:
-                    if marcar_virtual is not None:
-                        created.virtual = marcar_virtual
-                        session.add(created)
-                    n_changed += 1
-            # Si activo=False y no existe, no hacemos nada
-            continue
-        cambia = False
-        if d.activo != activo:
-            d.activo = activo
-            cambia = True
-        if marcar_virtual is not None and d.virtual != marcar_virtual:
-            d.virtual = marcar_virtual
-            cambia = True
-        if cambia:
-            session.add(d)
-            n_changed += 1
+            created = create_dictado_for_materia(session, ciclo_id, mc)
+            if created is not None:
+                if marcar_virtual is not None:
+                    created.virtual = marcar_virtual
+                    session.add(created)
+                n_changed += 1
+        else:
+            if marcar_virtual is not None and d.virtual != marcar_virtual:
+                d.virtual = marcar_virtual
+                session.add(d)
+                n_changed += 1
 
     if n_changed > 0:
         session.commit()
     return n_changed
+
+
+def borrar_dictado_de_ciclo(
+    session: Session, ciclo_id: str, dictado_id: str,
+) -> bool:
+    """Borra un dictado del ciclo (bridge + fila), nullificando las
+    clases huerfanas.
+
+    Uso principal: sync/limpieza de divergencias desde la UI. Es
+    idempotente: si el dictado no existe o no esta linkeado al ciclo,
+    devuelve False.
+    """
+    from src.database.models import ClaseDB
+
+    d = session.get(DictadoDB, dictado_id)
+    if d is None:
+        return False
+
+    # Borrar el bridge (si existe).
+    bridges = list(session.exec(
+        select(DictadoCicloDB).where(
+            DictadoCicloDB.dictado_id == dictado_id,
+            DictadoCicloDB.ciclo_id == ciclo_id,
+        )
+    ).all())
+    if not bridges:
+        return False
+    for b in bridges:
+        session.delete(b)
+
+    # Nullificar clases apuntando a este dictado.
+    for cl in session.exec(
+        select(ClaseDB).where(ClaseDB.dictado_id == dictado_id)
+    ).all():
+        cl.dictado_id = None
+        session.add(cl)
+
+    # Si no queda ningun bridge (el dictado no aparece en otros ciclos),
+    # borrar la fila `dictados`.
+    otros_bridges = list(session.exec(
+        select(DictadoCicloDB).where(
+            DictadoCicloDB.dictado_id == dictado_id,
+        )
+    ).all())
+    if not otros_bridges:
+        session.delete(d)
+
+    session.commit()
+    return True
 
 
 def create_dictado_for_materia(
@@ -727,63 +732,18 @@ def create_dictado_for_materia(
 
 
 def get_drift_summary(session: Session, ciclo_id: str) -> DriftSummary:
-    """Devuelve un diagnostico de cambios pendientes para los dictados del ciclo.
+    """Devuelve un diagnostico de divergencias del ciclo vs el plan +
+    reglas vigentes.
 
-    Combina tres chequeos:
-    1. Recompute pendiente: corre `recompute_activo_for_ciclo(apply=False)`
-       y reporta los flips esperados.
-    2. Materias del plan sin dictado linkeado.
-    3. Dictados huerfanos (linkeados al ciclo pero la materia ya no esta
-       en ningun plan asignado).
+    Wrapper thin sobre `sync_dictados_para_ciclo(apply=False)`: la
+    logica esta ahi. Este helper solo re-empaqueta al shape DriftSummary
+    para consumo por la UI.
     """
     summary = DriftSummary()
-
-    # 1) recompute drift
-    rec = recompute_activo_for_ciclo(session, ciclo_id, apply=False)
-    summary.recompute_to_activate = list(rec.to_activate)
-    summary.recompute_to_deactivate = list(rec.to_deactivate)
-
-    # Plan version ids del ciclo
-    plan_version_ids = list(session.exec(
-        select(CicloPlanVersionDB.plan_version_id)
-        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
-    ).all())
-    if not plan_version_ids:
-        return summary
-
-    # Materias del plan
-    plan_mat_codigos = set(session.exec(
-        select(PlanEstudioDB.materia_codigo)
-        .where(col(PlanEstudioDB.plan_version_id).in_(plan_version_ids))
-        .distinct()
-    ).all())
-
-    # Dictados linkeados al ciclo
-    linked_dicts = list(session.exec(
-        select(DictadoDB)
-        .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
-        .where(DictadoCicloDB.ciclo_id == ciclo_id)
-    ).all())
-    linked_mat_codigos = {d.materia_codigo for d in linked_dicts}
-
-    # 2) materias del plan sin dictado
-    missing = plan_mat_codigos - linked_mat_codigos
-    if missing:
-        nombre_map = {
-            m.codigo: m.nombre for m in session.exec(
-                select(MateriaDB).where(col(MateriaDB.codigo).in_(list(missing)))
-            ).all()
-        }
-        summary.missing_materias = sorted(
-            (mc, nombre_map.get(mc, "?")) for mc in missing
-        )
-
-    # 3) dictados huerfanos (existen pero la materia no esta en ningun plan)
-    orphans = [d for d in linked_dicts if d.materia_codigo not in plan_mat_codigos]
-    summary.orphan_dictados = sorted(
-        (d.materia_codigo, d.dictado_codigo) for d in orphans
-    )
-
+    sync = sync_dictados_para_ciclo(session, ciclo_id, apply=False)
+    summary.to_create = list(sync.to_create)
+    summary.to_delete = list(sync.to_delete)
+    summary.rule_says_skip_but_exists = list(sync.rule_says_skip_but_exists)
     return summary
 
 
@@ -902,18 +862,17 @@ def get_skipped_materias_for_ciclo(
 def get_materias_esperadas_from_dictados(
     session: Session, ciclo_id: str,
 ) -> dict[str, str]:
-    """Return {materia_codigo: materia_nombre} de dictados ACTIVOS para el ciclo.
+    """Return {materia_codigo: materia_nombre} de dictados del ciclo.
 
-    Esta es la fuente de verdad de "materias esperadas" para la prevalidacion
-    de cronogramas. Solo considera dictados con activo=True linkeados al ciclo
-    via DictadoCicloDB.
+    Fuente de verdad de "materias esperadas" para la prevalidacion de
+    cronogramas. Nueva semantica: la existencia del dictado en el ciclo
+    ES la afirmacion "esta materia se dicta este ciclo".
     """
     statement = (
         select(MateriaDB.codigo, MateriaDB.nombre)
         .join(DictadoDB, MateriaDB.codigo == DictadoDB.materia_codigo)
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
         .where(DictadoCicloDB.ciclo_id == ciclo_id)
-        .where(DictadoDB.activo == True)  # noqa: E712
         .distinct()
     )
     rows = session.exec(statement).all()
@@ -921,7 +880,7 @@ def get_materias_esperadas_from_dictados(
 
 
 def get_dictado_codigos_for_ciclo(
-    session: Session, ciclo_id: str, only_active: bool = True,
+    session: Session, ciclo_id: str,
 ) -> dict[str, str]:
     """Return {materia_codigo: dictado_codigo} para los dictados del ciclo."""
     statement = (
@@ -929,19 +888,16 @@ def get_dictado_codigos_for_ciclo(
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
         .where(DictadoCicloDB.ciclo_id == ciclo_id)
     )
-    if only_active:
-        statement = statement.where(DictadoDB.activo == True)  # noqa: E712
     rows = session.exec(statement).all()
     return {mat_cod: dic_cod for mat_cod, dic_cod in rows}
 
 
 def count_active_dictados_for_ciclo(session: Session, ciclo_id: str) -> int:
-    """Count of active dictados linkeados al ciclo."""
+    """Count of dictados linkeados al ciclo (todos existen → activos)."""
     statement = (
         select(func.count(DictadoDB.id))
         .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
         .where(DictadoCicloDB.ciclo_id == ciclo_id)
-        .where(DictadoDB.activo == True)  # noqa: E712
     )
     return session.exec(statement).one()
 

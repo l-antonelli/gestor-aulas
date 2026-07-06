@@ -126,6 +126,12 @@ def _run_migrations(eng):
     # entran al UPDATE.
     _migrate_dictado_virtual_a_nullable(eng)
 
+    # Data migration: eliminar `DictadoDB.activo` y
+    # `activo_override_manual`. Semantica nueva: un dictado existe → se
+    # dicta. No existe → no se dicta. Los inactivos se borran; sus
+    # clases huerfanas quedan con `dictado_id=NULL` (columna Optional).
+    _migrate_dictado_drop_activo(eng)
+
     # NOTA: aca antes habia una "data migration" que ejecutaba en CADA
     # arranque (y por lo tanto en cada rerun de Streamlit):
     #   UPDATE schedule_entries SET tipo_clase = NULL WHERE tipo_clase = 'teorica'
@@ -521,6 +527,90 @@ def _migrate_dictado_virtual_a_nullable(eng):
                 "(coinciden con materia.virtual, heredan).",
                 result.rowcount,
             )
+
+
+def _migrate_dictado_drop_activo(eng):
+    """Elimina las columnas `activo` y `activo_override_manual` de la
+    tabla `dictados`.
+
+    Pasos:
+    1. Detectar si la columna `activo` existe (si no, ya migro).
+    2. Nullificar `clases.dictado_id` en clases cuyo dictado esta en
+       `activo=False` (van a quedar huerfanas al borrar el dictado).
+    3. Borrar filas con `activo=False`.
+    4. Recrear tabla `dictados` sin `activo` ni `activo_override_manual`.
+
+    Idempotente: si la columna `activo` no existe, no hace nada.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(dictados)").fetchall()
+        cols = {r[1] for r in rows}
+        if "activo" not in cols:
+            return  # ya migrada
+
+        logger.info(
+            "Migrating dictados table: dropping `activo` and "
+            "`activo_override_manual` columns"
+        )
+
+        # 2. Nullificar clases apuntando a dictados inactivos.
+        n_orphans = conn.exec_driver_sql(
+            "UPDATE clases SET dictado_id = NULL "
+            "WHERE dictado_id IN ("
+            "  SELECT id FROM dictados WHERE activo = 0"
+            ")"
+        ).rowcount
+
+        # 3. Borrar dictado_ciclo entries de dictados inactivos primero
+        # (evita FK dangling temporal).
+        conn.exec_driver_sql(
+            "DELETE FROM dictado_ciclo WHERE dictado_id IN ("
+            "  SELECT id FROM dictados WHERE activo = 0"
+            ")"
+        )
+
+        # 4. Borrar los dictados inactivos.
+        n_deleted = conn.exec_driver_sql(
+            "DELETE FROM dictados WHERE activo = 0"
+        ).rowcount
+
+        # 5. Recrear tabla sin las columnas.
+        conn.exec_driver_sql("""
+            CREATE TABLE dictados_tmp (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                materia_codigo VARCHAR NOT NULL,
+                dictado_codigo VARCHAR NOT NULL DEFAULT '',
+                inicio_dictado DATE,
+                fin_dictado DATE,
+                virtual BOOLEAN,
+                FOREIGN KEY (materia_codigo) REFERENCES materias (codigo)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO dictados_tmp
+                (id, materia_codigo, dictado_codigo, inicio_dictado,
+                 fin_dictado, virtual)
+            SELECT id, materia_codigo, dictado_codigo, inicio_dictado,
+                   fin_dictado, virtual
+            FROM dictados
+        """)
+        conn.exec_driver_sql("DROP TABLE dictados")
+        conn.exec_driver_sql("ALTER TABLE dictados_tmp RENAME TO dictados")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_dictados_materia_codigo "
+            "ON dictados (materia_codigo)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_dictados_dictado_codigo "
+            "ON dictados (dictado_codigo)"
+        )
+        conn.commit()
+        logger.info(
+            "Migration complete: dropped `activo` and "
+            "`activo_override_manual`. Deleted %d inactive dictados, "
+            "nullified %d orphan classes.",
+            n_deleted, n_orphans,
+        )
 
 
 def _seed_default_sede_if_empty(conn):

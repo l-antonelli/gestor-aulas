@@ -48,7 +48,7 @@ def _seed_basico(session: Session) -> str:
     )
     dictado = DictadoDB(
         id="d1", materia_codigo="M1", dictado_codigo="M1-2026-1C",
-        activo=True, virtual=False,
+        virtual=False,
     )
     bridge = DictadoCicloDB(dictado_id="d1", ciclo_id="2026-1C")
     plan = PlanificacionCursadaDB(

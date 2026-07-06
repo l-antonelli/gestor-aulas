@@ -141,8 +141,6 @@ def clonar_ciclo(
             dictado_codigo=d.dictado_codigo + f"-{sufijo}",
             inicio_dictado=d.inicio_dictado,
             fin_dictado=d.fin_dictado,
-            activo=d.activo,
-            activo_override_manual=d.activo_override_manual,
             virtual=d.virtual,
         ))
     resumen["dictados"] = len(dictado_id_map)

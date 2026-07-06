@@ -13,13 +13,13 @@ from src.database.models import (
 )
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
-    clear_activo_override,
+    aceptar_materias_en_ciclo,
+    borrar_dictado_de_ciclo,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_drift_summary,
     get_skipped_materias_for_ciclo,
-    recompute_activo_for_ciclo,
-    set_activo_manual,
+    sync_dictados_para_ciclo,
     swap_plan_version_for_ciclo,
     update_dictado,
 )
@@ -354,108 +354,88 @@ with tab_dictados:
                     st.success("✅ Dictados al día con la configuración.")
                 else:
                     _drift_parts = []
-                    _n_recompute = (
-                        len(_drift.recompute_to_activate)
-                        + len(_drift.recompute_to_deactivate)
-                    )
-                    if _n_recompute > 0:
+                    if _drift.to_create:
                         _drift_parts.append(
-                            f"🔄 {_n_recompute} a recalcular"
+                            f"➕ {len(_drift.to_create)} sin dictado"
                         )
-                    if _drift.missing_materias:
+                    if _drift.to_delete:
                         _drift_parts.append(
-                            f"➕ {len(_drift.missing_materias)} sin dictado"
+                            f"🗑️ {len(_drift.to_delete)} huérfano(s)"
                         )
-                    if _drift.orphan_dictados:
+                    if _drift.rule_says_skip_but_exists:
                         _drift_parts.append(
-                            f"🗑️ {len(_drift.orphan_dictados)} huérfano(s)"
+                            f"⚠️ {len(_drift.rule_says_skip_but_exists)} "
+                            "existen pero la regla dice que no"
                         )
                     st.warning(
-                        "⚠️ Cambios pendientes: " + " · ".join(_drift_parts)
+                        "⚠️ Divergencias: " + " · ".join(_drift_parts)
                     )
                     with st.popover(
                         "Ver detalle", use_container_width=False,
                     ):
-                        if _drift.recompute_to_activate:
-                            st.markdown(
-                                f"**🟢 Pasarán a Activo al recalcular "
-                                f"({len(_drift.recompute_to_activate)})**"
-                            )
-                            for _it in _drift.recompute_to_activate:
-                                st.write(
-                                    f"- **{_it['materia_codigo']}** — "
-                                    f"{_it['materia_nombre']} "
-                                    f"({_it['carrera_nombre']})  \n"
-                                    f"  _{_it['razon']}_"
-                                )
-                        if _drift.recompute_to_deactivate:
-                            st.markdown(
-                                f"**⚪ Pasarán a Inactivo al recalcular "
-                                f"({len(_drift.recompute_to_deactivate)})**"
-                            )
-                            for _it in _drift.recompute_to_deactivate:
-                                st.write(
-                                    f"- **{_it['materia_codigo']}** — "
-                                    f"{_it['materia_nombre']} "
-                                    f"({_it['carrera_nombre']})  \n"
-                                    f"  _{_it['razon']}_"
-                                )
-                        if _drift.missing_materias:
+                        if _drift.to_create:
                             st.markdown(
                                 f"**➕ Materias del plan sin dictado "
-                                f"({len(_drift.missing_materias)})**"
+                                f"({len(_drift.to_create)})**"
                             )
                             st.caption(
                                 "Apretá **Crear Dictados** para crearlos."
                             )
-                            for _mc, _nm in _drift.missing_materias:
-                                st.write(f"- {_mc} — {_nm}")
-                        if _drift.orphan_dictados:
+                            for _it in _drift.to_create:
+                                st.write(
+                                    f"- **{_it['materia_codigo']}** — "
+                                    f"{_it['materia_nombre']}  \n"
+                                    f"  _{_it['razon']}_"
+                                )
+                        if _drift.to_delete:
                             st.markdown(
                                 f"**🗑️ Dictados huérfanos "
-                                f"({len(_drift.orphan_dictados)})**"
+                                f"({len(_drift.to_delete)})**"
                             )
                             st.caption(
                                 "Materias con dictado pero que ya no están "
-                                "en ningún plan asignado al ciclo. Suele "
-                                "pasar después de cambiar la versión del plan."
+                                "en ningún plan asignado al ciclo."
                             )
-                            for _mc, _dc in _drift.orphan_dictados:
-                                st.write(f"- `{_dc}` ({_mc})")
+                            for _it in _drift.to_delete:
+                                st.write(
+                                    f"- `{_it['dictado_codigo']}` "
+                                    f"({_it['materia_codigo']})"
+                                )
                             if st.button(
                                 "🗑️ Eliminar huérfanos",
                                 key="btn_delete_orphans",
                                 type="secondary",
                             ):
-                                _orphan_codes = [
-                                    mc for mc, _ in _drift.orphan_dictados
-                                ]
                                 with next(get_session()) as _del_s:
                                     _del_n = 0
-                                    for _orp_mc in _orphan_codes:
-                                        _orp_d = _del_s.exec(
-                                            select(DictadoDB)
-                                            .where(DictadoDB.materia_codigo == _orp_mc)
-                                            .join(
-                                                DictadoCicloDB,
-                                                DictadoDB.id == DictadoCicloDB.dictado_id,
-                                            )
-                                            .where(DictadoCicloDB.ciclo_id == sel_ciclo_dict)
-                                        ).first()
-                                        if _orp_d is None:
+                                    for _it in _drift.to_delete:
+                                        _did = _it["dictado_id"]
+                                        if _did is None:
                                             continue
-                                        # borrar link y dictado
-                                        _orp_link = _del_s.get(
-                                            DictadoCicloDB,
-                                            (_orp_d.id, sel_ciclo_dict),
-                                        )
-                                        if _orp_link:
-                                            _del_s.delete(_orp_link)
-                                        _del_s.delete(_orp_d)
-                                        _del_n += 1
-                                    _del_s.commit()
-                                st.toast(f"{_del_n} huérfano(s) eliminado(s).")
+                                        if borrar_dictado_de_ciclo(
+                                            _del_s, sel_ciclo_dict, _did,
+                                        ):
+                                            _del_n += 1
+                                st.toast(
+                                    f"{_del_n} huérfano(s) eliminado(s)."
+                                )
                                 st.rerun()
+                        if _drift.rule_says_skip_but_exists:
+                            st.markdown(
+                                f"**⚠️ Existen pero la regla dice que no "
+                                f"({len(_drift.rule_says_skip_but_exists)})**"
+                            )
+                            st.caption(
+                                "Dictados que el usuario creó a mano (o "
+                                "que quedaron de una regla anterior). No "
+                                "se borran automáticamente."
+                            )
+                            for _it in _drift.rule_says_skip_but_exists:
+                                st.write(
+                                    f"- **{_it['materia_codigo']}** — "
+                                    f"{_it['materia_nombre']}  \n"
+                                    f"  _{_it['razon']}_"
+                                )
 
             # Guard: si hay cambios pendientes en batch, bloquear las
             # operaciones globales (Crear Dictados, Recalcular según
@@ -492,195 +472,114 @@ with tab_dictados:
                 else:
                     msg_parts = []
                     if result.created:
-                        _act = result.created - result.created_inactive
-                        msg_parts.append(
-                            f"{result.created} creados "
-                            f"({_act} activos, {result.created_inactive} inactivos)"
-                        )
+                        msg_parts.append(f"{result.created} creados")
                     if result.linked:
                         msg_parts.append(f"{result.linked} vinculados (anuales)")
                     if result.skipped:
                         msg_parts.append(f"{result.skipped} ya existentes")
+                    if result.skipped_recursado:
+                        msg_parts.append(
+                            f"{result.skipped_recursado} omitidos por recursado"
+                        )
                     st.success(f"Dictados: {', '.join(msg_parts)}")
-                    # Por las dudas: dictados nuevos no tienen
-                    # session_state previo, pero `linked` sí puede
-                    # haber tocado dictados anuales existentes.
                     st.session_state["dict_resync_pending"] = True
                     st.rerun()
 
-            # Checkbox "pisar ediciones manuales" debe estar disponible
-            # *siempre* antes del botón Recalcular (no condicionado a un
-            # estado intermedio).
-            _pisar_ovr = st.checkbox(
-                "Pisar también las ediciones manuales",
-                value=False,
-                key=f"recompute_pisar_ovr_{sel_ciclo_dict}",
-                help=(
-                    "Por default, 'Recalcular según reglas' respeta los "
-                    "dictados que fueron editados a mano (los marcados "
-                    "con el indicador ✋). Activá esta opción sólo si "
-                    "querés descartar todas las ediciones manuales y "
-                    "dejar que las reglas vuelvan a decidir el estado "
-                    "de cada dictado."
-                ),
-            )
             if _do_recompute:
                 with next(get_session()) as session:
-                    preview = recompute_activo_for_ciclo(
+                    sync = sync_dictados_para_ciclo(
                         session, sel_ciclo_dict, apply=False,
-                        pisar_overrides=_pisar_ovr,
                     )
-                st.session_state["dict_recompute_preview"] = {
+                st.session_state["dict_sync_preview"] = {
                     "ciclo": sel_ciclo_dict,
-                    "to_activate": preview.to_activate,
-                    "to_deactivate": preview.to_deactivate,
-                    "overrides_respetados": preview.overrides_respetados,
-                    "unchanged": preview.unchanged,
-                    "pisar_overrides": _pisar_ovr,
+                    "to_create": sync.to_create,
+                    "to_delete": sync.to_delete,
+                    "rule_says_skip_but_exists": sync.rule_says_skip_but_exists,
                 }
 
-            # --- Recompute preview UI ---
-            _rprev = st.session_state.get("dict_recompute_preview")
-            if _rprev and _rprev.get("ciclo") == sel_ciclo_dict:
-                _to_act = _rprev["to_activate"]
-                _to_deact = _rprev["to_deactivate"]
-                _ovr = _rprev.get("overrides_respetados", [])
-                _n_changes = len(_to_act) + len(_to_deact)
-                if _n_changes == 0 and not _ovr:
-                    st.info(
-                        f"Todos los dictados ya están alineados con las "
-                        f"reglas actuales ({_rprev['unchanged']} sin "
-                        f"cambios)."
-                    )
-                    st.session_state.pop("dict_recompute_preview", None)
+            # --- Sync preview UI ---
+            _sprev = st.session_state.get("dict_sync_preview")
+            if _sprev and _sprev.get("ciclo") == sel_ciclo_dict:
+                _to_create = _sprev["to_create"]
+                _to_delete = _sprev["to_delete"]
+                _keep_skip = _sprev.get("rule_says_skip_but_exists", [])
+                _n_changes = len(_to_create) + len(_to_delete)
+                if _n_changes == 0 and not _keep_skip:
+                    st.info("Los dictados del ciclo ya están alineados.")
+                    st.session_state.pop("dict_sync_preview", None)
                 else:
                     with st.container(border=True):
-                        _modo_ovr = (
-                            "🚨 Modo: pisar ediciones manuales"
-                            if _rprev.get("pisar_overrides")
-                            else "✋ Modo: respetar ediciones manuales"
-                        )
                         st.markdown(
-                            f"**Preview de recálculo** — "
-                            f"{_n_changes} cambio(s), "
-                            f"{_rprev['unchanged']} sin cambio. "
-                            f"_{_modo_ovr}_"
+                            f"**Preview de sincronización** — "
+                            f"{len(_to_create)} a crear, "
+                            f"{len(_to_delete)} a borrar."
                         )
-
-                        def _render_recompute_table(items, key_prefix):
-                            import pandas as _pd
-                            rows = []
-                            for it in items:
-                                _aa = it.get("anio_plan")
-                                _cc = it.get("cuatrimestre_plan")
-                                _ubic = (
-                                    f"{_aa}°·{_cc}" if _aa and _cc
-                                    else (str(_aa) if _aa else (_cc or "—"))
-                                )
-                                _ea = "Activo" if it["estado_actual"] else "Inactivo"
-                                _en = "Activo" if it["estado_nuevo"] else "Inactivo"
-                                _flecha = (
-                                    f"{_ea} → {_en}"
-                                    if it["estado_actual"] != it["estado_nuevo"]
-                                    else _ea
-                                )
-                                rows.append({
-                                    "Materia": (
-                                        f"{it['materia_codigo']} — "
+                        if _to_create:
+                            with st.expander(
+                                f"➕ Materias sin dictado ({len(_to_create)})",
+                                expanded=True,
+                            ):
+                                for it in _to_create:
+                                    st.write(
+                                        f"- **{it['materia_codigo']}** — "
                                         f"{it['materia_nombre']}"
-                                    ),
-                                    "Carrera": it["carrera_nombre"],
-                                    "Año/Cuatri": _ubic,
-                                    "Cambio": _flecha,
-                                    "Razón": it["razon"],
-                                    "Editado a mano": (
-                                        "✋" if it["tiene_override"] else ""
-                                    ),
-                                })
-                            return _pd.DataFrame(rows)
-
-                        if _to_act:
+                                    )
+                        if _to_delete:
                             with st.expander(
-                                f"🟢 Pasarán a Activo ({len(_to_act)})",
+                                f"🗑️ Dictados huérfanos ({len(_to_delete)})",
                                 expanded=True,
                             ):
-                                _df = _render_recompute_table(_to_act, "act")
-                                st.dataframe(
-                                    _df,
-                                    width='stretch',
-                                    hide_index=True,
-                                )
-                        if _to_deact:
+                                for it in _to_delete:
+                                    st.write(
+                                        f"- `{it['dictado_codigo']}` "
+                                        f"({it['materia_codigo']})"
+                                    )
+                        if _keep_skip:
                             with st.expander(
-                                f"⚪ Pasarán a Inactivo ({len(_to_deact)})",
-                                expanded=True,
-                            ):
-                                _df = _render_recompute_table(_to_deact, "deact")
-                                st.dataframe(
-                                    _df,
-                                    width='stretch',
-                                    hide_index=True,
-                                )
-                        if _ovr:
-                            with st.expander(
-                                f"✋ Editados a mano (respetados) ({len(_ovr)})",
+                                f"⚠️ Existen pero la regla dice que no "
+                                f"({len(_keep_skip)})",
                                 expanded=False,
                             ):
                                 st.caption(
-                                    "Estos dictados fueron editados a mano "
-                                    "desde la grilla: la recalculación los "
-                                    "respeta y NO los modifica. Para que "
-                                    "vuelvan a alinearse con la regla, "
-                                    "apretá 'Quitar edición manual' en la "
-                                    "grilla o activá el toggle 'Pisar "
-                                    "también las ediciones manuales'."
+                                    "Los dejamos como están. Borralos "
+                                    "manualmente desde la grilla si "
+                                    "querés."
                                 )
-                                _df = _render_recompute_table(_ovr, "ovr")
-                                st.dataframe(
-                                    _df,
-                                    width='stretch',
-                                    hide_index=True,
-                                )
+                                for it in _keep_skip:
+                                    st.write(
+                                        f"- **{it['materia_codigo']}** — "
+                                        f"{it['materia_nombre']}  \n"
+                                        f"  _{it['razon']}_"
+                                    )
                         _ac1, _ac2, _ = st.columns([1, 1, 3])
                         with _ac1:
                             if st.button(
-                                "Aplicar cambios",
+                                "Aplicar sincronización",
                                 type="primary",
-                                key="btn_apply_recompute",
+                                key="btn_apply_sync",
                                 disabled=(_n_changes == 0),
                             ):
                                 with next(get_session()) as session:
-                                    res = recompute_activo_for_ciclo(
-                                        session, sel_ciclo_dict,
-                                        apply=True,
-                                        pisar_overrides=_rprev.get(
-                                            "pisar_overrides", False,
-                                        ),
+                                    res = sync_dictados_para_ciclo(
+                                        session, sel_ciclo_dict, apply=True,
                                     )
                                 st.success(
-                                    f"{res.n_changes} dictado(s) "
-                                    f"actualizado(s)."
+                                    f"{res.n_changes} cambio(s) aplicado(s)."
                                 )
                                 st.session_state.pop(
-                                    "dict_recompute_preview", None,
+                                    "dict_sync_preview", None,
                                 )
                                 st.session_state.pop(
                                     "dict_pending_count", None,
                                 )
-                                # El recompute mutó DB sin pasar por los
-                                # toggles → marcamos resync pendiente
-                                # para que el próximo render alinee
-                                # session_state con DB. Ver bloque
-                                # "Resync de session_state tras
-                                # operaciones bulk" más arriba.
                                 st.session_state["dict_resync_pending"] = True
                                 st.rerun()
                         with _ac2:
                             if st.button(
-                                "Cancelar", key="btn_cancel_recompute",
+                                "Cancelar", key="btn_cancel_sync",
                             ):
                                 st.session_state.pop(
-                                    "dict_recompute_preview", None,
+                                    "dict_sync_preview", None,
                                 )
                                 st.rerun()
 
@@ -830,7 +729,7 @@ with tab_dictados:
                         _did = _k.rsplit("_", 1)[-1]
                         _d = _dictado_id_to_db.get(_did)
                         if _d is not None:
-                            st.session_state[_k] = _d.activo
+                            st.session_state[_k] = True
                     elif _k.startswith("virtual_"):
                         _did = _k.rsplit("_", 1)[-1]
                         _d = _dictado_id_to_db.get(_did)
@@ -866,8 +765,8 @@ with tab_dictados:
             # Top stats
             # =========================================================
             _n_total_dict = len(dictados)
-            _n_activos = sum(1 for d in dictados if d.activo)
-            _n_virtuales = sum(1 for d in dictados if d.virtual and d.activo)
+            _n_activos = sum(1 for d in dictados if True)
+            _n_virtuales = sum(1 for d in dictados if d.virtual and True)
             _n_inactivos = _n_total_dict - _n_activos
             _n_sin_dict = sum(
                 1 for items in items_by_carrera.values()
@@ -1051,7 +950,7 @@ with tab_dictados:
                         if _dd is None:
                             continue
                         _new = bool(st.session_state[_k])
-                        if _new != _dd.activo:
+                        if _new != True:
                             pendientes.append({
                                 "tipo": "activo",
                                 "dictado_id": _did,
@@ -1060,7 +959,7 @@ with tab_dictados:
                                     mat_map[_dd.materia_codigo].nombre
                                     if _dd.materia_codigo in mat_map else ""
                                 ),
-                                "actual": _dd.activo,
+                                "actual": True,
                                 "nuevo": _new,
                                 "key": _k,
                             })
@@ -1179,10 +1078,17 @@ with tab_dictados:
                                 for p in _pendientes:
                                     try:
                                         if p["tipo"] == "activo":
-                                            set_activo_manual(
-                                                _ds, p["dictado_id"],
-                                                bool(p["nuevo"]),
-                                            )
+                                            # Semantica nueva: desactivar =
+                                            # borrar el dictado del ciclo.
+                                            # Activar (recrear) no aplica
+                                            # desde este flujo (usar el
+                                            # panel de divergencias / no
+                                            # esperadas en validaciones).
+                                            if not bool(p["nuevo"]):
+                                                borrar_dictado_de_ciclo(
+                                                    _ds, sel_ciclo_dict,
+                                                    p["dictado_id"],
+                                                )
                                         elif p["tipo"] == "virtual":
                                             update_dictado(
                                                 _ds, p["dictado_id"],
@@ -1253,9 +1159,9 @@ with tab_dictados:
                 # estado: solo aplica filtro si hay dictado.
                 # Las "sin dictado" (legacy) se muestran siempre con badge.
                 if d is not None:
-                    if d.activo and "Activo" not in _estado:
+                    if True and "Activo" not in _estado:
                         return False
-                    if not d.activo and "Inactivo" not in _estado:
+                    if not True and "Inactivo" not in _estado:
                         return False
                 # modalidad: si hay dictado, prima dictado.virtual; sin dictado, materia.virtual
                 _is_virtual = d.virtual if d is not None else mat.virtual
@@ -1341,7 +1247,7 @@ with tab_dictados:
                 _rec_key = f"rec_mat_{key_ns}_{carrera_cod}_{mat.codigo}"
                 _has_pending = False
                 if d is not None and _activo_key in st.session_state:
-                    if bool(st.session_state[_activo_key]) != d.activo:
+                    if bool(st.session_state[_activo_key]) != True:
                         _has_pending = True
                 if d is not None and _virtual_key in st.session_state:
                     if bool(st.session_state[_virtual_key]) != d.virtual:
@@ -1358,11 +1264,11 @@ with tab_dictados:
                     # Estado tag
                     if d is None:
                         _badge = "🔘 Sin dictado"
-                    elif d.activo:
+                    elif True:
                         _badge = "🟢 Activo"
                     else:
                         _badge = "⚪ Inactivo"
-                    if d is not None and d.activo_override_manual is not None:
+                    if d is not None and False:
                         _badge += " · ✋ editado a mano"
                     _virt = " · 🌐 virtual" if (
                         (d.virtual if d else mat.virtual)
@@ -1420,27 +1326,15 @@ with tab_dictados:
                     with col_activo:
                         st.checkbox(
                             "Activo",
-                            value=d.activo,
+                            value=True,
                             key=_activo_key,
                         )
                         # Botón para limpiar la edición manual y volver
                         # a alinear el dictado con la regla. Mantenemos
                         # commit inmediato porque es una acción puntual
                         # del usuario, no parte del batch.
-                        if d.activo_override_manual is not None:
-                            if st.button(
-                                "Quitar edición manual",
-                                key=(
-                                    f"clear_ovr_{key_ns}_{carrera_cod}_{d.id}"
-                                ),
-                            ):
-                                with next(get_session()) as _ds:
-                                    clear_activo_override(_ds, d.id)
-                                st.toast(
-                                    f"{mat.codigo}: edición manual "
-                                    "descartada"
-                                )
-                                st.rerun()
+                        # `activo_override_manual` fue eliminado: no hay
+                        # override para descartar.
                     with col_virtual:
                         st.checkbox(
                             "Virtual",
@@ -1466,11 +1360,11 @@ with tab_dictados:
                 n_opt = sum(1 for it in items_filt if it["pe"].optativa)
                 n_act = sum(
                     1 for it in items_filt
-                    if it["dictado"] and it["dictado"].activo
+                    if it["dictado"] and True
                 )
                 n_inact = sum(
                     1 for it in items_filt
-                    if it["dictado"] and not it["dictado"].activo
+                    if it["dictado"] and not True
                 )
                 n_sd = sum(1 for it in items_filt if it["dictado"] is None)
                 _hdr = (
@@ -1654,11 +1548,11 @@ with tab_dictados:
                 )
                 _n_act = sum(
                     1 for it in _items_comunes_filt
-                    if it["dictado"] and it["dictado"].activo
+                    if it["dictado"] and True
                 )
                 _n_inact = sum(
                     1 for it in _items_comunes_filt
-                    if it["dictado"] and not it["dictado"].activo
+                    if it["dictado"] and not True
                 )
                 _n_sd = sum(
                     1 for it in _items_comunes_filt

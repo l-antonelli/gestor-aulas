@@ -12,12 +12,12 @@ from src.database.models import (
     PlanCarreraVersionDB, PlanEstudioDB, CicloPlanVersionDB,
 )
 from src.services.dictado_service import (
+    aceptar_materias_en_ciclo,
     create_dictado_for_materia,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_skipped_materias_for_ciclo,
-    recompute_activo_for_ciclo,
-    set_activo_for_materias_in_ciclo,
+    sync_dictados_para_ciclo,
     update_dictado,
 )
 
@@ -393,10 +393,10 @@ class TestDictaRecursado:
 
         result = create_dictados_for_ciclo(session, "2025-1C-OVR1")
         assert result.created == 1
-        assert result.created_inactive == 0  # quedo activo por override
+        assert result.skipped_recursado == 0  # se creo (override materia gana)
 
         d = get_dictados_for_ciclo(session, "2025-1C-OVR1")[0]
-        assert d.activo is True
+        assert d is not None  # existe → se dicta
 
     def test_materia_override_recursado_false_beats_carrera_true(self, session):
         """Si MateriaDB.dicta_recursado=False y el cuatri es opuesto,
@@ -690,11 +690,10 @@ class TestCreateDictadoForMateria:
         ))
         session.commit()
 
-        # Manual creation produces an active dictado (sin pasar por auto-creator)
+        # Manual creation produces a dictado (todos existen → todos activos)
         d = create_dictado_for_materia(session, "2025-1C-LIC", "QUI201")
         assert d is not None
         assert d.materia_codigo == "QUI201"
-        assert d.activo is True
 
         # Idempotente: segunda llamada devuelve el mismo
         d2 = create_dictado_for_materia(session, "2025-1C-LIC", "QUI201")
@@ -819,6 +818,14 @@ class TestRecomputeActivo:
         assert d.activo is True
 
 
+@pytest.mark.skip(
+    reason=(
+        "set_activo_for_materias_in_ciclo fue reemplazado por "
+        "aceptar_materias_en_ciclo (crear si no existe) y "
+        "borrar_dictado_de_ciclo (borrar en vez de desactivar). Tests "
+        "asumen la semantica vieja con `activo=False`."
+    ),
+)
 class TestSetActivoForMaterias:
     """Tests for `set_activo_for_materias_in_ciclo`."""
 
@@ -910,14 +917,15 @@ class TestSetActivoForMaterias:
 class TestUpdateDictado:
     """Tests for update_dictado."""
 
+    @pytest.mark.skip(
+        reason=(
+            "DictadoDB.activo fue eliminado. Un dictado existe → se "
+            "dicta; para desactivar hay que borrar la fila con "
+            "borrar_dictado_de_ciclo."
+        ),
+    )
     def test_update_activo(self, session, ciclo_1c, materias):
-        create_dictados_for_ciclo(session, "2025-1C")
-        dictados = get_dictados_for_ciclo(session, "2025-1C")
-        d = dictados[0]
-
-        updated = update_dictado(session, d.id, activo=False)
-        assert updated is not None
-        assert updated.activo is False
+        pass
 
     def test_update_virtual(self, session, ciclo_1c, materias):
         create_dictados_for_ciclo(session, "2025-1C")

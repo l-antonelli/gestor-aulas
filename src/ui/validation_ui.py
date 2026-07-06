@@ -55,7 +55,7 @@ from src.services.cronograma_validation_service import (
     persist_validation as _crono_persist_validation,
     validar_cronograma,
 )
-from src.services.dictado_service import set_activo_for_materias_in_ciclo
+from src.services.dictado_service import aceptar_materias_en_ciclo
 from src.services.plan_validation_service import (
     PlanValidationSummary,
     add_ignored_pair,
@@ -895,39 +895,55 @@ def _render_dictado_action_selector(
     )
 
     if _sel_labels:
-        # Para "activate" ofrecemos dos botones: presencial y virtual.
-        # Para "deactivate" sigue siendo un único botón.
         _codes = [_options[lbl] for lbl in _sel_labels]
 
-        def _aplicar_bulk(activo: bool, marcar_virtual: Optional[bool]) -> None:
+        def _aplicar_activar(marcar_virtual: Optional[bool]) -> None:
             with next(get_session()) as _ds:
-                _n = set_activo_for_materias_in_ciclo(
-                    _ds, ciclo_id, _codes, activo=activo,
+                _n = aceptar_materias_en_ciclo(
+                    _ds, ciclo_id, _codes,
                     marcar_virtual=marcar_virtual,
                 )
             for _k in invalidate_cache_keys:
                 st.session_state.pop(_k, None)
-            # El bulk modificó DB sin pasar por los toggles del panel
-            # de Ciclos → Dictados (que es otra página). Si el usuario
-            # después abre esa página, los checkboxes podrían mostrar
-            # valores viejos del session_state. Marcamos resync
-            # pendiente para que el panel de Ciclos los re-sincronice
-            # con DB en su próximo render.
             st.session_state["dict_resync_pending"] = True
             st.session_state[pending_revalidate_key] = True
-            if activo and marcar_virtual:
+            if marcar_virtual:
                 _msg = f"{_n} dictado(s) activado(s) como virtual(es)."
-            elif activo:
-                _msg = f"{_n} dictado(s) activado(s)."
             else:
-                _msg = f"{_n} dictado(s) desactivado(s)."
+                _msg = f"{_n} dictado(s) activado(s)."
             st.toast(_msg)
+            st.rerun()
+
+        def _aplicar_desactivar() -> None:
+            """Desactivar = borrar el dictado del ciclo. Semantica nueva:
+            si el dictado no existe, no hay nada que dictar."""
+            from src.services.dictado_service import borrar_dictado_de_ciclo
+            from sqlmodel import select as _sel
+            from src.database.models import (
+                DictadoDB as _DDB,
+                DictadoCicloDB as _DCB,
+            )
+            n_borrados = 0
+            with next(get_session()) as _ds:
+                dictados = list(_ds.exec(
+                    _sel(_DDB).join(_DCB, _DDB.id == _DCB.dictado_id)  # type: ignore[arg-type]
+                    .where(_DCB.ciclo_id == ciclo_id)
+                    .where(col(_DDB.materia_codigo).in_(_codes))
+                ).all())
+                for d in dictados:
+                    if borrar_dictado_de_ciclo(_ds, ciclo_id, d.id):
+                        n_borrados += 1
+            for _k in invalidate_cache_keys:
+                st.session_state.pop(_k, None)
+            st.session_state["dict_resync_pending"] = True
+            st.session_state[pending_revalidate_key] = True
+            st.toast(f"{n_borrados} dictado(s) borrado(s) del ciclo.")
             st.rerun()
 
         if action == "activate":
             st.caption(
-                "**Activar** marca el dictado como esperado y presencial. "
-                "**Activar y marcar virtual** lo marca como esperado pero "
+                "**Activar** crea el dictado en el ciclo como presencial. "
+                "**Activar y marcar virtual** lo crea marcado como "
                 "**virtual sólo en este ciclo** (modalidad puntual): el LP "
                 "de asignación de aulas lo ignorará. Útil para recursados "
                 "u ofertas por Zoom."
@@ -939,25 +955,31 @@ def _render_dictado_action_selector(
                     key=_btn_key, type="primary",
                     use_container_width=True,
                 ):
-                    _aplicar_bulk(activo=True, marcar_virtual=False)
+                    _aplicar_activar(marcar_virtual=False)
             with _bcol_v:
                 if st.button(
                     f"🌐 Activar y marcar virtual ({len(_sel_labels)})",
                     key=f"{_btn_key}_virtual",
                     use_container_width=True,
                     help=(
-                        "Marca los dictados como activos y virtuales "
-                        "sólo para este ciclo. La materia en el catálogo "
-                        "no se modifica."
+                        "Marca los dictados como virtuales sólo para "
+                        "este ciclo. La materia en el catálogo no se "
+                        "modifica."
                     ),
                 ):
-                    _aplicar_bulk(activo=True, marcar_virtual=True)
+                    _aplicar_activar(marcar_virtual=True)
         else:
             if st.button(
                 f"⚪ {_verbo} {len(_sel_labels)} dictado(s)",
                 key=_btn_key, type="primary",
+                help=(
+                    "Borra los dictados de estas materias del ciclo. "
+                    "Semantica nueva: la ausencia del dictado significa "
+                    "que la materia no se dicta este ciclo. Las clases "
+                    "asociadas quedan sin dictado (huerfanas)."
+                ),
             ):
-                _aplicar_bulk(activo=False, marcar_virtual=None)
+                _aplicar_desactivar()
 
 
 def _render_resolve_conflicto(

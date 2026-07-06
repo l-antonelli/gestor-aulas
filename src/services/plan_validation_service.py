@@ -388,7 +388,7 @@ def validar_plan(
 
     # Detalle faltantes/extras por carrera
     dictado_codigos = get_dictado_codigos_for_ciclo(
-        session, plan.ciclo_id, only_active=True,
+        session, plan.ciclo_id,
     )
     summary.faltantes_por_carrera = _faltantes_por_carrera(
         session, plan, esperadas, materias_en_plan_filt, dictado_codigos,

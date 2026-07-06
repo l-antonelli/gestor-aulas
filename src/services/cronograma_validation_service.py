@@ -369,7 +369,7 @@ def validar_cronograma(
 
     # Faltantes por carrera (detalle) — usa el dictado_codigo en la razon.
     dictado_codigos = get_dictado_codigos_for_ciclo(
-        session, ciclo_id, only_active=True,
+        session, ciclo_id,
     )
     summary.faltantes_por_carrera = _get_faltantes_por_carrera(
         session, ciclo_id, esperadas, materias_en_sched_filt, dictado_codigos,

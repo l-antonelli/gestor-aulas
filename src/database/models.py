@@ -123,14 +123,6 @@ class DictadoDB(SQLModel, table=True):
     dictado_codigo: str = Field(default="", index=True)  # Display key, e.g. "MAT101-2025-2C"
     inicio_dictado: Optional[date] = Field(default=None)
     fin_dictado: Optional[date] = Field(default=None)
-    activo: bool = Field(default=True)
-    # Override manual del flag `activo`. Cuando es None, el dictado se
-    # alinea con la regla de recursado al apretar "Recalcular según
-    # reglas". Cuando es True/False, fuerza el valor manualmente y la
-    # ejecucion default de `recompute_activo_for_ciclo` lo respeta
-    # (sólo se borra cuando el usuario activa el toggle "Pisar overrides
-    # manuales").
-    activo_override_manual: Optional[bool] = Field(default=None)
     # Override de virtualidad a nivel dictado. Sigue "nivel mas
     # especifico manda" (ver `resolve_virtual`):
     #   None  = heredar de la materia (default).
