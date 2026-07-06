@@ -963,16 +963,18 @@ def has_dictados_for_ciclo(session: Session, ciclo_id: str) -> bool:
 def update_dictado(
     session: Session,
     dictado_id: str,
-    activo: Optional[bool] = None,
     virtual: Optional[bool] = None,
 ) -> Optional[DictadoDB]:
-    """Update activo and/or virtual flags on a dictado."""
+    """Update the ``virtual`` flag on a dictado.
+
+    Semantica nueva: no hay flag `activo` — para desactivar un dictado
+    hay que borrarlo con ``borrar_dictado_de_ciclo``. `virtual` es
+    Optional[bool] (None = heredar de la materia, True/False = override).
+    """
     dictado = session.get(DictadoDB, dictado_id)
     if dictado is None:
         return None
 
-    if activo is not None:
-        dictado.activo = activo
     if virtual is not None:
         dictado.virtual = virtual
 

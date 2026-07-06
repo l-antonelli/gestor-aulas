@@ -678,40 +678,6 @@ class TestValidarCoberturaPlan:
         assert result.valid is False
         assert "MISS1" in result.details[0]
 
-    @pytest.mark.skip(
-        reason=(
-            "DictadoDB.activo fue eliminado. Semantica nueva: si el "
-            "dictado no debe dictarse, no debe existir. Este test "
-            "asumia dictado inactivo pero linkeado."
-        ),
-    )
-    def test_inactive_dictado_not_checked(self, session, base_data):
-        """An inactive dictado should not trigger a coverage warning."""
-        ciclo = base_data["ciclo"]
-
-        m1 = MateriaDB(codigo="INACT1", nombre="Inactive", periodo="cuatrimestral")
-        session.add(m1)
-        session.flush()
-
-        dictado = DictadoDB(
-            id=str(uuid.uuid4()), materia_codigo="INACT1",
-            dictado_codigo="INACT1-2025-1C",
-        )
-        session.add(dictado)
-        session.flush()
-        session.add(DictadoCicloDB(dictado_id=dictado.id, ciclo_id=ciclo.id))
-
-        plan = PlanificacionCursadaDB(
-            id=str(uuid.uuid4()), nombre="Inactive",
-            ciclo_id=ciclo.id, activo=False,
-        )
-        session.add(plan)
-        session.commit()
-
-        result = validar_cobertura_plan(session, plan.id, ciclo.id)
-        assert result.valid is True
-
-
 class TestIdentificarVirtualesPlan:
     """Tests for identificar_virtuales_plan."""
 
