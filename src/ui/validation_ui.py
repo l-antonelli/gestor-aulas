@@ -898,11 +898,20 @@ def _render_dictado_action_selector(
         _codes = [_options[lbl] for lbl in _sel_labels]
 
         def _aplicar_activar(marcar_virtual: Optional[bool]) -> None:
+            from src.services.change_log_service import change_context
+            _reason_modo = "virtual" if marcar_virtual else "presencial"
             with next(get_session()) as _ds:
-                _n = aceptar_materias_en_ciclo(
-                    _ds, ciclo_id, _codes,
-                    marcar_virtual=marcar_virtual,
-                )
+                with change_context(
+                    origin="ui:validacion",
+                    reason=(
+                        f"Aceptar materia(s) del cronograma como "
+                        f"{_reason_modo} en el ciclo {ciclo_id}"
+                    ),
+                ):
+                    _n = aceptar_materias_en_ciclo(
+                        _ds, ciclo_id, _codes,
+                        marcar_virtual=marcar_virtual,
+                    )
             for _k in invalidate_cache_keys:
                 st.session_state.pop(_k, None)
             st.session_state["dict_resync_pending"] = True
@@ -918,6 +927,7 @@ def _render_dictado_action_selector(
             """Desactivar = borrar el dictado del ciclo. Semantica nueva:
             si el dictado no existe, no hay nada que dictar."""
             from src.services.dictado_service import borrar_dictado_de_ciclo
+            from src.services.change_log_service import change_context
             from sqlmodel import select as _sel
             from src.database.models import (
                 DictadoDB as _DDB,
@@ -930,9 +940,16 @@ def _render_dictado_action_selector(
                     .where(_DCB.ciclo_id == ciclo_id)
                     .where(col(_DDB.materia_codigo).in_(_codes))
                 ).all())
-                for d in dictados:
-                    if borrar_dictado_de_ciclo(_ds, ciclo_id, d.id):
-                        n_borrados += 1
+                with change_context(
+                    origin="ui:validacion",
+                    reason=(
+                        f"Bulk desactivar (borrar) desde validación en "
+                        f"ciclo {ciclo_id}"
+                    ),
+                ):
+                    for d in dictados:
+                        if borrar_dictado_de_ciclo(_ds, ciclo_id, d.id):
+                            n_borrados += 1
             for _k in invalidate_cache_keys:
                 st.session_state.pop(_k, None)
             st.session_state["dict_resync_pending"] = True

@@ -27,6 +27,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.database.connection import get_session
+from src.services.change_log_service import change_context
 from src.services.dictado_service import (
     borrar_dictado_de_ciclo,
     create_dictado_for_materia,
@@ -99,7 +100,14 @@ def render_panel_divergencias(
             ),
         ):
             with next(get_session()) as _s:
-                res = sync_dictados_para_ciclo(_s, ciclo_id, apply=True)
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Sincronización masiva del ciclo {ciclo_id} "
+                        "desde el panel de divergencias"
+                    ),
+                ):
+                    res = sync_dictados_para_ciclo(_s, ciclo_id, apply=True)
             st.session_state[on_change_key] = True
             st.toast(
                 f"✅ {res.n_changes} cambio(s) aplicado(s): "
@@ -184,9 +192,16 @@ def _render_row_to_create(
             use_container_width=True,
         ):
             with next(get_session()) as _s:
-                create_dictado_for_materia(
-                    _s, ciclo_id, item["materia_codigo"],
-                )
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Crear dictado ({item['materia_codigo']}) "
+                        f"desde panel de divergencias del ciclo {ciclo_id}"
+                    ),
+                ):
+                    create_dictado_for_materia(
+                        _s, ciclo_id, item["materia_codigo"],
+                    )
             st.session_state[on_change_key] = True
             st.toast(f"✅ Dictado creado: {item['materia_codigo']}")
             st.rerun()
@@ -202,10 +217,17 @@ def _render_row_to_create(
             use_container_width=True,
         ):
             with next(get_session()) as _s:
-                promover_a_regla(
-                    _s, item["materia_codigo"], ciclo_id,
-                    accion="omitir-en-regla",
-                )
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Promoción a regla (omitir) desde panel de "
+                        f"divergencias del ciclo {ciclo_id}"
+                    ),
+                ):
+                    promover_a_regla(
+                        _s, item["materia_codigo"], ciclo_id,
+                        accion="omitir-en-regla",
+                    )
             st.session_state[on_change_key] = True
             st.toast(
                 f"⏭️ {item['materia_codigo']}: dicta_recursado=False. "
@@ -236,7 +258,14 @@ def _render_row_to_delete(
             use_container_width=True,
         ):
             with next(get_session()) as _s:
-                borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Borrar huérfano ({item['materia_codigo']}) del "
+                        f"ciclo {ciclo_id} (materia ya no está en el plan)"
+                    ),
+                ):
+                    borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
             st.session_state[on_change_key] = True
             st.toast(f"🗑️ Dictado borrado: {item['dictado_codigo']}")
             st.rerun()
@@ -265,7 +294,14 @@ def _render_row_keep_skip(
             use_container_width=True,
         ):
             with next(get_session()) as _s:
-                borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Borrar dictado ({item['materia_codigo']}) del "
+                        f"ciclo {ciclo_id} — regla decía skippear"
+                    ),
+                ):
+                    borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
             st.session_state[on_change_key] = True
             st.toast(f"🗑️ Dictado borrado: {item['dictado_codigo']}")
             st.rerun()
@@ -282,10 +318,17 @@ def _render_row_keep_skip(
             use_container_width=True,
         ):
             with next(get_session()) as _s:
-                promover_a_regla(
-                    _s, item["materia_codigo"], ciclo_id,
-                    accion="crear-en-regla",
-                )
+                with change_context(
+                    origin="ui:ciclos",
+                    reason=(
+                        f"Promoción a regla (crear) desde panel de "
+                        f"divergencias del ciclo {ciclo_id}"
+                    ),
+                ):
+                    promover_a_regla(
+                        _s, item["materia_codigo"], ciclo_id,
+                        accion="crear-en-regla",
+                    )
             st.session_state[on_change_key] = True
             st.toast(
                 f"⬆️ {item['materia_codigo']}: dicta_recursado=True. "
