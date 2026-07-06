@@ -731,6 +731,55 @@ def create_dictado_for_materia(
     return session.get(DictadoDB, link.dictado_id)
 
 
+def promover_a_regla(
+    session: Session,
+    materia_codigo: str,
+    ciclo_id: str,
+    *,
+    accion: str,
+) -> bool:
+    """Promueve la decision tomada en un dictado a regla general en
+    MateriaDB/CarreraDB.
+
+    Casos que resuelve:
+
+    - **accion="crear-en-regla"**: la regla actual dice skippear (el
+      dictado no deberia existir) pero el usuario quiere que exista
+      Y ademas quiere que la regla nueva permita crearlo. Setea
+      `MateriaDB.dicta_recursado=True` (override sobre carrera). Asi
+      en ciclos futuros la materia sale automaticamente.
+
+    - **accion="omitir-en-regla"**: la regla dice que el dictado deberia
+      existir pero el usuario quiere que NO se cree. Setea
+      `MateriaDB.dicta_recursado=False`. Solo tiene efecto si la
+      materia es de cuatri opuesto al ciclo (ver
+      `_should_skip_for_recursado`); si es del mismo cuatri o anual,
+      la regla no la skippea igual y el override no basta.
+
+    NO modifica el estado actual de ningun dictado — sólo la política.
+    La sincronizacion queda a cargo del usuario apretando "Sync".
+
+    Returns:
+        True si se aplico el cambio, False si la materia no existe o
+        el flag ya estaba en el valor pedido.
+    """
+    if accion not in {"crear-en-regla", "omitir-en-regla"}:
+        raise ValueError(
+            f"Accion invalida: '{accion}'. Debe ser "
+            "'crear-en-regla' u 'omitir-en-regla'."
+        )
+    materia = session.get(MateriaDB, materia_codigo)
+    if materia is None:
+        return False
+    nuevo_valor = True if accion == "crear-en-regla" else False
+    if materia.dicta_recursado == nuevo_valor:
+        return False  # ya estaba en el valor pedido
+    materia.dicta_recursado = nuevo_valor
+    session.add(materia)
+    session.commit()
+    return True
+
+
 def get_drift_summary(session: Session, ciclo_id: str) -> DriftSummary:
     """Devuelve un diagnostico de divergencias del ciclo vs el plan +
     reglas vigentes.

@@ -4,7 +4,7 @@ import uuid
 import pytest
 from datetime import date
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from src.database.models import (
@@ -13,10 +13,12 @@ from src.database.models import (
 )
 from src.services.dictado_service import (
     aceptar_materias_en_ciclo,
+    borrar_dictado_de_ciclo,
     create_dictado_for_materia,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
     get_skipped_materias_for_ciclo,
+    promover_a_regla,
     sync_dictados_para_ciclo,
     update_dictado,
 )
@@ -1128,3 +1130,259 @@ class TestActivoOverrideManual:
         assert item["estado_nuevo"] is False
         assert "no dicta recursado" in item["razon"]
         assert item["tiene_override"] is False
+
+
+class TestSyncDictadosParaCiclo:
+    """Tests para `sync_dictados_para_ciclo`, la nueva API de divergencias."""
+
+    def _setup_ciclo_con_plan(self, session, *, cuatri_mat="1C", ciclo_num=1):
+        """Ciclo + carrera + materia + plan_version. No crea dictado."""
+        carrera = CarreraDB(codigo="SC", nombre="Sync Test")
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="SC",
+            nombre="Plan SC", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="SC01", nombre="Sync Mat",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="SC01",
+            carrera_codigo="SC", anio_plan=1, cuatrimestre_plan=cuatri_mat,
+        ))
+        ciclo = CicloDB(
+            id=f"2025-{ciclo_num}C-SC", anio=2025, numero=ciclo_num,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+        return ciclo, mat, carrera
+
+    def test_preview_to_create_sin_dictado(self, session):
+        """Materia del plan sin dictado y regla no dice skippear →
+        aparece en to_create."""
+        ciclo, mat, _ = self._setup_ciclo_con_plan(session)
+        # NO llamamos create_dictados_for_ciclo → dictado ausente.
+        sync = sync_dictados_para_ciclo(session, ciclo.id, apply=False)
+        assert len(sync.to_create) == 1
+        assert sync.to_create[0]["materia_codigo"] == "SC01"
+        assert sync.applied is False
+        # No se creo nada (apply=False).
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 0
+
+    def test_apply_crea_faltantes(self, session):
+        """apply=True crea los dictados de to_create."""
+        ciclo, mat, _ = self._setup_ciclo_con_plan(session)
+        sync = sync_dictados_para_ciclo(session, ciclo.id, apply=True)
+        assert sync.applied is True
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 1
+
+    def test_to_delete_dictado_huerfano(self, session):
+        """Dictado existe pero la materia no esta en ningun plan del
+        ciclo → aparece en to_delete."""
+        ciclo, _, carrera = self._setup_ciclo_con_plan(session)
+        # Creamos el dictado normalmente.
+        create_dictados_for_ciclo(session, ciclo.id)
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 1
+        # Ahora sacamos la materia del plan (borro PE row).
+        pe = session.exec(
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == "SC01",
+            )
+        ).first()
+        session.delete(pe)
+        session.commit()
+
+        sync = sync_dictados_para_ciclo(session, ciclo.id, apply=False)
+        assert len(sync.to_delete) == 1
+        assert sync.to_delete[0]["materia_codigo"] == "SC01"
+
+    def test_apply_borra_huerfanos(self, session):
+        """apply=True borra los dictados de to_delete."""
+        ciclo, _, _ = self._setup_ciclo_con_plan(session)
+        create_dictados_for_ciclo(session, ciclo.id)
+        pe = session.exec(
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == "SC01",
+            )
+        ).first()
+        session.delete(pe)
+        session.commit()
+
+        sync_dictados_para_ciclo(session, ciclo.id, apply=True)
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 0
+
+    def test_rule_says_skip_but_exists_no_se_borra(self, session):
+        """Dictado existe pero la regla dice skippear → aparece en
+        rule_says_skip_but_exists y NO se borra en apply."""
+        # Ciclo 1C con materia de 2C (cuatri opuesto) y carrera que no
+        # dicta recursado. La regla dice skippear pero el dictado existe.
+        ciclo, mat, carrera = self._setup_ciclo_con_plan(
+            session, cuatri_mat="2C",
+        )
+        carrera.dicta_recursado = False
+        session.add(carrera)
+        session.commit()
+        # Creamos el dictado a mano (create_dictados no lo crearia).
+        create_dictado_for_materia(session, ciclo.id, mat.codigo)
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 1
+
+        sync = sync_dictados_para_ciclo(session, ciclo.id, apply=True)
+        # No lo borro (no aparece en to_delete).
+        assert len(sync.to_delete) == 0
+        assert len(sync.rule_says_skip_but_exists) == 1
+        # El dictado sigue existiendo.
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 1
+
+
+class TestPromoverARegla:
+    """Tests para `promover_a_regla`."""
+
+    def _setup_materia(self, session):
+        mat = MateriaDB(
+            codigo="PR01", nombre="Promover Test",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.commit()
+        return mat
+
+    def test_crear_en_regla_setea_dicta_recursado_true(self, session):
+        mat = self._setup_materia(session)
+        assert mat.dicta_recursado is None
+        result = promover_a_regla(
+            session, "PR01", "2025-1C", accion="crear-en-regla",
+        )
+        assert result is True
+        session.refresh(mat)
+        assert mat.dicta_recursado is True
+
+    def test_omitir_en_regla_setea_dicta_recursado_false(self, session):
+        mat = self._setup_materia(session)
+        result = promover_a_regla(
+            session, "PR01", "2025-1C", accion="omitir-en-regla",
+        )
+        assert result is True
+        session.refresh(mat)
+        assert mat.dicta_recursado is False
+
+    def test_no_toca_si_ya_esta_en_valor(self, session):
+        mat = self._setup_materia(session)
+        mat.dicta_recursado = True
+        session.add(mat)
+        session.commit()
+        result = promover_a_regla(
+            session, "PR01", "2025-1C", accion="crear-en-regla",
+        )
+        assert result is False  # ya estaba en ese valor
+
+    def test_falla_si_materia_no_existe(self, session):
+        result = promover_a_regla(
+            session, "NOEXISTE", "2025-1C", accion="crear-en-regla",
+        )
+        assert result is False
+
+    def test_accion_invalida_raises(self, session):
+        self._setup_materia(session)
+        with pytest.raises(ValueError, match="Accion invalida"):
+            promover_a_regla(
+                session, "PR01", "2025-1C", accion="foobar",
+            )
+
+
+class TestBorrarDictadoDeCiclo:
+    """Tests para `borrar_dictado_de_ciclo` (helper que apoya la UI)."""
+
+    def _setup_ciclo_con_dictado(self, session):
+        carrera = CarreraDB(codigo="BD", nombre="Borrar Test")
+        session.add(carrera)
+        session.flush()
+        pv = PlanCarreraVersionDB(
+            id=str(uuid.uuid4()), carrera_codigo="BD",
+            nombre="Plan BD", fecha_creacion=date(2025, 1, 1),
+        )
+        session.add(pv)
+        session.flush()
+        mat = MateriaDB(
+            codigo="BD01", nombre="Borrar Mat",
+            periodo="cuatrimestral", active=True,
+        )
+        session.add(mat)
+        session.flush()
+        session.add(PlanEstudioDB(
+            plan_version_id=pv.id, materia_codigo="BD01",
+            carrera_codigo="BD", anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        ciclo = CicloDB(
+            id="2025-1C-BD", anio=2025, numero=1,
+            fecha_inicio=date(2025, 3, 10), fecha_fin=date(2025, 7, 5),
+        )
+        session.add(ciclo)
+        session.flush()
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ciclo.id, plan_version_id=pv.id,
+        ))
+        session.commit()
+        create_dictados_for_ciclo(session, ciclo.id)
+        return ciclo
+
+    def test_borra_dictado_del_ciclo(self, session):
+        ciclo = self._setup_ciclo_con_dictado(session)
+        d = get_dictados_for_ciclo(session, ciclo.id)[0]
+        assert borrar_dictado_de_ciclo(session, ciclo.id, d.id) is True
+        assert len(get_dictados_for_ciclo(session, ciclo.id)) == 0
+        # La fila DictadoDB tambien se borro (no queda en otros ciclos).
+        assert session.get(DictadoDB, d.id) is None
+
+    def test_borrar_nullifica_clases_huerfanas(self, session):
+        from src.database.models import (
+            ClaseDB, ComisionDB, HorarioDB,
+            PlanificacionCursadaDB,
+        )
+        from datetime import time
+        ciclo = self._setup_ciclo_con_dictado(session)
+        d = get_dictados_for_ciclo(session, ciclo.id)[0]
+        # Simulamos que hay clases del dictado (via un plan + comision).
+        plan = PlanificacionCursadaDB(
+            id="pl-1", nombre="P", ciclo_id=ciclo.id,
+        )
+        session.add(plan)
+        com = ComisionDB(
+            id="c-1", materia_codigo="BD01", dictado_id=d.id,
+            plan_cursada_id="pl-1", comision_key="BD01-001",
+            nombre="C1", numero=1, cupo=30,
+        )
+        session.add(com)
+        h = HorarioDB(
+            id="h-1", comision_id="c-1", codigo_materia="BD01",
+            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        session.add(h)
+        cl = ClaseDB(
+            id="cl-1", horario_id="h-1", comision_id="c-1",
+            plan_cursada_id="pl-1", dictado_id=d.id,
+            fecha=date(2025, 3, 10),
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        session.add(cl)
+        session.commit()
+
+        borrar_dictado_de_ciclo(session, ciclo.id, d.id)
+        session.refresh(cl)
+        # La clase sobrevive pero con dictado_id=None.
+        assert cl.dictado_id is None
+
+    def test_idempotente_si_dictado_no_existe(self, session):
+        ciclo = self._setup_ciclo_con_dictado(session)
+        result = borrar_dictado_de_ciclo(session, ciclo.id, "NOEXISTE")
+        assert result is False
