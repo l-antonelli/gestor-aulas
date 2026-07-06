@@ -13,7 +13,6 @@ from src.database.models import (
 )
 from src.database.crud import ciclo_crud
 from src.services.dictado_service import (
-    aceptar_materias_en_ciclo,
     borrar_dictado_de_ciclo,
     create_dictados_for_ciclo,
     get_dictados_for_ciclo,
@@ -219,16 +218,16 @@ with tab_ciclos:
 
 
 # =============================================================================
-# Tab 2: Dictados - Create, view grouped by carrera, edit activo/virtual
+# Tab 2: Dictados - Create, view grouped by carrera, edit virtual
 # =============================================================================
 with tab_dictados:
     st.subheader("Dictados por Ciclo")
     st.caption(
-        "Los **dictados activos** acá son lo que la prevalidación de cronogramas "
-        "espera del ciclo. Si una materia del plan **no se va a dictar** este "
-        "cuatrimestre, marcala como `Activo=False` y desaparece de las "
-        "esperadas. La bandera `Virtual` se hereda de la materia pero se puede "
-        "ajustar caso por caso."
+        "Los **dictados del ciclo** son lo que la prevalidación de cronogramas "
+        "espera. Si una materia del plan **no se va a dictar** este "
+        "cuatrimestre, **borrá su dictado** (semántica nueva: existe = se "
+        "dicta). La bandera `Virtual` hereda de la materia por defecto y se "
+        "puede overridear caso por caso (Heredar / Virtual / Presencial)."
     )
 
     if not ciclo_ids:
@@ -301,7 +300,9 @@ with tab_dictados:
                 st.caption(
                     f"⚠️ {_cfg_n_no_recursado} carrera(s) con "
                     f"`dicta_recursado=False`: las materias exclusivas y del "
-                    f"cuatri opuesto se crean como **inactivas** (salvo edición a mano)."
+                    "cuatri opuesto **no se crean** al hacer `Crear Dictados` "
+                    "(quedan como \"skipped\" con la razón). Se pueden crear "
+                    "manualmente desde el panel de divergencias."
                 )
             if _cfg_n_inactive:
                 st.caption(
@@ -311,8 +312,8 @@ with tab_dictados:
             st.caption(
                 "Editá `dicta_recursado` (carrera y materia) y la versión del plan "
                 "asignada al ciclo desde **dentro de cada expander de carrera** abajo. "
-                "Después tocá **🔄 Recalcular** para alinear los dictados con las "
-                "reglas actualizadas."
+                "Después tocá **🔄 Sincronizar según reglas** para alinear los "
+                "dictados con las reglas actualizadas."
             )
 
             st.divider()
@@ -666,12 +667,7 @@ with tab_dictados:
                 for _k in list(st.session_state.keys()):
                     if not isinstance(_k, str):
                         continue
-                    if _k.startswith("activo_"):
-                        _did = _k.rsplit("_", 1)[-1]
-                        _d = _dictado_id_to_db.get(_did)
-                        if _d is not None:
-                            st.session_state[_k] = True
-                    elif _k.startswith("virtual_"):
+                    if _k.startswith("virtual_"):
                         _did = _k.rsplit("_", 1)[-1]
                         _d = _dictado_id_to_db.get(_did)
                         if _d is not None:
@@ -710,10 +706,13 @@ with tab_dictados:
             # =========================================================
             # Top stats
             # =========================================================
-            _n_total_dict = len(dictados)
-            _n_activos = sum(1 for d in dictados if True)
-            _n_virtuales = sum(1 for d in dictados if d.virtual and True)
-            _n_inactivos = _n_total_dict - _n_activos
+            _n_dictados = len(dictados)
+            # `d.virtual` es Optional[bool]; contamos solo overrides
+            # explicitos hacia virtual (True). Los que estan en None
+            # heredan de la materia y no cuentan como override.
+            _n_virtuales_override = sum(
+                1 for d in dictados if d.virtual is True
+            )
             _n_sin_dict = sum(
                 1 for items in items_by_carrera.values()
                 for it in items if it["dictado"] is None
@@ -725,50 +724,53 @@ with tab_dictados:
                 for it in items if it["pe"].optativa
             }
 
-            _ms1, _ms2, _ms3, _ms4 = st.columns(4)
-            _ms1.metric("Activos", _n_activos)
-            _ms2.metric("Inactivos", _n_inactivos)
-            _ms3.metric("Virtuales", _n_virtuales)
-            _ms4.metric("Optativas", len(_opt_codigos))
-            if _n_sin_dict > 0:
-                st.warning(
-                    f"⚠️ Hay {_n_sin_dict} materia(s) del plan sin dictado "
-                    "creado todavía. Apretá **Crear Dictados** para "
-                    "completar el set."
-                )
+            _ms1, _ms2, _ms3 = st.columns(3)
+            _ms1.metric("Dictados existentes", _n_dictados)
+            _ms2.metric(
+                "Virtuales (override)",
+                _n_virtuales_override,
+                help=(
+                    "Dictados con `DictadoDB.virtual=True` explícito. "
+                    "Los que heredan de la materia no cuentan acá."
+                ),
+            )
+            _ms3.metric("Optativas", len(_opt_codigos))
             st.caption(
-                "**Esperadas en prevalidación = Activos.** Las inactivas se "
-                "excluyen del set de materias esperadas."
+                "**Semántica nueva**: la existencia del dictado en el "
+                "ciclo es la afirmación *\"esta materia se dicta este "
+                "ciclo\"*. No hay flag `activo`. Las materias del plan "
+                "sin dictado son las que la regla de recursado no "
+                "autoriza a crear."
             )
 
             with st.expander(
-                "ℹ️ Cómo usar los toggles de cada materia", expanded=False,
+                "ℹ️ Cómo funciona esta página", expanded=False,
             ):
                 st.markdown(
-                    "Cada fila tiene tres toggles que combinan "
-                    "**modalidad efectiva** y **excepciones manuales**:\n\n"
-                    "- **🟢/⚪ Activo**: si la materia se dicta en este "
-                    "ciclo. Las inactivas se excluyen del set esperado "
-                    "en prevalidaciones de cronograma. El indicador "
-                    "**✋ editado a mano** aparece cuando vos forzaste "
-                    "el valor, y se respeta al volver a apretar "
-                    "*Recalcular según reglas* (salvo que actives "
-                    "*Pisar ediciones manuales*).\n"
-                    "- **Recursado fijado a mano**: override del flag "
-                    "`dicta_recursado` de la carrera para esta materia "
-                    "(útil cuando una materia particular se ofrece "
-                    "como recursado aunque la carrera en general no lo "
-                    "haga, o viceversa).\n"
-                    "- **🌐 Virtual**: marca el dictado como virtual "
-                    "**sólo en este ciclo**. La materia sigue figurando "
-                    "en el plan, validaciones de cobertura la cuentan "
-                    "como cubierta, pero **no necesita aula** — el LP "
-                    "de asignación la ignora. Útil para recursados o "
-                    "materias que se dictan por Zoom este cuatrimestre. "
-                    "El catálogo de la materia (campo "
-                    "`MateriaDB.virtual`) **no** se modifica: si en otro "
-                    "ciclo la materia es presencial, su dictado de ese "
-                    "ciclo aparecerá presencial por default."
+                    "**Divergencias entre plan y regla** se muestran en "
+                    "el panel de arriba con acciones fila-a-fila:\n\n"
+                    "- **➕ Materias del plan sin dictado**: la regla "
+                    "actual permite crearlas — apretá `[✅ Crear]` o "
+                    "`[⚡ Aplicar todo]` para que aparezcan.\n"
+                    "- **🗑️ Dictados huérfanos**: existen pero la materia "
+                    "ya no está en el plan del ciclo.\n"
+                    "- **⚠️ Existen pero la regla dice que no**: "
+                    "dictados que se crearon a mano (o antes de un "
+                    "cambio de política). `[🗑️ Borrar]` para sacarlos "
+                    "o `[⬆️ Promover a regla]` para actualizar la "
+                    "política.\n\n"
+                    "**En la grilla por carrera** cada fila tiene:\n\n"
+                    "- Selector **Recursado** (Según Carrera / Sí / No) "
+                    "que setea `MateriaDB.dicta_recursado`. Sólo aplica "
+                    "en ciclos futuros; para el actual, sincronizá con "
+                    "🔄.\n"
+                    "- Botón **🗑️ Borrar** para eliminar el dictado del "
+                    "ciclo.\n"
+                    "- Selector **Virtual** de 3 estados (Heredar / "
+                    "Virtual / Presencial) para el override del "
+                    "dictado. Los horarios individuales pueden también "
+                    "ser marcados como virtuales desde la grilla del "
+                    "plan."
                 )
 
             st.divider()
@@ -797,9 +799,14 @@ with tab_dictados:
             with _fc2:
                 _estado = st.multiselect(
                     "Estado",
-                    options=["Activo", "Inactivo"],
-                    default=["Activo", "Inactivo"],
+                    options=["Con dictado", "Sin dictado"],
+                    default=["Con dictado", "Sin dictado"],
                     key="dict_estado",
+                    help=(
+                        "Con dictado = existe fila DictadoDB en el ciclo. "
+                        "Sin dictado = materia del plan que no tiene "
+                        "dictado (aparece como divergencia arriba)."
+                    ),
                 )
 
             _fc3, _fc4, _fc5, _fc6 = st.columns([2, 2, 2, 2])
@@ -858,19 +865,19 @@ with tab_dictados:
             # "Cambios pendientes" + botón único de aplicación.
             #
             # Set de prefijos de keys que monitoreamos.
-            _BATCH_PREFIXES = ("activo_", "virtual_", "rec_mat_")
+            _BATCH_PREFIXES = ("virtual_", "rec_mat_")
 
             def _detectar_pendientes() -> list[dict]:
                 """Inspecciona session_state y devuelve la lista de
                 cambios pendientes vs DB.
 
                 Cada item:
-                  {tipo: 'activo'|'virtual'|'recursado',
+                  {tipo: 'virtual'|'recursado',
                    dictado_id: str | None (recursado no tiene dictado),
                    materia_codigo: str,
                    nombre: str,
-                   actual: bool|None|str,
-                   nuevo: bool|None|str,
+                   actual: str,
+                   nuevo: str,
                    key: str}
                 """
                 pendientes: list[dict] = []
@@ -880,36 +887,10 @@ with tab_dictados:
                     if not _k.startswith(_BATCH_PREFIXES):
                         continue
                     # Parseo de la key.
-                    # activo_{ns}_{carrera}_{dictado_id}
                     # virtual_{ns}_{carrera}_{dictado_id}
                     # rec_mat_{ns}_{carrera}_{materia_codigo}
                     parts = _k.split("_")
-                    if _k.startswith("activo_") and len(parts) >= 4:
-                        _did = "_".join(parts[3:])
-                        # Recuperar dictado actual del map cargado
-                        _dd = next(
-                            (
-                                d for d in dictados if d.id == _did
-                            ),
-                            None,
-                        )
-                        if _dd is None:
-                            continue
-                        _new = bool(st.session_state[_k])
-                        if _new != True:
-                            pendientes.append({
-                                "tipo": "activo",
-                                "dictado_id": _did,
-                                "materia_codigo": _dd.materia_codigo,
-                                "nombre": (
-                                    mat_map[_dd.materia_codigo].nombre
-                                    if _dd.materia_codigo in mat_map else ""
-                                ),
-                                "actual": True,
-                                "nuevo": _new,
-                                "key": _k,
-                            })
-                    elif _k.startswith("virtual_") and len(parts) >= 4:
+                    if _k.startswith("virtual_") and len(parts) >= 4:
                         _did = "_".join(parts[3:])
                         _dd = next(
                             (d for d in dictados if d.id == _did), None,
@@ -993,10 +974,6 @@ with tab_dictados:
                             _attr_lbl = "Recursado"
                             _act = str(p["actual"])
                             _new = str(p["nuevo"])
-                        elif p["tipo"] == "activo":
-                            _attr_lbl = "Activo"
-                            _act = "Activo" if p["actual"] else "Inactivo"
-                            _new = "Activo" if p["nuevo"] else "Inactivo"
                         else:
                             _attr_lbl = "Virtual"
                             # `actual` y `nuevo` son labels del selectbox
@@ -1029,19 +1006,7 @@ with tab_dictados:
                             with next(get_session()) as _ds:
                                 for p in _pendientes:
                                     try:
-                                        if p["tipo"] == "activo":
-                                            # Semantica nueva: desactivar =
-                                            # borrar el dictado del ciclo.
-                                            # Activar (recrear) no aplica
-                                            # desde este flujo (usar el
-                                            # panel de divergencias / no
-                                            # esperadas en validaciones).
-                                            if not bool(p["nuevo"]):
-                                                borrar_dictado_de_ciclo(
-                                                    _ds, sel_ciclo_dict,
-                                                    p["dictado_id"],
-                                                )
-                                        elif p["tipo"] == "virtual":
+                                        if p["tipo"] == "virtual":
                                             # `nuevo` es label del
                                             # selectbox: 3 estados →
                                             # Optional[bool].
@@ -1118,15 +1083,20 @@ with tab_dictados:
                     qn = _q.strip().lower()
                     if qn not in mat.codigo.lower() and qn not in mat.nombre.lower():
                         return False
-                # estado: solo aplica filtro si hay dictado.
-                # Las "sin dictado" (legacy) se muestran siempre con badge.
+                # estado (con/sin dictado). Semántica nueva:
+                # existencia = activación.
+                if d is not None and "Con dictado" not in _estado:
+                    return False
+                if d is None and "Sin dictado" not in _estado:
+                    return False
+                # modalidad: resuelve la jerarquía horario→dictado→materia
+                # a nivel materia (sin horarios especificos acá).
                 if d is not None:
-                    if True and "Activo" not in _estado:
-                        return False
-                    if not True and "Inactivo" not in _estado:
-                        return False
-                # modalidad: si hay dictado, prima dictado.virtual; sin dictado, materia.virtual
-                _is_virtual = d.virtual if d is not None else mat.virtual
+                    _is_virtual = (
+                        d.virtual if d.virtual is not None else mat.virtual
+                    )
+                else:
+                    _is_virtual = mat.virtual
                 if _is_virtual and "Virtual" not in _modal:
                     return False
                 if not _is_virtual and "Presencial" not in _modal:
@@ -1198,19 +1168,12 @@ with tab_dictados:
                 # cancelar commits intermedios y hacer "perder" cambios.
                 # El batch evita eso porque hay una única transacción al
                 # apretar "Aplicar cambios" abajo.
-                _activo_key = (
-                    f"activo_{key_ns}_{carrera_cod}_{d.id}"
-                    if d is not None else ""
-                )
                 _virtual_key = (
                     f"virtual_{key_ns}_{carrera_cod}_{d.id}"
                     if d is not None else ""
                 )
                 _rec_key = f"rec_mat_{key_ns}_{carrera_cod}_{mat.codigo}"
                 _has_pending = False
-                if d is not None and _activo_key in st.session_state:
-                    if bool(st.session_state[_activo_key]) != True:
-                        _has_pending = True
                 if d is not None and _virtual_key in st.session_state:
                     _curr_v_lbl = (
                         "Heredar" if d.virtual is None
@@ -1307,9 +1270,6 @@ with tab_dictados:
                             ),
                             use_container_width=True,
                         ):
-                            from src.services.dictado_service import (
-                                borrar_dictado_de_ciclo,
-                            )
                             with next(get_session()) as _bs:
                                 borrar_dictado_de_ciclo(
                                     _bs, sel_ciclo_dict, d.id,
@@ -1352,22 +1312,13 @@ with tab_dictados:
                 items = items_by_carrera[carrera_cod]
                 # filter
                 items_filt = [it for it in items if _matches(it)]
-                # Header stats
-                n_obl = sum(1 for it in items_filt if not it["pe"].optativa)
-                n_opt = sum(1 for it in items_filt if it["pe"].optativa)
-                n_act = sum(
-                    1 for it in items_filt
-                    if it["dictado"] and True
-                )
-                n_inact = sum(
-                    1 for it in items_filt
-                    if it["dictado"] and not True
-                )
+                # Header stats: con dictado vs sin dictado.
+                n_con = sum(1 for it in items_filt if it["dictado"] is not None)
                 n_sd = sum(1 for it in items_filt if it["dictado"] is None)
                 _hdr = (
                     f"🎓 {carrera_cod} · {carrera_nombre} — "
                     f"{len(items_filt)} materia(s) "
-                    f"(🟢 {n_act} · ⚪ {n_inact} · 🔘 {n_sd})"
+                    f"(🟢 {n_con} con dictado · 🔘 {n_sd} sin dictado)"
                 )
 
                 if _force_state is True:
@@ -1543,13 +1494,9 @@ with tab_dictados:
                 _n_opt = sum(
                     1 for it in _items_comunes_filt if it["pe"].optativa
                 )
-                _n_act = sum(
+                _n_con = sum(
                     1 for it in _items_comunes_filt
-                    if it["dictado"] and True
-                )
-                _n_inact = sum(
-                    1 for it in _items_comunes_filt
-                    if it["dictado"] and not True
+                    if it["dictado"] is not None
                 )
                 _n_sd = sum(
                     1 for it in _items_comunes_filt
@@ -1557,7 +1504,7 @@ with tab_dictados:
                 )
                 _hdr_com = (
                     f"🔗 Comunes — {len(_items_comunes_filt)} materia(s) "
-                    f"(🟢 {_n_act} · ⚪ {_n_inact} · 🔘 {_n_sd})"
+                    f"(🟢 {_n_con} con dictado · 🔘 {_n_sd} sin dictado)"
                 )
                 if _force_state is True:
                     _expanded_com = True
