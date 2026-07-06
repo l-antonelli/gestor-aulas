@@ -407,6 +407,7 @@ def generate_plan_from_preview(
                     hora_inicio=ep.hora_inicio,
                     hora_fin=ep.hora_fin,
                     tipo_clase=getattr(ep, "tipo_clase", None),
+                    virtual=getattr(ep, "virtual", None),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -558,6 +559,7 @@ def generate_plan_from_schedule(
                     hora_inicio=entry.hora_inicio,
                     hora_fin=entry.hora_fin,
                     tipo_clase=getattr(entry, "tipo_clase", None),
+                    virtual=getattr(entry, "virtual", None),
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -621,6 +623,9 @@ def apply_horario_edits(
             continue
 
         _row_tipo = row.get("tipo_clase") or None
+        # Nueva columna "virtual" del data_editor: viene como
+        # Optional[bool]. Si la row no la tiene (paths viejos), None.
+        _row_virtual = row.get("virtual")
 
         if isinstance(hid, str) and hid.startswith("new_"):
             # Create new horario
@@ -632,6 +637,7 @@ def apply_horario_edits(
                 hora_inicio=row["hora_inicio"],
                 hora_fin=row["hora_fin"],
                 tipo_clase=_row_tipo,
+                virtual=_row_virtual,
             )
             session.add(new_h)
             created += 1
@@ -644,6 +650,7 @@ def apply_horario_edits(
                 or h.hora_fin != row["hora_fin"]
                 or h.comision_id != target_com.id
                 or h.tipo_clase != _row_tipo
+                or h.virtual != _row_virtual
             )
             if changed:
                 h.dia = row["dia"]
@@ -651,6 +658,7 @@ def apply_horario_edits(
                 h.hora_fin = row["hora_fin"]
                 h.comision_id = target_com.id
                 h.tipo_clase = _row_tipo
+                h.virtual = _row_virtual
                 session.add(h)
                 updated += 1
 

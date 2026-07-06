@@ -792,6 +792,19 @@ with tab_editar:
                     ) if _sm_entries else 1
                     _sm_com_options = list(range(0, _sm_max_com + 3))
 
+                    def _virtual_to_label(v: bool | None) -> str:
+                        """Optional[bool] → label del selectbox."""
+                        if v is None:
+                            return "Heredar"
+                        return "Sí" if v else "No"
+
+                    def _label_to_virtual(lbl: str) -> bool | None:
+                        if lbl == "Sí":
+                            return True
+                        if lbl == "No":
+                            return False
+                        return None
+
                     _sm_df = pd.DataFrame([
                         {
                             "entry_id": e.id,
@@ -800,10 +813,14 @@ with tab_editar:
                             "Fin": e.hora_fin,
                             "Comisión": e.comision or 0,
                             "Tipo": e.tipo_clase or "sin determinar",
+                            "Virtual": _virtual_to_label(e.virtual),
                         }
                         for e in _sm_entries
                     ]) if _sm_entries else pd.DataFrame(
-                        columns=["entry_id", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
+                        columns=[
+                            "entry_id", "Día", "Inicio", "Fin",
+                            "Comisión", "Tipo", "Virtual",
+                        ]
                     )
 
                     _sm_de_key = f"sm_de_{sel_edit_id}_{_sm_sel}_{len(_sm_entries)}"
@@ -846,6 +863,10 @@ with tab_editar:
                                     if "Tipo" in changes:
                                         _tv = changes["Tipo"]
                                         _cambios["tipo_clase"] = None if _tv == "sin determinar" else _tv
+                                    if "Virtual" in changes:
+                                        _cambios["virtual"] = _label_to_virtual(
+                                            changes["Virtual"]
+                                        )
                                     if _cambios:
                                         update_schedule_entry(
                                             sess, _e.id, **_cambios,
@@ -864,6 +885,9 @@ with tab_editar:
                                     _cv = int(row.get("Comisión") or 0)
                                     _tipo_raw = row.get("Tipo")
                                     _tipo = None if (not _tipo_raw or _tipo_raw == "sin determinar") else _tipo_raw
+                                    _virtual_val = _label_to_virtual(
+                                        row.get("Virtual") or "Heredar"
+                                    )
                                     add_schedule_entry(
                                         sess,
                                         sel_edit_id,
@@ -873,6 +897,7 @@ with tab_editar:
                                         _coerce_time(row["Fin"]),
                                         comision=_cv if _cv > 0 else None,
                                         tipo_clase=_tipo,
+                                        virtual=_virtual_val,
                                     )
                                     _created += 1
                         _parts = []
@@ -909,6 +934,18 @@ with tab_editar:
                                 options=["sin determinar", "teorica", "laboratorio"],
                                 default="sin determinar",
                                 help="Tipo de clase: sin determinar (LP decide), teorica o laboratorio",
+                                width="small",
+                            ),
+                            "Virtual": column_config.SelectboxColumn(
+                                options=["Heredar", "Sí", "No"],
+                                default="Heredar",
+                                help=(
+                                    "Modalidad de este horario específico. "
+                                    "Heredar = usa el flag del dictado o "
+                                    "materia. Sí = fuerza virtual (el LP "
+                                    "no asigna aula). No = fuerza "
+                                    "presencial."
+                                ),
                                 width="small",
                             ),
                         },

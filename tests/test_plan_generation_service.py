@@ -669,3 +669,97 @@ class TestGenerateFromPreviewExtended:
             session, sched.id, "Plan", ciclo.id, prev.materias,
         )
         assert result.plan.forecast_metodo_default == "media_movil"
+
+
+class TestVirtualPropagation:
+    """Tests para la propagación de `ScheduleEntryDB.virtual` a
+    `HorarioDB.virtual` al generar el plan (Fase 4a)."""
+
+    def test_entry_virtual_true_propaga_a_horario(self, session, ciclo, materias):
+        s = ScheduleDB(
+            id="sched-vt", ciclo_id=ciclo.id,
+            nombre="Sched Virt True", fecha_upload=date(2025, 7, 1),
+        )
+        session.add(s)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id="sched-vt",
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            virtual=True,
+        ))
+        session.commit()
+
+        result = generate_plan_from_schedule(
+            session, "sched-vt", "Plan VT", ciclo.id,
+        )
+        horarios = list(session.exec(select(HorarioDB)).all())
+        assert len(horarios) == 1
+        assert horarios[0].virtual is True
+
+    def test_entry_virtual_false_propaga_a_horario(self, session, ciclo, materias):
+        s = ScheduleDB(
+            id="sched-vf", ciclo_id=ciclo.id,
+            nombre="Sched Virt False", fecha_upload=date(2025, 7, 1),
+        )
+        session.add(s)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id="sched-vf",
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            virtual=False,
+        ))
+        session.commit()
+
+        generate_plan_from_schedule(session, "sched-vf", "Plan VF", ciclo.id)
+        horarios = list(session.exec(select(HorarioDB)).all())
+        assert horarios[0].virtual is False
+
+    def test_entry_virtual_none_hereda(self, session, ciclo, materias):
+        """Por default `ScheduleEntryDB.virtual=None` → el horario
+        también nace con virtual=None (delega en dictado/materia)."""
+        s = ScheduleDB(
+            id="sched-vn", ciclo_id=ciclo.id,
+            nombre="Sched Virt None", fecha_upload=date(2025, 7, 1),
+        )
+        session.add(s)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id="sched-vn",
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            # virtual no seteado explicito → default None
+        ))
+        session.commit()
+
+        generate_plan_from_schedule(session, "sched-vn", "Plan VN", ciclo.id)
+        horarios = list(session.exec(select(HorarioDB)).all())
+        assert horarios[0].virtual is None
+
+    def test_apply_horario_edits_actualiza_virtual(
+        self, session, ciclo, materias, schedule,
+    ):
+        """El editor del plan puede modificar HorarioDB.virtual
+        directamente (sin regenerar plan)."""
+        from src.services.plan_generation_service import apply_horario_edits
+        result = generate_plan_from_schedule(
+            session, "sched-1", "Plan Ed", ciclo.id,
+        )
+        h = list(session.exec(select(HorarioDB)).all())[0]
+        assert h.virtual is None  # arranca None
+        # Aplicar edit con virtual=True
+        edited_rows = [{
+            "horario_id": h.id,
+            "comision_numero": 1,
+            "dia": h.dia,
+            "hora_inicio": h.hora_inicio,
+            "hora_fin": h.hora_fin,
+            "tipo_clase": h.tipo_clase,
+            "virtual": True,
+        }]
+        apply_horario_edits(
+            session, result.plan.id, h.codigo_materia, edited_rows,
+        )
+        session.refresh(h)
+        assert h.virtual is True

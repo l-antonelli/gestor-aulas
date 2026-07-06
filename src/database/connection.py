@@ -100,6 +100,9 @@ def _run_migrations(eng):
         # Override de virtualidad a nivel horario. None=heredar dictado,
         # True/False=forzar. Ver `resolve_virtual`.
         "ALTER TABLE horarios ADD COLUMN virtual BOOLEAN DEFAULT NULL",
+        # Idem para las entries del cronograma. El flag se propaga a
+        # HorarioDB.virtual al generar el plan.
+        "ALTER TABLE schedule_entries ADD COLUMN virtual BOOLEAN DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:

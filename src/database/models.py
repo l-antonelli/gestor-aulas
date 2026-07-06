@@ -349,6 +349,15 @@ class ScheduleEntryDB(SQLModel, table=True):
     hora_fin: time
     comision: Optional[int] = Field(default=None)
     tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
+    # Override de virtualidad a nivel entry del cronograma. Se propaga
+    # a HorarioDB.virtual al generar el plan. Sigue la misma semantica
+    # de 3 estados que HorarioDB:
+    #   None  = heredar (del dictado / materia, resuelto en el LP).
+    #   True  = forzar virtual, aunque el dictado sea presencial.
+    #   False = forzar presencial, aunque el dictado sea virtual.
+    # Permite mezclar modalidades dentro de un dictado (ej. una teorica
+    # virtual + un laboratorio presencial).
+    virtual: Optional[bool] = Field(default=None)
 
     # Relationships
     schedule: Optional[ScheduleDB] = Relationship(back_populates="entries")

@@ -313,8 +313,13 @@ def add_schedule_entry(
     hora_fin: time,
     comision: int | None = None,
     tipo_clase: str | None = None,
+    virtual: bool | None = None,
 ) -> ScheduleEntryDB:
-    """Agregar una entrada a un cronograma existente."""
+    """Agregar una entrada a un cronograma existente.
+
+    `virtual` es Optional[bool]: None=heredar (default), True=virtual,
+    False=presencial. Se propaga a HorarioDB.virtual al generar el plan.
+    """
     entry = ScheduleEntryDB(
         id=str(uuid.uuid4()),
         schedule_id=schedule_id,
@@ -324,6 +329,7 @@ def add_schedule_entry(
         hora_fin=hora_fin,
         comision=comision,
         tipo_clase=tipo_clase,
+        virtual=virtual,
     )
     session.add(entry)
     session.commit()
@@ -337,7 +343,10 @@ def update_schedule_entry(session: Session, entry_id: str, **campos) -> Schedule
     if entry is None:
         raise ValueError(f"Entry '{entry_id}' no encontrada")
 
-    allowed = {"dia", "hora_inicio", "hora_fin", "codigo_materia", "comision", "tipo_clase"}
+    allowed = {
+        "dia", "hora_inicio", "hora_fin", "codigo_materia",
+        "comision", "tipo_clase", "virtual",
+    }
     for key, value in campos.items():
         if key not in allowed:
             raise ValueError(f"Campo '{key}' no permitido")
