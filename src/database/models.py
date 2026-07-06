@@ -641,3 +641,51 @@ class LPRunDB(SQLModel, table=True):
     #   "alpha": {comision_id: float}    # solo si activar_alpha=True
     # }
     details_json: str = Field(default="{}")
+
+
+# =============================================================================
+# Change Log (Fase 3): auditoria de mutaciones importantes
+# =============================================================================
+
+class ChangeLogDB(SQLModel, table=True):
+    """Registro de una mutacion importante en el catalogo o configuracion.
+
+    Se genera automaticamente via hooks SQLAlchemy para las entidades
+    en `TRACKED_ENTITIES` (ver `change_log_service`). Ademas, los
+    servicios pueden emitir eventos de dominio explicitos con `razon`
+    (ej. "aceptado desde cronograma X", "promovido a regla desde el
+    panel de divergencias").
+
+    Se puede consultar via:
+    - Pestaña "Historial" en la pagina de la entidad (filtro por
+      entity_type + entity_id).
+    - Feed global en el dashboard (ultimos N dias, todas las entidades).
+    """
+    __tablename__ = "change_log"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    # Tipo de entidad afectada, ej "MateriaDB", "CarreraDB", "DictadoDB".
+    entity_type: str = Field(index=True)
+    # PK de la entidad. Puede ser cualquier string (uuid, codigo, etc).
+    entity_id: str = Field(index=True)
+    # Etiqueta humana para no perder contexto si la entidad se borra.
+    # Ej: "MAT101 - Calculo I" para materia, "IA - Ingenieria en
+    # Informatica" para carrera.
+    entity_label: str = Field(default="")
+    # Tipo de mutacion.
+    action: str  # "created" | "updated" | "deleted"
+    # Campo modificado (para action="updated"). None para create/delete.
+    field: Optional[str] = Field(default=None)
+    # Valores serializados como JSON (para preservar tipos).
+    old_value: Optional[str] = Field(default=None)
+    new_value: Optional[str] = Field(default=None)
+    # Razon libre proporcionada por el servicio que emitio el evento.
+    # Vacio para cambios automaticos capturados por hooks.
+    reason: str = Field(default="")
+    # Cuando ocurrio.
+    when: datetime = Field(
+        default_factory=datetime.utcnow, index=True,
+    )
+    # Origen del cambio para trazabilidad ("ui:ciclos", "ui:validacion",
+    # "script:nombre", "auto" para hooks sin contexto explicito).
+    origin: str = Field(default="auto", index=True)

@@ -632,6 +632,12 @@ def _seed_default_sede_if_empty(conn):
 
 def init_db():
     """Initialize database tables. Call once at app startup."""
+    # Importar change_log_service registra los hooks SQLAlchemy sobre
+    # las entidades trackeadas ANTES de crear las tablas (para que
+    # `ChangeLogDB.__table__` este en el metadata al momento de
+    # `create_all`). Idempotente: los hooks se registran una sola vez
+    # aunque init_db se llame multiples veces.
+    from src.services import change_log_service  # noqa: F401
     SQLModel.metadata.create_all(engine)
     _run_migrations(engine)
 
