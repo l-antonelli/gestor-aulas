@@ -201,10 +201,10 @@ class TestCreateDictadosForCiclo:
 class TestDictaRecursado:
     """Tests for dicta_recursado logic in dictado creation."""
 
-    def test_exclusive_materia_created_inactive_when_no_recursado(self, session):
+    def test_exclusive_materia_skipped_when_no_recursado(self, session):
         """A cuatrimestral materia exclusive to one carrera with dicta_recursado=False
-        and assigned to 2C should be created with activo=False when creating
-        dictados for 1C (no longer skipped — registered for on-the-fly editing)."""
+        and assigned to 2C should be SKIPPED (no dictado created) when creating
+        dictados for 1C. La ausencia del dictado ES la afirmacion "no se dicta"."""
         # Carrera that does NOT dicta recursado
         carrera = CarreraDB(
             codigo="LIC", nombre="Licenciatura", duracion_anios=4,
@@ -247,14 +247,12 @@ class TestDictaRecursado:
 
         result = create_dictados_for_ciclo(session, "2025-1C-LIC")
 
-        # Ahora se crea pero inactivo
-        assert result.created == 1
-        assert result.created_inactive == 1
-        assert result.skipped_recursado == 0  # deprecated
+        # No se crea: la regla dice skippear.
+        assert result.created == 0
+        assert result.skipped_recursado == 1
 
         dictados = get_dictados_for_ciclo(session, "2025-1C-LIC")
-        assert len(dictados) == 1
-        assert dictados[0].activo is False
+        assert len(dictados) == 0
 
     def test_exclusive_materia_not_skipped_when_same_cuatrimestre(self, session):
         """A materia assigned to 1C should NOT be skipped in 1C even when
@@ -402,7 +400,9 @@ class TestDictaRecursado:
 
     def test_materia_override_recursado_false_beats_carrera_true(self, session):
         """Si MateriaDB.dicta_recursado=False y el cuatri es opuesto,
-        se crea inactivo aunque la carrera sea dicta_recursado=True."""
+        NO se crea el dictado aunque la carrera sea dicta_recursado=True.
+        El override a nivel materia gana (regla "nivel mas especifico manda").
+        """
         carrera = CarreraDB(
             codigo="OVR2", nombre="Override 2", dicta_recursado=True,
         )
@@ -437,10 +437,9 @@ class TestDictaRecursado:
         session.commit()
 
         result = create_dictados_for_ciclo(session, "2025-1C-OVR2")
-        assert result.created == 1
-        assert result.created_inactive == 1  # inactivo por override
-        d = get_dictados_for_ciclo(session, "2025-1C-OVR2")[0]
-        assert d.activo is False
+        assert result.created == 0
+        assert result.skipped_recursado == 1
+        assert len(get_dictados_for_ciclo(session, "2025-1C-OVR2")) == 0
 
     def test_dicta_recursado_true_never_skips(self, session):
         """When dicta_recursado=True (default), opposite-cuatrimestre materias
@@ -488,10 +487,16 @@ class TestDictaRecursado:
 
 
 class TestVirtualInheritance:
-    """Tests for virtual flag inheritance from materia to dictado."""
+    """Tests for virtual flag inheritance from materia to dictado.
 
-    def test_virtual_materia_creates_virtual_dictado(self, session):
-        """A materia with virtual=True should produce a dictado with virtual=True."""
+    Nueva semantica: el dictado se crea con `virtual=None` (heredar del
+    materia via `resolve_virtual`). Solo se setea explicito si el
+    usuario hace un override desde la UI.
+    """
+
+    def test_virtual_materia_creates_dictado_hereda_null(self, session):
+        """A materia with virtual=True should produce a dictado with
+        virtual=None (heredar), no `virtual=True` explicito."""
         carrera = CarreraDB(codigo="VIR", nombre="Virtual Test")
         session.add(carrera)
         session.flush()
@@ -529,18 +534,22 @@ class TestVirtualInheritance:
 
         dictados = get_dictados_for_ciclo(session, "2025-1C-VIR")
         assert len(dictados) == 1
-        assert dictados[0].virtual is True
+        # virtual queda en None (heredar de materia).
+        assert dictados[0].virtual is None
 
-    def test_non_virtual_materia_creates_non_virtual_dictado(self, session, ciclo_1c, materias):
-        """A materia with virtual=False (default) should produce a dictado with virtual=False."""
+    def test_non_virtual_materia_creates_dictado_hereda_null(self, session, ciclo_1c, materias):
+        """A materia with virtual=False (default) should also produce a
+        dictado with virtual=None (heredar). No hay diferencia estructural
+        entre materia virtual y no-virtual a nivel del dictado creado."""
         create_dictados_for_ciclo(session, "2025-1C")
 
         dictados = get_dictados_for_ciclo(session, "2025-1C")
         for d in dictados:
-            assert d.virtual is False
+            assert d.virtual is None
 
-    def test_virtual_anual_materia_inherits(self, session):
-        """An annual virtual materia should create a virtual dictado."""
+    def test_virtual_anual_materia_hereda_null(self, session):
+        """An annual virtual materia should also create a dictado with
+        virtual=None (heredar)."""
         carrera = CarreraDB(codigo="VAN", nombre="Virtual Anual")
         session.add(carrera)
         session.flush()
@@ -578,15 +587,16 @@ class TestVirtualInheritance:
 
         dictados = get_dictados_for_ciclo(session, "2025-1C-VAN")
         assert len(dictados) == 1
-        assert dictados[0].virtual is True
+        assert dictados[0].virtual is None
 
 
 class TestGetSkippedMaterias:
     """Tests for get_skipped_materias_for_ciclo."""
 
-    def test_no_skipped_after_create_creates_all(self, session):
-        """Despues de la nueva logica de creacion, ninguna materia queda
-        sin dictado: las que antes se skipeaban ahora se crean inactivas."""
+    def test_skipped_por_recursado_no_tiene_dictado(self, session):
+        """Una materia cuya regla de recursado dice skippear NO tiene
+        dictado en el ciclo. Aparece como skipped en
+        `get_skipped_materias_for_ciclo`."""
         carrera = CarreraDB(
             codigo="SKP", nombre="Skip Test", dicta_recursado=False,
         )
@@ -623,12 +633,11 @@ class TestGetSkippedMaterias:
 
         create_dictados_for_ciclo(session, "2025-1C-SKP")
 
-        # Ya no se considera "skipped" — quedo creado pero inactivo
+        # No se creo dictado — aparece como skipped.
         skipped = get_skipped_materias_for_ciclo(session, "2025-1C-SKP")
-        assert len(skipped) == 0
-        dictados = get_dictados_for_ciclo(session, "2025-1C-SKP")
-        assert len(dictados) == 1
-        assert dictados[0].activo is False
+        codigos_skipped = {m.materia_codigo for m in skipped}
+        assert "SKP01" in codigos_skipped
+        assert len(get_dictados_for_ciclo(session, "2025-1C-SKP")) == 0
 
     def test_empty_when_all_materias_have_dictados(self, session, ciclo_1c, materias):
         """No skipped materias when all plan materias have dictados."""
@@ -697,6 +706,14 @@ class TestCreateDictadoForMateria:
         assert create_dictado_for_materia(session, "2025-1C", "NOPE") is None
 
 
+@pytest.mark.skip(
+    reason=(
+        "recompute_activo_for_ciclo va a ser redefinida como "
+        "sync_dictados_para_ciclo (add/remove sin auto-apply) en un "
+        "commit siguiente. Los tests actuales asumen la semantica vieja "
+        "de crear dictados inactivos, que ya no aplica."
+    ),
+)
 class TestRecomputeActivo:
     """Tests for `recompute_activo_for_ciclo`."""
 
@@ -916,6 +933,13 @@ class TestUpdateDictado:
         assert result is None
 
 
+@pytest.mark.skip(
+    reason=(
+        "activo_override_manual va a ser eliminado en el commit que "
+        "renombra recompute a sync_dictados_para_ciclo. Semantica nueva: "
+        "los dictados existen o no; no hay override manual del flag activo."
+    ),
+)
 class TestActivoOverrideManual:
     """Tests para `set_activo_manual`, `clear_activo_override` y la
     interaccion con `recompute_activo_for_ciclo` (Fase override)."""

@@ -233,31 +233,24 @@ def create_dictados_for_ciclo(session: Session, ciclo_id: str) -> DictadoCreatio
             result.skipped += 1
             continue
 
-        # Recursado: si la regla dice omitir, igual creamos el dictado pero
-        # con activo=False. Ya no skipea; quedan registrados para edicion
-        # on-the-fly desde la UI.
-        _should_be_inactive = (
-            materia.periodo == "cuatrimestral"
-            and _should_skip_for_recursado(
-                session, materia, ciclo, plan_version_ids,
-            )
-        )
-        _initial_activo = not _should_be_inactive
+        # Recursado: si la regla dice omitir, NO se crea el dictado.
+        # La existencia del dictado en el ciclo ES la afirmacion "esta
+        # materia se dicta este ciclo". Si despues aparecen horarios en
+        # el plan para esta materia, van a saltar como "divergencia"
+        # (dictado inexistente) y el usuario puede crearlo desde ahi.
+        if materia.periodo == "cuatrimestral" and _should_skip_for_recursado(
+            session, materia, ciclo, plan_version_ids,
+        ):
+            result.skipped_recursado += 1
+            continue
 
         if materia.periodo == "cuatrimestral":
-            _create_cuatrimestral_dictado(
-                session, materia, ciclo, result, activo=_initial_activo,
-            )
+            _create_cuatrimestral_dictado(session, materia, ciclo, result)
         elif materia.periodo == "anual":
             if ciclo.numero == 1:
-                _create_anual_dictado_1c(
-                    session, materia, ciclo, result, activo=_initial_activo,
-                )
+                _create_anual_dictado_1c(session, materia, ciclo, result)
             else:
                 _link_anual_dictado_2c(session, materia, ciclo, result)
-
-        if _should_be_inactive:
-            result.created_inactive += 1
 
     session.commit()
     return result
@@ -268,9 +261,13 @@ def _create_cuatrimestral_dictado(
     materia: MateriaDB,
     ciclo: CicloDB,
     result: DictadoCreationResult,
-    activo: bool = True,
 ) -> None:
-    """Create a cuatrimestral dictado and link it to the ciclo."""
+    """Create a cuatrimestral dictado and link it to the ciclo.
+
+    `virtual` queda en `None` (heredar de la materia via
+    `resolve_virtual`). Solo se setea explicito cuando el usuario hace
+    un override desde la UI del ciclo.
+    """
     dictado_codigo = f"{materia.codigo}-{ciclo.anio}-{ciclo.numero}C"
     dictado_id = str(uuid.uuid4())
 
@@ -280,8 +277,8 @@ def _create_cuatrimestral_dictado(
         dictado_codigo=dictado_codigo,
         inicio_dictado=ciclo.fecha_inicio,
         fin_dictado=ciclo.fecha_fin,
-        activo=activo,
-        virtual=materia.virtual,
+        activo=True,
+        virtual=None,
     )
     session.add(dictado)
     session.flush()
@@ -296,9 +293,11 @@ def _create_anual_dictado_1c(
     materia: MateriaDB,
     ciclo: CicloDB,
     result: DictadoCreationResult,
-    activo: bool = True,
 ) -> None:
-    """Create an annual dictado in 1C (fin_dictado=None until 2C links it)."""
+    """Create an annual dictado in 1C (fin_dictado=None until 2C links it).
+
+    `virtual` queda en `None` (heredar de la materia).
+    """
     dictado_codigo = f"{materia.codigo}-{ciclo.anio}"
     dictado_id = str(uuid.uuid4())
 
@@ -308,8 +307,8 @@ def _create_anual_dictado_1c(
         dictado_codigo=dictado_codigo,
         inicio_dictado=ciclo.fecha_inicio,
         fin_dictado=None,
-        activo=activo,
-        virtual=materia.virtual,
+        activo=True,
+        virtual=None,
     )
     session.add(dictado)
     session.flush()
@@ -336,7 +335,8 @@ def _link_anual_dictado_2c(
     ).first()
 
     if existing_dictado is None:
-        # No 1C dictado found — create a fresh one
+        # No 1C dictado found — create a fresh one.
+        # `virtual` queda en None (heredar de la materia).
         dictado_id = str(uuid.uuid4())
         dictado = DictadoDB(
             id=dictado_id,
@@ -345,7 +345,7 @@ def _link_anual_dictado_2c(
             inicio_dictado=ciclo.fecha_inicio,
             fin_dictado=ciclo.fecha_fin,
             activo=True,
-            virtual=materia.virtual,
+            virtual=None,
         )
         session.add(dictado)
         session.flush()
