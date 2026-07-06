@@ -224,7 +224,7 @@ class TestBuildInputs:
         # El horario quedó filtrado, no entra al LP.
         assert len(inputs.horarios) == 0
         assert any(
-            "virtual en este ciclo" in w for w in inputs.warnings
+            "excluido: virtual" in w for w in inputs.warnings
         ), f"warnings esperados; got {inputs.warnings}"
 
     def test_dictado_no_virtual_no_se_filtra(self, session):
@@ -243,6 +243,77 @@ class TestBuildInputs:
         inputs = build_inputs(session, "plan-1", LPConfig())
         assert len(inputs.horarios) == 1
         assert inputs.horarios[0].id == h.id
+
+    def test_horario_virtual_override_gana_sobre_dictado_presencial(self, session):
+        """HorarioDB.virtual=True aisla ese horario del LP aunque el
+        dictado no sea virtual. Caso: un dictado con 2 horarios, uno
+        presencial y otro virtual (ej. lab presencial + teorica online).
+        """
+        ctx = _seed_basic(session)
+        ciclo = ctx["ciclo"]
+        _add_materia_con_serie(session, "MIX", ciclo, esperados=20)
+        h_pres = _add_comision_horario(session, "plan-1", "MIX", "Lunes", 8, 10)
+        # Un segundo horario para la misma comision, esta vez virtual.
+        from sqlmodel import select as _select
+        com = session.exec(
+            _select(ComisionDB).where(ComisionDB.materia_codigo == "MIX")
+        ).first()
+        h_virt = HorarioDB(
+            id="h-virt-mix",
+            comision_id=com.id,
+            codigo_materia="MIX",
+            dia="Lunes",
+            hora_inicio=time(10, 0), hora_fin=time(12, 0),
+            virtual=True,  # override a nivel horario
+        )
+        session.add(h_virt)
+        session.add(AulaDB(
+            id="a1", sede_id="S1", codigo_aula="a1",
+            nombre="Aula 1", capacidad=30,
+        ))
+        session.commit()
+
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        # El horario virtual quedo filtrado; el presencial sigue.
+        ids = {h.id for h in inputs.horarios}
+        assert h_pres.id in ids
+        assert "h-virt-mix" not in ids
+
+    def test_horario_virtual_false_override_gana_sobre_dictado_virtual(self, session):
+        """HorarioDB.virtual=False fuerza presencial aunque el dictado
+        del ciclo sea virtual. Caso: recursado virtual pero una clase
+        puntual se dicta presencial."""
+        ctx = _seed_basic(session)
+        ciclo = ctx["ciclo"]
+        m = MateriaDB(
+            codigo="REC2", nombre="Recursado 2", virtual=False,
+            horas_semanales=4, horas_teoria=4, horas_laboratorio=0,
+        )
+        d = DictadoDB(
+            id="d-rec2", materia_codigo="REC2",
+            dictado_codigo="REC2-2026-1C", virtual=True,  # dictado virtual
+        )
+        session.add_all([m, d])
+        session.add(DictadoCicloDB(dictado_id="d-rec2", ciclo_id=ciclo.id))
+        session.add(InscripcionHistoricaDB(
+            materia_codigo="REC2", anio=ciclo.anio - 1,
+            cuatrimestre=f"{ciclo.numero}C", inscriptos=20,
+        ))
+        session.commit()
+        # Horario con override False (fuerza presencial).
+        h = _add_comision_horario(session, "plan-1", "REC2", "Martes", 14, 16)
+        h.virtual = False
+        session.add(h)
+        session.add(AulaDB(
+            id="a1", sede_id="S1", codigo_aula="a1",
+            nombre="Aula 1", capacidad=30,
+        ))
+        session.commit()
+
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        # El horario NO se filtra: entra al LP presencial.
+        ids = {hh.id for hh in inputs.horarios}
+        assert h.id in ids
 
 
 class TestRunLPDry:

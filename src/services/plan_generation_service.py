@@ -850,7 +850,8 @@ def build_timetable_grid(
     # suele estar None — el plan se genera desde el cronograma, no
     # desde el dictado.
     from src.database.models import DictadoCicloDB
-    materia_dictado_virtual: dict[str, bool] = {}
+    from src.services.resolucion_jerarquica import resolve_virtual
+    materia_dictado_virtual: dict[str, bool | None] = {}
     if ciclo_id:
         rows = session.exec(
             select(DictadoDB.materia_codigo, DictadoDB.virtual)
@@ -858,7 +859,7 @@ def build_timetable_grid(
             .where(DictadoCicloDB.ciclo_id == ciclo_id)
         ).all()
         for materia_codigo, es_virtual in rows:
-            materia_dictado_virtual[materia_codigo] = bool(es_virtual)
+            materia_dictado_virtual[materia_codigo] = es_virtual
 
     # Build periodo map if ciclo provided
     periodo_map: dict[str, Optional[bool]] = {}
@@ -878,11 +879,12 @@ def build_timetable_grid(
             continue
         materia = mat_info.get(com.materia_codigo)
         mat_nombre = materia.nombre if materia else com.materia_codigo
-        # Una clase es virtual si la materia es virtual de catálogo o
-        # si el dictado del ciclo está marcado virtual en este ciclo.
-        is_virtual = (
-            (materia.virtual if materia else False)
-            or materia_dictado_virtual.get(com.materia_codigo, False)
+        # Virtualidad efectiva resolviendo la cadena horario > dictado >
+        # materia (regla "nivel mas especifico manda").
+        is_virtual = resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(com.materia_codigo),
+            materia_virtual=(materia.virtual if materia else False),
         )
 
         block = TimetableBlock(

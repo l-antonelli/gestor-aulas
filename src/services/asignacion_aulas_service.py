@@ -153,6 +153,8 @@ def build_inputs(
 
     # Materias del plan (para filtrar virtuales y para R5).
     materias_db = list(session.exec(select(MateriaDB)).all())
+    # materia_codigo -> bool: virtualidad DECLARADA en la materia (raiz
+    # de la cadena de resolucion jerarquica).
     materia_virtual: dict[str, bool] = {m.codigo: m.virtual for m in materias_db}
     hteo: dict[str, float] = {
         m.codigo: float(m.horas_teoria or 0.0) for m in materias_db
@@ -173,16 +175,20 @@ def build_inputs(
         c.id: float(c.coef_asignacion) for c in comisiones
     }
 
-    # Dictados virtuales del ciclo: si DictadoDB.virtual=True, los horarios
-    # de las materias asociadas se filtran del LP (no necesitan aula).
-    # Permite marcar como "virtual sólo en este ciclo" a recursados u
-    # ofertas excepcionales sin tocar el catálogo MateriaDB.virtual.
+    # Dictados del ciclo: leemos el flag `virtual` de cada dictado
+    # (Optional[bool]) para poder resolver la virtualidad efectiva de
+    # cada horario via `resolve_virtual` (regla "nivel mas especifico
+    # manda": horario > dictado > materia). Permite marcar como
+    # "virtual solo en este ciclo" a recursados u ofertas excepcionales
+    # sin tocar el catalogo `MateriaDB.virtual`.
     #
-    # Nota: ComisionDB.dictado_id no está siempre poblado (las comisiones
-    # generadas desde plan generation suelen quedar con None), así que
-    # resolvemos vía (materia_codigo, ciclo_id) usando DictadoCicloDB.
+    # Nota: ComisionDB.dictado_id no esta siempre poblado (las
+    # comisiones generadas desde plan generation suelen quedar con
+    # None), asi que resolvemos via (materia_codigo, ciclo_id) usando
+    # DictadoCicloDB.
     from src.database.models import DictadoCicloDB
-    materia_dictado_virtual: dict[str, bool] = {}
+    from src.services.resolucion_jerarquica import resolve_virtual
+    materia_dictado_virtual: dict[str, bool | None] = {}
     if plan.ciclo_id is not None:
         rows = session.exec(
             select(DictadoDB.materia_codigo, DictadoDB.virtual)
@@ -190,7 +196,7 @@ def build_inputs(
             .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
         ).all()
         for materia_codigo, es_virtual in rows:
-            materia_dictado_virtual[materia_codigo] = bool(es_virtual)
+            materia_dictado_virtual[materia_codigo] = es_virtual
 
     horarios_db = list(session.exec(
         select(HorarioDB).where(HorarioDB.comision_id.in_(comision_ids))  # type: ignore[attr-defined]
@@ -204,18 +210,18 @@ def build_inputs(
     dur: dict[str, float] = {}
 
     for h in horarios_db:
-        if materia_virtual.get(h.codigo_materia, False):
+        # Resolver virtualidad con jerarquia horario > dictado > materia.
+        # Los tres niveles pueden ser None (heredar del padre) excepto
+        # materia, que es bool concreto (raiz).
+        es_virtual = resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        )
+        if es_virtual:
             warnings.append(
-                f"Horario {h.id} excluido: materia {h.codigo_materia} es virtual"
-            )
-            continue
-        # Filtrar horarios de dictados virtuales (modalidad del ciclo).
-        # Si el dictado del ciclo está marcado virtual, la materia no
-        # necesita aula este cuatri (caso típico: recursado por Zoom).
-        if materia_dictado_virtual.get(h.codigo_materia, False):
-            warnings.append(
-                f"Horario {h.id} excluido: dictado de "
-                f"{h.codigo_materia} es virtual en este ciclo"
+                f"Horario {h.id} excluido: virtual "
+                f"(materia {h.codigo_materia})"
             )
             continue
         # Red de seguridad: si el horario tiene tipo_clase=None pero la

@@ -1383,7 +1383,9 @@ def _render_detalle_por_materia(
             DictadoDB as _DD,
             DictadoCicloDB as _DCB,
         )
-        _dictado_virtual_por_materia: dict[str, bool] = {}
+        # dict[materia_codigo] -> Optional[bool] (raw del dictado):
+        # None = heredar de materia, True/False = override.
+        _dictado_virtual_por_materia: dict[str, bool | None] = {}
         if ciclo_id:
             _dvm_rows = list(session.exec(
                 select(_DD.materia_codigo, _DD.virtual)
@@ -1392,7 +1394,7 @@ def _render_detalle_por_materia(
                 .where(col(_DD.materia_codigo).in_(_all_codes))
             ).all())
             for _mc, _v in _dvm_rows:
-                _dictado_virtual_por_materia[_mc] = bool(_v)
+                _dictado_virtual_por_materia[_mc] = _v
 
         # Materias con laboratorio asignado (para filtro "Solo con lab")
         from src.database.models import MateriaLaboratorioDB as _MLB
@@ -1500,13 +1502,18 @@ def _render_detalle_por_materia(
             _n_horarios = _entry_count_sched.get(_code, 0)
         _hsem = _m.horas_semanales if _m else None
         _hlab = _m.horas_laboratorio if _m else None
-        # `_virtual_catalogo`: la materia es virtual de catálogo.
-        # `_virtual_dictado`: el dictado del ciclo está marcado virtual
-        # (modalidad puntual). El filtro "Virtual" del detalle
-        # combina ambos con OR — coherente con el LP.
+        # `_virtual_catalogo`: la materia es virtual de catalogo.
+        # `_virtual_dictado`: valor raw del dictado (Optional[bool]).
+        # `_virtual`: resuelto por jerarquia (dictado > materia).
+        # A nivel materia (sin horario) usamos horario_virtual=None.
+        from src.services.resolucion_jerarquica import resolve_virtual
         _virtual_catalogo = bool(_m.virtual) if _m else False
-        _virtual_dictado = _dictado_virtual_por_materia.get(_code, False)
-        _virtual = _virtual_catalogo or _virtual_dictado
+        _virtual_dictado = _dictado_virtual_por_materia.get(_code)
+        _virtual = resolve_virtual(
+            horario_virtual=None,
+            dictado_virtual=_virtual_dictado,
+            materia_virtual=_virtual_catalogo,
+        )
         _periodo = _m.periodo if _m else "cuatrimestral"
         _anual = _periodo == "anual"
         _n_carreras = len(_carreras_set)

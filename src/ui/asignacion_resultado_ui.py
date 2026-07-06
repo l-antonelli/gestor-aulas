@@ -909,12 +909,15 @@ def _render_inspector_franja(
         ).all()) if materias_codes else []
         mat_map = {m.codigo: m for m in materias_db}
 
-        # Filtrar horarios virtuales — mismo criterio que build_inputs del LP:
-        # (a) MateriaDB.virtual=True, (b) DictadoDB.virtual=True para este ciclo.
-        # Sin este filtro, el inspector cuenta más horarios que el heatmap.
+        # Filtrar horarios virtuales — mismo criterio que build_inputs
+        # del LP: resolucion jerarquica horario > dictado > materia.
+        # Sin este filtro, el inspector cuenta mas horarios que el heatmap.
+        from src.services.resolucion_jerarquica import (
+            resolve_virtual as _resolve_virtual,
+        )
         materia_virtual = {m.codigo: m.virtual for m in materias_db}
         plan_obj = _s.get(_PlanificacionCursadaDB, plan_id)
-        materia_dictado_virtual: dict[str, bool] = {}
+        materia_dictado_virtual: dict[str, bool | None] = {}
         if plan_obj is not None and plan_obj.ciclo_id is not None:
             dict_rows = _s.exec(
                 _select(_DictadoDB.materia_codigo, _DictadoDB.virtual)
@@ -925,11 +928,14 @@ def _render_inspector_franja(
                 .where(_DictadoCicloDB.ciclo_id == plan_obj.ciclo_id)
             ).all()
             for mc, es_virt in dict_rows:
-                materia_dictado_virtual[mc] = bool(es_virt)
+                materia_dictado_virtual[mc] = es_virt
         horarios_db = [
             h for h in horarios_db_all
-            if not materia_virtual.get(h.codigo_materia, False)
-            and not materia_dictado_virtual.get(h.codigo_materia, False)
+            if not _resolve_virtual(
+                horario_virtual=h.virtual,
+                dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+                materia_virtual=materia_virtual.get(h.codigo_materia, False),
+            )
         ]
 
         # Sedes admisibles por materia.
