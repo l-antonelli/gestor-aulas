@@ -134,6 +134,18 @@ def render_panel_divergencias(
                 "recursado dice que debería existir un dictado, pero "
                 "no está creado."
             )
+            _render_bulk_promover(
+                ciclo_id, drift.to_create, on_change_key,
+                accion="omitir-en-regla",
+                boton_label="⏭️ Omitir TODAS en regla",
+                confirm_prefix=f"omitir_{ciclo_id}",
+                help_text=(
+                    "Setea MateriaDB.dicta_recursado=False para TODAS "
+                    "las materias de esta lista. En ciclos futuros dejarán "
+                    "de aparecer como esperadas. NO crea ni borra dictados "
+                    "en este ciclo."
+                ),
+            )
             for it in drift.to_create:
                 _render_row_to_create(ciclo_id, it, on_change_key)
 
@@ -165,8 +177,101 @@ def render_panel_divergencias(
                 "a regla general para que en ciclos futuros no se marquen "
                 "como divergencia."
             )
+            _render_bulk_promover(
+                ciclo_id, drift.rule_says_skip_but_exists, on_change_key,
+                accion="crear-en-regla",
+                boton_label="⬆️ Promover TODAS a regla",
+                confirm_prefix=f"promover_{ciclo_id}",
+                help_text=(
+                    "Setea MateriaDB.dicta_recursado=True para TODAS "
+                    "las materias de esta lista. En ciclos futuros pasarán "
+                    "a ser esperadas por defecto. NO crea ni borra "
+                    "dictados en este ciclo."
+                ),
+            )
             for it in drift.rule_says_skip_but_exists:
                 _render_row_keep_skip(ciclo_id, it, on_change_key)
+
+
+def _render_bulk_promover(
+    ciclo_id: str,
+    items: list[dict],
+    on_change_key: str,
+    *,
+    accion: str,  # "crear-en-regla" | "omitir-en-regla"
+    boton_label: str,
+    confirm_prefix: str,
+    help_text: str,
+) -> None:
+    """Boton bulk para promover a regla TODAS las materias de una
+    seccion, con confirmacion en 2 pasos.
+
+    Estado guardado en session_state: `dict_confirming_bulk_{prefix}`
+    (bool). Primer click lo setea a True; en el siguiente render, en
+    lugar del boton aparece el bloque de confirmacion. `Confirmar`
+    aplica y limpia el flag; `Cancelar` solo limpia el flag.
+    """
+    if not items:
+        return
+    n = len(items)
+    confirm_key = f"dict_confirming_bulk_{confirm_prefix}"
+    is_confirming = bool(st.session_state.get(confirm_key, False))
+
+    if not is_confirming:
+        _c1, _c_rest = st.columns([2, 5])
+        with _c1:
+            if st.button(
+                f"{boton_label} ({n})",
+                key=f"btn_bulk_{confirm_prefix}",
+                help=help_text,
+                use_container_width=True,
+            ):
+                st.session_state[confirm_key] = True
+                st.rerun()
+        return
+
+    # Modo confirmacion.
+    st.warning(
+        f"⚠️ Vas a modificar **{n} materia(s) del catálogo** "
+        f"(`MateriaDB.dicta_recursado`). Esto **afecta todos los "
+        f"ciclos futuros** — no sólo el actual. Los dictados del "
+        f"ciclo actual **no se tocan** hasta que apliques manualmente "
+        f"(botón `⚡ Aplicar todo` o acciones fila-a-fila).",
+    )
+    _c1, _c2, _c_rest = st.columns([1.5, 1.2, 5])
+    with _c1:
+        if st.button(
+            f"✅ Confirmar ({n})",
+            type="primary",
+            key=f"btn_bulk_confirm_{confirm_prefix}",
+        ):
+            _reason = (
+                f"Bulk promover: {accion} en {n} materia(s) desde el "
+                f"panel de divergencias del ciclo {ciclo_id}"
+            )
+            n_aplicados = 0
+            with next(get_session()) as _s:
+                with change_context(origin="ui:ciclos", reason=_reason):
+                    for it in items:
+                        if promover_a_regla(
+                            _s, it["materia_codigo"], ciclo_id,
+                            accion=accion,
+                        ):
+                            n_aplicados += 1
+            st.session_state[on_change_key] = True
+            st.session_state[confirm_key] = False
+            st.toast(
+                f"✅ {n_aplicados}/{n} materia(s) actualizada(s) en la "
+                "regla general."
+            )
+            st.rerun()
+    with _c2:
+        if st.button(
+            "🚫 Cancelar",
+            key=f"btn_bulk_cancel_{confirm_prefix}",
+        ):
+            st.session_state[confirm_key] = False
+            st.rerun()
 
 
 def _render_row_to_create(
