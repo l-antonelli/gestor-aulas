@@ -1,0 +1,294 @@
+"""Panel de divergencias entre los dictados de un ciclo y las reglas
+vigentes en MateriaDB/CarreraDB.
+
+Componente reutilizable para la pagina de Ciclos (`4_📆_Ciclos.py`).
+Muestra en tres secciones colapsables (una por categoria de divergencia)
+las materias/dictados afectados, con acciones fila-a-fila:
+
+- **to_create** (materia del plan sin dictado, regla dice que si):
+  - `[✅ Crear]`: crea el dictado.
+  - `[⏭️ Omitir en regla]`: setea MateriaDB.dicta_recursado=False para
+    que ciclos futuros la skippen automaticamente.
+
+- **to_delete** (dictado huerfano, la materia ya no esta en el plan):
+  - `[🗑️ Borrar]`: borra el dictado y nullifica clases huerfanas.
+
+- **rule_says_skip_but_exists** (dictado existe pero regla dice skippear):
+  - `[🗑️ Borrar]`.
+  - `[⬆️ Promover a regla]`: setea MateriaDB.dicta_recursado=True para
+    que ciclos futuros la creen automaticamente.
+
+Adicionalmente ofrece un boton masivo "Aplicar todo (crear + borrar)"
+que corre `sync_dictados_para_ciclo(apply=True)`.
+"""
+
+from __future__ import annotations
+
+import streamlit as st
+
+from src.database.connection import get_session
+from src.services.dictado_service import (
+    borrar_dictado_de_ciclo,
+    create_dictado_for_materia,
+    promover_a_regla,
+    sync_dictados_para_ciclo,
+)
+
+
+def _fmt_ubicacion(item: dict) -> str:
+    """`3° · 1C` / `5° · Anual` / `—` segun anio/cuatri."""
+    a = item.get("anio_plan")
+    c = item.get("cuatrimestre_plan")
+    if a and c:
+        return f"{a}° · {c}"
+    if a:
+        return f"{a}°"
+    if c:
+        return c
+    return "—"
+
+
+def render_panel_divergencias(
+    ciclo_id: str,
+    drift,
+    *,
+    on_change_key: str = "dict_resync_pending",
+) -> None:
+    """Renderiza el panel completo de divergencias.
+
+    Args:
+        ciclo_id: ciclo a sincronizar.
+        drift: `DriftSummary` computado previamente (evita re-consultar).
+        on_change_key: session_state key que se setea a True cuando el
+            usuario aplica cualquier cambio (para que la pagina llamante
+            re-sincronice sus caches).
+    """
+    if drift.is_clean:
+        st.success(
+            "✅ No hay divergencias: los dictados del ciclo están "
+            "alineados con las reglas vigentes."
+        )
+        return
+
+    n_create = len(drift.to_create)
+    n_delete = len(drift.to_delete)
+    n_keep_skip = len(drift.rule_says_skip_but_exists)
+
+    st.markdown(
+        f"### ⚠️ Divergencias: {n_create} a crear · {n_delete} a "
+        f"borrar · {n_keep_skip} existen pero la regla dice que no"
+    )
+    st.caption(
+        "Compara los dictados del ciclo contra las materias del plan "
+        "asignado + las reglas de recursado (MateriaDB/CarreraDB.dicta_"
+        "recursado). Cada fila tiene acciones para aplicar puntualmente "
+        "o promover la decisión a la regla general."
+    )
+
+    # ----- Botón masivo "Aplicar todo" -----
+    _bc1, _bc2, _bc_rest = st.columns([2, 3, 5])
+    with _bc1:
+        if (n_create + n_delete) > 0 and st.button(
+            f"⚡ Aplicar todo ({n_create + n_delete} cambios)",
+            type="primary",
+            key=f"btn_apply_all_divergencias_{ciclo_id}",
+            help=(
+                "Aplica los cambios de to_create y to_delete. NO toca "
+                "'existen pero regla dice que no' (esos requieren "
+                "decision explicita por fila)."
+            ),
+        ):
+            with next(get_session()) as _s:
+                res = sync_dictados_para_ciclo(_s, ciclo_id, apply=True)
+            st.session_state[on_change_key] = True
+            st.toast(
+                f"✅ {res.n_changes} cambio(s) aplicado(s): "
+                f"{len(res.to_create)} creado(s), "
+                f"{len(res.to_delete)} borrado(s)."
+            )
+            st.rerun()
+    with _bc2:
+        st.caption(
+            "Los cambios en 'existen pero la regla dice que no' NO se "
+            "aplican masivamente — hay que decidir fila a fila."
+        )
+
+    st.divider()
+
+    # ----- Seccion to_create -----
+    if n_create > 0:
+        with st.expander(
+            f"➕ Materias del plan sin dictado ({n_create})",
+            expanded=True,
+        ):
+            st.caption(
+                "La materia está en el plan del ciclo y la regla de "
+                "recursado dice que debería existir un dictado, pero "
+                "no está creado."
+            )
+            for it in drift.to_create:
+                _render_row_to_create(ciclo_id, it, on_change_key)
+
+    # ----- Seccion to_delete -----
+    if n_delete > 0:
+        with st.expander(
+            f"🗑️ Dictados huérfanos ({n_delete})",
+            expanded=True,
+        ):
+            st.caption(
+                "El dictado existe pero la materia ya no está en el plan "
+                "asignado al ciclo (suele pasar tras cambiar de versión "
+                "de plan)."
+            )
+            for it in drift.to_delete:
+                _render_row_to_delete(ciclo_id, it, on_change_key)
+
+    # ----- Seccion rule_says_skip_but_exists -----
+    if n_keep_skip > 0:
+        with st.expander(
+            f"⚠️ Existen pero la regla dice que no ({n_keep_skip})",
+            expanded=False,
+        ):
+            st.caption(
+                "El dictado fue creado (probablemente a mano) pero las "
+                "reglas actuales de MateriaDB/CarreraDB dicen que no "
+                "debería existir. **No se borran automáticamente**. "
+                "Elegí: borrarlos si fue error, o promover la decisión "
+                "a regla general para que en ciclos futuros no se marquen "
+                "como divergencia."
+            )
+            for it in drift.rule_says_skip_but_exists:
+                _render_row_keep_skip(ciclo_id, it, on_change_key)
+
+
+def _render_row_to_create(
+    ciclo_id: str, item: dict, on_change_key: str,
+) -> None:
+    """Fila to_create con acciones [Crear] / [Omitir en regla]."""
+    c_info, c_ubic, c_a1, c_a2 = st.columns([4, 1.5, 1.2, 1.6])
+    with c_info:
+        st.markdown(
+            f"**{item['materia_codigo']}** — {item['materia_nombre']}  \n"
+            f"<span style='color:#888;font-size:0.85em'>"
+            f"🎓 {item['carrera_nombre']} · _{item['razon']}_"
+            f"</span>",
+            unsafe_allow_html=True,
+        )
+    with c_ubic:
+        st.caption(_fmt_ubicacion(item))
+    with c_a1:
+        if st.button(
+            "✅ Crear",
+            key=f"btn_create_{ciclo_id}_{item['materia_codigo']}",
+            help="Crear el dictado en este ciclo.",
+            use_container_width=True,
+        ):
+            with next(get_session()) as _s:
+                create_dictado_for_materia(
+                    _s, ciclo_id, item["materia_codigo"],
+                )
+            st.session_state[on_change_key] = True
+            st.toast(f"✅ Dictado creado: {item['materia_codigo']}")
+            st.rerun()
+    with c_a2:
+        if st.button(
+            "⏭️ Omitir en regla",
+            key=f"btn_skip_rule_{ciclo_id}_{item['materia_codigo']}",
+            help=(
+                "Setear MateriaDB.dicta_recursado=False para que ciclos "
+                "futuros omitan esta materia automáticamente. NO crea "
+                "el dictado ni afecta otros ciclos existentes."
+            ),
+            use_container_width=True,
+        ):
+            with next(get_session()) as _s:
+                promover_a_regla(
+                    _s, item["materia_codigo"], ciclo_id,
+                    accion="omitir-en-regla",
+                )
+            st.session_state[on_change_key] = True
+            st.toast(
+                f"⏭️ {item['materia_codigo']}: dicta_recursado=False. "
+                "Aplica en ciclos futuros."
+            )
+            st.rerun()
+
+
+def _render_row_to_delete(
+    ciclo_id: str, item: dict, on_change_key: str,
+) -> None:
+    """Fila to_delete con accion [Borrar]."""
+    c_info, c_a = st.columns([6, 1.4])
+    with c_info:
+        st.markdown(
+            f"`{item['dictado_codigo']}` — **{item['materia_codigo']}** "
+            f"({item['materia_nombre']})"
+        )
+    with c_a:
+        if st.button(
+            "🗑️ Borrar",
+            key=f"btn_delete_orphan_{ciclo_id}_{item['dictado_id']}",
+            help=(
+                "Borra el dictado y sus vinculos con este ciclo. Las "
+                "clases asociadas quedan sin dictado (huérfanas) pero "
+                "no se borran."
+            ),
+            use_container_width=True,
+        ):
+            with next(get_session()) as _s:
+                borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
+            st.session_state[on_change_key] = True
+            st.toast(f"🗑️ Dictado borrado: {item['dictado_codigo']}")
+            st.rerun()
+
+
+def _render_row_keep_skip(
+    ciclo_id: str, item: dict, on_change_key: str,
+) -> None:
+    """Fila rule_says_skip_but_exists con acciones [Borrar] / [Promover]."""
+    c_info, c_ubic, c_a1, c_a2 = st.columns([4, 1.5, 1.2, 1.6])
+    with c_info:
+        st.markdown(
+            f"**{item['materia_codigo']}** — {item['materia_nombre']}  \n"
+            f"<span style='color:#888;font-size:0.85em'>"
+            f"🎓 {item['carrera_nombre']} · _{item['razon']}_"
+            f"</span>",
+            unsafe_allow_html=True,
+        )
+    with c_ubic:
+        st.caption(_fmt_ubicacion(item))
+    with c_a1:
+        if st.button(
+            "🗑️ Borrar",
+            key=f"btn_delete_keep_{ciclo_id}_{item['dictado_id']}",
+            help="Borrar este dictado (se creó por error o ya no aplica).",
+            use_container_width=True,
+        ):
+            with next(get_session()) as _s:
+                borrar_dictado_de_ciclo(_s, ciclo_id, item["dictado_id"])
+            st.session_state[on_change_key] = True
+            st.toast(f"🗑️ Dictado borrado: {item['dictado_codigo']}")
+            st.rerun()
+    with c_a2:
+        if st.button(
+            "⬆️ Promover a regla",
+            key=f"btn_promote_{ciclo_id}_{item['materia_codigo']}",
+            help=(
+                "Setear MateriaDB.dicta_recursado=True para que ciclos "
+                "futuros creen automáticamente el dictado de esta "
+                "materia. La regla nueva convierte esta divergencia en "
+                "el comportamiento esperado."
+            ),
+            use_container_width=True,
+        ):
+            with next(get_session()) as _s:
+                promover_a_regla(
+                    _s, item["materia_codigo"], ciclo_id,
+                    accion="crear-en-regla",
+                )
+            st.session_state[on_change_key] = True
+            st.toast(
+                f"⬆️ {item['materia_codigo']}: dicta_recursado=True. "
+                "Aplica en ciclos futuros."
+            )
+            st.rerun()

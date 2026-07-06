@@ -24,6 +24,7 @@ from src.services.dictado_service import (
     update_dictado,
 )
 from src.services.crud_services import carrera_service
+from src.ui.divergencias_panel import render_panel_divergencias
 
 init_db()
 
@@ -316,15 +317,14 @@ with tab_dictados:
 
             st.divider()
 
-            # --- Create + Recompute buttons ---
+            # --- Create + Sync buttons ---
             st.caption(
-                "**Crear Dictados** genera todas las materias del plan como "
-                "dictados de este ciclo. Las que la regla de `dicta_recursado` "
-                "indique no dictar quedan creadas pero **inactivas** — las "
-                "podés activar manualmente cuando quieras. Es idempotente. "
-                "**Recalcular según reglas** revisa todos los dictados y "
-                "ajusta `activo` según las banderas actuales (útil después de "
-                "tocar `dicta_recursado` en una carrera)."
+                "**Crear Dictados** genera todas las materias del plan que "
+                "la regla de `dicta_recursado` autoriza. Es idempotente. "
+                "**Sincronizar según reglas** propone crear los que faltan "
+                "y borrar los huérfanos (útil después de tocar "
+                "`dicta_recursado` en una carrera o cambiar la versión del "
+                "plan). Divergencias con acciones fila-a-fila más abajo."
             )
             # Drift summary: detecta recompute pendiente, materias sin
             # dictado y dictados huerfanos. Se muestra como un chip al lado
@@ -342,11 +342,11 @@ with tab_dictados:
                 )
             with _bcol2:
                 _do_recompute = st.button(
-                    "🔄 Recalcular según reglas",
+                    "🔄 Sincronizar según reglas",
                     key="btn_recompute_dictados",
                     help=(
-                        "Compara la bandera `activo` de cada dictado contra las "
-                        "reglas vigentes y muestra un preview de los cambios."
+                        "Compara los dictados existentes contra las reglas "
+                        "vigentes y muestra qué se crearía o borraría."
                     ),
                 )
             with _bcol3:
@@ -369,73 +369,14 @@ with tab_dictados:
                         )
                     st.warning(
                         "⚠️ Divergencias: " + " · ".join(_drift_parts)
+                        + " · Panel de gestión abajo ↓"
                     )
-                    with st.popover(
-                        "Ver detalle", use_container_width=False,
-                    ):
-                        if _drift.to_create:
-                            st.markdown(
-                                f"**➕ Materias del plan sin dictado "
-                                f"({len(_drift.to_create)})**"
-                            )
-                            st.caption(
-                                "Apretá **Crear Dictados** para crearlos."
-                            )
-                            for _it in _drift.to_create:
-                                st.write(
-                                    f"- **{_it['materia_codigo']}** — "
-                                    f"{_it['materia_nombre']}  \n"
-                                    f"  _{_it['razon']}_"
-                                )
-                        if _drift.to_delete:
-                            st.markdown(
-                                f"**🗑️ Dictados huérfanos "
-                                f"({len(_drift.to_delete)})**"
-                            )
-                            st.caption(
-                                "Materias con dictado pero que ya no están "
-                                "en ningún plan asignado al ciclo."
-                            )
-                            for _it in _drift.to_delete:
-                                st.write(
-                                    f"- `{_it['dictado_codigo']}` "
-                                    f"({_it['materia_codigo']})"
-                                )
-                            if st.button(
-                                "🗑️ Eliminar huérfanos",
-                                key="btn_delete_orphans",
-                                type="secondary",
-                            ):
-                                with next(get_session()) as _del_s:
-                                    _del_n = 0
-                                    for _it in _drift.to_delete:
-                                        _did = _it["dictado_id"]
-                                        if _did is None:
-                                            continue
-                                        if borrar_dictado_de_ciclo(
-                                            _del_s, sel_ciclo_dict, _did,
-                                        ):
-                                            _del_n += 1
-                                st.toast(
-                                    f"{_del_n} huérfano(s) eliminado(s)."
-                                )
-                                st.rerun()
-                        if _drift.rule_says_skip_but_exists:
-                            st.markdown(
-                                f"**⚠️ Existen pero la regla dice que no "
-                                f"({len(_drift.rule_says_skip_but_exists)})**"
-                            )
-                            st.caption(
-                                "Dictados que el usuario creó a mano (o "
-                                "que quedaron de una regla anterior). No "
-                                "se borran automáticamente."
-                            )
-                            for _it in _drift.rule_says_skip_but_exists:
-                                st.write(
-                                    f"- **{_it['materia_codigo']}** — "
-                                    f"{_it['materia_nombre']}  \n"
-                                    f"  _{_it['razon']}_"
-                                )
+
+            # Panel de divergencias con acciones fila-a-fila (Fase 2).
+            # Se muestra siempre — cuando no hay divergencias, un banner
+            # verde confirma que el ciclo esta alineado.
+            with st.container(border=True):
+                render_panel_divergencias(sel_ciclo_dict, _drift)
 
             # Guard: si hay cambios pendientes en batch, bloquear las
             # operaciones globales (Crear Dictados, Recalcular según
@@ -734,7 +675,12 @@ with tab_dictados:
                         _did = _k.rsplit("_", 1)[-1]
                         _d = _dictado_id_to_db.get(_did)
                         if _d is not None:
-                            st.session_state[_k] = _d.virtual
+                            # `d.virtual` es Optional[bool]; el widget
+                            # usa un selectbox de 3 estados.
+                            st.session_state[_k] = (
+                                "Heredar" if _d.virtual is None
+                                else ("Virtual" if _d.virtual else "Presencial")
+                            )
                     elif _k.startswith("rec_mat_"):
                         # rec_mat_{ns}_{carrera}_{materia_codigo}
                         # materia_codigo puede tener underscores; el
@@ -970,8 +916,12 @@ with tab_dictados:
                         )
                         if _dd is None:
                             continue
-                        _new = bool(st.session_state[_k])
-                        if _new != _dd.virtual:
+                        _new_lbl = st.session_state[_k]
+                        _curr_lbl = (
+                            "Heredar" if _dd.virtual is None
+                            else ("Virtual" if _dd.virtual else "Presencial")
+                        )
+                        if _new_lbl != _curr_lbl:
                             pendientes.append({
                                 "tipo": "virtual",
                                 "dictado_id": _did,
@@ -980,8 +930,8 @@ with tab_dictados:
                                     mat_map[_dd.materia_codigo].nombre
                                     if _dd.materia_codigo in mat_map else ""
                                 ),
-                                "actual": _dd.virtual,
-                                "nuevo": _new,
+                                "actual": _curr_lbl,
+                                "nuevo": _new_lbl,
                                 "key": _k,
                             })
                     elif _k.startswith("rec_mat_") and len(parts) >= 5:
@@ -1049,8 +999,10 @@ with tab_dictados:
                             _new = "Activo" if p["nuevo"] else "Inactivo"
                         else:
                             _attr_lbl = "Virtual"
-                            _act = "Sí" if p["actual"] else "No"
-                            _new = "Sí" if p["nuevo"] else "No"
+                            # `actual` y `nuevo` son labels del selectbox
+                            # de 3 estados (Heredar / Virtual / Presencial).
+                            _act = str(p["actual"])
+                            _new = str(p["nuevo"])
                         _rows_pend.append({
                             "Materia": (
                                 f"{p['materia_codigo']} — {p['nombre']}"
@@ -1090,9 +1042,19 @@ with tab_dictados:
                                                     p["dictado_id"],
                                                 )
                                         elif p["tipo"] == "virtual":
+                                            # `nuevo` es label del
+                                            # selectbox: 3 estados →
+                                            # Optional[bool].
+                                            _new_v = (
+                                                None if p["nuevo"] == "Heredar"
+                                                else (
+                                                    True if p["nuevo"] == "Virtual"
+                                                    else False
+                                                )
+                                            )
                                             update_dictado(
                                                 _ds, p["dictado_id"],
-                                                virtual=bool(p["nuevo"]),
+                                                virtual=_new_v,
                                             )
                                         elif p["tipo"] == "recursado":
                                             _new_val = (
@@ -1250,7 +1212,11 @@ with tab_dictados:
                     if bool(st.session_state[_activo_key]) != True:
                         _has_pending = True
                 if d is not None and _virtual_key in st.session_state:
-                    if bool(st.session_state[_virtual_key]) != d.virtual:
+                    _curr_v_lbl = (
+                        "Heredar" if d.virtual is None
+                        else ("Virtual" if d.virtual else "Presencial")
+                    )
+                    if st.session_state[_virtual_key] != _curr_v_lbl:
                         _has_pending = True
                 if _rec_key in st.session_state:
                     _curr_lbl = (
@@ -1323,30 +1289,61 @@ with tab_dictados:
                     )
 
                 if d is not None:
+                    # `col_activo` se re-usa como accion "🗑️ Borrar
+                    # dictado". Semantica nueva: el dictado existe → se
+                    # dicta. Para desactivar hay que borrarlo (queda como
+                    # divergencia si la regla dice que deberia existir).
                     with col_activo:
-                        st.checkbox(
-                            "Activo",
-                            value=True,
-                            key=_activo_key,
-                        )
-                        # Botón para limpiar la edición manual y volver
-                        # a alinear el dictado con la regla. Mantenemos
-                        # commit inmediato porque es una acción puntual
-                        # del usuario, no parte del batch.
-                        # `activo_override_manual` fue eliminado: no hay
-                        # override para descartar.
+                        if st.button(
+                            "🗑️ Borrar",
+                            key=(
+                                f"btn_borrar_{key_ns}_{carrera_cod}_{d.id}"
+                            ),
+                            help=(
+                                "Borra el dictado del ciclo. Si la regla "
+                                "dice que la materia debería dictarse "
+                                "quedará como divergencia (aparecerá en "
+                                "el panel arriba)."
+                            ),
+                            use_container_width=True,
+                        ):
+                            from src.services.dictado_service import (
+                                borrar_dictado_de_ciclo,
+                            )
+                            with next(get_session()) as _bs:
+                                borrar_dictado_de_ciclo(
+                                    _bs, sel_ciclo_dict, d.id,
+                                )
+                            st.session_state["dict_resync_pending"] = True
+                            st.toast(f"🗑️ Dictado borrado: {mat.codigo}")
+                            st.rerun()
+                    # Toggle Virtual: 3 estados (heredar / si / no) porque
+                    # ahora `DictadoDB.virtual` es Optional[bool].
                     with col_virtual:
-                        st.checkbox(
+                        _vir_options = ["Heredar", "Virtual", "Presencial"]
+                        _curr_v_idx = (
+                            0 if d.virtual is None
+                            else (1 if d.virtual else 2)
+                        )
+                        st.selectbox(
                             "Virtual",
-                            value=d.virtual,
+                            options=_vir_options,
+                            index=_curr_v_idx,
                             key=_virtual_key,
+                            label_visibility="visible",
+                            help=(
+                                "Heredar: usa el flag de la materia. "
+                                "Virtual: fuerza a virtual sólo en este "
+                                "ciclo. Presencial: fuerza a presencial "
+                                "aunque la materia sea virtual."
+                            ),
                         )
                 else:
-                    # Caso raro: materia del plan sin dictado todavia. Suele
-                    # pasar solo en estado intermedio (DB pre-migracion).
-                    # Apretar "Crear Dictados" arriba completa el set.
+                    # Materia del plan sin dictado — desde acá NO se puede
+                    # crear (el flujo correcto es el panel de divergencias
+                    # arriba con acciones fila-a-fila).
                     with col_activo:
-                        st.caption("(Sin dictado)")
+                        st.caption("(Sin dictado — ver divergencias)")
                     with col_virtual:
                         st.caption("—")
 
