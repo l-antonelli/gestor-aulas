@@ -777,6 +777,12 @@ def promover_a_regla(
     materia.dicta_recursado = nuevo_valor
     session.add(materia)
     session.commit()
+    # Invalidar pool: sin esto, otras sesiones abiertas (típicamente
+    # el próximo render de Streamlit) pueden leer `dicta_recursado`
+    # stale y el selectbox del panel de recursado detectar un falso
+    # "cambio pendiente" al comparar contra el session_state.
+    from src.database.connection import engine as _engine
+    _engine.dispose()
     return True
 
 
