@@ -193,15 +193,40 @@ class MateriaDB(SQLModel, table=True):
 
 
 class ComisionDB(SQLModel, table=True):
-    """División de una materia para distribuir alumnos."""
+    """División de una materia para distribuir alumnos.
+
+    Una comisión pertenece a UN cronograma (``schedule_id``) O bien a UN
+    plan de cursada (``plan_cursada_id``), pero no a ambos a la vez. El
+    service layer valida el XOR (no hay constraint de DB por SQLite).
+
+    - Comisión de **cronograma** (``schedule_id`` seteado): plantilla que
+      define atributos (nombre, cupo, carrera_asignada, ...) para las
+      entries de ese cronograma. Al generar un plan desde el cronograma,
+      estas comisiones se **clonan** al plan (nuevos IDs) preservando
+      atributos, para que el plan tenga ciclo de vida independiente.
+    - Comisión de **plan** (``plan_cursada_id`` seteado): entidad viva
+      del plan de cursada. Los ``HorarioDB`` del plan apuntan aca.
+
+    El campo ``carrera_asignada`` sobrescribe la restriccion de sede del
+    LP (ver RF-LP-15): comisiones orientadas a una carrera puntual (ej.
+    una comisión de una materia común organizada para alumnos de
+    Electrónica) fuerzan al LP a asignar aulas de las sedes de esa
+    carrera en vez de la sede default de comunes.
+    """
     __tablename__ = "comisiones"
 
     id: str = Field(primary_key=True)
     materia_codigo: str = Field(foreign_key="materias.codigo", index=True)
     dictado_id: Optional[str] = Field(default=None, foreign_key="dictados.id", index=True)
     plan_cursada_id: Optional[str] = Field(default=None, foreign_key="planificaciones_cursada.id", index=True)
+    # Comisión "template" de un cronograma. XOR con plan_cursada_id: el
+    # service layer valida que exactamente uno de los dos esté seteado.
+    schedule_id: Optional[str] = Field(default=None, foreign_key="schedules.id", index=True)
     comision_key: str = Field(default="")  # "{dictado_codigo}-{numero:03d}"
     nombre: str = Field(default="Comisión Única")
+    # `numero` es display-only, no identifier. El identity de una
+    # comisión es su `id` (UUID). Se mantiene para que el usuario pueda
+    # numerarlas 1/2/3 a su criterio.
     numero: int = Field(ge=1, default=1)
     cupo: int = Field(gt=0)
     descripcion: str = Field(default="")
@@ -210,6 +235,11 @@ class ComisionDB(SQLModel, table=True):
     # deberia ser ~1.0 (validacion en service layer, no constraint de DB).
     # Default 1.0 para que sea consistente cuando hay una sola comision.
     coef_asignacion: float = Field(default=1.0, ge=0, le=1)
+    # Override de la carrera que define la sede admisible del LP (R10).
+    # Ver RF-LP-15. None (default) = sin override.
+    carrera_asignada: Optional[str] = Field(
+        default=None, foreign_key="carreras.codigo", index=True,
+    )
 
     # Relationships
     materia: Optional[MateriaDB] = Relationship(back_populates="comisiones")
@@ -338,7 +368,12 @@ class ScheduleDB(SQLModel, table=True):
 
 
 class ScheduleEntryDB(SQLModel, table=True):
-    """A single row from a schedule file: materia + dia + hora + comision opcional."""
+    """A single row from a schedule file: materia + dia + hora + comision opcional.
+
+    ``comision_id`` es la FK a ``ComisionDB`` (una comisión "template"
+    del cronograma). Puede ser None si el entry todavía no fue asignado
+    a una comisión concreta.
+    """
     __tablename__ = "schedule_entries"
 
     id: str = Field(primary_key=True)  # UUID
@@ -347,7 +382,13 @@ class ScheduleEntryDB(SQLModel, table=True):
     dia: str
     hora_inicio: time
     hora_fin: time
-    comision: Optional[int] = Field(default=None)
+    # FK a ComisionDB con schedule_id igual a este entry.schedule_id.
+    # Reemplaza al viejo campo `comision: Optional[int]` (identificador
+    # de facto por indice, no entidad real). None = entry sin comisión
+    # asignada.
+    comision_id: Optional[str] = Field(
+        default=None, foreign_key="comisiones.id", index=True,
+    )
     tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
     # Override de virtualidad a nivel entry del cronograma. Se propaga
     # a HorarioDB.virtual al generar el plan. Sigue la misma semantica

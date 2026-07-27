@@ -763,3 +763,114 @@ class TestVirtualPropagation:
         )
         session.refresh(h)
         assert h.virtual is True
+
+
+class TestClonComisionCronogramaAPlan:
+    """Preserva `carrera_asignada` (y demás atributos) al clonar
+    comisiones del cronograma template hacia el plan. RF-COMISION-02
+    + RF-LP-15 end-to-end."""
+
+    def test_carrera_asignada_del_template_se_hereda_en_el_plan(
+        self, session, ciclo, materias, schedule,
+    ):
+        """Si la comisión template del cronograma tiene
+        carrera_asignada='B', la comisión clon del plan también."""
+        from src.services.comision_service import (
+            create_comision_for_schedule,
+        )
+        # Crear una comisión template en el cronograma con override.
+        com_tpl = create_comision_for_schedule(
+            session, schedule_id=schedule.id,
+            materia_codigo="MAT101",
+            nombre="Comisión Especial",
+            cupo=15,
+            descripcion="Prueba",
+            carrera_asignada="A",
+            numero=1,
+        )
+        # Asignar los entries de MAT101 a esa comisión.
+        entries_mat = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == schedule.id,
+                ScheduleEntryDB.codigo_materia == "MAT101",
+            )
+        ).all()
+        assert len(entries_mat) >= 1
+        # Necesito una carrera "A" para que la FK valide.
+        from src.database.models import CarreraDB
+        session.add(CarreraDB(codigo="A", nombre="Car A"))
+        session.commit()
+        for e in entries_mat:
+            e.comision_id = com_tpl.id
+            session.add(e)
+        session.commit()
+
+        # Generar plan via preview + generate.
+        preview = preview_plan_from_schedule(session, schedule.id)
+        result = generate_plan_from_preview(
+            session,
+            schedule_id=schedule.id,
+            nombre="Plan Herencia",
+            ciclo_id=ciclo.id,
+            materia_previews=preview.materias,
+        )
+        assert result.plan is not None
+
+        # Buscar la comisión del PLAN (no del template).
+        coms_plan = list(session.exec(
+            select(ComisionDB).where(
+                ComisionDB.plan_cursada_id == result.plan.id,
+                ComisionDB.materia_codigo == "MAT101",
+            )
+        ).all())
+        assert len(coms_plan) == 1
+        clon = coms_plan[0]
+        # Verificar herencia de atributos del template.
+        assert clon.carrera_asignada == "A"
+        assert clon.nombre == "Comisión Especial"
+        assert clon.cupo == 15
+        assert clon.descripcion == "Prueba"
+        # Y que sea otro id (clon, no shared).
+        assert clon.id != com_tpl.id
+        assert clon.schedule_id is None
+        # El template sigue con schedule_id
+        session.refresh(com_tpl)
+        assert com_tpl.schedule_id == schedule.id
+        assert com_tpl.plan_cursada_id is None
+
+    def test_generate_sin_template_usa_defaults(
+        self, session, ciclo, materias, schedule,
+    ):
+        """Backward compat: si el cronograma no tiene comisiones
+        template (ScheduleEntry sin comision_id), la generación del
+        plan sigue funcionando y crea comisiones con defaults
+        (nombre='Comision N', cupo del MateriaDB, carrera_asignada=None)."""
+        # El fixture `schedule` crea entries SIN asignar comision_id.
+        # Verificar que ninguno tiene comisión.
+        ents = list(session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == schedule.id,
+            )
+        ).all())
+        assert all(e.comision_id is None for e in ents)
+
+        preview = preview_plan_from_schedule(session, schedule.id)
+        result = generate_plan_from_preview(
+            session,
+            schedule_id=schedule.id,
+            nombre="Plan sin templates",
+            ciclo_id=ciclo.id,
+            materia_previews=preview.materias,
+        )
+        assert result.plan is not None
+        # Al menos una comisión por materia con defaults.
+        coms = list(session.exec(
+            select(ComisionDB).where(
+                ComisionDB.plan_cursada_id == result.plan.id,
+            )
+        ).all())
+        assert len(coms) >= 2
+        for c in coms:
+            assert c.carrera_asignada is None  # sin override
+            assert c.nombre.startswith("Comision") or c.nombre.startswith("Comisión")
+            assert c.cupo > 0

@@ -755,19 +755,39 @@ def validar_factibilidad_particion_horas(
             .where(ScheduleEntryDB.codigo_materia.in_(list(mat_map.keys())))
         ).all())
 
-        # Group by (materia, comision). Skip entries sin comision asignada
-        # (la Phase 2 valida con comisiones del preview).
+        # Group by (materia, comision_id). Skip entries sin comisión
+        # asignada (huérfanos). Se muestran los numeros/nombres de las
+        # comisiones en los mensajes de error.
         from collections import defaultdict
-        groups: dict[tuple[str, int], list] = defaultdict(list)
+        groups: dict[tuple[str, str], list] = defaultdict(list)
         for e in entries:
-            if e.comision is None:
+            if e.comision_id is None:
                 continue
-            groups[(e.codigo_materia, e.comision)].append(e)
+            groups[(e.codigo_materia, e.comision_id)].append(e)
 
-        for (mat_code, com_num), group_entries in sorted(groups.items()):
+        # Precargar comisiones referenciadas para las etiquetas.
+        com_ids_referenciados = {cid for _, cid in groups.keys()}
+        comisiones_map: dict[str, ComisionDB] = {}
+        if com_ids_referenciados:
+            comisiones_map = {
+                c.id: c for c in session.exec(
+                    select(ComisionDB).where(
+                        ComisionDB.id.in_(com_ids_referenciados)  # type: ignore[attr-defined]
+                    )
+                ).all()
+            }
+
+        def _lbl_com(com_id: str) -> str:
+            c = comisiones_map.get(com_id)
+            if c is None:
+                return f"comision {com_id[:8]}"
+            return f"C{c.numero}"
+
+        for (mat_code, com_id), group_entries in sorted(groups.items()):
             mat = mat_map[mat_code]
             ht = mat.horas_teoria or 0
             hl = mat.horas_laboratorio or 0
+            com_lbl = _lbl_com(com_id)
 
             durations = []
             pre_lab_sum = 0.0
@@ -785,13 +805,13 @@ def validar_factibilidad_particion_horas(
             # Check predetermined consistency
             if pre_lab_sum > hl + 0.01:
                 errors.append(
-                    f"{mat_code} C{com_num}: horas predeterminadas como lab "
+                    f"{mat_code} {com_lbl}: horas predeterminadas como lab "
                     f"({pre_lab_sum:.1f}) > horas_laboratorio ({hl:.1f})"
                 )
                 continue
             if pre_teo_sum > ht + 0.01:
                 errors.append(
-                    f"{mat_code} C{com_num}: horas predeterminadas como teoría "
+                    f"{mat_code} {com_lbl}: horas predeterminadas como teoría "
                     f"({pre_teo_sum:.1f}) > horas_teoria ({ht:.1f})"
                 )
                 continue
@@ -801,7 +821,7 @@ def validar_factibilidad_particion_horas(
             expected_total = ht + hl
             if abs(total - expected_total) > 0.01:
                 errors.append(
-                    f"{mat_code} C{com_num}: duracion total ({total:.1f}h) "
+                    f"{mat_code} {com_lbl}: duracion total ({total:.1f}h) "
                     f"≠ horas_teoria + horas_laboratorio ({expected_total:.1f}h)"
                 )
                 continue
@@ -809,7 +829,7 @@ def validar_factibilidad_particion_horas(
             # Subset-sum: find a subset of durations summing to hl
             if not _subset_sum_exists(durations, hl):
                 errors.append(
-                    f"{mat_code} C{com_num}: no existe partición de clases "
+                    f"{mat_code} {com_lbl}: no existe partición de clases "
                     f"({[f'{d:.1f}' for d in durations]}) que sume "
                     f"horas_laboratorio={hl:.1f}"
                 )

@@ -19,6 +19,7 @@ from src.services.carrera_sede_service import (
     get_sede_default_comunes,
     get_sedes_de_carrera,
     materia_es_comun,
+    sedes_admisibles_para_carrera,
     sedes_admisibles_para_materia,
     set_sede_default_comunes,
     set_sedes_de_carrera,
@@ -184,3 +185,21 @@ class TestSedesAdmisiblesParaMateria:
         _seed_carreras_y_sedes(session)
         # M1 nunca se asocio a un PlanEstudioDB
         assert sedes_admisibles_para_materia(session, "M1") is None
+
+
+class TestSedesAdmisiblesParaCarrera:
+    """Cubre la funcion usada por el override
+    `HorarioDB.carrera_asignada` (comisiones orientadas a una carrera)."""
+
+    def test_devuelve_sedes_configuradas(self, session):
+        _seed_carreras_y_sedes(session)
+        set_sedes_de_carrera(session, "A", ["S1", "S2"])
+        assert sedes_admisibles_para_carrera(session, "A") == {"S1", "S2"}
+
+    def test_sin_sedes_configuradas_devuelve_none(self, session):
+        _seed_carreras_y_sedes(session)
+        assert sedes_admisibles_para_carrera(session, "A") is None
+
+    def test_carrera_inexistente_devuelve_none(self, session):
+        _seed_carreras_y_sedes(session)
+        assert sedes_admisibles_para_carrera(session, "FANTASMA") is None

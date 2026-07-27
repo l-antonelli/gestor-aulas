@@ -1,6 +1,5 @@
 """Service for generating a PlanificacionCursada from a Schedule."""
 
-import math
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -12,7 +11,7 @@ from typing import Optional
 from sqlmodel import col
 
 from src.database.models import (
-    ScheduleEntryDB, PlanificacionCursadaDB, ComisionDB, HorarioDB,
+    ClaseDB, ScheduleEntryDB, PlanificacionCursadaDB, ComisionDB, HorarioDB,
     MateriaDB, ScheduleDB, ConfiguracionHoraria,
     PlanEstudioDB, CicloPlanVersionDB, DictadoDB,
 )
@@ -91,6 +90,8 @@ def _derive_comisiones(
     horas_semanales: Optional[float],
     optativa: bool,
     n_carreras: int,
+    *,
+    entry_numero_map: dict[str, int] | None = None,
 ) -> tuple[int, int, str, str]:
     """Derive comision count using simplified rules.
 
@@ -112,8 +113,16 @@ def _derive_comisiones(
     max_paralelas = max(slot_counts.values()) if slot_counts else 1
     total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in entries)
 
-    # Rule 0: check pre-assigned comision values from the schedule
-    pre_assigned_vals = [e.comision for e in entries if e.comision is not None and e.comision >= 1]
+    # Rule 0: check pre-assigned comision values from the schedule.
+    # Ahora la asignación previa viene de `ComisionDB.numero` (via el
+    # mapa entry_id -> numero que el caller pre-computa). Si un entry
+    # no tiene comisión asignada, cuenta como sin pre-asignar.
+    entry_numero_map = entry_numero_map or {}
+    pre_assigned_vals = [
+        entry_numero_map[e.id] for e in entries
+        if entry_numero_map.get(e.id) is not None
+        and entry_numero_map[e.id] >= 1
+    ]
     pre_assigned_max = max(pre_assigned_vals) if pre_assigned_vals else 0
     all_pre_assigned = len(pre_assigned_vals) == len(entries) and pre_assigned_max > 0
 
@@ -195,13 +204,17 @@ def _derive_comisiones(
 def _assign_entries_to_comisiones(
     entries: list[ScheduleEntryDB],
     n_comisiones: int,
+    *,
+    entry_numero_map: dict[str, int] | None = None,
 ) -> list[EntryPreview]:
     """Distribute entries among comisiones balancing by total hours.
 
-    If entries already have a comision value from the DB, use it.
-    For entries with comision=None, assign using hours-balanced algorithm
-    that ensures each comision gets roughly equal total hours.
+    `entry_numero_map` es el mapa entry_id -> `ComisionDB.numero`
+    resuelto por el caller a partir de las FKs `comision_id`. Si el
+    entry ya tiene comisión asignada en el cronograma, se respeta;
+    los que no, se distribuyen balanceando horas.
     """
+    entry_numero_map = entry_numero_map or {}
     dia_order = {"Lunes": 0, "Martes": 1, "Miércoles": 2,
                  "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
     sorted_entries = sorted(
@@ -215,9 +228,10 @@ def _assign_entries_to_comisiones(
     com_hours: dict[int, float] = {c: 0.0 for c in range(1, n_comisiones + 1)}
 
     for e in sorted_entries:
-        if e.comision is not None and 1 <= e.comision <= n_comisiones:
-            pre_assigned[e.id] = e.comision
-            com_hours[e.comision] += _calc_entry_hours(e.hora_inicio, e.hora_fin)
+        prev_num = entry_numero_map.get(e.id)
+        if prev_num is not None and 1 <= prev_num <= n_comisiones:
+            pre_assigned[e.id] = prev_num
+            com_hours[prev_num] += _calc_entry_hours(e.hora_inicio, e.hora_fin)
         else:
             needs_assignment.append(e)
 
@@ -294,6 +308,26 @@ def preview_plan_from_schedule(
     for entry in entries:
         materia_entries.setdefault(entry.codigo_materia, []).append(entry)
 
+    # Precomputar el mapa entry_id -> ComisionDB.numero para todos los
+    # entries que tienen comisión asignada en el cronograma. Reemplaza
+    # el viejo acceso directo `e.comision`.
+    com_ids_usados = {e.comision_id for e in entries if e.comision_id}
+    if com_ids_usados:
+        from src.database.models import ComisionDB
+        comisiones_referenciadas = {
+            c.id: c for c in session.exec(
+                select(ComisionDB).where(
+                    ComisionDB.id.in_(com_ids_usados)  # type: ignore[attr-defined]
+                )
+            ).all()
+        }
+    else:
+        comisiones_referenciadas = {}
+    entry_numero_map: dict[str, int] = {}
+    for e in entries:
+        if e.comision_id and e.comision_id in comisiones_referenciadas:
+            entry_numero_map[e.id] = comisiones_referenciadas[e.comision_id].numero
+
     for materia_codigo, mat_entries in materia_entries.items():
         materia = materia_crud.get(session, materia_codigo)
         mat_nombre = materia.nombre if materia else materia_codigo
@@ -304,10 +338,13 @@ def preview_plan_from_schedule(
         total_hours = sum(_calc_entry_hours(e.hora_inicio, e.hora_fin) for e in mat_entries)
 
         n_comisiones, max_paralelas, flag, flag_detail = _derive_comisiones(
-            mat_entries, h_sem, optativa, n_carreras
+            mat_entries, h_sem, optativa, n_carreras,
+            entry_numero_map=entry_numero_map,
         )
 
-        entry_previews = _assign_entries_to_comisiones(mat_entries, n_comisiones)
+        entry_previews = _assign_entries_to_comisiones(
+            mat_entries, n_comisiones, entry_numero_map=entry_numero_map,
+        )
 
         preview = MateriaPreview(
             materia_codigo=materia_codigo,
@@ -366,6 +403,17 @@ def generate_plan_from_preview(
     session.add(plan)
     session.flush()
 
+    # Precarga: comisiones "template" del cronograma origen (para
+    # heredar atributos como carrera_asignada, cupo, descripción).
+    # Clave por (materia_codigo, numero) del template.
+    from src.database.models import ComisionDB as _Com
+    templates_by_key: dict[tuple[str, int], _Com] = {}
+    if schedule_id:
+        for c in session.exec(
+            select(_Com).where(_Com.schedule_id == schedule_id)
+        ).all():
+            templates_by_key[(c.materia_codigo, c.numero)] = c
+
     for mp in materia_previews:
         materia = materia_crud.get(session, mp.materia_codigo)
         cupo = (materia.cupo or 0) if materia else 0
@@ -383,16 +431,23 @@ def generate_plan_from_preview(
         for com_num in sorted(com_entries.keys()):
             comision_id = str(uuid.uuid4())
             comision_key = f"{mp.materia_codigo}-{com_num:03d}"
+            template = templates_by_key.get((mp.materia_codigo, com_num))
 
             comision = ComisionDB(
                 id=comision_id,
                 materia_codigo=mp.materia_codigo,
                 plan_cursada_id=plan_id,
+                schedule_id=None,
                 comision_key=comision_key,
-                nombre=f"Comision {com_num}",
+                nombre=(template.nombre if template else f"Comision {com_num}"),
                 numero=com_num,
-                cupo=cupo,
+                cupo=(template.cupo if template else cupo),
+                descripcion=(template.descripcion if template else ""),
                 coef_asignacion=coef_uniforme,
+                # Heredar override de sede del template si corresponde.
+                carrera_asignada=(
+                    template.carrera_asignada if template else None
+                ),
             )
             session.add(comision)
             session.flush()
@@ -528,7 +583,7 @@ def generate_plan_from_schedule(
         # Coef de asignacion uniforme: 1/n para n comisiones de esta materia
         coef_uniforme = 1.0 / max(len(groups), 1)
 
-        # Create comisiones and horarios
+        # Create comisiones and horarios (legacy path, sin template)
         for com_idx, group in enumerate(groups):
             com_numero = com_idx + 1
             comision_id = str(uuid.uuid4())
@@ -539,6 +594,7 @@ def generate_plan_from_schedule(
                 id=comision_id,
                 materia_codigo=materia_codigo,
                 plan_cursada_id=plan_id,
+                schedule_id=None,
                 comision_key=comision_key,
                 nombre=comision_nombre,
                 numero=com_numero,

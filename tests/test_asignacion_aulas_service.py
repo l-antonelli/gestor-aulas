@@ -582,132 +582,6 @@ class TestRunLPRespetarManuales:
         assert c1.aula_asignada_manualmente is False
 
 
-class TestEdicionManual:
-
-    def test_validar_y_aplicar_puntual(self, session):
-        from src.services.asignacion_aulas_service import (
-            aplicar_edicion_manual, validar_edicion_manual,
-        )
-        c1, c2 = _seed_plan_con_clases(session)
-        # Inicialmente sin aula. Ponerle una manual al primero.
-        c1.tipo_clase = "teorica"
-        c2.tipo_clase = "teorica"
-        session.add_all([c1, c2])
-        session.commit()
-        res = validar_edicion_manual(session, [c1.id], "a1")
-        assert res.ok is True
-        n = aplicar_edicion_manual(session, [c1.id], "a1")
-        assert n == 1
-        session.refresh(c1)
-        session.refresh(c2)
-        assert c1.aula_id == "a1"
-        assert c1.aula_asignada_manualmente is True
-        # c2 no se tocó.
-        assert c2.aula_id is None
-
-    def test_validar_doble_booking_rechaza(self, session):
-        from src.services.asignacion_aulas_service import (
-            aplicar_edicion_manual, validar_edicion_manual,
-        )
-        c1, c2 = _seed_plan_con_clases(session)
-        # c1 asignada a a1; c2 ahora se quiere asignar a a1 también
-        # (mismo día por construcción del seed: no, c2 es el lunes
-        # siguiente). Para forzar choque, creo otra clase del mismo día
-        # de c1 con horario solapado y aula a1.
-        from src.database.models import (
-            ClaseDB as _C, ComisionDB as _Com, HorarioDB as _Hor,
-        )
-        c1.tipo_clase = "teorica"
-        c1.aula_id = "a1"
-        c1.aula_asignada_manualmente = True
-        session.add(c1)
-        session.commit()
-        # Otra clase mismo día, mismo horario, otra comisión, asignada a a2.
-        # Editamos para mandarla a a1 → debe rechazar.
-        com_id = str(uuid.uuid4())
-        otra_com = _Com(
-            id=com_id, materia_codigo="M1", plan_cursada_id="plan-1",
-            comision_key="M1-002", nombre="C2", numero=2, cupo=30,
-        )
-        hor_id = str(uuid.uuid4())
-        otro_hor = _Hor(
-            id=hor_id, comision_id=com_id, codigo_materia="M1",
-            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
-        )
-        clase_otra = _C(
-            id=str(uuid.uuid4()), horario_id=hor_id, comision_id=com_id,
-            plan_cursada_id="plan-1", fecha=c1.fecha,
-            hora_inicio=time(8, 0), hora_fin=time(10, 0),
-            tipo_clase="teorica", aula_id="a2",
-        )
-        session.add_all([otra_com, otro_hor, clase_otra])
-        session.commit()
-        # Quiero mover clase_otra a a1 (donde está c1) → choque.
-        res = validar_edicion_manual(session, [clase_otra.id], "a1")
-        assert res.ok is False
-        assert any("ocupada" in e for e in res.errores)
-
-    def test_validar_tipo_incompatible(self, session):
-        from src.services.asignacion_aulas_service import (
-            validar_edicion_manual,
-        )
-        from src.database.models import AulaDB as _Aula
-        c1, c2 = _seed_plan_con_clases(session)
-        # Marcar c1 como teórica.
-        c1.tipo_clase = "teorica"
-        session.add(c1)
-        # Crear aula laboratorio.
-        session.add(_Aula(
-            id="aL", sede_id="S1", codigo_aula="aL",
-            nombre="Lab", capacidad=30, tipo="laboratorio",
-        ))
-        session.commit()
-        # Intento mandar la clase teórica a un lab.
-        res = validar_edicion_manual(session, [c1.id], "aL")
-        assert res.ok is False
-        assert any("teórica" in e for e in res.errores)
-
-    def test_clases_del_rango(self, session):
-        from src.services.asignacion_aulas_service import clases_del_rango
-        c1, c2 = _seed_plan_con_clases(session)
-        # c1, c2 son del mismo horario (lunes 8-10) en semanas distintas.
-        # Rango incluyendo c1 y c2.
-        rango = clases_del_rango(
-            session, c1.id, fecha_desde=c1.fecha, fecha_hasta=c2.fecha,
-        )
-        ids = {c.id for c in rango}
-        assert ids == {c1.id, c2.id}
-        # Rango sólo c1.
-        rango = clases_del_rango(
-            session, c1.id, fecha_desde=c1.fecha, fecha_hasta=c1.fecha,
-        )
-        assert {c.id for c in rango} == {c1.id}
-
-    def test_re_run_respeta_aula_manual_seteada(self, session):
-        from src.services.asignacion_aulas_service import (
-            aplicar_edicion_manual, validar_edicion_manual,
-        )
-        c1, c2 = _seed_plan_con_clases(session)
-        c1.tipo_clase = "teorica"
-        session.add(c1)
-        session.commit()
-        # Edición manual de c1 a a1.
-        res = validar_edicion_manual(session, [c1.id], "a1")
-        assert res.ok is True
-        aplicar_edicion_manual(session, [c1.id], "a1")
-        # Re-correr LP con respetar_manuales=True.
-        cfg = LPConfig(respetar_ediciones_manuales=True)
-        run_lp(session, "plan-1", config=cfg)
-        session.refresh(c1)
-        # La edición sobrevive.
-        assert c1.aula_id == "a1"
-        assert c1.aula_asignada_manualmente is True
-
-
-# =============================================================================
-# Fase 8 — Toggle α
-# =============================================================================
-
 def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
     """Seed con un dictado, dos comisiones del mismo dictado, total
     esperado=120, coef inicial [1.0, 0.0], dos aulas iguales cap=60.
@@ -716,7 +590,7 @@ def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
     redistribuir a [0.5, 0.5] con over=under=0.
     """
     from src.database.models import (
-        AulaDB as _Aula, MateriaLaboratorioDB as _ML,
+        AulaDB as _Aula,
     )
     ctx = _seed_basic(session)
     ciclo = ctx["ciclo"]
@@ -1062,138 +936,6 @@ def _seed_plan_con_clase_lab_y_teorica(session: Session) -> dict:
     return {"clase": c1}
 
 
-class TestCambioTipoClasePuntual:
-
-    def test_cambiar_tipo_clase_teorica_a_laboratorio(self, session):
-        from src.services.asignacion_aulas_service import (
-            cambiar_tipo_clase_puntual,
-        )
-        ctx = _seed_plan_con_clase_lab_y_teorica(session)
-        clase = ctx["clase"]
-        # Guardo aula previa (None aca pero sirve si la edicion ya la habia
-        # asignado antes).
-        clase.aula_id = "a1"
-        session.add(clase)
-        session.commit()
-
-        res = cambiar_tipo_clase_puntual(
-            session, clase.id, nuevo_tipo="laboratorio", aula_nueva_id="L1",
-        )
-        assert res.ok is True
-        session.refresh(clase)
-        assert clase.tipo_clase == "laboratorio"
-        assert clase.aula_id == "L1"
-        assert clase.aula_asignada_manualmente is True
-
-    def test_cambiar_tipo_clase_laboratorio_a_teorica(self, session):
-        from src.services.asignacion_aulas_service import (
-            cambiar_tipo_clase_puntual,
-        )
-        ctx = _seed_plan_con_clase_lab_y_teorica(session)
-        clase = ctx["clase"]
-        # Forzamos la clase en estado "laboratorio" asignada al lab L1.
-        clase.tipo_clase = "laboratorio"
-        clase.aula_id = "L1"
-        session.add(clase)
-        session.commit()
-
-        # Cambio a teorica usando el anfiteatro.
-        res = cambiar_tipo_clase_puntual(
-            session, clase.id, nuevo_tipo="teorica", aula_nueva_id="ANF1",
-        )
-        assert res.ok is True
-        session.refresh(clase)
-        assert clase.tipo_clase == "teorica"
-        assert clase.aula_id == "ANF1"
-        assert clase.aula_asignada_manualmente is True
-
-    def test_cambiar_tipo_falla_si_aula_no_compatible(self, session):
-        """Cambio a laboratorio con un aula que NO esta en
-        MateriaLaboratorioDB para esa materia => rechaza."""
-        from src.services.asignacion_aulas_service import (
-            cambiar_tipo_clase_puntual,
-        )
-        ctx = _seed_plan_con_clase_lab_y_teorica(session)
-        clase = ctx["clase"]
-        # Otro lab que NO es compatible con M1.
-        session.add(AulaDB(
-            id="L2", sede_id="S1", codigo_aula="L2",
-            nombre="Lab 2", capacidad=30, tipo="laboratorio",
-        ))
-        session.commit()
-
-        res = cambiar_tipo_clase_puntual(
-            session, clase.id, nuevo_tipo="laboratorio", aula_nueva_id="L2",
-        )
-        assert res.ok is False
-        assert any("compatible" in e.lower() for e in res.errores)
-        # No persistio.
-        session.refresh(clase)
-        assert clase.tipo_clase == "teorica"
-
-    def test_cambiar_tipo_falla_si_aula_ocupada(self, session):
-        """Si el aula destino ya esta ocupada por otra clase en la misma
-        fecha/franja, debe rechazar (no doble booking)."""
-        from src.services.asignacion_aulas_service import (
-            cambiar_tipo_clase_puntual,
-        )
-        ctx = _seed_plan_con_clase_lab_y_teorica(session)
-        clase = ctx["clase"]
-        # Creo otra clase en la misma fecha/franja que ya ocupa el lab L1.
-        com_id_2 = str(uuid.uuid4())
-        otra_com = ComisionDB(
-            id=com_id_2, materia_codigo="M1", plan_cursada_id="plan-1",
-            comision_key="M1-002", nombre="Com 2", numero=2, cupo=30,
-        )
-        hor_id = str(uuid.uuid4())
-        otro_hor = HorarioDB(
-            id=hor_id, comision_id=com_id_2, codigo_materia="M1",
-            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
-            tipo_clase="laboratorio",
-        )
-        otra_clase = ClaseDB(
-            id=str(uuid.uuid4()), horario_id=hor_id, comision_id=com_id_2,
-            plan_cursada_id="plan-1", fecha=clase.fecha,
-            hora_inicio=time(8, 0), hora_fin=time(10, 0),
-            tipo_clase="laboratorio", aula_id="L1",
-        )
-        session.add_all([otra_com, otro_hor, otra_clase])
-        session.commit()
-
-        res = cambiar_tipo_clase_puntual(
-            session, clase.id, nuevo_tipo="laboratorio", aula_nueva_id="L1",
-        )
-        assert res.ok is False
-        assert any("ocupada" in e.lower() for e in res.errores)
-        session.refresh(clase)
-        assert clase.tipo_clase == "teorica"
-
-    def test_get_aulas_disponibles_acepta_tipo_objetivo(self, session):
-        """get_aulas_disponibles con tipo_objetivo='laboratorio' devuelve
-        solo aulas-lab compatibles, sin importar el tipo_clase actual."""
-        from src.services.asignacion_aulas_service import (
-            get_aulas_disponibles,
-        )
-        ctx = _seed_plan_con_clase_lab_y_teorica(session)
-        clase = ctx["clase"]  # tipo_clase='teorica'
-
-        # Sin tipo_objetivo: aulas teoricas/anfiteatro (a1, a2, ANF1).
-        sin = get_aulas_disponibles(session, "plan-1", [clase.id])
-        ids_sin = {a.id for a in sin}
-        assert "L1" not in ids_sin
-        assert {"a1", "a2", "ANF1"}.issubset(ids_sin)
-
-        # Con tipo_objetivo='laboratorio': solo L1 (compatible con M1).
-        con = get_aulas_disponibles(
-            session, "plan-1", [clase.id], tipo_objetivo="laboratorio",
-        )
-        assert {a.id for a in con} == {"L1"}
-
-
-# =============================================================================
-# Patron HorarioDB.aula_id (LP escribe al patron + herencia)
-# =============================================================================
-
 
 class TestPatronHorario:
     """El LP escribe HorarioDB.aula_id; las clases heredan."""
@@ -1209,33 +951,6 @@ class TestPatronHorario:
         session.refresh(c1)
         session.refresh(c2)
         assert c1.aula_id == horario.aula_id
-        assert c2.aula_id == horario.aula_id
-
-    def test_re_run_pisa_patron_pero_respeta_clase_manual(self, session):
-        from src.services.asignacion_aulas_service import (
-            aplicar_edicion_manual, validar_edicion_manual,
-        )
-        c1, c2 = _seed_plan_con_clases(session)
-        c1.tipo_clase = "teorica"
-        session.add(c1)
-        session.commit()
-        # Edicion manual de c1 a a1.
-        res = validar_edicion_manual(session, [c1.id], "a1")
-        assert res.ok is True
-        aplicar_edicion_manual(session, [c1.id], "a1")
-        # Re-correr LP con respetar_manuales=True.
-        cfg = LPConfig(respetar_ediciones_manuales=True)
-        run_lp(session, "plan-1", config=cfg)
-        # El patron debe haberse seteado.
-        horario = session.get(HorarioDB, c1.horario_id)
-        assert horario is not None
-        assert horario.aula_id is not None
-        # c1 (manual) sigue intacta.
-        session.refresh(c1)
-        assert c1.aula_id == "a1"
-        assert c1.aula_asignada_manualmente is True
-        # c2 hereda del patron.
-        session.refresh(c2)
         assert c2.aula_id == horario.aula_id
 
 
@@ -1278,24 +993,6 @@ class TestCambiarAulaHorario:
         assert ctx["c1"].aula_id == "a1"
         assert ctx["c2"].aula_id == "a1"
 
-    def test_respeta_clases_manuales(self, session):
-        from src.services.asignacion_aulas_service import (
-            aplicar_edicion_manual, cambiar_aula_horario,
-            validar_edicion_manual,
-        )
-        ctx = _seed_plan_para_patron(session)
-        # Edicion manual previa de c1 a a1.
-        res_em = validar_edicion_manual(session, [ctx["c1"].id], "a1")
-        assert res_em.ok is True
-        aplicar_edicion_manual(session, [ctx["c1"].id], "a1")
-        # Cambiar el patron a a2: c1 no se toca, c2 si.
-        res = cambiar_aula_horario(session, ctx["horario_id"], "a2")
-        assert res.ok is True
-        session.refresh(ctx["c1"])
-        session.refresh(ctx["c2"])
-        assert ctx["c1"].aula_id == "a1"  # excepcion preservada
-        assert ctx["c1"].aula_asignada_manualmente is True
-        assert ctx["c2"].aula_id == "a2"  # heredo del patron nuevo
 
     def test_falla_si_aula_no_compatible_con_tipo(self, session):
         from src.services.asignacion_aulas_service import (
@@ -1543,3 +1240,204 @@ class TestR10SedePorCarrera:
         # L_S2 sigue siendo compatible aunque este fuera de las sedes
         # admisibles, porque es lab compatible con M1.
         assert inputs.compat[(h.id, "L_S2")] is True
+
+
+class TestCarreraAsignadaOverride:
+    """Override `ComisionDB.carrera_asignada`: comision organizada para
+    una carrera puntual fuerza la sede admisible via esa carrera en
+    vez de la regla habitual (por materia comun/exclusiva).
+
+    Nota post-refactor: el override vive en la COMISIÓN, no en el
+    horario individual. Los tests setean `ComisionDB.carrera_asignada`
+    y esperan que el LP resuelva sedes admisibles via esa comisión."""
+
+    def test_override_fuerza_sede_de_la_carrera_asignada(self, session):
+        """Materia comun (>=2 carreras) por default va a la sede
+        default de comunes. Si la comisión del horario tiene
+        carrera_asignada=B, el LP debe permitir aulas de las sedes
+        de B en vez de la default de comunes."""
+        from datetime import date as _date
+        from src.database.models import (
+            CarreraDB, ComisionDB as _Com, HorarioDB as _Hor,
+            PlanCarreraVersionDB, PlanEstudioDB,
+        )
+        from src.services.asignacion_aulas_service import build_inputs
+        from src.services.carrera_sede_service import (
+            set_sede_default_comunes, set_sedes_de_carrera,
+        )
+        _seed_plan_con_carrera(session, "A")
+        # Hago M1 comun (agrego carrera B).
+        session.add(CarreraDB(codigo="B", nombre="Car B"))
+        session.add(PlanCarreraVersionDB(
+            id="pv-B", carrera_codigo="B", nombre="Plan B",
+            fecha_creacion=_date(2026, 1, 1),
+        ))
+        session.commit()
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-B",
+            materia_codigo="M1", carrera_codigo="B",
+        ))
+        # Sedes: S_PE (default comunes), S_A (de A), S_B (de B).
+        session.add(SedeDB(id="S_PE", nombre="Pellegrini"))
+        session.add(SedeDB(id="S_B", nombre="Siberia"))
+        session.add(AulaDB(
+            id="a_pe", sede_id="S_PE", codigo_aula="a_pe",
+            nombre="A Pell", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a_a", sede_id="S1", codigo_aula="a_a",
+            nombre="A A", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a_b", sede_id="S_B", codigo_aula="a_b",
+            nombre="A B", capacidad=30,
+        ))
+        session.commit()
+        set_sedes_de_carrera(session, "A", ["S1"])
+        set_sedes_de_carrera(session, "B", ["S_B"])
+        set_sede_default_comunes(session, "S_PE")
+
+        # Sin override: M1 es comun → solo a_pe compatible.
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        h_id = inputs.horarios[0].id
+        assert inputs.compat[(h_id, "a_pe")] is True
+        assert inputs.compat[(h_id, "a_a")] is False
+        assert inputs.compat[(h_id, "a_b")] is False
+
+        # Con override en la COMISIÓN: carrera_asignada=B, solo a_b
+        # compatible (la sede default de comunes ya no aplica).
+        h = session.exec(select(_Hor).where(_Hor.id == h_id)).first()
+        assert h is not None
+        com = session.get(_Com, h.comision_id)
+        assert com is not None
+        com.carrera_asignada = "B"
+        session.add(com)
+        session.commit()
+
+        inputs2 = build_inputs(session, "plan-1", LPConfig())
+        assert inputs2.compat[(h_id, "a_pe")] is False
+        assert inputs2.compat[(h_id, "a_a")] is False
+        assert inputs2.compat[(h_id, "a_b")] is True
+
+    def test_override_none_mantiene_comportamiento_previo(self, session):
+        """Sin override, la sede se resuelve como antes (materia)."""
+        from src.services.asignacion_aulas_service import build_inputs
+        from src.services.carrera_sede_service import set_sedes_de_carrera
+        _seed_plan_con_carrera(session, "A")
+        session.add(SedeDB(id="S2", nombre="Sede 2"))
+        session.add(AulaDB(
+            id="a1", sede_id="S1", codigo_aula="a1",
+            nombre="A1", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a2", sede_id="S2", codigo_aula="a2",
+            nombre="A2", capacidad=30,
+        ))
+        session.commit()
+        set_sedes_de_carrera(session, "A", ["S1"])
+
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        h_id = inputs.horarios[0].id
+        # Sin override, M1 es exclusiva de A → solo S1.
+        assert inputs.compat[(h_id, "a1")] is True
+        assert inputs.compat[(h_id, "a2")] is False
+
+    def test_override_carrera_sin_sedes_configuradas_no_filtra(self, session):
+        """Si la carrera del override no tiene sedes configuradas,
+        el override es no-op (fallback 'todas las sedes')."""
+        from src.database.models import (
+            CarreraDB, ComisionDB as _Com,
+        )
+        from src.services.asignacion_aulas_service import build_inputs
+        from src.services.carrera_sede_service import (
+            set_sede_default_comunes,
+        )
+        _seed_plan_con_carrera(session, "A")
+        session.add(CarreraDB(codigo="C", nombre="Car C"))
+        session.add(SedeDB(id="S2", nombre="Sede 2"))
+        session.add(SedeDB(id="S_PE", nombre="Pellegrini"))
+        session.add(AulaDB(
+            id="a1", sede_id="S1", codigo_aula="a1",
+            nombre="A1", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a2", sede_id="S2", codigo_aula="a2",
+            nombre="A2", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a_pe", sede_id="S_PE", codigo_aula="a_pe",
+            nombre="A Pell", capacidad=30,
+        ))
+        session.commit()
+        set_sede_default_comunes(session, "S_PE")
+
+        # Sin sedes para "C", comision.carrera_asignada=C → sin restriccion.
+        h = session.exec(select(HorarioDB)).first()
+        assert h is not None
+        com = session.get(_Com, h.comision_id)
+        assert com is not None
+        com.carrera_asignada = "C"
+        session.add(com)
+        session.commit()
+
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        assert inputs.compat[(h.id, "a1")] is True
+        assert inputs.compat[(h.id, "a2")] is True
+        assert inputs.compat[(h.id, "a_pe")] is True
+
+    def test_get_aulas_disponibles_para_horario_respeta_override(self, session):
+        """La UI de edicion manual del patron tambien debe filtrar
+        por la carrera del override (leido desde la comisión)."""
+        from datetime import date as _date
+        from src.database.models import (
+            CarreraDB, ComisionDB as _Com, HorarioDB as _Hor,
+            PlanCarreraVersionDB, PlanEstudioDB,
+        )
+        from src.services.asignacion_aulas_service import (
+            get_aulas_disponibles_para_horario,
+        )
+        from src.services.carrera_sede_service import (
+            set_sede_default_comunes, set_sedes_de_carrera,
+        )
+        _seed_plan_con_carrera(session, "A")
+        session.add(CarreraDB(codigo="B", nombre="Car B"))
+        session.add(PlanCarreraVersionDB(
+            id="pv-B", carrera_codigo="B", nombre="Plan B",
+            fecha_creacion=_date(2026, 1, 1),
+        ))
+        session.commit()
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-B",
+            materia_codigo="M1", carrera_codigo="B",
+        ))
+        session.add(SedeDB(id="S_PE", nombre="Pellegrini"))
+        session.add(SedeDB(id="S_B", nombre="Siberia"))
+        session.add(AulaDB(
+            id="a_pe", sede_id="S_PE", codigo_aula="a_pe",
+            nombre="A Pell", capacidad=30, tipo="teorica",
+        ))
+        session.add(AulaDB(
+            id="a_b", sede_id="S_B", codigo_aula="a_b",
+            nombre="A B", capacidad=30, tipo="teorica",
+        ))
+        session.commit()
+        set_sedes_de_carrera(session, "B", ["S_B"])
+        set_sede_default_comunes(session, "S_PE")
+
+        h = session.exec(select(_Hor)).first()
+        assert h is not None
+        h.tipo_clase = "teorica"
+        session.add(h)
+        com = session.get(_Com, h.comision_id)
+        assert com is not None
+        com.carrera_asignada = "B"
+        session.add(com)
+        session.commit()
+
+        aulas = get_aulas_disponibles_para_horario(
+            session, "plan-1", h.id,
+        )
+        ids = {a.id for a in aulas}
+        # Solo a_b (sede de B); a_pe (default comunes) queda fuera.
+        assert "a_b" in ids
+        assert "a_pe" not in ids

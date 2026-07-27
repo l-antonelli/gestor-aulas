@@ -103,6 +103,21 @@ def _run_migrations(eng):
         # Idem para las entries del cronograma. El flag se propaga a
         # HorarioDB.virtual al generar el plan.
         "ALTER TABLE schedule_entries ADD COLUMN virtual BOOLEAN DEFAULT NULL",
+        # Override de la carrera que define la sede admisible del LP
+        # a nivel COMISIÓN (RF-LP-15). Reemplaza a los intentos previos
+        # de tener carrera_asignada en HorarioDB o ScheduleEntryDB —
+        # una comisión organizada para una carrera puntual debe
+        # aplicar el override a TODOS sus horarios de una.
+        "ALTER TABLE comisiones ADD COLUMN carrera_asignada VARCHAR DEFAULT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_comisiones_carrera_asignada ON comisiones (carrera_asignada)",
+        # Comisión "template" de un cronograma. Convive con
+        # plan_cursada_id (XOR validado a nivel service).
+        "ALTER TABLE comisiones ADD COLUMN schedule_id VARCHAR DEFAULT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_comisiones_schedule_id ON comisiones (schedule_id)",
+        # FK de entries a la comisión template (reemplaza al campo int
+        # `comision` que era identificador de facto).
+        "ALTER TABLE schedule_entries ADD COLUMN comision_id VARCHAR DEFAULT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_schedule_entries_comision_id ON schedule_entries (comision_id)",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -162,6 +177,19 @@ def _run_migrations(eng):
     # aplicar UNIQUE en codigo_aula. Solo actúa si `aulas` aún tiene esa
     # columna (DBs legacy); en DBs nuevas no hace nada.
     _migrate_aulas_drop_legacy_sede(eng)
+
+    # Migración para convertir ScheduleEntryDB.comision (int, de facto
+    # identifier por índice) en ScheduleEntryDB.comision_id (FK a
+    # ComisionDB, entidad real). Crea una ComisionDB con
+    # schedule_id + numero por cada tupla (schedule, materia, comision)
+    # distinta, y reasigna los entries por FK. Idempotente.
+    _migrate_schedule_entries_a_comision_id(eng)
+
+    # Migración legacy: si quedan columnas `carrera_asignada` en
+    # `horarios` o `schedule_entries` de un intento previo del
+    # refactor, mudar los valores a `ComisionDB.carrera_asignada` y
+    # eliminar las columnas de las tablas.
+    _migrate_horario_entries_drop_carrera_asignada(eng)
 
 
 def _migrate_schedules_nullable_ciclo(eng):
@@ -614,6 +642,284 @@ def _migrate_dictado_drop_activo(eng):
             "nullified %d orphan classes.",
             n_deleted, n_orphans,
         )
+
+
+def _migrate_schedule_entries_a_comision_id(eng):
+    """Convierte `schedule_entries.comision` (int) en `comision_id`
+    (FK a `comisiones.id`).
+
+    Pasos:
+    1. Chequear si la columna vieja `comision` existe. Si no, no-op.
+    2. Por cada tupla (schedule_id, codigo_materia, comision) distinta
+       con `comision > 0`, crear una `ComisionDB` con:
+       - schedule_id=schedule_id
+       - materia_codigo=codigo_materia
+       - numero=comision
+       - nombre="Comisión {N}"
+       - cupo=materia.cupo o 30 (fallback)
+       - plan_cursada_id=NULL (es comisión de cronograma)
+    3. Setear `schedule_entries.comision_id` con el id de la comisión
+       creada. Entries con comision=0 o NULL quedan con comision_id=NULL
+       (huérfanos, se reasignan manualmente).
+    4. Recrear la tabla `schedule_entries` sin la columna `comision`.
+
+    Idempotente: si la columna ya no existe, no hace nada.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "PRAGMA table_info(schedule_entries)"
+        ).fetchall()
+        cols = {r[1] for r in rows}
+        if "comision" not in cols:
+            return
+        if "comision_id" not in cols:
+            # ALTER TABLE lo debería haber agregado antes.
+            return
+
+        logger.info(
+            "Migrating schedule_entries: replacing int `comision` "
+            "with FK `comision_id` to ComisionDB"
+        )
+
+        # Chequeo defensivo: si comision_id ya está poblado en algunas
+        # filas, saltear la creación de esas comisiones (ya se corrió
+        # parcialmente). En corridas normales debería estar todo NULL.
+        distinct_rows = conn.exec_driver_sql("""
+            SELECT DISTINCT schedule_id, codigo_materia, comision
+            FROM schedule_entries
+            WHERE comision IS NOT NULL AND comision > 0
+        """).fetchall()
+
+        n_created = 0
+        for sched_id, mat_codigo, com_num in distinct_rows:
+            # ¿Ya existe una comisión matching (por algún motivo)?
+            existente = conn.exec_driver_sql(
+                "SELECT id FROM comisiones "
+                "WHERE schedule_id = ? AND materia_codigo = ? "
+                "AND numero = ? LIMIT 1",
+                (sched_id, mat_codigo, com_num),
+            ).fetchone()
+            if existente:
+                com_id = existente[0]
+            else:
+                # Cupo default: leer de la materia si tiene, sino 30.
+                mat_cupo_row = conn.exec_driver_sql(
+                    "SELECT cupo FROM materias WHERE codigo = ?",
+                    (mat_codigo,),
+                ).fetchone()
+                cupo_val = int(mat_cupo_row[0]) if (mat_cupo_row and mat_cupo_row[0]) else 30
+                com_id = str(uuid_mod.uuid4())
+                conn.exec_driver_sql(
+                    "INSERT INTO comisiones "
+                    "(id, materia_codigo, schedule_id, comision_key, "
+                    "nombre, numero, cupo, descripcion, coef_asignacion) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        com_id, mat_codigo, sched_id,
+                        f"{mat_codigo}-{com_num:03d}",
+                        f"Comisión {com_num}", com_num, cupo_val, "", 1.0,
+                    ),
+                )
+                n_created += 1
+
+            # Setear comision_id en los entries que apuntan a esta
+            # tupla y no lo tienen ya seteado.
+            conn.exec_driver_sql(
+                "UPDATE schedule_entries SET comision_id = ? "
+                "WHERE schedule_id = ? AND codigo_materia = ? "
+                "AND comision = ? AND comision_id IS NULL",
+                (com_id, sched_id, mat_codigo, com_num),
+            )
+
+        conn.commit()
+        logger.info(
+            "Migration: created %d ComisionDB from schedule entries",
+            n_created,
+        )
+
+        # Recrear tabla sin la columna vieja `comision`.
+        conn.exec_driver_sql("""
+            CREATE TABLE schedule_entries_tmp (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                schedule_id VARCHAR NOT NULL,
+                codigo_materia VARCHAR NOT NULL,
+                dia VARCHAR NOT NULL,
+                hora_inicio TIME NOT NULL,
+                hora_fin TIME NOT NULL,
+                comision_id VARCHAR,
+                tipo_clase VARCHAR,
+                virtual BOOLEAN,
+                FOREIGN KEY (schedule_id) REFERENCES schedules (id),
+                FOREIGN KEY (codigo_materia) REFERENCES materias (codigo),
+                FOREIGN KEY (comision_id) REFERENCES comisiones (id)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO schedule_entries_tmp
+                (id, schedule_id, codigo_materia, dia, hora_inicio,
+                 hora_fin, comision_id, tipo_clase, virtual)
+            SELECT id, schedule_id, codigo_materia, dia, hora_inicio,
+                   hora_fin, comision_id, tipo_clase, virtual
+            FROM schedule_entries
+        """)
+        conn.exec_driver_sql("DROP TABLE schedule_entries")
+        conn.exec_driver_sql(
+            "ALTER TABLE schedule_entries_tmp RENAME TO schedule_entries"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_entries_schedule_id "
+            "ON schedule_entries (schedule_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_entries_codigo_materia "
+            "ON schedule_entries (codigo_materia)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_entries_comision_id "
+            "ON schedule_entries (comision_id)"
+        )
+        conn.commit()
+        logger.info(
+            "Migration complete: dropped column `comision` from schedule_entries"
+        )
+
+
+def _migrate_horario_entries_drop_carrera_asignada(eng):
+    """Elimina la columna `carrera_asignada` de `horarios` y
+    `schedule_entries` (que quedó de un intento previo del refactor,
+    donde el override vivía a nivel horario en vez de comisión).
+
+    Mueve los valores existentes a `ComisionDB.carrera_asignada` de la
+    comisión referenciada. Si un entry tenía valor pero no tiene
+    comision_id (huérfano), el valor se pierde y se emite warning.
+
+    Idempotente: si la columna no existe en ninguna tabla, no hace nada.
+    """
+    with eng.connect() as conn:
+        # HORARIOS
+        h_rows = conn.exec_driver_sql(
+            "PRAGMA table_info(horarios)"
+        ).fetchall()
+        h_cols = {r[1] for r in h_rows}
+        if "carrera_asignada" in h_cols:
+            logger.info(
+                "Migrating horarios: dropping carrera_asignada column "
+                "(now lives in ComisionDB)"
+            )
+            # Mover valores a ComisionDB antes de dropear.
+            hs_con_valor = conn.exec_driver_sql(
+                "SELECT comision_id, carrera_asignada FROM horarios "
+                "WHERE carrera_asignada IS NOT NULL"
+            ).fetchall()
+            for com_id, val in hs_con_valor:
+                if not com_id:
+                    continue
+                conn.exec_driver_sql(
+                    "UPDATE comisiones SET carrera_asignada = ? "
+                    "WHERE id = ? AND carrera_asignada IS NULL",
+                    (val, com_id),
+                )
+            # Recrear tabla sin carrera_asignada.
+            conn.exec_driver_sql("""
+                CREATE TABLE horarios_tmp (
+                    id VARCHAR NOT NULL PRIMARY KEY,
+                    comision_id VARCHAR NOT NULL,
+                    codigo_materia VARCHAR NOT NULL,
+                    dia VARCHAR NOT NULL,
+                    hora_inicio TIME NOT NULL,
+                    hora_fin TIME NOT NULL,
+                    tipo_clase VARCHAR,
+                    aula_id VARCHAR,
+                    virtual BOOLEAN,
+                    FOREIGN KEY (comision_id) REFERENCES comisiones (id),
+                    FOREIGN KEY (codigo_materia) REFERENCES materias (codigo),
+                    FOREIGN KEY (aula_id) REFERENCES aulas (id)
+                )
+            """)
+            conn.exec_driver_sql("""
+                INSERT INTO horarios_tmp
+                    (id, comision_id, codigo_materia, dia, hora_inicio,
+                     hora_fin, tipo_clase, aula_id, virtual)
+                SELECT id, comision_id, codigo_materia, dia, hora_inicio,
+                       hora_fin, tipo_clase, aula_id, virtual
+                FROM horarios
+            """)
+            conn.exec_driver_sql("DROP TABLE horarios")
+            conn.exec_driver_sql(
+                "ALTER TABLE horarios_tmp RENAME TO horarios"
+            )
+            for idx_sql in (
+                "CREATE INDEX IF NOT EXISTS ix_horarios_comision_id ON horarios (comision_id)",
+                "CREATE INDEX IF NOT EXISTS ix_horarios_codigo_materia ON horarios (codigo_materia)",
+                "CREATE INDEX IF NOT EXISTS ix_horarios_dia ON horarios (dia)",
+                "CREATE INDEX IF NOT EXISTS ix_horarios_aula_id ON horarios (aula_id)",
+            ):
+                conn.exec_driver_sql(idx_sql)
+            conn.commit()
+
+        # SCHEDULE_ENTRIES (columna nunca llegó a llenarse en producción,
+        # pero por si quedó del intento previo).
+        se_rows = conn.exec_driver_sql(
+            "PRAGMA table_info(schedule_entries)"
+        ).fetchall()
+        se_cols = {r[1] for r in se_rows}
+        if "carrera_asignada" in se_cols:
+            logger.info(
+                "Migrating schedule_entries: dropping carrera_asignada "
+                "column (now lives in ComisionDB)"
+            )
+            se_con_valor = conn.exec_driver_sql(
+                "SELECT comision_id, carrera_asignada FROM schedule_entries "
+                "WHERE carrera_asignada IS NOT NULL"
+            ).fetchall()
+            for com_id, val in se_con_valor:
+                if not com_id:
+                    continue
+                conn.exec_driver_sql(
+                    "UPDATE comisiones SET carrera_asignada = ? "
+                    "WHERE id = ? AND carrera_asignada IS NULL",
+                    (val, com_id),
+                )
+            # La tabla ya se recreó en `_migrate_schedule_entries_a_comision_id`
+            # SIN esta columna. Si por algún motivo sobrevivió, la
+            # dropeamos ahora. En la práctica esta rama no debería
+            # ejecutarse porque la otra migración ya reescribió la
+            # tabla. Igual dejamos el chequeo por seguridad.
+            conn.exec_driver_sql("""
+                CREATE TABLE schedule_entries_tmp2 (
+                    id VARCHAR NOT NULL PRIMARY KEY,
+                    schedule_id VARCHAR NOT NULL,
+                    codigo_materia VARCHAR NOT NULL,
+                    dia VARCHAR NOT NULL,
+                    hora_inicio TIME NOT NULL,
+                    hora_fin TIME NOT NULL,
+                    comision_id VARCHAR,
+                    tipo_clase VARCHAR,
+                    virtual BOOLEAN,
+                    FOREIGN KEY (schedule_id) REFERENCES schedules (id),
+                    FOREIGN KEY (codigo_materia) REFERENCES materias (codigo),
+                    FOREIGN KEY (comision_id) REFERENCES comisiones (id)
+                )
+            """)
+            conn.exec_driver_sql("""
+                INSERT INTO schedule_entries_tmp2
+                    (id, schedule_id, codigo_materia, dia, hora_inicio,
+                     hora_fin, comision_id, tipo_clase, virtual)
+                SELECT id, schedule_id, codigo_materia, dia, hora_inicio,
+                       hora_fin, comision_id, tipo_clase, virtual
+                FROM schedule_entries
+            """)
+            conn.exec_driver_sql("DROP TABLE schedule_entries")
+            conn.exec_driver_sql(
+                "ALTER TABLE schedule_entries_tmp2 RENAME TO schedule_entries"
+            )
+            for idx_sql in (
+                "CREATE INDEX IF NOT EXISTS ix_schedule_entries_schedule_id ON schedule_entries (schedule_id)",
+                "CREATE INDEX IF NOT EXISTS ix_schedule_entries_codigo_materia ON schedule_entries (codigo_materia)",
+                "CREATE INDEX IF NOT EXISTS ix_schedule_entries_comision_id ON schedule_entries (comision_id)",
+            ):
+                conn.exec_driver_sql(idx_sql)
+            conn.commit()
 
 
 def _seed_default_sede_if_empty(conn):

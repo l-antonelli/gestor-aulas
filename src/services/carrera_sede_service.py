@@ -126,6 +126,32 @@ def materia_es_comun(session: Session, materia_codigo: str) -> bool:
     return len({c for c in carreras}) >= 2
 
 
+def sedes_admisibles_para_carrera(
+    session: Session, carrera_codigo: str,
+) -> set[str] | None:
+    """Devuelve el set de ``sede_id`` admisibles para una carrera.
+
+    Se usa cuando un horario tiene el override ``carrera_asignada``
+    (comision organizada para una carrera puntual): el LP resuelve la
+    sede admisible via esta funcion en vez de
+    ``sedes_admisibles_para_materia``.
+
+    Reglas:
+
+    - Si la carrera tiene sedes configuradas via ``CarreraSedeDB``,
+      devuelve ese set.
+    - Si no tiene ninguna sede configurada, devuelve None (fallback
+      "todas las sedes", coherente con la rama exclusiva de
+      ``sedes_admisibles_para_materia``).
+
+    El valor None significa "sin restriccion de sede".
+    """
+    sedes = get_sedes_de_carrera(session, carrera_codigo)
+    if not sedes:
+        return None
+    return sedes
+
+
 def sedes_admisibles_para_materia(
     session: Session, materia_codigo: str,
 ) -> set[str] | None:

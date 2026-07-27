@@ -7,7 +7,12 @@ from typing import Optional
 
 from sqlmodel import Session, select, col
 
-from src.database.models import ScheduleDB, ScheduleEntryDB, MateriaDB
+from src.database.models import (
+    ComisionDB,
+    MateriaDB,
+    ScheduleDB,
+    ScheduleEntryDB,
+)
 from src.database.crud import ciclo_crud
 from src.services.horario_loading_service import _resolve_materia_code
 from src.services.horario_file_parser import parse_horarios_file
@@ -24,13 +29,27 @@ class ScheduleCreationResult:
 
 @dataclass
 class ScheduleBlock:
-    """Un bloque en la grilla de un cronograma (entry directo, sin comisiones)."""
+    """Un bloque en la grilla de un cronograma (entry directo, sin comisiones).
+
+    `comision_id` es la FK a ``ComisionDB``. `comision_numero` es el
+    número display de esa comisión (o None si el entry no tiene
+    comisión asignada) — se mantiene para las UIs legacy que muestran
+    `C1`, `C2`, etc.
+    """
     entry_id: str
     materia_codigo: str
     materia_nombre: str
     hora_inicio: time
     hora_fin: time
-    comision: int | None = None
+    comision_id: str | None = None
+    comision_numero: int | None = None
+    comision_nombre: str | None = None
+
+    # Alias de compatibilidad hacia atrás: código viejo pedía `.comision`
+    # como int. Devuelve el numero de la comisión referenciada.
+    @property
+    def comision(self) -> int | None:  # noqa: D401
+        return self.comision_numero
 
 
 # =============================================================================
@@ -272,6 +291,29 @@ def duplicate_schedule(
     session.add(clone)
     session.flush()
 
+    # Clonar primero las comisiones del schedule original y armar un
+    # mapa old_comision_id -> new_comision_id.
+    from src.services.comision_service import list_comisiones_for_schedule
+    comisiones_origen = list_comisiones_for_schedule(session, schedule_id)
+    com_id_map: dict[str, str] = {}
+    for c in comisiones_origen:
+        clon_c = ComisionDB(
+            id=str(uuid.uuid4()),
+            materia_codigo=c.materia_codigo,
+            schedule_id=new_id,
+            plan_cursada_id=None,
+            comision_key=c.comision_key,
+            nombre=c.nombre,
+            numero=c.numero,
+            cupo=c.cupo,
+            descripcion=c.descripcion,
+            coef_asignacion=c.coef_asignacion,
+            carrera_asignada=c.carrera_asignada,
+        )
+        session.add(clon_c)
+        com_id_map[c.id] = clon_c.id
+    session.flush()
+
     entries = get_schedule_entries(session, schedule_id)
     for e in entries:
         new_entry = ScheduleEntryDB(
@@ -281,8 +323,9 @@ def duplicate_schedule(
             dia=e.dia,
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
-            comision=e.comision,
+            comision_id=com_id_map.get(e.comision_id) if e.comision_id else None,
             tipo_clase=e.tipo_clase,
+            virtual=e.virtual,
         )
         session.add(new_entry)
 
@@ -311,14 +354,20 @@ def add_schedule_entry(
     dia: str,
     hora_inicio: time,
     hora_fin: time,
-    comision: int | None = None,
+    comision_id: str | None = None,
     tipo_clase: str | None = None,
     virtual: bool | None = None,
 ) -> ScheduleEntryDB:
     """Agregar una entrada a un cronograma existente.
 
+    `comision_id` es FK a ``ComisionDB``. Si es None, el entry queda
+    huérfano (sin comisión asignada).
+
     `virtual` es Optional[bool]: None=heredar (default), True=virtual,
     False=presencial. Se propaga a HorarioDB.virtual al generar el plan.
+
+    Nota: el override de carrera de sede (``carrera_asignada``) vive
+    ahora a nivel ``ComisionDB``, no a nivel entry.
     """
     entry = ScheduleEntryDB(
         id=str(uuid.uuid4()),
@@ -327,7 +376,7 @@ def add_schedule_entry(
         dia=dia,
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
-        comision=comision,
+        comision_id=comision_id,
         tipo_clase=tipo_clase,
         virtual=virtual,
     )
@@ -345,7 +394,7 @@ def update_schedule_entry(session: Session, entry_id: str, **campos) -> Schedule
 
     allowed = {
         "dia", "hora_inicio", "hora_fin", "codigo_materia",
-        "comision", "tipo_clase", "virtual",
+        "comision_id", "tipo_clase", "virtual",
     }
     for key, value in campos.items():
         if key not in allowed:
@@ -403,16 +452,18 @@ def sync_preview_edits_to_schedule(
 
     for ed in edited_entries:
         eid = ed["entry_id"]
-        ed_comision = ed.get("comision")
+        ed_comision_id = ed.get("comision_id")
         ed_tipo = ed.get("tipo_clase") or None
+        ed_virtual = ed.get("virtual")
 
         if isinstance(eid, str) and eid.startswith("new_"):
             # New entry
             add_schedule_entry(
                 session, schedule_id, materia_codigo,
                 ed["dia"], ed["hora_inicio"], ed["hora_fin"],
-                comision=ed_comision,
+                comision_id=ed_comision_id,
                 tipo_clase=ed_tipo,
+                virtual=ed_virtual,
             )
             created += 1
         elif eid in current_map:
@@ -422,8 +473,9 @@ def sync_preview_edits_to_schedule(
                 existing.dia != ed["dia"]
                 or existing.hora_inicio != ed["hora_inicio"]
                 or existing.hora_fin != ed["hora_fin"]
-                or existing.comision != ed_comision
+                or existing.comision_id != ed_comision_id
                 or existing.tipo_clase != ed_tipo
+                or existing.virtual != ed_virtual
             )
             if changed:
                 update_schedule_entry(
@@ -431,8 +483,9 @@ def sync_preview_edits_to_schedule(
                     dia=ed["dia"],
                     hora_inicio=ed["hora_inicio"],
                     hora_fin=ed["hora_fin"],
-                    comision=ed_comision,
+                    comision_id=ed_comision_id,
                     tipo_clase=ed_tipo,
+                    virtual=ed_virtual,
                 )
                 updated += 1
 
@@ -472,15 +525,28 @@ def build_schedule_grid(
     ).all()
     mat_names = {m.codigo: m.nombre for m in materias}
 
+    # Resolver comisiones referenciadas
+    com_ids = {e.comision_id for e in entries if e.comision_id}
+    comisiones_map: dict[str, ComisionDB] = {}
+    if com_ids:
+        comisiones_map = {
+            c.id: c for c in session.exec(
+                select(ComisionDB).where(col(ComisionDB.id).in_(list(com_ids)))
+            ).all()
+        }
+
     grid: dict[str, list[ScheduleBlock]] = {}
     for e in entries:
+        com = comisiones_map.get(e.comision_id) if e.comision_id else None
         block = ScheduleBlock(
             entry_id=e.id,
             materia_codigo=e.codigo_materia,
             materia_nombre=mat_names.get(e.codigo_materia, e.codigo_materia),
             hora_inicio=e.hora_inicio,
             hora_fin=e.hora_fin,
-            comision=e.comision,
+            comision_id=e.comision_id,
+            comision_numero=com.numero if com else None,
+            comision_nombre=com.nombre if com else None,
         )
         grid.setdefault(e.dia, []).append(block)
 
