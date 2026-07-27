@@ -129,6 +129,15 @@ def _dialog_confirm_add():
         if st.button("Confirmar", type="primary", use_container_width=True):
             _com_val = add_comision if add_comision > 0 else None
             with next(get_session()) as session:
+                _com_id = None
+                if _com_val:
+                    from src.services.comision_service import (
+                        get_or_create_comision_by_numero,
+                    )
+                    _com_id = get_or_create_comision_by_numero(
+                        session, pending["materia"], _com_val,
+                        schedule_id=pending["schedule_id"],
+                    ).id
                 add_schedule_entry(
                     session,
                     pending["schedule_id"],
@@ -136,7 +145,7 @@ def _dialog_confirm_add():
                     pending["dia"],
                     pending["hora_inicio"],
                     pending["hora_fin"],
-                    comision=_com_val,
+                    comision_id=_com_id,
                 )
             st.session_state["_edit_processed_select"] = pending["_key"]
             st.session_state["_edit_toast"] = (
@@ -205,12 +214,110 @@ def _dialog_edit_entry():
             "Fin", value=pending["hora_fin"], key="dlg_edit_fin",
         )
 
-    _pending_com = pending.get("comision") or 0
-    new_comision = st.number_input(
-        "Comisión (0 = sin asignar)",
-        min_value=0, max_value=20, value=_pending_com,
+    # Selector de comisión: comisiones existentes para (schedule, materia)
+    # + opción "Crear nueva…" que abre un mini-form inline.
+    from src.services.comision_service import (
+        create_comision_for_schedule,
+        list_comisiones_for_schedule_materia,
+    )
+    _sched_id_dlg = pending.get("schedule_id") or sel_edit_id
+    with next(get_session()) as _dsess:
+        _dlg_coms = list_comisiones_for_schedule_materia(
+            _dsess, _sched_id_dlg, new_mat,
+        )
+    _dlg_com_labels: dict[str, str] = {
+        c.id: f"{c.numero} · {c.nombre}" for c in _dlg_coms
+    }
+    _dlg_labels_by_com: dict[str, str] = {
+        v: k for k, v in _dlg_com_labels.items()
+    }
+    _SIN = "— sin comisión —"
+    _NUEVA = "➕ Crear nueva comisión…"
+    _dlg_options = (
+        [_SIN]
+        + sorted(_dlg_com_labels.values(), key=lambda s: int(s.split(" · ")[0]))
+        + [_NUEVA]
+    )
+    # Resolver la comisión actual del entry para preseleccionar
+    _pending_current_label = _SIN
+    with next(get_session()) as _dsess2:
+        _entry_db = _dsess2.get(ScheduleEntryDB, pending["entry_id"])
+        if _entry_db and _entry_db.comision_id and _entry_db.comision_id in _dlg_com_labels:
+            _pending_current_label = _dlg_com_labels[_entry_db.comision_id]
+    _default_idx = _dlg_options.index(_pending_current_label) if _pending_current_label in _dlg_options else 0
+    new_com_label = st.selectbox(
+        "Comisión",
+        options=_dlg_options,
+        index=_default_idx,
         key="dlg_edit_comision",
     )
+
+    # Si eligió crear nueva, mostrar mini form
+    if new_com_label == _NUEVA:
+        st.markdown("**Datos de la nueva comisión**")
+        _dlg_new_nombre = st.text_input(
+            "Nombre", value=f"Comisión {len(_dlg_coms) + 1}",
+            key="dlg_edit_new_com_nombre",
+        )
+        _dlg_new_cupo = st.number_input(
+            "Cupo", min_value=1, value=30, step=1,
+            key="dlg_edit_new_com_cupo",
+        )
+        _car_opts = ["—"] + sorted([c.codigo for c in all_carreras])
+        _dlg_new_carrera = st.selectbox(
+            "Carrera asignada (opcional)",
+            options=_car_opts,
+            key="dlg_edit_new_com_carrera",
+            help=(
+                "Sobrescribe la sede sugerida automáticamente: si tiene "
+                "valor, la comisión se dicta en las sedes de esa "
+                "carrera aunque la materia sea común. — = sin "
+                "restricción especial."
+            ),
+        )
+
+    # --- Tipo de clase y Virtualidad del horario ---
+    _tipo_opts = ["sin determinar", "teorica", "laboratorio"]
+    _entry_tipo = _entry_db.tipo_clase if _entry_db else None
+    _tipo_current = _entry_tipo or "sin determinar"
+    _entry_virtual = _entry_db.virtual if _entry_db else None
+    _virtual_label_map = {None: "Heredar", True: "Sí", False: "No"}
+    _virtual_labels = ["Heredar", "Sí", "No"]
+    _virtual_current_label = _virtual_label_map.get(_entry_virtual, "Heredar")
+
+    col_tipo_dlg, col_virt_dlg = st.columns(2)
+    with col_tipo_dlg:
+        new_tipo = st.selectbox(
+            "Tipo de clase",
+            options=_tipo_opts,
+            index=(
+                _tipo_opts.index(_tipo_current)
+                if _tipo_current in _tipo_opts else 0
+            ),
+            key="dlg_edit_tipo",
+            help=(
+                "sin determinar: la asignación automática decide "
+                "teoría o laboratorio según las horas requeridas de "
+                "la materia. teoría/laboratorio: fuerza el tipo."
+            ),
+        )
+    with col_virt_dlg:
+        new_virtual_label = st.selectbox(
+            "Virtual",
+            options=_virtual_labels,
+            index=(
+                _virtual_labels.index(_virtual_current_label)
+                if _virtual_current_label in _virtual_labels else 0
+            ),
+            key="dlg_edit_virtual",
+            help=(
+                "Modalidad de este horario específico. "
+                "Heredar = usa lo que dice el dictado o la materia. "
+                "Sí = fuerza virtual (no se asigna aula). "
+                "No = fuerza presencial (aunque el dictado sea "
+                "virtual)."
+            ),
+        )
 
     st.divider()
 
@@ -226,9 +333,36 @@ def _dialog_edit_entry():
                 cambios["hora_inicio"] = new_inicio
             if new_fin != pending["hora_fin"]:
                 cambios["hora_fin"] = new_fin
-            _new_com_val = new_comision if new_comision > 0 else None
-            if _new_com_val != (pending.get("comision") or None):
-                cambios["comision"] = _new_com_val
+            # Resolver el comision_id según lo elegido en el selectbox.
+            _selected_com_id: str | None
+            with next(get_session()) as _guard:
+                if new_com_label == _NUEVA:
+                    _new_com_obj = create_comision_for_schedule(
+                        _guard, _sched_id_dlg, new_mat,
+                        nombre=st.session_state.get("dlg_edit_new_com_nombre", ""),
+                        cupo=int(st.session_state.get("dlg_edit_new_com_cupo") or 30),
+                        carrera_asignada=(
+                            None
+                            if st.session_state.get("dlg_edit_new_com_carrera") in (None, "—")
+                            else st.session_state["dlg_edit_new_com_carrera"]
+                        ),
+                    )
+                    _selected_com_id = _new_com_obj.id
+                elif new_com_label == _SIN:
+                    _selected_com_id = None
+                else:
+                    _selected_com_id = _dlg_labels_by_com.get(new_com_label)
+            _current_com_id = _entry_db.comision_id if _entry_db else None
+            if _selected_com_id != _current_com_id:
+                cambios["comision_id"] = _selected_com_id
+            # Tipo y virtual
+            _new_tipo_val = None if new_tipo == "sin determinar" else new_tipo
+            if _new_tipo_val != _entry_tipo:
+                cambios["tipo_clase"] = _new_tipo_val
+            _label_to_virtual_map = {"Heredar": None, "Sí": True, "No": False}
+            _new_virtual_val = _label_to_virtual_map.get(new_virtual_label)
+            if _new_virtual_val != _entry_virtual:
+                cambios["virtual"] = _new_virtual_val
             mat_label = materias_map.get(new_mat, new_mat)
             if cambios:
                 with next(get_session()) as session:
@@ -778,6 +912,15 @@ with tab_editar:
                     st.divider()
                     st.markdown("##### Entradas y comisiones")
 
+                    from src.services.comision_service import (
+                        create_comision_for_schedule,
+                        delete_comision,
+                        get_or_create_comision_by_numero,
+                        list_comisiones_for_schedule_materia,
+                        update_comision,
+                    )
+                    from src.database.models import ComisionDB
+
                     with next(get_session()) as session:
                         _sm_entries = list(session.exec(
                             select(ScheduleEntryDB)
@@ -785,12 +928,32 @@ with tab_editar:
                             .where(ScheduleEntryDB.codigo_materia == _sm_sel)
                             .order_by(ScheduleEntryDB.dia, ScheduleEntryDB.hora_inicio)
                         ).all())
+                        # Comisiones template de la materia en este cronograma
+                        _sm_comisiones = list_comisiones_for_schedule_materia(
+                            session, sel_edit_id, _sm_sel,
+                        )
 
                     _dias_orden = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-                    _sm_max_com = max(
-                        max((e.comision or 0) for e in _sm_entries), 1,
-                    ) if _sm_entries else 1
-                    _sm_com_options = list(range(0, _sm_max_com + 3))
+
+                    # Mapa {id: ComisionDB} para resolver rápido en el render.
+                    _com_by_id: dict[str, ComisionDB] = {
+                        c.id: c for c in _sm_comisiones
+                    }
+                    # Labels display -> id para el selectbox de la tabla.
+                    # Formato: "N · nombre" ordenado por numero.
+                    _com_label_by_id: dict[str, str] = {
+                        c.id: f"{c.numero} · {c.nombre}" for c in _sm_comisiones
+                    }
+                    _com_id_by_label: dict[str, str] = {
+                        lbl: cid for cid, lbl in _com_label_by_id.items()
+                    }
+                    _CREAR_NUEVA_LABEL = "➕ Crear nueva comisión…"
+                    _SIN_ASIGNAR_LABEL = "— sin comisión —"
+                    _sm_com_selectbox_options = (
+                        [_SIN_ASIGNAR_LABEL]
+                        + sorted(_com_label_by_id.values(), key=lambda s: int(s.split(" · ")[0]))
+                        + [_CREAR_NUEVA_LABEL]
+                    )
 
                     def _virtual_to_label(v: bool | None) -> str:
                         """Optional[bool] → label del selectbox."""
@@ -805,13 +968,23 @@ with tab_editar:
                             return False
                         return None
 
+                    def _com_id_to_label(cid: str | None) -> str:
+                        if cid is None:
+                            return _SIN_ASIGNAR_LABEL
+                        return _com_label_by_id.get(cid, _SIN_ASIGNAR_LABEL)
+
+                    def _label_to_com_id(lbl: str) -> str | None:
+                        if lbl in (_SIN_ASIGNAR_LABEL, _CREAR_NUEVA_LABEL, "", None):
+                            return None
+                        return _com_id_by_label.get(lbl)
+
                     _sm_df = pd.DataFrame([
                         {
                             "entry_id": e.id,
                             "Día": e.dia,
                             "Inicio": e.hora_inicio,
                             "Fin": e.hora_fin,
-                            "Comisión": e.comision or 0,
+                            "Comisión": _com_id_to_label(e.comision_id),
                             "Tipo": e.tipo_clase or "sin determinar",
                             "Virtual": _virtual_to_label(e.virtual),
                         }
@@ -835,13 +1008,23 @@ with tab_editar:
                                     int(parts[2]) if len(parts) > 2 else 0)
 
                     def _sm_on_change():
-                        """Autoguardar cambios del data_editor."""
+                        """Autoguardar cambios del data_editor.
+
+                        Nuevo flujo con ComisionDB entidad real:
+                        - Columna "Comisión" es un label textual;
+                          mapear a comision_id via _label_to_com_id.
+                        - Si el usuario elige "➕ Crear nueva comisión…",
+                          se levanta un flag en session_state y el
+                          proximo rerun abre un dialog para el form.
+                          Mientras tanto la fila queda sin cambiar.
+                        """
                         edited = st.session_state.get(_sm_de_key)
                         if not edited:
                             return
                         _saved = 0
                         _deleted = 0
                         _created = 0
+                        _requested_new = None  # (entry_id | None, added_row_idx | None)
                         with next(get_session()) as sess:
                             # Edited rows
                             for idx_str, changes in (
@@ -858,8 +1041,11 @@ with tab_editar:
                                     if "Fin" in changes:
                                         _cambios["hora_fin"] = _coerce_time(changes["Fin"])
                                     if "Comisión" in changes:
-                                        _cv = int(changes["Comisión"])
-                                        _cambios["comision"] = _cv if _cv > 0 else None
+                                        _new_lbl = changes["Comisión"]
+                                        if _new_lbl == _CREAR_NUEVA_LABEL:
+                                            _requested_new = ("existing", _e.id)
+                                            continue
+                                        _cambios["comision_id"] = _label_to_com_id(_new_lbl)
                                     if "Tipo" in changes:
                                         _tv = changes["Tipo"]
                                         _cambios["tipo_clase"] = None if _tv == "sin determinar" else _tv
@@ -880,9 +1066,13 @@ with tab_editar:
                                     )
                                     _deleted += 1
                             # Added rows
-                            for row in edited.get("added_rows") or []:
+                            for row_idx, row in enumerate(edited.get("added_rows") or []):
                                 if row.get("Día") and row.get("Inicio") and row.get("Fin"):
-                                    _cv = int(row.get("Comisión") or 0)
+                                    _lbl = row.get("Comisión") or _SIN_ASIGNAR_LABEL
+                                    if _lbl == _CREAR_NUEVA_LABEL:
+                                        _requested_new = ("new_row", row_idx)
+                                        continue
+                                    _com_id = _label_to_com_id(_lbl)
                                     _tipo_raw = row.get("Tipo")
                                     _tipo = None if (not _tipo_raw or _tipo_raw == "sin determinar") else _tipo_raw
                                     _virtual_val = _label_to_virtual(
@@ -895,11 +1085,13 @@ with tab_editar:
                                         row["Día"],
                                         _coerce_time(row["Inicio"]),
                                         _coerce_time(row["Fin"]),
-                                        comision=_cv if _cv > 0 else None,
+                                        comision_id=_com_id,
                                         tipo_clase=_tipo,
                                         virtual=_virtual_val,
                                     )
                                     _created += 1
+                        if _requested_new is not None:
+                            st.session_state["_sm_new_com_request"] = _requested_new
                         _parts = []
                         if _saved:
                             _parts.append(f"{_saved} modificada(s)")
@@ -926,14 +1118,23 @@ with tab_editar:
                                 format="HH:mm", width="small",
                             ),
                             "Comisión": column_config.SelectboxColumn(
-                                options=_sm_com_options,
-                                help="0 = sin asignar",
-                                width="small",
+                                options=_sm_com_selectbox_options,
+                                default=_SIN_ASIGNAR_LABEL,
+                                help=(
+                                    "Comisión a la que pertenece este horario. "
+                                    "Elegí una existente, dejala sin asignar "
+                                    "o creá una nueva desde la última opción."
+                                ),
+                                width="medium",
                             ),
                             "Tipo": column_config.SelectboxColumn(
                                 options=["sin determinar", "teorica", "laboratorio"],
                                 default="sin determinar",
-                                help="Tipo de clase: sin determinar (LP decide), teorica o laboratorio",
+                                help=(
+                                    "Tipo de clase: sin determinar "
+                                    "(lo decide la asignación "
+                                    "automática), teórica o laboratorio"
+                                ),
                                 width="small",
                             ),
                             "Virtual": column_config.SelectboxColumn(
@@ -941,10 +1142,10 @@ with tab_editar:
                                 default="Heredar",
                                 help=(
                                     "Modalidad de este horario específico. "
-                                    "Heredar = usa el flag del dictado o "
-                                    "materia. Sí = fuerza virtual (el LP "
-                                    "no asigna aula). No = fuerza "
-                                    "presencial."
+                                    "Heredar = usa lo que dice el "
+                                    "dictado o la materia. Sí = fuerza "
+                                    "virtual (no se asigna aula). "
+                                    "No = fuerza presencial."
                                 ),
                                 width="small",
                             ),
@@ -956,26 +1157,217 @@ with tab_editar:
                         key=_sm_de_key,
                     )
 
+                    # --- Dialog para crear comisión nueva al vuelo ---
+                    _req = st.session_state.get("_sm_new_com_request")
+                    if _req is not None:
+                        _req_kind, _req_ref = _req
+                        with st.container(border=True):
+                            st.markdown("**Crear nueva comisión**")
+                            _new_nombre = st.text_input(
+                                "Nombre", value=f"Comisión {len(_sm_comisiones) + 1}",
+                                key="_sm_new_com_nombre",
+                            )
+                            _new_cupo = st.number_input(
+                                "Cupo", min_value=1, value=30, step=1,
+                                key="_sm_new_com_cupo",
+                            )
+                            _car_opts = ["—"] + sorted([c.codigo for c in all_carreras])
+                            _new_carrera = st.selectbox(
+                                "Carrera asignada (opcional — sobrescribe la sede sugerida automáticamente)",
+                                options=_car_opts,
+                                key="_sm_new_com_carrera",
+                                help=(
+                                    "Solo si la comisión está orientada "
+                                    "a una carrera en particular "
+                                    "(comisión de una materia común "
+                                    "organizada para alumnos de una "
+                                    "carrera de otra sede). "
+                                    "— = sin restricción especial."
+                                ),
+                            )
+                            _new_desc = st.text_area(
+                                "Descripción (opcional)", value="",
+                                key="_sm_new_com_desc",
+                            )
+                            _c1, _c2 = st.columns(2)
+                            with _c1:
+                                if st.button("Crear y asignar", type="primary", use_container_width=True):
+                                    with next(get_session()) as _cses:
+                                        _new_com = create_comision_for_schedule(
+                                            _cses, sel_edit_id, _sm_sel,
+                                            nombre=_new_nombre,
+                                            cupo=int(_new_cupo),
+                                            descripcion=_new_desc,
+                                            carrera_asignada=(
+                                                None if _new_carrera == "—" else _new_carrera
+                                            ),
+                                        )
+                                        if _req_kind == "existing":
+                                            update_schedule_entry(
+                                                _cses, _req_ref,
+                                                comision_id=_new_com.id,
+                                            )
+                                    st.session_state.pop("_sm_new_com_request", None)
+                                    for _k in ("_sm_new_com_nombre",
+                                               "_sm_new_com_cupo",
+                                               "_sm_new_com_carrera",
+                                               "_sm_new_com_desc"):
+                                        st.session_state.pop(_k, None)
+                                    st.rerun()
+                            with _c2:
+                                if st.button("Cancelar", use_container_width=True):
+                                    st.session_state.pop("_sm_new_com_request", None)
+                                    st.rerun()
+
+                    # --- Tabla de comisiones (editable): cupo, carrera, ... ---
+                    st.markdown("##### Comisiones de esta materia")
+                    if _sm_comisiones:
+                        _carr_opts_full = ["—"] + sorted([c.codigo for c in all_carreras])
+                        _com_df = pd.DataFrame([
+                            {
+                                "comision_id": c.id,
+                                "N°": c.numero,
+                                "Nombre": c.nombre,
+                                "Cupo": c.cupo,
+                                "Carrera asignada": c.carrera_asignada or "—",
+                                "Descripción": c.descripcion or "",
+                            }
+                            for c in sorted(_sm_comisiones, key=lambda c: c.numero)
+                        ])
+                        _com_de_key = f"com_de_{sel_edit_id}_{_sm_sel}_{len(_sm_comisiones)}"
+
+                        def _com_on_change():
+                            edited = st.session_state.get(_com_de_key)
+                            if not edited:
+                                return
+                            _com_saved = 0
+                            _com_deleted = 0
+                            _com_bloqueadas: list[str] = []
+                            with next(get_session()) as sess:
+                                for idx_str, changes in (edited.get("edited_rows") or {}).items():
+                                    idx = int(idx_str)
+                                    if idx >= len(_com_df):
+                                        continue
+                                    cid = str(_com_df.iloc[idx]["comision_id"])
+                                    _cambios: dict = {}
+                                    if "N°" in changes:
+                                        _cambios["numero"] = int(changes["N°"])
+                                    if "Nombre" in changes:
+                                        _cambios["nombre"] = str(changes["Nombre"])
+                                    if "Cupo" in changes:
+                                        _new_cupo_val = int(changes["Cupo"])
+                                        if _new_cupo_val >= 1:
+                                            _cambios["cupo"] = _new_cupo_val
+                                    if "Carrera asignada" in changes:
+                                        _val = changes["Carrera asignada"]
+                                        _cambios["carrera_asignada"] = (
+                                            None if _val == "—" else _val
+                                        )
+                                    if "Descripción" in changes:
+                                        _cambios["descripcion"] = str(changes["Descripción"])
+                                    if _cambios:
+                                        update_comision(sess, cid, **_cambios)
+                                        _com_saved += 1
+                                for idx in edited.get("deleted_rows") or []:
+                                    if idx < len(_com_df):
+                                        cid = str(_com_df.iloc[idx]["comision_id"])
+                                        _res = delete_comision(sess, cid)
+                                        if _res.ok:
+                                            _com_deleted += 1
+                                        else:
+                                            _com_bloqueadas.extend(_res.errores)
+                            if _com_bloqueadas:
+                                st.session_state["_com_del_warn"] = "\n\n".join(_com_bloqueadas)
+                            if _com_saved or _com_deleted:
+                                _p = []
+                                if _com_saved:
+                                    _p.append(f"{_com_saved} comisión(es) actualizada(s)")
+                                if _com_deleted:
+                                    _p.append(f"{_com_deleted} borrada(s)")
+                                st.session_state["_edit_toast"] = ", ".join(_p).capitalize()
+
+                        st.data_editor(
+                            _com_df,
+                            column_config={
+                                "comision_id": None,
+                                "N°": column_config.NumberColumn(
+                                    "N°", min_value=1, step=1, width="small",
+                                ),
+                                "Nombre": column_config.TextColumn(width="medium"),
+                                "Cupo": column_config.NumberColumn(
+                                    # min_value=0 para tolerar valores
+                                    # legacy con cupo=0 (materia sin
+                                    # cupo). Se filtran en save.
+                                    min_value=0, step=1, width="small",
+                                    help="Debe ser ≥ 1 para persistirse.",
+                                ),
+                                "Carrera asignada": column_config.SelectboxColumn(
+                                    options=_carr_opts_full,
+                                    default="—",
+                                    help=(
+                                        "Si tiene valor, la asignación "
+                                        "automática restringe la sede "
+                                        "del aula a las sedes de esa "
+                                        "carrera (comisión orientada a "
+                                        "una carrera en particular). "
+                                        "— = sin restricción."
+                                    ),
+                                    width="medium",
+                                ),
+                                "Descripción": column_config.TextColumn(width="large"),
+                            },
+                            hide_index=True,
+                            num_rows="dynamic",
+                            on_change=_com_on_change,
+                            key=_com_de_key,
+                            use_container_width=True,
+                        )
+                        if st.session_state.get("_com_del_warn"):
+                            st.warning(st.session_state.pop("_com_del_warn"))
+                    else:
+                        st.caption(
+                            "Todavía no hay comisiones creadas para esta materia. "
+                            "Se van a crear automáticamente al asignar una comisión "
+                            "en la tabla de entries de arriba."
+                        )
+
                     # --- Resumen por comisión ---
                     if _sm_entries:
                         _sm_summary_rows = []
-                        for _cn in _sm_com_options:
+                        # Los "cn" ahora son los numeros existentes en las
+                        # comisiones + los entries sin comisión.
+                        _nums_presentes = sorted({c.numero for c in _sm_comisiones})
+                        _sin_entries = [e for e in _sm_entries if not e.comision_id]
+                        for _cn in _nums_presentes:
+                            # Encuentro las comisiones con este numero (deberia ser una)
+                            _coms_num = [c for c in _sm_comisiones if c.numero == _cn]
+                            if not _coms_num:
+                                continue
+                            _cid = _coms_num[0].id
                             _cn_entries = [
-                                e for e in _sm_entries if (e.comision or 0) == _cn
+                                e for e in _sm_entries if e.comision_id == _cid
                             ]
                             _horarios = []
                             for _e in _cn_entries:
                                 _hi = _e.hora_inicio.strftime("%H:%M")
                                 _hf = _e.hora_fin.strftime("%H:%M")
-                                _horarios.append(
-                                    f"{_e.dia[:3]} {_hi}-{_hf}"
-                                )
-                            if _cn_entries or _cn > 0:
-                                _sm_summary_rows.append({
-                                    "Comisión": _cn if _cn > 0 else "Sin asignar",
-                                    "Clases": len(_cn_entries),
-                                    "Horarios": ", ".join(_horarios) if _horarios else "—",
-                                })
+                                _horarios.append(f"{_e.dia[:3]} {_hi}-{_hf}")
+                            _sm_summary_rows.append({
+                                "Comisión": _cn,
+                                "Clases": len(_cn_entries),
+                                "Horarios": ", ".join(_horarios) if _horarios else "—",
+                            })
+                        if _sin_entries:
+                            _horarios_sin = []
+                            for _e in _sin_entries:
+                                _hi = _e.hora_inicio.strftime("%H:%M")
+                                _hf = _e.hora_fin.strftime("%H:%M")
+                                _horarios_sin.append(f"{_e.dia[:3]} {_hi}-{_hf}")
+                            _sm_summary_rows.append({
+                                "Comisión": "Sin asignar",
+                                "Clases": len(_sin_entries),
+                                "Horarios": ", ".join(_horarios_sin) if _horarios_sin else "—",
+                            })
                         if _sm_summary_rows:
                             st.caption("Resumen por comisión")
                             st.dataframe(

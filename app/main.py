@@ -32,10 +32,11 @@ Usa el menú lateral para navegar entre las secciones:
 
 - **📚 Materias**: Gestión de asignaturas académicas y relación con carreras
 - **🏛️ Aulas**: Gestión de espacios físicos
-- **👥 Comisiones**: Vista de comisiones por materia (solo lectura, cupo editable)
-- **📅 Horarios**: Carga de horarios por archivo CSV/Excel o entrada manual
 - **🎓 Carreras**: Carreras y planes de estudio
-- **📆 Ciclos**: Períodos lectivos
+- **📆 Ciclos**: Períodos lectivos y dictados
+- **📊 Planes**: Planes de cursada (comisiones, horarios y asignación automática de aulas)
+- **📅 Cronogramas**: Cronogramas de horarios (templates que alimentan los planes)
+- **📜 Historial**: Registro de cambios en el catálogo
 
 ### Funcionalidades Destacadas
 

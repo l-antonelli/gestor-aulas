@@ -25,51 +25,53 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
         ciclo_ids: List of ciclo IDs to choose from in the selectbox.
         ciclos_map: Map ciclo_id → CicloDB for any extra info.
     """
-    st.subheader("Prevalidacion de cronograma contra ciclo")
+    st.subheader("Prevalidación de cronograma contra ciclo")
     st.caption(
-        "Selecciona un ciclo y un cronograma para prevalidar los datos. "
-        "Podes ajustar comisiones, horarios y horas teoria/lab antes de "
-        "generar un plan. Cada validacion queda registrada en el historial."
+        "Seleccioná un ciclo y un cronograma para prevalidar los datos. "
+        "Podés ajustar comisiones, horarios y horas de teoría/laboratorio "
+        "antes de generar un plan. Cada validación queda registrada en "
+        "el historial."
     )
 
-    with st.expander("ℹ️ Que significa validar?", expanded=False):
+    with st.expander("ℹ️ ¿Qué significa validar?", expanded=False):
         st.markdown(
             """
             **Validar un cronograma contra un ciclo** compara las materias
             presentes en el cronograma con las que se esperan dictar en ese
             ciclo, y verifica condiciones estructurales que necesita el
-            siguiente paso (generar plan + asignar aulas).
+            siguiente paso (generar el plan + asignar aulas).
 
-            **Materias esperadas = `Dictados` activos del ciclo**. Los dictados
-            se gestionan en **📆 Ciclos → 📚 Dictados**: ahi se decide para
-            cada materia del plan si se va a dictar este cuatrimestre y cómo
-            (existencia del dictado, flag `virtual`). Si una materia **no
-            tiene dictado** en el ciclo, no aparece en faltantes ni se
-            considera esperada.
+            **Materias esperadas = dictados activos del ciclo**. Los
+            dictados se gestionan en **📆 Ciclos → 📚 Dictados**: ahí se
+            decide para cada materia del plan si se va a dictar este
+            cuatrimestre y cómo (existe o no el dictado, y si es virtual
+            en este ciclo). Si una materia **no tiene dictado** en el
+            ciclo, no aparece en faltantes ni se considera esperada.
 
             **Qué se controla**:
 
             - **Cobertura**: cuántas materias esperadas (con dictado en
               el ciclo) están cubiertas, cuáles faltan (con detalle por
-              carrera y `dictado_codigo`), y cuáles aparecen en el
+              carrera y código de dictado), y cuáles aparecen en el
               cronograma sin tener dictado creado en el ciclo (extras).
-            - **Laboratorios**: cuantas materias del cronograma tienen
-              laboratorios compatibles asignados, y como esta configurado su
-              modo:
-                - **fijo** (`horas_laboratorio > 0`): el LP usara los slots
-                  para fijar lab.
-                - **reserva ad-hoc** (`horas_laboratorio = 0`): el LP no fija
-                  lab; los docentes lo reservan caso por caso durante el
-                  ejercicio.
-                - **pendiente** (`horas_laboratorio is None`): falta definir;
-                  bloqueante.
-            - **Particion teoria/lab**: para cada comision de materia con lab
-              fijo, que las clases puedan dividirse en subconjuntos que sumen
-              `horas_teoria` y `horas_laboratorio`.
+            - **Laboratorios**: cuántas materias del cronograma tienen
+              laboratorios compatibles asignados, y cómo está
+              configurado su modo:
+                - **fijo** (horas de laboratorio mayor a 0): la
+                  asignación usará esos bloques para fijar el lab.
+                - **reserva puntual** (horas de laboratorio en 0): la
+                  asignación no fija el lab; los docentes lo reservan
+                  caso por caso durante el cuatrimestre.
+                - **pendiente** (horas de laboratorio sin definir):
+                  falta definir; es bloqueante.
+            - **Partición teoría/lab**: para cada comisión de una
+              materia con lab fijo, que las clases puedan dividirse en
+              subconjuntos que sumen las horas de teoría y las horas de
+              laboratorio declaradas.
 
-            La pagina **Planes** empieza desde un cronograma validado para
-            generar el plan + asignar aulas + fijar la agenda concreta de
-            clases.
+            La página **Planes** parte de un cronograma validado para
+            generar el plan, asignar aulas y fijar la agenda concreta
+            de clases.
             """
         )
 

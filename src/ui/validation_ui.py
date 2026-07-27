@@ -961,9 +961,9 @@ def _render_dictado_action_selector(
             st.caption(
                 "**Activar** crea el dictado en el ciclo como presencial. "
                 "**Activar y marcar virtual** lo crea marcado como "
-                "**virtual sólo en este ciclo** (modalidad puntual): el LP "
-                "de asignación de aulas lo ignorará. Útil para recursados "
-                "u ofertas por Zoom."
+                "**virtual sólo en este ciclo** (modalidad puntual): la "
+                "asignación de aulas lo ignorará. Útil para recursados u "
+                "ofertas por Zoom."
             )
             _bcol_a, _bcol_v = st.columns(2)
             with _bcol_a:
@@ -1497,13 +1497,13 @@ def _render_detalle_por_materia(
                 _entry_count_sched[e.codigo_materia] = (
                     _entry_count_sched.get(e.codigo_materia, 0) + 1
                 )
-                # comisiones distintas por materia (tomando ScheduleEntryDB.comision)
-                pass
-            # Distinct comisiones por materia
-            _by_mat: dict[str, set[int]] = {}
+            # Distinct comisiones por materia. La comisión ahora es una
+            # entidad real (ComisionDB) referenciada via
+            # ScheduleEntryDB.comision_id.
+            _by_mat: dict[str, set[str]] = {}
             for e in _entries:
-                if e.comision is not None:
-                    _by_mat.setdefault(e.codigo_materia, set()).add(e.comision)
+                if e.comision_id is not None:
+                    _by_mat.setdefault(e.codigo_materia, set()).add(e.comision_id)
             _com_count_sched = {mc: len(s) for mc, s in _by_mat.items()}
 
     # Construir filas
@@ -2270,10 +2270,19 @@ def _render_schedule(
         st.markdown("##### 🧪 Resumen de laboratorios")
         _lc1, _lc2, _lc3, _lc4 = st.columns(4)
         _lc1.metric("Con lab asignado", summary.n_con_lab_asignado)
-        _lc2.metric("Lab fijo (h>0)", summary.n_lab_fijo)
-        _lc3.metric("Reserva ad-hoc (h=0)", summary.n_lab_reserva)
+        _lc2.metric(
+            "Con horas de lab fijas", summary.n_lab_fijo,
+            help="Materias con horas de laboratorio > 0 declaradas.",
+        )
+        _lc3.metric(
+            "Reserva puntual (sin horas fijas)", summary.n_lab_reserva,
+            help=(
+                "Materias con laboratorio compatible pero horas de "
+                "lab = 0. El docente reserva el lab caso por caso."
+            ),
+        )
         _lc4.metric(
-            "Pendiente (sin h)", summary.n_lab_pendiente,
+            "Sin definir horas", summary.n_lab_pendiente,
             delta=(
                 "⚠️ bloqueante" if summary.n_lab_pendiente else None
             ),

@@ -59,16 +59,21 @@ A esto se suma un grado de libertad adicional: hay materias donde el plan declar
 
 La tentación natural es resolverlo en pasos: "primero decido el tipo de cada horario, después le busco aula". Eso falla por una razón simple: el tipo y el aula están **acoplados**. Si decidimos teoría/laboratorio de antemano y después no hay laboratorios disponibles en cierta franja, llegamos a infactibilidad evitable. Un único modelo combinado encuentra el óptimo del problema acoplado o demuestra que no hay solución.
 
-### 1.3 Patrón semanal vs clases puntuales
+### 1.3 Trabajo exclusivamente sobre el patrón semanal
 
-El sistema distingue dos niveles:
+El programa lineal trabaja exclusivamente sobre el **patrón semanal**: la franja que se repite todas las semanas del cuatrimestre. Por ejemplo: "Análisis Matemático I, Comisión A, lunes de 14 a 18 hs". Asigna un aula a cada patrón; esa asignación aplica a todas las instancias del ciclo.
 
-- **Patrón semanal** (un horario): la franja que se repite todas las semanas del cuatrimestre. Por ejemplo: "Análisis Matemático I, Comisión A, lunes de 14 a 18 hs".
-- **Clase puntual**: una instancia concreta del patrón en una fecha. Por ejemplo: "lunes 22 de marzo, 14 a 18 hs".
+> **Nota (2026-07-07)**: en versiones tempranas del sistema el usuario
+> podía además editar excepciones a nivel de "clase puntual"
+> (`ClaseDB`) — un día específico podía cambiar de aula sin afectar
+> al patrón. Esa capacidad se deprecó porque agregaba complejidad
+> sin uso operativo real. Hoy el usuario **solo edita el patrón
+> semanal**. `ClaseDB` sigue existiendo en el modelo como cache
+> técnico: al aplicar la solución, la asignación del patrón se
+> propaga a las instancias por fecha. La UI no expone edición por
+> fecha.
 
-El **programa lineal trabaja exclusivamente sobre el patrón**: asigna un aula a cada horario semanal. Las clases puntuales heredan automáticamente esa aula. Cuando, después de correr el programa lineal, alguien necesita hacer una excepción puntual (cambiar de aula una clase un día específico, por ejemplo), eso queda como un override manual sobre la clase puntual y no afecta al patrón ni al programa lineal.
-
-Esta separación es importante por dos motivos. Primero, **el programa lineal queda mucho más chico**: un cuatrimestre típico tiene ~600 horarios pero ~10000 clases puntuales (16 semanas × 600 = 9600). Resolver por patrón es un orden de magnitud menos. Segundo, separa con claridad qué decide la herramienta automática (el patrón) de qué decide el operador humano (las excepciones).
+Trabajar sobre el patrón mantiene el programa lineal chico: un cuatrimestre típico tiene ~600 horarios pero ~10000 clases puntuales (16 semanas × 600 = 9600); resolver por patrón es un orden de magnitud menos.
 
 ## 2. Alcance
 
@@ -83,7 +88,7 @@ Esta separación es importante por dos motivos. Primero, **el programa lineal qu
 - **No crea ni elimina comisiones**. Las comisiones llegan ya definidas desde el panel de planificación. Si el resultado es malo o infactible, el usuario ajusta comisiones (sumar más, redistribuir pesos, mover horarios) y vuelve a correr.
 - **No reescribe horarios**. Los días, horas y duraciones son datos de entrada fijos.
 - **No asigna aulas a horarios virtuales** (modalidad a distancia o asincrónica). Esos horarios se filtran antes de armar el modelo: no consumen aula.
-- **No decide reservas puntuales de laboratorio**. Si un día puntual una clase teórica necesita ir a un laboratorio (porque tienen una práctica especial), eso es una excepción ad-hoc posterior al programa lineal, no parte del planteo inicial.
+- **No decide reservas puntuales de laboratorio**. La reserva se hace a nivel patrón: si un horario semanal debe dictarse en un laboratorio, se marca su `tipo_clase` y el programa lineal le asigna un aula de laboratorio.
 - **No considera horarios ya ejecutados**. Si la corrida del programa lineal es a mitad del cuatrimestre, las clases que ya pasaron quedan intactas.
 
 ### 2.3 Supuestos modelados
@@ -811,8 +816,9 @@ Esta sección documenta cómo el modelo abstracto se conecta con la base de dato
    e) Si resulta infactible: reporta diagnóstico estructural + SII si aplica.
    f) Si resulta óptimo o subóptimo: persiste HorarioDB.aula_id,
       HorarioDB.tipo_clase y ComisionDB.coef_asignacion (si la opción de
-      redistribución está activa), y propaga a las ClaseDB que heredan del
-      patrón (ver § 1.3 y RF-PLAN-07).
+      redistribución está activa). Internamente también propaga el aula
+      a las ClaseDB del ciclo como cache técnico; esa capa no se expone
+      al usuario tras la deprecación de clases puntuales (2026-07-07).
 
 4. La interfaz muestra el resultado en el panel de aulas del plan.
 ```

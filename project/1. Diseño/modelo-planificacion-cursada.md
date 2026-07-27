@@ -1,11 +1,97 @@
-# Modelo de Planificacion de Cursada
+# Modelo de Planificación de Cursada
 
-Este documento describe el modelo de datos para la gestion de ciclos academicos, planificacion de cursada y generacion de clases. Complementa el modelo ER original (`proyecto/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
+Este documento describe el modelo de datos para la gestión de ciclos académicos, planificación de cursada y asignación de aulas. Complementa el modelo ER original (`project/0. Planteo/modelo-er.md`) con las entidades necesarias para gestionar el ciclo de vida completo de las clases.
 
-> **Estado**: Implementado (Tareas 1-11 completadas + versionado de planes + validación por comisión + prevalidación de comisiones + tipo_clase y laboratorios + dictados como fuente de verdad de "esperadas").
-> **Fecha diseño**: 2026-03-09
-> **Fecha implementacion**: 2026-03-09
-> **Ultima actualizacion**: 2026-05-26 (dictados activos como fuente de verdad para prevalidacion, override `dicta_recursado` por materia, eliminacion del estado "sin dictado")
+> **Estado**: Implementado. Modelo estabilizado tras varios refactors
+> (Tareas 1-11 + versionado de planes + validación por comisión +
+> prevalidación de comisiones + tipo_clase y laboratorios + dictados
+> como fuente de verdad de "esperadas" + comisiones como entidad de
+> primera clase + virtualidad jerárquica + deprecación de clases
+> puntuales).
+>
+> **Fecha diseño inicial**: 2026-03-09
+> **Última actualización mayor**: 2026-07-12 (después de la deprecación
+> de clases puntuales y del refactor de comisiones-por-carrera).
+
+## 0. Cambios clave desde la primera versión (leer antes que nada)
+
+Las secciones 2 y 5 de este documento reflejan el diseño **inicial**
+del modelo. Después de esa versión se ejecutaron varios refactors que
+alteraron el esquema. La sección **0.1** resume el estado actual
+(fuente de verdad); las secciones 2 y 5 se mantienen como registro
+histórico del proceso de diseño.
+
+### 0.1 Estado actual del esquema (fuente de verdad)
+
+Los cambios más importantes desde el diseño inicial son:
+
+1. **`DictadoDB.activo` y `activo_override_manual` eliminados**
+   (2026-06-30). La regla es "existencia = activación": si la fila
+   del dictado existe, se ofrece; si no existe, no se ofrece. Para
+   "desactivar" hay que borrar la fila (`borrar_dictado_de_ciclo`),
+   que además pone en NULL las `ClaseDB.dictado_id` huérfanas para
+   preservarlas. Ver `2. Desarrollo/RECURSADO_Y_VIRTUAL.md`.
+
+2. **Virtualidad jerárquica en tres niveles** (2026-07). Un horario
+   es efectivamente virtual si el nivel más específico dice virtual:
+   `HorarioDB.virtual > DictadoDB.virtual > MateriaDB.virtual`. Los
+   dos primeros son `Optional[bool]` (None = heredar). Helper:
+   `resolve_virtual(horario, dictado, materia) -> bool`. Análogo con
+   `dicta_recursado` a 2 niveles.
+
+3. **`ComisionDB` es entidad de primera clase** (2026-07). Antes
+   `ScheduleEntryDB.comision: int` era un identificador de facto sin
+   entidad. Ahora `ComisionDB` puede pertenecer a un cronograma
+   (`schedule_id` seteado) o a un plan (`plan_cursada_id` seteado),
+   pero no a ambos (XOR validado a nivel service). Al generar un
+   plan desde un cronograma, las comisiones template se **clonan**
+   al plan preservando atributos. Ver
+   `2. Desarrollo/COMISIONES_POR_CARRERA.md`.
+
+4. **Override de sede por comisión** (2026-07). Se agregó
+   `ComisionDB.carrera_asignada: Optional[str]` (FK a
+   `carreras.codigo`). Cuando tiene valor, las sedes admisibles del
+   LP para todos los horarios de esa comisión se resuelven según esa
+   carrera en lugar de la regla habitual por materia. Nunca vivió
+   en `HorarioDB.carrera_asignada` (columna borrada por migración
+   idempotente).
+
+5. **`HorarioDB.aula_id` es el objetivo del LP** (2026-06). El LP
+   asigna aulas al patrón semanal (`HorarioDB.aula_id`), no
+   directamente a `ClaseDB`. Al generar clases, cada `ClaseDB`
+   hereda el aula del patrón. La edición del aula del patrón vía
+   `cambiar_aula_horario` propaga el cambio a las `ClaseDB` del
+   horario. Ver `1. Diseño/asignacion-aulas-LP.md`.
+
+6. **Clases puntuales deprecadas** (2026-07-07). La UI no expone
+   más la edición manual de `ClaseDB` por fecha. Se quitaron el
+   tab "📅 Clases" y las funciones service
+   `aplicar_edicion_manual`, `cambiar_tipo_clase_puntual`,
+   `clases_del_rango`, `validar_edicion_manual`,
+   `get_aulas_disponibles`. `ClaseDB` sigue existiendo como cache
+   técnico del solver: la asignación del patrón se propaga a las
+   `ClaseDB` del ciclo automáticamente. Los flags
+   `ClaseDB.aula_asignada_manualmente` y `tipo_clase` se conservan
+   por si en el futuro se re-habilita alguna vista por fecha, pero
+   el usuario no los edita.
+
+7. **Sedes como entidad y restricción por sede/carrera** (2026-06).
+   `SedeDB` reemplaza al string libre en `AulaDB.sede`. Nueva tabla
+   M:N `CarreraSedeDB` (sedes habilitadas por carrera) y flag
+   `SedeDB.es_default_comunes` (una única sede por vez recibe las
+   materias compartidas entre 2+ carreras). Ver R10 del LP en
+   `asignacion-aulas-LP.md` § 3.5.
+
+8. **Audit log automático** (2026-07). Nueva tabla `ChangeLogDB` y
+   hooks SQLAlchemy que trackean mutaciones a un whitelist de
+   entidades (`MateriaDB`, `CarreraDB`, `DictadoDB`, `DictadoCicloDB`,
+   `SedeDB`). Los servicios pueden emitir eventos explícitos con
+   `emit_event(...)` y `change_context(...)`. Ver
+   `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` § 4.
+
+Para el detalle exacto del esquema actual, la referencia definitiva
+es siempre `src/database/models.py`. Este documento resume el
+propósito de cada entidad y las decisiones de diseño.
 
 ---
 

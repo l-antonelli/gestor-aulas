@@ -17,10 +17,12 @@ renderiza el detalle completo de UNA materia dentro de un cronograma:
 Reusable desde el panel de validación unificado
 (`validation_ui._render_detalle_por_materia`) cuando `source='schedule'`.
 
-Las "comisiones" del cronograma son **auto-derivadas**: viven como
-`ScheduleEntryDB.comision` (int) por entry; no hay tabla `ComisionDB`
-hasta que se genera el plan. Por eso el editor opera directamente
-sobre `ScheduleEntryDB` y no sobre `ComisionDB`.
+Las comisiones son entidades reales (`ComisionDB`) con
+`schedule_id != None` que existen en el cronograma antes de generar
+el plan. Cada `ScheduleEntryDB.comision_id` es FK a una de esas
+comisiones. Este editor delega la edición de atributos de la
+comisión (nombre, cupo, carrera_asignada) a la tabla de comisiones
+de la página de Cronogramas; acá solo se opera sobre entries.
 
 Diferencias respecto a `plan_materia_editor.render_plan_materia_detail`:
 - No hay edición de cupo / coef / forecast (son del plan, no del
@@ -42,8 +44,13 @@ from sqlmodel import select
 from src.database.connection import get_session
 from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
+    ComisionDB,
     MateriaLaboratorioDB,
     ScheduleEntryDB,
+)
+from src.services.comision_service import (
+    get_or_create_comision_by_numero,
+    list_comisiones_for_schedule_materia,
 )
 from src.services.schedule_service import (
     add_schedule_entry,
@@ -55,6 +62,36 @@ from src.services.schedule_service import (
 )
 from src.services.validations import _subset_sum_exists
 from src.ui.calendar_render import render_editable_schedule_calendar
+
+
+def _numero_de_entry(
+    session, entry: ScheduleEntryDB,
+    comisiones_map: dict[str, ComisionDB] | None = None,
+) -> int | None:
+    """Resuelve el `numero` de la comisión referenciada por un entry.
+    Si el entry no tiene comisión asignada, devuelve None.
+
+    Si se pasa `comisiones_map` (cache pre-cargado por id), usa eso;
+    sino hace un get individual.
+    """
+    if not entry.comision_id:
+        return None
+    if comisiones_map is not None:
+        c = comisiones_map.get(entry.comision_id)
+        return c.numero if c else None
+    c = session.get(ComisionDB, entry.comision_id)
+    return c.numero if c else None
+
+
+def _build_comisiones_map(
+    session, schedule_id: str, materia_codigo: str,
+) -> dict[str, ComisionDB]:
+    """Devuelve dict {comision_id: ComisionDB} para la materia en el
+    cronograma. Precarga usada por callers que iteran muchos entries."""
+    coms = list_comisiones_for_schedule_materia(
+        session, schedule_id, materia_codigo,
+    )
+    return {c.id: c for c in coms}
 
 
 _DIA_ORD = {
@@ -173,9 +210,9 @@ def _dialog_edit_entry():
             ),
             key="_sme_dlg_tipo",
             help=(
-                "Sin determinar: el LP elige cuál de los bloques con "
-                "horas suficientes será de laboratorio. "
-                "Teórica/Laboratorio: forzar el tipo."
+                "Sin determinar: la asignación automática elige "
+                "cuál de los bloques con horas suficientes será de "
+                "laboratorio. Teórica/Laboratorio: fuerza el tipo."
             ),
         )
 
@@ -285,10 +322,18 @@ def _dialog_add_entry():
             _tipo_val = None if new_tipo == "sin determinar" else new_tipo
             _eff_sid = _maybe_save_as_copy(_schedule_id, _save_as_copy)
             with next(get_session()) as session:
+                # Resolver o crear la comisión matching por número.
+                _com_id = None
+                if _com_val:
+                    _com_obj = get_or_create_comision_by_numero(
+                        session, _materia_codigo, _com_val,
+                        schedule_id=_eff_sid,
+                    )
+                    _com_id = _com_obj.id
                 add_schedule_entry(
                     session, _eff_sid, _materia_codigo,
                     pending["dia"], pending["hora_inicio"], pending["hora_fin"],
-                    comision=_com_val, tipo_clase=_tipo_val,
+                    comision_id=_com_id, tipo_clase=_tipo_val,
                 )
             st.session_state["_sme_toast"] = (
                 f"{_materia_codigo} agregada"
@@ -454,8 +499,8 @@ def render_schedule_materia_detail(
             label_visibility="collapsed",
             help=(
                 "Horas semanales fijas como laboratorio. Si tiene lab "
-                "asignado pero Hs lab = 0, se asume reserva ad-hoc "
-                "(decide el docente fuera del LP)."
+                "asignado pero Hs lab = 0, se asume reserva puntual "
+                "(la decide el docente por afuera del sistema)."
             ),
         )
 
@@ -470,8 +515,8 @@ def render_schedule_materia_detail(
         if has_lab and new_hlab == 0 and sum_ok:
             st.caption(
                 "ℹ️ Tiene laboratorios asignados con **Hs lab = 0** → "
-                "reserva ad-hoc: el LP no fija lab; los docentes lo "
-                "reservan caso por caso."
+                "reserva puntual: la asignación automática no fija "
+                "el lab; los docentes lo reservan caso por caso."
             )
 
         # Auto-save si suma OK y hay cambios
@@ -526,16 +571,25 @@ def render_schedule_materia_detail(
         ),
     ):
         new_assignments = _reassign_round_robin(entries, n_com)
-        # Persistir directamente en DB
+        # Persistir directamente en DB. `new_assignments` mapea
+        # entry_id -> numero de comisión; resolvemos cada numero a un
+        # ComisionDB (creándola si no existe) y guardamos comision_id.
         with next(get_session()) as _s:
             _entries_db = list(_s.exec(
                 select(ScheduleEntryDB)
                 .where(ScheduleEntryDB.schedule_id == schedule_id)
                 .where(ScheduleEntryDB.codigo_materia == materia_codigo)
             ).all())
+            _num_to_id: dict[int, str] = {}
             for _e in _entries_db:
                 if _e.id in new_assignments:
-                    _e.comision = new_assignments[_e.id]
+                    _num = new_assignments[_e.id]
+                    if _num not in _num_to_id:
+                        _num_to_id[_num] = get_or_create_comision_by_numero(
+                            _s, materia_codigo, _num,
+                            schedule_id=schedule_id,
+                        ).id
+                    _e.comision_id = _num_to_id[_num]
                     _s.add(_e)
             _s.commit()
         # Invalidar cache del data_editor
@@ -559,9 +613,12 @@ def render_schedule_materia_detail(
     # Fingerprint del estado actual de DB: si los entries cambiaron por
     # fuera del editor (otro tab, otro usuario, recarga), invalidamos el
     # cache para que el data_editor refleje la realidad.
+    with next(get_session()) as _sfp:
+        _com_map_fp = _build_comisiones_map(_sfp, schedule_id, materia_codigo)
     _current_fp = tuple(sorted(
         (e.id, e.dia, str(e.hora_inicio), str(e.hora_fin),
-         e.comision or 0, e.tipo_clase or "")
+         (_com_map_fp.get(e.comision_id).numero if e.comision_id and _com_map_fp.get(e.comision_id) else 0),
+         e.tipo_clase or "")
         for e in entries
     ))
     _cached_fp = st.session_state.get(fp_key)
@@ -575,12 +632,13 @@ def render_schedule_materia_detail(
     if init_key not in st.session_state:
         rows = []
         for e in entries:
+            _num = _com_map_fp.get(e.comision_id).numero if e.comision_id and _com_map_fp.get(e.comision_id) else 1
             rows.append({
                 "_eid": e.id,
                 "Día": e.dia,
                 "Inicio": _time_str(e.hora_inicio),
                 "Fin": _time_str(e.hora_fin),
-                "Comisión": e.comision or 1,
+                "Comisión": _num,
                 "Tipo": e.tipo_clase or "sin determinar",
             })
         df = (
@@ -602,7 +660,12 @@ def render_schedule_materia_detail(
             df["Hs"] = pd.Series(dtype=float)
         st.session_state[init_key] = df
         st.session_state[saved_key] = {
-            e.id: (e.comision or 1) for e in entries
+            e.id: (
+                _com_map_fp.get(e.comision_id).numero
+                if e.comision_id and _com_map_fp.get(e.comision_id)
+                else 1
+            )
+            for e in entries
         }
         st.session_state[fp_key] = _current_fp
     else:
@@ -635,7 +698,10 @@ def render_schedule_materia_detail(
                 "Tipo",
                 options=["sin determinar", "teorica", "laboratorio"],
                 default="sin determinar",
-                help="sin determinar (LP decide), teorica o laboratorio",
+                help=(
+                    "sin determinar (lo decide la asignación "
+                    "automática), teórica o laboratorio"
+                ),
                 width="small",
             ),
             "Hs": st.column_config.NumberColumn(
@@ -820,7 +886,18 @@ def _derive_n_comisiones(entries: list[ScheduleEntryDB]) -> int:
     """Derivar n_comisiones del set de entries (max comision asignada o 1)."""
     if not entries:
         return 1
-    max_com = max((e.comision or 1) for e in entries)
+    # Resolver los numeros de las comisiones referenciadas.
+    com_ids = {e.comision_id for e in entries if e.comision_id}
+    max_com = 1
+    if com_ids:
+        with next(get_session()) as _s:
+            for c in _s.exec(
+                select(ComisionDB).where(
+                    ComisionDB.id.in_(com_ids)  # type: ignore[attr-defined]
+                )
+            ).all():
+                if c.numero > max_com:
+                    max_com = c.numero
     # Constraint: paralelas
     paralelas = _max_paralelas_in_entries(entries)
     return max(max_com, paralelas, 1)
@@ -914,17 +991,38 @@ def _persist_edits(
     Reusa `sync_preview_edits_to_schedule` que ya soporta upsert por
     entry_id (con prefijo "new_" para filas nuevas) y elimina filas
     que ya no están en el set.
+
+    Convierte el numero de comisión (columna "Comisión") a comision_id
+    usando `get_or_create_comision_by_numero` — crea la ComisionDB si
+    todavía no existe para ese (schedule, materia, numero).
     """
     sync_entries = []
+    # Pre-resolver numero -> comision_id para no crear duplicados en
+    # la misma pasada (evita race si aparece un mismo numero varias
+    # veces en el batch).
+    _num_to_id: dict[int, str] = {}
+    with next(get_session()) as _s0:
+        for _, r in valid_df.iterrows():
+            _num_raw = r.get("Comisión")
+            if pd.isna(_num_raw):
+                continue
+            _num = int(_num_raw)
+            if _num not in _num_to_id:
+                _num_to_id[_num] = get_or_create_comision_by_numero(
+                    _s0, materia_codigo, _num,
+                    schedule_id=schedule_id,
+                ).id
+
     for i, (_, r) in enumerate(valid_df.iterrows()):
         eid = (
             r["_eid"]
             if pd.notna(r.get("_eid"))
             else f"new_{materia_codigo}_{i}"
         )
-        com = (
+        com_num = (
             int(r["Comisión"]) if pd.notna(r.get("Comisión")) else 1
         )
+        com_id = _num_to_id.get(com_num)
         hi_str = str(r["Inicio"])[:5]
         hf_str = str(r["Fin"])[:5]
         tipo_raw = r.get("Tipo")
@@ -942,7 +1040,7 @@ def _persist_edits(
             "hora_fin": (
                 time.fromisoformat(hf_str) if ":" in hf_str else r["Fin"]
             ),
-            "comision": com,
+            "comision_id": com_id,
             "tipo_clase": tipo,
         })
 
@@ -1153,8 +1251,9 @@ def _compute_checks(
             "label": "Modo lab",
             "status": "info",
             "detail": (
-                "Reserva ad-hoc (Hs lab = 0): el LP no fija lab; "
-                "los docentes lo reservan caso por caso."
+                "Reserva puntual (Hs lab = 0): la asignación "
+                "automática no fija el lab; los docentes lo "
+                "reservan caso por caso."
             ),
         })
     elif has_lab and h_lab is not None and h_lab > 0:
@@ -1162,7 +1261,10 @@ def _compute_checks(
             "id": "thl_reserva",
             "label": "Modo lab",
             "status": "ok",
-            "detail": f"Lab fijo: {h_lab:g}h por comisión entran al LP.",
+            "detail": (
+                f"Lab fijo: {h_lab:g}h por comisión entran a la "
+                "asignación."
+            ),
         })
     elif has_lab and h_lab is None:
         checks.append({
@@ -1213,7 +1315,7 @@ def _compute_checks(
             det = (
                 "; ".join(det_parts)
                 if det_parts
-                else "Todas 'sin determinar' (LP decide)"
+                else "Todas 'sin determinar' (lo decide la asignación automática)"
             )
             checks.append({
                 "id": "thl_predet",
@@ -1397,7 +1499,7 @@ def _render_editable_calendar(
             _baseline_hi = _entry.hora_inicio
             _baseline_hf = _entry.hora_fin
             _tipo = _entry.tipo_clase
-            _com = _entry.comision
+            _com = _numero_de_entry(session, _entry)
         st.session_state["_sme_pending_click"] = {
             "schedule_id": schedule_id,
             "entry_id": action.entry_id,

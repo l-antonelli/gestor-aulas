@@ -53,15 +53,16 @@ with _tabs[0]:
     render_feed_global(limit=int(_limit), days=int(_days), key_ns="feed")
 
 with _tabs[1]:
+    _tipo_labels = {
+        "MateriaDB": "Materia",
+        "CarreraDB": "Carrera",
+        "DictadoDB": "Dictado",
+        "SedeDB": "Sede",
+    }
     _tipo = st.selectbox(
         "Tipo de entidad",
-        options=["MateriaDB", "CarreraDB", "DictadoDB", "SedeDB"],
-        format_func=lambda t: {
-            "MateriaDB": "Materia",
-            "CarreraDB": "Carrera",
-            "DictadoDB": "Dictado",
-            "SedeDB": "Sede",
-        }.get(t, t),
+        options=list(_tipo_labels.keys()),
+        format_func=lambda t: _tipo_labels.get(t, t),
         key="hist_ent_tipo",
     )
 
@@ -84,7 +85,7 @@ with _tabs[1]:
             _opts = {s.nombre: s.id for s in _items}
 
     if not _opts:
-        st.info(f"No hay entidades del tipo {_tipo}.")
+        st.info(f"No hay entidades del tipo {_tipo_labels.get(_tipo, _tipo)}.")
     else:
         _sel_label = st.selectbox(
             "Seleccioná una entidad",

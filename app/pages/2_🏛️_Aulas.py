@@ -431,7 +431,7 @@ def _render_tab_sedes(session) -> None:
             set_sede_default_comunes,
         )
         with st.expander(
-            "🏛️ Sede default para materias comunes (R10 del LP)",
+            "🏛️ Sede por defecto para materias comunes",
             expanded=False,
         ):
             st.caption(
@@ -450,7 +450,7 @@ def _render_tab_sedes(session) -> None:
                 opciones.index(actual.id) if actual is not None else 0
             )
             sel = st.selectbox(
-                "Sede default para materias comunes",
+                "Sede por defecto para materias comunes",
                 options=opciones,
                 index=default_idx,
                 format_func=lambda x: labels[x],

@@ -265,13 +265,14 @@ def _render_materia_expander(
                         _mcols[_i].metric(
                             f"{METODO_LABELS.get(_m, _m)}{_params_str}",
                             f"{_r.valor:.0f}",
-                            help=f"SSE in-sample: {_r.in_sample_sse:.1f}",
+                            help=f"Error cuadrático sobre datos históricos: {_r.in_sample_sse:.1f}",
                         )
 
         st.caption(
-            "💡 El método de forecast aplicado al LP se configura en "
-            "**Planes → Detalle → Método de forecast** (default por plan + "
-            "override por materia). Acá se muestran los 3 métodos como referencia."
+            "💡 El método de proyección aplicado a la asignación se "
+            "configura en **Planes → Detalle → Método de proyección** "
+            "(predeterminado por plan y excepción por materia). Acá "
+            "se muestran los 3 métodos como referencia."
         )
 
 

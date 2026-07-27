@@ -176,23 +176,25 @@ def render_custom_materia_page():
                                 _rec_default = default_values.get("dicta_recursado")
                                 _rec_options = [
                                     "Según Carrera",
-                                    "Sí (override)",
-                                    "No (override)",
+                                    "Sí (forzar)",
+                                    "No (forzar)",
                                 ]
                                 _rec_idx = (
                                     0 if _rec_default is None
                                     else (1 if _rec_default else 2)
                                 )
                                 _rec_choice = st.selectbox(
-                                    "Recursado (override por materia)",
+                                    "Recursado (excepción para esta materia)",
                                     options=_rec_options,
                                     index=_rec_idx,
                                     help=(
-                                        "Si la carrera tiene `dicta_recursado=False` "
-                                        "pero querés que esta materia se cree activa "
-                                        "igual (o viceversa), elegí un override. "
-                                        "`Según Carrera` deja la decisión "
-                                        "a la bandera de la carrera."
+                                        "Si la carrera está marcada como "
+                                        "'no dicta recursado' pero querés "
+                                        "que esta materia igual se cree "
+                                        "en los ciclos (o al revés), "
+                                        "elegí una excepción. "
+                                        "'Según Carrera' respeta lo que "
+                                        "diga la carrera."
                                     ),
                                 )
                                 _rec_value = (

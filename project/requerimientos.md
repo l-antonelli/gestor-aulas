@@ -60,11 +60,11 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 |---|---|---|---|
 | RF-PLAN-01 | Generación de comisiones por dictado con coeficientes de asignación. | ✅ | `src/services/comision_service.py` |
 | RF-PLAN-02 | Generación de horarios por comisión a partir del cronograma cargado. | ✅ | `src/services/plan_generation_service.py` |
-| RF-PLAN-03 | Materialización de `HorarioDB` a `ClaseDB` por cada fecha del ciclo. | ✅ | `src/services/clase_generation_service.py` |
+| RF-PLAN-03 | *(Deprecado)* Materialización de `HorarioDB` a `ClaseDB` por cada fecha del ciclo. La generación de clases puntuales quedó fuera del alcance operativo: el LP y la UI trabajan exclusivamente sobre el patrón semanal (`HorarioDB`). `ClaseDB` permanece en el modelo como cache técnico del LP pero no se materializa desde la UI. | 🚫 Deprecado | — |
 | RF-PLAN-04 | Validación de cobertura (faltantes, no esperadas, conflictos por carrera/año/cuatri). | ✅ | `src/ui/validation_ui.py`, `2. Desarrollo/VALIDACIONES.md` |
 | RF-PLAN-05 | Detección de materias virtuales tanto a nivel catálogo como dictado. | ✅ | `src/ui/validation_ui.py` |
 | RF-PLAN-06 | Estimación de inscriptos esperados por comisión a partir de series históricas y forecast configurable. | ✅ | `src/services/forecast_service.py` |
-| RF-PLAN-07 | Las `ClaseDB` heredan `aula_id` y `tipo_clase` del patrón (`HorarioDB`) al generarse. Esto garantiza que el aula asignada por el LP al patrón se propague automáticamente a todas las instancias del ciclo. | ✅ | `src/services/clase_generation_service.py` |
+| RF-PLAN-07 | *(Deprecado)* Las `ClaseDB` heredan `aula_id` y `tipo_clase` del patrón. Ver RF-PLAN-03. La propagación patrón→clase sigue viva en `apply_solution` como cache, pero no se expone en la UI. | 🚫 Deprecado | — |
 
 ### RF-LP — Asignación de aulas (programación lineal)
 
@@ -75,8 +75,8 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-LP-03 | Toggle α: redistribución de coeficientes de comisión cuando hay desbalance. | ✅ | `1. Diseño/asignacion-aulas-LP.md` |
 | RF-LP-04 | Re-ejecución incremental desde `fecha_desde`: clases anteriores quedan intactas. | ✅ | `2. Desarrollo/ASIGNACION_IMPL.md` |
 | RF-LP-09 | El LP asigna aulas al **patrón** (`HorarioDB.aula_id`), no directamente a clases. Esto separa "asignación del esquema semanal" (responsabilidad del LP) de "excepciones puntuales por fecha" (responsabilidad del usuario). | ✅ | `src/services/asignacion_aulas_service.py:apply_solution` |
-| RF-LP-10 | Edición del patrón post-LP vía `cambiar_aula_horario`: cambia `HorarioDB.aula_id` y propaga a las `ClaseDB` que heredan, respetando excepciones manuales. | ✅ | `src/services/asignacion_aulas_service.py:cambiar_aula_horario` |
-| RF-LP-05 | Toggle "respetar ediciones manuales": preserva clases con `aula_asignada_manualmente=True`. | ✅ | `2. Desarrollo/ASIGNACION_IMPL.md` |
+| RF-LP-10 | Edición del patrón post-LP vía `cambiar_aula_horario`: cambia `HorarioDB.aula_id`. La propagación al cache `ClaseDB` se mantiene por si en el futuro se re-habilita alguna vista por fecha, pero el usuario no la ve. | ✅ | `src/services/asignacion_aulas_service.py:cambiar_aula_horario` |
+| RF-LP-05 | *(Legacy)* Toggle "respetar ediciones manuales" del LP: preserva `ClaseDB.aula_asignada_manualmente=True`. Se conserva como capacidad del solver por si vuelven las clases puntuales; hoy no hay UI que setee el flag. | 🚫 Sin UI | `2. Desarrollo/ASIGNACION_IMPL.md` |
 | RF-LP-06 | Persistencia de `LPRunDB` con snapshot completo (config, status, métricas, detalles). | ✅ | `src/database/models.py` |
 | RF-LP-07 | Resolución con CBC y timeout configurable. | ✅ | `LPConfig.timeout_seconds` |
 | RF-LP-08 | Filtrado de horarios virtuales (catálogo y dictado) en el armado de inputs. | ✅ | `src/services/asignacion_aulas_service.py:build_inputs` |
@@ -84,20 +84,35 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-LP-12 | **Auto-completar tipo de horario por horas declaradas**. Cuando una materia tiene `hlab=0` y `hteo>0` (o viceversa), el tipo de cada horario queda determinado de antemano. La acción `aplicar_auto_completar_tipos` persiste ese tipo en `HorarioDB.tipo_clase` para el plan. Adicionalmente, `build_inputs` aplica el override en memoria como red de seguridad: si el operador no corrió la acción, el LP arranca igual con menos variables `t[h]` redundantes. | ✅ | `src/services/plan_actions_service.py`, `src/services/asignacion_aulas_service.py:build_inputs` |
 | RF-LP-13 | **Heatmap demanda vs oferta**. Mapa día × franja con la peor saturación por celda (cantidad de horarios simultáneos sobre cantidad de aulas admisibles tras R3 + R10), categorizado por tipo (teórica / laboratorio-por-materia / sin determinar). Identifica el cuello de botella concreto cuando el LP es infactible. | ✅ | `src/services/asignacion_aulas_helpers.py:compute_heatmap_demanda_oferta`, `src/ui/asignacion_resultado_ui.py` |
 | RF-LP-14 | **Reporte de impacto de R10**. Tabla por materia con cuántas aulas admisibles tenía sólo por R3 (tipo + lab) y cuántas le quedan tras R10 (sede). Permite responder "¿la infactibilidad la causa la configuración de sedes o el inventario?". | ✅ | `src/services/asignacion_aulas_helpers.py:compute_impacto_r10`, `src/ui/asignacion_resultado_ui.py` |
+| RF-LP-15 | **Override de sede por comisión** (`ComisionDB.carrera_asignada`). Permite modelar "comisiones orientadas a una carrera": la comisión pertenece a una materia común, pero se organiza pensada para alumnos de una carrera específica de otra sede (ej. una comisión de Física III para alumnos de Electrónica, que se dicta en Siberia en vez de la sede default de comunes, Pellegrini). El campo `ComisionDB.carrera_asignada: Optional[str]` (FK a `carreras.codigo`) sobrescribe la resolución habitual de sede para **todos los horarios de la comisión**: si tiene valor, las sedes admisibles del LP se resuelven vía `sedes_admisibles_para_carrera` con esa carrera; si es `None` (default), se usa la regla habitual por materia (RF-LP-11). El override vive a nivel comisión (no a nivel horario individual) porque semánticamente "la comisión está organizada para una carrera puntual" — todos sus horarios heredan la restricción de sede. Se edita desde la tabla de comisiones (siempre visible dentro del editor de una materia en cronogramas o planes) o al crear una comisión nueva vía dialog en cronogramas. Al generar el plan desde un cronograma, la comisión se **clona** (RF-COMISION-01) preservando el override. La compatibilidad de laboratorio (`MateriaLaboratorioDB`) sigue prevaleciendo sobre esta restricción, igual que en R10 estándar. `get_aulas_disponibles_para_horario` también respeta el override. Los cambios de `carrera_asignada` en el plan emiten evento en `ChangeLogDB` con `origin=ui:planes`. | ✅ | `src/services/carrera_sede_service.py:sedes_admisibles_para_carrera`, `src/services/asignacion_aulas_service.py:build_inputs`, `src/services/comision_service.py`, `src/ui/plan_grilla_editor.py`, `app/pages/6_📅_Cronogramas.py` |
 
-### RF-ADHOC — Gestión ad-hoc post-LP
+### RF-COMISION — Gestión de comisiones como entidad
 
 | ID | Descripción | Estado | Doc canónico |
 |---|---|---|---|
-| RF-ADHOC-01 | Edición manual de aula puntual (1 clase). | ✅ | `2. Desarrollo/ASIGNACION_IMPL.md` § 5.1 |
-| RF-ADHOC-02 | Edición manual de aula por rango de fechas (mismo horario semanal). | ✅ | `2. Desarrollo/ASIGNACION_IMPL.md` § 5.1 |
-| RF-ADHOC-03 | Edición manual "de hoy en adelante" (rango = `[hoy, fin_ciclo]`). | ✅ | `2. Desarrollo/ASIGNACION_IMPL.md` § 5.1 |
-| RF-ADHOC-04 | Cambio puntual y bidireccional de `tipo_clase` (teorica ↔ laboratorio) con reasignación de aula compatible y liberación del aula original. | ✅ | `src/services/asignacion_aulas_service.py:cambiar_tipo_clase_puntual` |
-| RF-ADHOC-05 | Marca `aula_asignada_manualmente=True` que sobrevive a re-runs del LP. | ✅ | `src/database/models.py:ClaseDB` |
-| RF-ADHOC-06 | Filtros multi-dimensionales en panel Aulas del plan: aula, carrera, año, cuatri, tipo de clase, materia, día, sede, sólo manuales. | ✅ | `src/ui/aula_cronograma_view.py` |
-| RF-ADHOC-07 | Vista de calendario semanal por aula + indicador de divergencias por horario. | ✅ | `src/ui/aula_cronograma_view.py` |
+| RF-COMISION-01 | **Las comisiones son entidades reales** (`ComisionDB`) que pueden pertenecer a un cronograma (`schedule_id` seteado) o a un plan de cursada (`plan_cursada_id` seteado), pero no a ambos a la vez (XOR validado a nivel service). Reemplaza al viejo campo `ScheduleEntryDB.comision: int` que era identificador de facto sin entidad. `ScheduleEntryDB.comision_id` y `HorarioDB.comision_id` son ambos FK a `ComisionDB`. Los atributos de la comisión (nombre, cupo, coef_asignacion, carrera_asignada, descripción) son editables desde una tabla dedicada — antes del refactor solo existían al momento de generar el plan y no podían editarse en la etapa de cronograma. | ✅ | `src/database/models.py:ComisionDB`, `src/services/comision_service.py`, `2. Desarrollo/COMISIONES_POR_CARRERA.md` |
+| RF-COMISION-02 | **Cascada cronograma → plan por clonado**. Al generar un plan desde un cronograma, las comisiones template del cronograma se **clonan** (nuevos IDs, `plan_cursada_id` seteado, `schedule_id=None`) preservando nombre, cupo, coef_asignacion, carrera_asignada, descripción. Los `HorarioDB` del plan apuntan a las comisiones clon. Editar la comisión del plan no afecta a la del cronograma template (ciclo de vida independiente). | ✅ | `src/services/comision_service.py:clone_comisiones_for_plan`, `src/services/plan_generation_service.py:generate_plan_from_preview` |
+| RF-COMISION-03 | **Borrado seguro con guarda**: `delete_comision` bloquea el borrado si la comisión tiene entries de cronograma o horarios de plan asociados. El usuario debe reasignarlos primero. Evita "huérfanos" no intencionales por borrar comisiones activas. | ✅ | `src/services/comision_service.py:delete_comision` |
+| RF-COMISION-04 | **UI: selector de comisiones en cronogramas y planes**. En la tabla de entries del cronograma y en el diálogo "Editar entrada" del calendario, la columna/campo "Comisión" es un selectbox de comisiones existentes (label `{N° · nombre}`) + opción "➕ Crear nueva comisión…" que abre un form inline (nombre, cupo, carrera_asignada, descripción). No se depende más de que el usuario ingrese un número arbitrario. | ✅ | `app/pages/6_📅_Cronogramas.py`, `src/ui/schedule_materia_editor.py` |
+
+### RF-ADHOC — Gestión ad-hoc post-LP *(deprecada)*
+
+Todo el bloque de "clases puntuales" (RF-ADHOC-01..05, RF-ADHOC-09) fue
+eliminado en la decisión operativa de trabajar solo sobre el patrón
+semanal. Los servicios `aplicar_edicion_manual`,
+`cambiar_tipo_clase_puntual`, `clases_del_rango`,
+`validar_edicion_manual` y `get_aulas_disponibles` se borraron del
+código; sus tests también. El tab "📅 Clases" de la página de Planes
+y el diálogo `_dialog_cambiar_aula` de `aula_cronograma_view.py`
+también se sacaron.
+
+Las capacidades que **quedan** en producción y no eran puntuales:
+
+| ID | Descripción | Estado | Doc canónico |
+|---|---|---|---|
+| RF-ADHOC-06 | Filtros multi-dimensionales en panel Aulas del plan: aula, carrera, año, cuatri, tipo de clase, materia, día, sede. | ✅ | `src/ui/aula_cronograma_view.py` |
+| RF-ADHOC-07 | Vista de calendario semanal por aula (a nivel patrón). | ✅ | `src/ui/aula_cronograma_view.py` |
 | RF-ADHOC-08 | Activación de materia y marca virtual en bloque desde el panel de validación. | ✅ | `src/ui/validation_ui.py` |
-| RF-ADHOC-09 | Permitir reasignación sugerida del aula liberada al hacer cambio de tipo. | ⏳ | (futuro; hoy se libera y se avisa) |
 
 ### RF-DIAG — Diagnóstico y validación
 
@@ -125,7 +140,7 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-UI-02 | Indicadores visuales de estado (badges 🟢⚪✋ ←override, virtual, manual). | ✅ | UI |
 | RF-UI-03 | Edición inline con toggles auto-save + `st.toast` de confirmación. | ✅ | `app/pages/4_📆_Ciclos.py` |
 | RF-UI-04 | Calendario semanal renderizado con `render_timetable_calendar`. | ✅ | `src/ui/calendar_render.py` |
-| RF-UI-05 | Diálogo modal de edición de aula/tipo con alcance configurable. | ✅ | `src/ui/aula_cronograma_view.py:_dialog_cambiar_aula` |
+| RF-UI-05 | *(Deprecado)* Diálogo modal de edición de aula/tipo con alcance configurable (para clases puntuales). Eliminado con la deprecación de clases puntuales. | 🚫 Deprecado | — |
 
 ## RNF — Requerimientos no funcionales
 
@@ -144,7 +159,7 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 
 | Módulo | RFs cubiertos | Tests |
 |---|---|---|
-| `src/services/asignacion_aulas_service.py` | RF-LP-01..08, RF-ADHOC-01..05 | `tests/test_asignacion_aulas_service.py` |
+| `src/services/asignacion_aulas_service.py` | RF-LP-01..15 | `tests/test_asignacion_aulas_service.py` |
 | `src/services/asignacion_aulas_helpers.py` | RF-DIAG-01..03 | `tests/test_asignacion_aulas_helpers.py` |
 | `src/services/dictado_service.py` | RF-DICT-01..08 | `tests/test_dictado_service.py` |
 | `src/services/resolucion_jerarquica.py` | RF-DICT-02, RF-DICT-04 | `tests/test_resolucion_jerarquica.py` |
@@ -153,38 +168,30 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | `src/ui/historial_widget.py` | RF-AUDIT-04 | (UI) |
 | `src/services/forecast_service.py` | RF-PLAN-06 | `tests/test_forecast_service.py` |
 | `src/services/plan_generation_service.py` | RF-PLAN-02 | `tests/test_plan_generation_service.py` |
-| `src/services/clase_generation_service.py` | RF-PLAN-03 | `tests/test_clase_generation_service.py` |
+| `src/services/clase_generation_service.py` | *(deprecado)* — RF-PLAN-03 fuera de scope operativo | `tests/test_clase_generation_service.py` (retenidos) |
 | `src/services/comision_service.py` | RF-PLAN-01 | `tests/test_comision_service.py` |
 | `src/ui/validation_ui.py` | RF-PLAN-04..05, RF-ADHOC-08 | (UI, sin tests directos) |
-| `src/ui/aula_cronograma_view.py` | RF-ADHOC-06..07, RF-UI-04..05 | (UI, helpers cubiertos en service tests) |
+| `src/ui/aula_cronograma_view.py` | RF-ADHOC-06..07, RF-UI-04 | (UI, helpers cubiertos en service tests) |
 | `app/pages/4_📆_Ciclos.py` | RF-CICLO-01..02, RF-DICT-* | (UI) |
 | `app/pages/2_🏛️_Aulas.py` | RF-CAT-04..05 | (UI) |
 
-## Decisiones pendientes
+## Decisiones cerradas
 
-- **2026-06-12 (reunión con directores)**: se planteó la posibilidad
-  de **eliminar completamente el concepto de "clase puntual"** del
-  sistema y trabajar exclusivamente sobre el patrón semanal
-  (`HorarioDB`). El argumento es que las excepciones por fecha
-  agregan complejidad sin uso operativo claro hasta el momento. La
-  decisión queda **abierta**: hay que evaluar antes de codear si vale
-  la pena el costo de borrar `ClaseDB.aula_id`,
-  `aula_asignada_manualmente`, las funciones
-  `aplicar_edicion_manual` / `cambiar_tipo_clase_puntual` /
-  `clases_del_rango`, sus tests y la UI asociada (que aún no se
-  implementó), o si conviene dejarlas como capacidad latente. Hay
-  tres opciones evaluadas en una sesión previa: A (mantener todo,
-  sólo deprecar en docs), B (limpieza fuerte: borrar todo lo puntual
-  + el campo `ClaseDB.aula_id`), C (intermedio: borrar funciones y
-  UI puntuales pero mantener `ClaseDB.aula_id` como caché propagado
-  desde el patrón). Pendiente de cierre.
+- **2026-07-07 (deprecación clases puntuales)**: se decidió eliminar
+  del sistema el concepto de "clase puntual" (`ClaseDB` como unidad
+  editable). El LP trabaja exclusivamente sobre el patrón semanal
+  (`HorarioDB.aula_id`) y las clases materializadas quedan como
+  cache técnico (opción C del análisis previo). Se removió: (a) tab
+  "📅 Clases" de la página Planes; (b) diálogo
+  `_dialog_cambiar_aula`; (c) funciones service
+  `aplicar_edicion_manual`, `cambiar_tipo_clase_puntual`,
+  `clases_del_rango`, `validar_edicion_manual`,
+  `get_aulas_disponibles`; (d) los tests asociados. Se conservó
+  `ClaseDB.aula_id`, `aula_asignada_manualmente`, `tipo_clase` y el
+  toggle `respetar_ediciones_manuales` del LP como capacidad latente
+  del solver (no expuesta en UI).
 
 ## Pendientes y backlog
-
-- **RF-ADHOC-09** (sugerir reasignación del aula liberada): hoy al
-  cambiar el tipo de una clase puntual el aula original queda con
-  hueco. La UI podría sugerir qué otras clases del plan podrían
-  ocupar ese hueco.
 - **RF-LP-09** (constraint de mismo edificio para clases consecutivas
   de la misma carrera/año): mencionado en discusiones pero no
   formalizado.

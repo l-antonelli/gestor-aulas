@@ -17,7 +17,8 @@ import streamlit as st
 from sqlmodel import Session, select
 
 from src.database.models import (
-    ClaseDB,
+    ComisionDB,
+    HorarioDB,
     LPRunDB,
     PlanificacionCursadaDB,
 )
@@ -40,12 +41,18 @@ def _precheck(session: Session, plan_id: str) -> tuple[bool, list[str]]:
     if plan is None:
         return False, ["Plan no encontrado."]
 
-    n_clases = session.exec(
-        select(ClaseDB).where(ClaseDB.plan_cursada_id == plan_id).limit(1)
+    # El LP asigna aulas al PATRÓN (HorarioDB.aula_id), así que basta
+    # con que el plan tenga al menos un horario.
+    tiene_horarios = session.exec(
+        select(HorarioDB)
+        .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)  # type: ignore[arg-type]
+        .where(ComisionDB.plan_cursada_id == plan_id)
+        .limit(1)
     ).first()
-    if n_clases is None:
+    if tiene_horarios is None:
         problemas.append(
-            "El plan no tiene clases generadas. Generalas desde el tab 📅 Clases."
+            "El plan no tiene horarios cargados. Agregá horarios "
+            "desde el tab 📋 Grilla Horaria."
         )
 
     return (len(problemas) == 0, problemas)
@@ -74,7 +81,7 @@ def _render_config_form(
             default_fecha = ciclo.fecha_inicio
 
     with st.form(f"{key_ns}_lp_form"):
-        st.markdown("**Configuración del LP**")
+        st.markdown("**Configuración de la asignación de aulas**")
         c1, c2 = st.columns(2)
         with c1:
             fecha_desde = st.date_input(
@@ -86,10 +93,11 @@ def _render_config_form(
                 key=f"{key_ns}_fecha_desde",
             )
             lambda_over = st.number_input(
-                "λ_over (peso sobre-ocupación)",
+                "Peso de sobre-ocupación",
                 min_value=0.0, value=10.0, step=1.0,
                 help="Cuánto se castiga que el aula tenga menos capacidad "
-                     "que los inscriptos esperados.",
+                     "que los inscriptos esperados. Cuanto más alto, más "
+                     "prioriza evitar que una comisión no entre.",
                 key=f"{key_ns}_lover",
             )
             tol_over = st.slider(
@@ -103,44 +111,50 @@ def _render_config_form(
             respetar = st.toggle(
                 "Respetar ediciones manuales",
                 value=True,
-                help="Si activo, el LP no pisa clases con aula asignada "
-                     "manualmente. Desactivar sólo si querés re-asignar todo.",
+                help="Si está activo, la asignación no pisa clases con "
+                     "aula elegida manualmente. Desactivalo sólo si "
+                     "querés re-asignar todo desde cero.",
                 key=f"{key_ns}_respetar",
             )
             lambda_under = st.number_input(
-                "λ_under (peso sub-utilización)",
+                "Peso de sub-utilización",
                 min_value=0.0, value=1.0, step=0.5,
-                help="Cuánto se castiga que el aula tenga capacidad "
-                     "muy superior a los inscriptos.",
+                help="Cuánto se castiga que el aula tenga capacidad muy "
+                     "superior a los inscriptos (aula grande con pocos "
+                     "alumnos).",
                 key=f"{key_ns}_lunder",
             )
             tol_under = st.slider(
                 "Tolerancia de sub-utilización",
                 min_value=0.0, max_value=1.0, value=0.20, step=0.05,
                 help="Margen relativo donde la sub-utilización no "
-                     "penaliza. 0.20 = hasta 20% de espacio vacío gratis.",
+                     "penaliza. 0.20 = hasta 20% de espacio vacío sin "
+                     "penalidad.",
                 key=f"{key_ns}_tunder",
             )
 
         timeout = st.number_input(
-            "Timeout del solver (segundos)",
+            "Tiempo máximo de resolución (segundos)",
             min_value=10, max_value=1800, value=300, step=30,
+            help="Si la asignación tarda más que esto, se corta y "
+                 "devuelve la mejor solución parcial encontrada.",
             key=f"{key_ns}_timeout",
         )
 
         activar_alpha = st.toggle(
-            "Redistribuir pesos α (avanzado)",
+            "Redistribuir pesos entre comisiones (avanzado)",
             value=False,
             help=(
-                "Permite que el LP redistribuya `coef_asignacion` entre "
-                "comisiones del mismo dictado para mejorar el ajuste a "
-                "la capacidad disponible. Los pesos propuestos se "
-                "muestran como diff y se aplican sólo si los confirmás."
+                "Permite que la asignación redistribuya el peso relativo "
+                "de las comisiones del mismo dictado para mejorar el "
+                "ajuste a la capacidad disponible. Los pesos propuestos "
+                "se muestran como diferencia y se aplican sólo si los "
+                "confirmás."
             ),
             key=f"{key_ns}_activar_alpha",
         )
 
-        submitted = st.form_submit_button("🚀 Correr LP", type="primary")
+        submitted = st.form_submit_button("🚀 Asignar aulas", type="primary")
 
     if not submitted:
         return None
@@ -169,8 +183,14 @@ def _render_summary(run: LPRunDB) -> None:
         "timeout": "⏱️",
         "error": "⚠️",
     }.get(run.status, "❔")
+    _status_humano = {
+        "optimal": "resuelta",
+        "infeasible": "no se pudo resolver",
+        "timeout": "se agotó el tiempo",
+        "error": "hubo un error",
+    }.get(run.status, run.status)
     st.markdown(
-        f"### {status_emoji} Último run — {run.status}"
+        f"### {status_emoji} Última corrida — {_status_humano}"
         f" · {run.run_at.strftime('%Y-%m-%d %H:%M')}"
     )
 
@@ -186,21 +206,23 @@ def _render_summary(run: LPRunDB) -> None:
 
     c6, c7, c8 = st.columns(3)
     if run.objective_value is not None:
-        c6.metric("Objetivo", f"{run.objective_value:.2f}")
+        c6.metric("Costo total", f"{run.objective_value:.2f}",
+                  help="Suma ponderada de sobre-ocupación y sub-utilización. "
+                       "Cuanto más bajo, mejor el ajuste global.")
     if run.solver_seconds is not None:
-        c7.metric("Solver (s)", f"{run.solver_seconds:.2f}")
+        c7.metric("Tiempo de resolución (s)", f"{run.solver_seconds:.2f}")
     c8.metric("Manuales respetadas", run.n_ediciones_manuales_respetadas)
 
     with st.expander("Configuración aplicada", expanded=False):
         st.write({
-            "fecha_desde": run.fecha_desde.isoformat(),
-            "λ_over": run.lambda_over,
-            "λ_under": run.lambda_under,
-            "tol_over": run.tol_over,
-            "tol_under": run.tol_under,
-            "respetar_ediciones_manuales": run.respetar_ediciones_manuales,
-            "activar_alpha": run.activar_alpha,
-            "timeout_seconds": run.timeout_seconds,
+            "Aplicar desde la fecha": run.fecha_desde.isoformat(),
+            "Peso sobre-ocupación": run.lambda_over,
+            "Peso sub-utilización": run.lambda_under,
+            "Tolerancia sobre-ocupación": run.tol_over,
+            "Tolerancia sub-utilización": run.tol_under,
+            "Respetar ediciones manuales": run.respetar_ediciones_manuales,
+            "Redistribuir pesos entre comisiones": run.activar_alpha,
+            "Tiempo máximo de resolución (s)": run.timeout_seconds,
         })
 
 
@@ -210,7 +232,7 @@ def _render_summary(run: LPRunDB) -> None:
 
 def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     """Punto de entrada del tab 'Aulas' en la página de Planes."""
-    st.subheader("🏛️ Asignación de aulas (LP)")
+    st.subheader("🏛️ Asignación de aulas")
 
     ok, problemas = _precheck(session, plan_id)
     if not ok:
@@ -219,28 +241,28 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
         return
 
     with st.expander(
-        "ℹ️ Qué horarios entran al LP", expanded=False,
+        "ℹ️ Qué horarios entran a la asignación", expanded=False,
     ):
         st.markdown(
-            "El LP intenta asignar un aula a cada horario presencial del "
-            "plan. **No** entran al LP (se ignoran sin error):\n\n"
-            "- Horarios de materias **virtuales** del catálogo "
-            "(`MateriaDB.virtual = True`).\n"
-            "- Horarios cuyo **dictado del ciclo** está marcado "
-            "**virtual** (`DictadoDB.virtual = True`). Útil para "
-            "recursados que se dictan por Zoom este cuatrimestre — "
-            "el dictado existe en el ciclo y la cobertura del "
+            "La asignación intenta encontrarle un aula a cada horario "
+            "presencial del plan. **No** entran los siguientes horarios "
+            "(se ignoran sin generar error):\n\n"
+            "- Horarios de materias **virtuales** del catálogo (la "
+            "materia está marcada como virtual).\n"
+            "- Horarios cuyo **dictado del ciclo** está marcado como "
+            "**virtual**. Útil para recursados que se dictan por Zoom "
+            "este cuatrimestre — el dictado existe y la cobertura del "
             "cronograma lo cuenta como cubierto, pero no consume aula. "
             "Configurable desde **Ciclos → 📚 Dictados**, columna "
             "**Virtual**.\n"
-            "- Horarios individuales marcados **virtual** "
-            "(`HorarioDB.virtual = True`). Permite mezclar modalidades "
-            "dentro de un mismo dictado (ej. teoría virtual + "
-            "laboratorio presencial).\n\n"
-            "Si el LP da **infactible**, lo más común es que haya "
-            "horarios del 2C en el cronograma del plan que en realidad "
-            "deberían estar marcados como virtuales (recursados). "
-            "Revisalos en Dictados antes de jugar con las tolerancias."
+            "- Horarios individuales marcados como **virtuales**. "
+            "Permite mezclar modalidades dentro de un mismo dictado "
+            "(por ejemplo, teoría virtual + laboratorio presencial).\n\n"
+            "Si la asignación no encuentra solución, lo más común es "
+            "que haya horarios del 2C en el cronograma del plan que "
+            "en realidad deberían estar marcados como virtuales "
+            "(recursados). Revisalos en Dictados antes de tocar las "
+            "tolerancias."
         )
 
     # Sugerencia: si hay horarios cuyo tipo se podría auto-completar,
@@ -254,29 +276,36 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     if _autotipos_prev.total > 0:
         st.warning(
             f"💡 Hay **{_autotipos_prev.total} horario(s)** con tipo "
-            "todavía sin determinar que se podrían auto-completar a "
-            "partir de las horas declaradas en sus materias "
+            "todavía sin determinar que se podrían completar "
+            "automáticamente a partir de las horas declaradas en sus "
+            "materias "
             f"({len(_autotipos_prev.a_teorica)} a teórica, "
             f"{len(_autotipos_prev.a_laboratorio)} a laboratorio). "
             "Aplicalo desde **🔧 Acciones del plan → Auto-completar "
             "tipo de horarios** para que las vistas e informes los "
-            "muestren bien. El LP igual los infiere en memoria al "
+            "muestren bien. La asignación igual los deduce sola al "
             "correr, así que no bloquea esta corrida."
         )
 
     cfg = _render_config_form(session, plan_id, key_ns)
 
     if cfg is not None:
-        with st.spinner("Resolviendo LP…"):
+        with st.spinner("Asignando aulas…"):
             run = run_lp(session, plan_id, cfg)
         if run.status == "optimal":
             st.success(
-                f"LP resuelto en {run.solver_seconds:.2f}s. "
+                f"Asignación resuelta en {run.solver_seconds:.2f}s. "
                 f"{run.n_clases_actualizadas} clases actualizadas."
             )
         else:
+            _mensajes_status = {
+                "infeasible": "no se encontró solución válida",
+                "timeout": "se agotó el tiempo máximo",
+                "error": "hubo un error inesperado",
+            }
+            _msg = _mensajes_status.get(run.status, run.status)
             st.error(
-                f"LP no resolvió: {run.status}. "
+                f"La asignación no resolvió: {_msg}. "
                 f"{run.error_message or 'Sin detalles.'}"
             )
         st.rerun()

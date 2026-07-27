@@ -1,14 +1,41 @@
 # Workflow End-to-End del sistema
 
-> **Última actualización**: 2026-06-03
+> **Última actualización**: 2026-07-12
 >
 > Documento operativo que describe el flujo completo del usuario en
-> `gestor-aulas` desde la carga inicial hasta la activación del plan
-> de cursada. Sirve como guía de uso y como referencia al describir
-> el sistema en el informe.
+> `gestor-aulas` desde la carga inicial hasta la asignación de aulas.
+> Sirve como guía de uso y como referencia al describir el sistema en
+> el informe.
+>
+> **Cambios clave a tener en cuenta al leer este documento**:
+>
+> 1. **`DictadoDB.activo` eliminado** (2026-06-30). La semántica
+>    actual es "existencia = activación": si el dictado existe en el
+>    ciclo, se ofrece; si no existe, no se ofrece. `activo_override_manual`
+>    tampoco existe. Cualquier referencia a "toggle Activo" o
+>    "activo/inactivo" de dictados que quede abajo se refiere ahora
+>    a **crear / borrar la fila del dictado**. Ver
+>    `RECURSADO_Y_VIRTUAL.md` y `RF-DICT-03`.
+> 2. **Clases puntuales deprecadas** (2026-07-07). El tab "📅 Clases"
+>    y toda la edición manual de `ClaseDB` (aula puntual, tipo puntual,
+>    rangos) fueron removidos. El asignador de aulas y la UI trabajan
+>    sólo sobre el patrón semanal (`HorarioDB.aula_id`). Cualquier
+>    mención al tab de clases o a la edición por fecha en las secciones
+>    5-8 refleja el estado anterior; hoy se trabaja únicamente con el
+>    patrón semanal.
+> 3. **Comisiones como entidad de primera clase** (2026-07). Antes
+>    `ScheduleEntry.comision` era un `int` sin entidad. Ahora
+>    `ComisionDB` puede pertenecer a un cronograma o a un plan y se
+>    edita como fila (nombre, cupo, carrera asignada, descripción).
+>    Al generar el plan desde un cronograma, las comisiones template
+>    se **clonan** al plan. Ver `COMISIONES_POR_CARRERA.md`.
 >
 > Vínculos:
 > - Modelo de datos: [modelo-planificacion-cursada.md](../1.%20Diseño/modelo-planificacion-cursada.md)
+> - Asignación de aulas (planteo formal): [asignacion-aulas-LP.md](../1.%20Diseño/asignacion-aulas-LP.md)
+> - Asignación de aulas (implementación): [ASIGNACION_IMPL.md](ASIGNACION_IMPL.md)
+> - Recursado y virtualidad: [RECURSADO_Y_VIRTUAL.md](RECURSADO_Y_VIRTUAL.md)
+> - Comisiones y sede por carrera: [COMISIONES_POR_CARRERA.md](COMISIONES_POR_CARRERA.md)
 > - Validaciones: [VALIDACIONES.md](VALIDACIONES.md)
 > - Concepto de plan de cursada: [plan-de-cursada.md](../0.%20Planteo/plan-de-cursada.md)
 
@@ -34,9 +61,10 @@ para que el solver de aulas lo procese.
            │
            ▼
 ┌─────────────────────┐
-│  2. Dictados del    │  Crear DictadoDB para cada materia del ciclo;
-│  ciclo              │       toggle activo/inactivo decide qué se
-│                     │       espera dictar este cuatri.
+│  2. Dictados del    │  Crear DictadoDB para cada materia del ciclo.
+│  ciclo              │       Semántica "existencia = activación":
+│                     │       la fila existe ↔ la materia se dicta
+│                     │       este cuatri.
 └──────────┬──────────┘
            │
            ▼
@@ -75,10 +103,12 @@ para que el solver de aulas lo procese.
            │
            ▼
 ┌─────────────────────┐
-│  8. (Próximamente)  │  LP de asignación: cada ClaseDB recibe un
-│  Asignar Aulas      │       AulaDB respetando capacidad, virtuales,
-│                     │       partición teoría/lab, y minimizando
-│                     │       cambios de aula entre clases consecutivas.
+│  8. Asignar Aulas   │  Programa lineal que decide el aula de cada
+│                     │       HorarioDB (patrón semanal) respetando
+│                     │       capacidad, virtuales, partición
+│                     │       teoría/lab, sedes admisibles y no
+│                     │       doble booking. Las ClaseDB heredan
+│                     │       el aula del patrón.
 └─────────────────────┘
 ```
 
@@ -146,66 +176,47 @@ esperadas" contra el cual validar.
 ### 3.1 Crear los dictados
 
 Botón **"Crear dictados"**: para cada materia del plan asignado al
-ciclo, crea un `DictadoDB` con:
+ciclo crea un `DictadoDB` con:
 
 - `dictado_codigo` (`{materia}-{ciclo.anio}-{numero}C` para
   cuatrimestral; `{materia}-{ciclo.anio}` para anual).
-- `activo`: por default `True`, salvo que la materia tenga
-  `dicta_recursado=False` (override por carrera o por materia)
-  o que sea anual y este sea el 2C (linkea a la versión del 1C).
+- Si la regla de recursado dice omitir la materia (por
+  `MateriaDB.dicta_recursado=False`, override, o
+  `CarreraDB.dicta_recursado=False`), el dictado **no se crea**
+  (aparece como omitido con la razón en el resumen). Semántica
+  "existencia = activación": la fila del dictado sólo existe si
+  la materia se dicta.
 
-### 3.2 Toggle activo/inactivo (con edición a mano, modo batch)
+### 3.2 Existencia del dictado (crear / borrar), no toggle activo
 
-Cada fila de la grilla de dictados tiene un toggle "Activo".
-**Activo = la materia es esperada este cuatri**. Inactivo = la
-materia NO se considera para validaciones de cobertura.
+**No hay más toggle "activo/inactivo"** (2026-06-30). La regla
+actual es "existencia = activación":
 
-**Modo batch + marca de edición a mano**: cuando el usuario cambia el
-toggle, el cambio NO se persiste al instante. Se acumula en una
-sección **⏳ Cambios pendientes** que aparece arriba de la grilla
-con una tabla resumen (materia, atributo, actual → nuevo) y dos
-botones: **💾 Aplicar N cambios** y **🚫 Descartar**. Al apretar
-Aplicar, se persiste todo en una transacción y la próxima
-recalculación respeta `DictadoDB.activo_override_manual` como
-marca de edición a mano.
+- **Crear el dictado** ↔ la materia es esperada este cuatri.
+- **Borrar el dictado** ↔ la materia NO se considera para
+  validaciones de cobertura.
 
-> **Por qué batch y no auto-save**: Streamlit interrumpe los reruns
-> en curso cuando el usuario hace clicks rápidos en sucesión. El
-> patrón viejo (commit + rerun por cada toggle) provocaba que esos
-> reruns interrumpidos cancelaran commits intermedios, perdiéndose
-> cambios. El batch evita esto porque hay una única transacción al
-> apretar Aplicar.
+Para borrar un dictado existente se usa
+`borrar_dictado_de_ciclo(session, ciclo_id, dictado_id)`, que
+también pone en NULL las `ClaseDB.dictado_id` huérfanas para que
+sobrevivan (por si se necesita el historial). Para "reactivar" hay
+que volver a crear la fila (`create_dictado_for_materia` o rerunning
+`create_dictados_for_ciclo`).
 
-> **Indicador visual**: el badge a la izquierda del nombre muestra
-> el estado **actual en DB** (no el del session_state). Cuando hay
-> un cambio pendiente para esa fila, aparece la marca
-> `⏳ pendiente` para que el usuario sepa que el toggle está en un
-> valor distinto al de la DB.
+**Panel de divergencias**: cuando la regla vigente y los dictados
+del ciclo no coinciden, la página de Ciclos ofrece un panel de
+sincronización que reporta:
 
-> **Bloqueo de operaciones globales**: mientras hay cambios
-> pendientes, los botones **Crear Dictados** y **Recalcular según
-> reglas** quedan bloqueados (muestran un mensaje pidiendo aplicar
-> o descartar primero) para evitar que pisen el batch.
+- Materias del plan sin dictado creado (`to_create`).
+- Dictados sin materia en el plan (`to_delete`, típicamente por
+  cambio de versión de plan).
+- Dictados existentes que la regla actual diría omitir
+  (`rule_says_skip_but_exists`). **No se borran automáticamente**;
+  el usuario decide caso por caso: borrar o **promover a regla**
+  (setear `MateriaDB.dicta_recursado`) para que en ciclos futuros
+  no aparezca como divergencia.
 
-El indicador 🟢/⚪ a la izquierda del nombre se actualiza tras
-aplicar los cambios. La etiqueta **✋ editado a mano** queda
-visible para los dictados con `activo_override_manual` seteado.
-
-**Por qué importa la marca**: la próxima ejecución de "Recalcular
-según reglas" **respeta las ediciones manuales por default** (no las
-toca). De esta manera el usuario puede desactivar materias comodín
-o sumar excepciones puntuales sin que la regla se las pise.
-
-**Cómo quitar una edición manual**: cada fila marcada muestra un
-botón "Quitar edición manual" debajo del toggle. Al apretarlo se
-borra la marca (`activo_override_manual` vuelve a `None`) sin tocar
-el estado actual de `activo`. La próxima recalculación vuelve a
-evaluar la regla para ese dictado.
-
-> **Source of truth**: el `DictadoDB.activo` sigue siendo la fuente
-> para "qué materias se esperan en el cuatri". El campo
-> `activo_override_manual` sólo afecta cómo se comporta "Recalcular
-> según reglas" frente a esa entrada.
+Detalle completo del flujo en `RECURSADO_Y_VIRTUAL.md`.
 
 > **Materias compartidas y separación visual**: una misma materia
 > (ej. "Cálculo I") puede aparecer en varios planes de carrera. La
@@ -522,28 +533,32 @@ Cuando el plan no tiene conflictos no-ignorados y el usuario aprieta
 **"Activar plan"** desde el panel de validación:
 
 1. Se invoca `activate_plan(session, plan_id)`.
-2. Se desactivan todos los demás planes del mismo ciclo (solo 1
+2. Se desactivan los demás planes del mismo ciclo (sólo un plan
    activo por ciclo).
-3. Se genera `ClaseDB` para cada `HorarioDB` × cada fecha del ciclo
-   donde aplique (`generate_clases_for_plan`):
+3. Se genera `ClaseDB` como **cache técnico** de instancias
+   concretas para cada `HorarioDB` × cada fecha del ciclo donde
+   aplique (`generate_clases_for_plan`):
    - Para cada `HorarioDB(comision=C, dia=Lunes, 8-10)` y cada
      fecha del ciclo cuyo `weekday()` coincida con "Lunes", se
      crea una `ClaseDB(comision_id=C.id, fecha=…, hora_inicio=8,
-     hora_fin=10, aula_id=None)`.
+     hora_fin=10, aula_id=HorarioDB.aula_id)` — hereda el aula del
+     patrón semanal.
    - Materias anuales heredan ambas mitades (1C + 2C).
-   - Las virtuales **se generan también** (la asignación de aula
-     posterior las saltea, pero se necesitan en la planificación
-     general). Una clase es virtual si la materia es virtual de
-     catálogo (`MateriaDB.virtual=True`) **o** si su dictado del
-     ciclo está marcado virtual (`DictadoDB.virtual=True`). El
-     segundo caso permite marcar como "virtual sólo en este ciclo"
-     a recursados u ofertas excepcionales sin tocar el catálogo
-     de la materia (que sigue siendo presencial). El toggle vive
-     en `📆 Ciclos → 📚 Dictados`, columna **Virtual**.
+   - Las virtuales **se generan también** con `aula_id=None`. Una
+     clase es virtual si la materia es virtual de catálogo, si su
+     dictado del ciclo está marcado virtual, o si el horario
+     puntual está marcado virtual (jerarquía en 3 niveles, ver
+     `RECURSADO_Y_VIRTUAL.md`). El toggle a nivel dictado vive en
+     `📆 Ciclos → 📚 Dictados`, columna **Virtual**.
 
 El plan queda con `activo=True` y aparece como `[ACTIVO]` en la
-lista. Las clases generadas son visibles en
-`📊 Planes → Clases`.
+lista.
+
+> **Nota**: desde la deprecación de clases puntuales (2026-07-07)
+> el usuario **no edita `ClaseDB` desde la UI**. Las clases se
+> generan como cache del asignador de aulas y no hay tab de edición
+> por fecha. La única fuente de verdad editable es el patrón
+> semanal (`HorarioDB`).
 
 ---
 
@@ -634,24 +649,19 @@ Detalle completo de la implementación:
 
 ---
 
-## 13. Próximos pasos (LP de asignación)
+## 13. Asignación de aulas (implementado)
 
-Por separado, en otro documento, vamos a plantear:
+El planteo formal y la implementación del programa lineal de
+asignación de aulas están en documentos dedicados:
 
-1. **Variables de decisión**: una por cada `(ClaseDB, AulaDB)`
-   compatible.
-2. **Restricciones**:
-   - Cada `ClaseDB` no virtual recibe **exactamente un** aula.
-   - Una misma `(aula, fecha, slot horario)` admite **a lo sumo
-     una** clase.
-   - Capacidad del aula ≥ inscriptos esperados de la comisión.
-   - Compatibilidad de tipo (lab/teórica) cuando aplica.
-   - Partición teoría/lab por comisión.
-3. **Objetivo**: minimizar la suma ponderada de:
-   - Cambios de aula entre clases consecutivas de la misma comisión.
-   - Sobre-capacidad (penalización suave si la asignación se ajusta).
-   - (Otras heurísticas a definir.)
-4. **Implementación**: PuLP / OR-Tools, integración via
-   `src/services/asignacion_service.py` (no creado aún), ejecución
-   bajo demanda desde la UI con feedback de progreso y un report
-   final.
+- **Planteo formal** (variables, restricciones R1–R10, función
+  objetivo, ejemplos): `1. Diseño/asignacion-aulas-LP.md`.
+- **Implementación** (servicios, flujo, diagnóstico de
+  infactibilidad, panel operativo, edición manual del patrón):
+  `2. Desarrollo/ASIGNACION_IMPL.md`.
+
+El diseño final asigna aulas al **patrón semanal**
+(`HorarioDB.aula_id`) en vez de a cada `ClaseDB` — un orden de
+magnitud menos variables. Las `ClaseDB` heredan el aula del patrón
+al generarse. La UI del panel de asignación vive en la pestaña
+"🏛️ Aulas" de la página de Planes.

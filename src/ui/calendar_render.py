@@ -343,7 +343,7 @@ def render_timetable_calendar(
             else:
                 bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
 
-            v_tag = " [V]" if b.virtual else ""
+            v_tag = " 💻" if b.virtual else ""
             if titulo_compacto:
                 # Modo compacto: solo código + comisión, una sola línea.
                 # Pensado para vistas con muchos bloques solapados
@@ -356,10 +356,15 @@ def render_timetable_calendar(
             else:
                 # Modo completo: materia (codigo + nombre), comision y
                 # aula del patron. FullCalendar respeta los \n cuando
-                # el tema permite eventos altos.
-                aula_line = (
-                    b.aula_label if b.aula_label else "Sin aula"
-                )
+                # el tema permite eventos altos. Si el horario es
+                # virtual no requiere aula: mostramos el icono para
+                # que no parezca un "sin aula" por falta de LP.
+                if b.virtual:
+                    aula_line = "💻 Virtual (no requiere aula)"
+                elif b.aula_label:
+                    aula_line = b.aula_label
+                else:
+                    aula_line = "Sin aula"
                 title = (
                     f"{b.materia_codigo}{v_tag} — {b.materia_nombre}\n"
                     f"{b.comision_nombre}\n"

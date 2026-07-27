@@ -80,13 +80,14 @@ def render_custom_carrera_page():
                             )
                             from sqlmodel import select as _select, col as _col
                             st.divider()
-                            st.markdown("**🏛️ Sedes habilitadas (R10)**")
+                            st.markdown("**🏛️ Sedes habilitadas**")
                             st.caption(
                                 "Las materias exclusivas de esta carrera "
                                 "(no compartidas) sólo se asignan a aulas "
-                                "que estén en estas sedes. Si no seleccionás "
-                                "ninguna, el LP asume 'todas las sedes' "
-                                "como fallback."
+                                "que estén en estas sedes. Si no "
+                                "seleccionás ninguna, se asumen 'todas "
+                                "las sedes' como comportamiento por "
+                                "defecto."
                             )
                             _sedes_db = list(session.exec(
                                 _select(_SedeDB).order_by(_col(_SedeDB.nombre))

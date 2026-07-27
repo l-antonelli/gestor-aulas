@@ -224,11 +224,13 @@ with tab_ciclos:
 with tab_dictados:
     st.subheader("Dictados por Ciclo")
     st.caption(
-        "Los **dictados del ciclo** son lo que la prevalidación de cronogramas "
-        "espera. Si una materia del plan **no se va a dictar** este "
-        "cuatrimestre, **borrá su dictado** (semántica nueva: existe = se "
-        "dicta). La bandera `Virtual` hereda de la materia por defecto y se "
-        "puede overridear caso por caso (Heredar / Virtual / Presencial)."
+        "Los **dictados del ciclo** son las materias que la "
+        "prevalidación de cronogramas espera. Si una materia del plan "
+        "**no se va a dictar** este cuatrimestre, **borrá su "
+        "dictado** (la regla es simple: si existe la fila, se dicta). "
+        "La marca **Virtual** hereda de la materia por defecto y se "
+        "puede sobrescribir caso por caso (Heredar / Virtual / "
+        "Presencial)."
     )
 
     if not ciclo_ids:
@@ -299,22 +301,26 @@ with tab_dictados:
             _cfg5.metric("Recursado fijado a mano", _cfg_n_override)
             if _cfg_n_no_recursado:
                 st.caption(
-                    f"⚠️ {_cfg_n_no_recursado} carrera(s) con "
-                    f"`dicta_recursado=False`: las materias exclusivas y del "
-                    "cuatri opuesto **no se crean** al hacer `Crear Dictados` "
-                    "(quedan como \"skipped\" con la razón). Se pueden crear "
-                    "manualmente desde el panel de divergencias."
+                    f"⚠️ {_cfg_n_no_recursado} carrera(s) marcadas como "
+                    "'no dicta recursado': las materias exclusivas y "
+                    "del cuatri opuesto **no se crean** al usar `Crear "
+                    "Dictados` (quedan omitidas, con la razón "
+                    "registrada). Se pueden crear manualmente desde "
+                    "el panel de divergencias."
                 )
             if _cfg_n_inactive:
                 st.caption(
-                    f"ℹ️ {_cfg_n_inactive} materia(s) con `active=False` "
-                    "(soft-delete) — siguen apareciendo en planes y se crean dictados igual."
+                    f"ℹ️ {_cfg_n_inactive} materia(s) archivadas — "
+                    "siguen apareciendo en planes y se crean dictados "
+                    "igual."
                 )
             st.caption(
-                "Editá `dicta_recursado` (carrera y materia) y la versión del plan "
-                "asignada al ciclo desde **dentro de cada expander de carrera** abajo. "
-                "Después tocá **🔄 Sincronizar según reglas** para alinear los "
-                "dictados con las reglas actualizadas."
+                "Editá la marca 'dicta recursado' (a nivel carrera y "
+                "a nivel materia) y la versión del plan asignada al "
+                "ciclo desde **dentro de cada sección de carrera** "
+                "abajo. Después tocá **🔄 Sincronizar según reglas** "
+                "para alinear los dictados con las reglas "
+                "actualizadas."
             )
 
             st.divider()
@@ -453,7 +459,7 @@ with tab_dictados:
                 else:
                     with st.container(border=True):
                         st.markdown(
-                            f"**Preview de sincronización** — "
+                            f"**Vista previa de sincronización** — "
                             f"{len(_to_create)} a crear, "
                             f"{len(_to_delete)} a borrar."
                         )

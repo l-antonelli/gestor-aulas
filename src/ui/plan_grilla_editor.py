@@ -147,9 +147,10 @@ def _dialog_edit_horario():
             ),
             key="_pge_dlg_tipo",
             help=(
-                "Sin determinar: el LP elige cuál de los bloques con "
-                "horas suficientes será de laboratorio. "
-                "Teórica/Laboratorio: forzar el tipo."
+                "Sin determinar: la asignación automática elige "
+                "cuál de los bloques con horas suficientes será "
+                "de laboratorio. "
+                "Teórica/Laboratorio: fuerza el tipo."
             ),
         )
 
@@ -392,7 +393,9 @@ def _build_plan_grid(
             materia_nombre=mat_nombre,
             hora_inicio=h.hora_inicio,
             hora_fin=h.hora_fin,
-            comision=c.numero,
+            comision_id=c.id,
+            comision_numero=c.numero,
+            comision_nombre=c.nombre,
         )
         grid.setdefault(h.dia, []).append(block)
 
@@ -867,6 +870,10 @@ def _render_tabla_editable_por_materia(
             return False
         return None
 
+    # Carreras disponibles (para la tabla de comisiones separada).
+    with next(get_session()) as _cs:
+        _all_carreras_pge = list(_cs.exec(select(CarreraDB)).all())
+
     df = pd.DataFrame([
         {
             "horario_id": h.id,
@@ -1036,7 +1043,8 @@ def _render_tabla_editable_por_materia(
                 options=["sin determinar", "teorica", "laboratorio"],
                 default="sin determinar",
                 help=(
-                    "sin determinar (LP decide), teorica o laboratorio"
+                    "sin determinar (lo decide la asignación "
+                    "automática), teórica o laboratorio"
                 ),
                 width="small",
             ),
@@ -1045,10 +1053,10 @@ def _render_tabla_editable_por_materia(
                 default="Heredar",
                 help=(
                     "Modalidad de este horario específico. "
-                    "Heredar = usa el flag del dictado/materia. "
-                    "Sí = fuerza virtual (el LP no asigna aula). "
-                    "No = fuerza presencial (aunque el dictado sea "
-                    "virtual)."
+                    "Heredar = usa lo que dice el dictado o la "
+                    "materia. Sí = fuerza virtual (no se asigna "
+                    "aula). No = fuerza presencial (aunque el "
+                    "dictado sea virtual)."
                 ),
                 width="small",
             ),
@@ -1059,6 +1067,151 @@ def _render_tabla_editable_por_materia(
         on_change=_on_change,
         key=de_key,
     )
+
+    # =========================================================================
+    # Tabla editable de COMISIONES del plan para esta materia
+    # =========================================================================
+    #
+    # La comisión es la entidad "dueña" de los atributos que aplican a
+    # todos sus horarios: cupo, coef, carrera_asignada, descripción.
+    # Editar acá afecta a todos los horarios del grupo (via FK).
+    st.markdown("###### Comisiones del plan para esta materia")
+    _carr_opts_full = ["—"] + sorted([c.codigo for c in _all_carreras_pge])
+    _com_df_pge = pd.DataFrame([
+        {
+            "comision_id": c.id,
+            "N°": c.numero,
+            "Nombre": c.nombre,
+            "Cupo": c.cupo,
+            "Coef": c.coef_asignacion,
+            "Carrera asignada": c.carrera_asignada or "—",
+            "Descripción": c.descripcion or "",
+        }
+        for c in sorted(coms, key=lambda c: c.numero)
+    ])
+    _com_de_key_pge = f"{key_ns}_com_de_{plan_id}_{materia_codigo}_{len(coms)}"
+
+    def _com_on_change_pge():
+        edited = st.session_state.get(_com_de_key_pge)
+        if not edited:
+            return
+        n_saved = 0
+        n_deleted = 0
+        blocked: list[str] = []
+        from src.services.comision_service import (
+            delete_comision, update_comision,
+        )
+        with next(get_session()) as sess:
+            for idx_str, changes in (edited.get("edited_rows") or {}).items():
+                idx = int(idx_str)
+                if idx >= len(_com_df_pge):
+                    continue
+                cid = str(_com_df_pge.iloc[idx]["comision_id"])
+                cambios: dict = {}
+                if "N°" in changes:
+                    cambios["numero"] = int(changes["N°"])
+                if "Nombre" in changes:
+                    cambios["nombre"] = str(changes["Nombre"])
+                if "Cupo" in changes:
+                    _new_cupo = int(changes["Cupo"])
+                    if _new_cupo >= 1:
+                        cambios["cupo"] = _new_cupo
+                if "Coef" in changes:
+                    cambios["coef_asignacion"] = float(changes["Coef"])
+                if "Carrera asignada" in changes:
+                    _val = changes["Carrera asignada"]
+                    _new_car = None if _val == "—" else _val
+                    cambios["carrera_asignada"] = _new_car
+                    # Audit log: es un cambio critico para el LP.
+                    from src.services.change_log_service import emit_event
+                    _cur = sess.get(ComisionDB, cid)
+                    if _cur is not None and _cur.carrera_asignada != _new_car:
+                        emit_event(
+                            sess,
+                            entity_type="ComisionDB",
+                            entity_id=cid,
+                            entity_label=(
+                                f"{materia_codigo} · C{_cur.numero} "
+                                f"({_cur.nombre})"
+                            ),
+                            action="updated",
+                            field="carrera_asignada",
+                            old_value=_cur.carrera_asignada,
+                            new_value=_new_car,
+                            reason=(
+                                f"Edición inline en grilla del plan {plan_id}"
+                            ),
+                            origin="ui:planes",
+                        )
+                if "Descripción" in changes:
+                    cambios["descripcion"] = str(changes["Descripción"])
+                if cambios:
+                    update_comision(sess, cid, **cambios)
+                    n_saved += 1
+            for idx in edited.get("deleted_rows") or []:
+                if idx < len(_com_df_pge):
+                    cid = str(_com_df_pge.iloc[idx]["comision_id"])
+                    _res = delete_comision(sess, cid)
+                    if _res.ok:
+                        n_deleted += 1
+                    else:
+                        blocked.extend(_res.errores)
+        if blocked:
+            st.session_state["_pge_com_del_warn"] = "\n\n".join(blocked)
+        if n_saved or n_deleted:
+            _p = []
+            if n_saved:
+                _p.append(f"{n_saved} comisión(es) actualizada(s)")
+            if n_deleted:
+                _p.append(f"{n_deleted} borrada(s)")
+            st.session_state["_pge_toast"] = ", ".join(_p).capitalize()
+
+    st.data_editor(
+        _com_df_pge,
+        column_config={
+            "comision_id": None,
+            "N°": column_config.NumberColumn(
+                "N°", min_value=1, step=1, width="small",
+            ),
+            "Nombre": column_config.TextColumn(width="medium"),
+            "Cupo": column_config.NumberColumn(
+                # min_value=0 para tolerar comisiones legacy con cupo=0
+                # (materia sin `cupo` seteado al momento de generar).
+                # El save filtra los valores 0 para no violar la
+                # constraint `gt=0` de ComisionDB.
+                min_value=0, step=1, width="small",
+                help="Debe ser ≥ 1 para persistirse.",
+            ),
+            "Coef": column_config.NumberColumn(
+                min_value=0.0, max_value=1.0, step=0.01,
+                format="%.2f", width="small",
+                help="Coeficiente de distribución de inscriptos "
+                     "esperados dentro del dictado (suma ~1.0 por dictado).",
+            ),
+            "Carrera asignada": column_config.SelectboxColumn(
+                options=_carr_opts_full,
+                default="—",
+                help=(
+                    "Si tiene valor, la asignación automática "
+                    "restringe la sede del aula a las sedes de esa "
+                    "carrera (comisión orientada a una carrera en "
+                    "particular; por ejemplo, una comisión de Física "
+                    "III para alumnos de Electrónica que debe cursar "
+                    "en Siberia en vez de la sede por defecto de las "
+                    "materias comunes). — = sin restricción especial."
+                ),
+                width="medium",
+            ),
+            "Descripción": column_config.TextColumn(width="large"),
+        },
+        hide_index=True,
+        num_rows="fixed",  # borrado explicito via delete_rows, creacion desde grid de horarios
+        on_change=_com_on_change_pge,
+        key=_com_de_key_pge,
+        use_container_width=True,
+    )
+    if st.session_state.get("_pge_com_del_warn"):
+        st.warning(st.session_state.pop("_pge_com_del_warn"))
 
     # Resumen por comisión
     if hs:

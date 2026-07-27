@@ -12,9 +12,6 @@ patrón actual vs. cuántas tienen variaciones.
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import date, timedelta
-
 import streamlit as st
 from sqlmodel import Session, select
 
@@ -22,7 +19,6 @@ from src.database.crud import get_or_create_config
 from src.database.models import (
     AulaDB,
     CicloDB,
-    ClaseDB,
     ComisionDB,
     MateriaDB,
     PlanificacionCursadaDB,
@@ -36,303 +32,6 @@ def _sede_nombre_map(session: Session) -> dict[str, str]:
     """Devuelve {sede_id: nombre} para todas las sedes existentes."""
     return {s.id: s.nombre for s in session.exec(select(SedeDB)).all()}
 
-
-def _lunes_de_semana(d: date) -> date:
-    """Devuelve el lunes de la semana de ``d``."""
-    return d - timedelta(days=d.weekday())
-
-
-def _semanas_del_ciclo(ciclo: CicloDB) -> list[date]:
-    """Lista de lunes de cada semana del ciclo."""
-    out: list[date] = []
-    cur = _lunes_de_semana(ciclo.fecha_inicio)
-    while cur <= ciclo.fecha_fin:
-        out.append(cur)
-        cur += timedelta(days=7)
-    return out
-
-
-def _clases_de_aula_en_semana(
-    session: Session, plan_id: str, aula_id: str, lunes: date,
-) -> list[ClaseDB]:
-    domingo = lunes + timedelta(days=6)
-    clases = session.exec(
-        select(ClaseDB).where(
-            ClaseDB.plan_cursada_id == plan_id,
-            ClaseDB.aula_id == aula_id,
-            ClaseDB.fecha >= lunes,
-            ClaseDB.fecha <= domingo,
-        )
-    ).all()
-    return list(clases)
-
-
-def _build_timetable_blocks(
-    session: Session, clases: list[ClaseDB],
-) -> dict[str, list[TimetableBlock]]:
-    """Construye el dict día -> [TimetableBlock] que pide
-    ``render_timetable_calendar``."""
-    DOW_TO_DIA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-    grid: dict[str, list[TimetableBlock]] = {}
-    if not clases:
-        return grid
-    com_ids = {c.comision_id for c in clases}
-    materias_codigos = set()
-    comisiones_db = list(session.exec(
-        select(ComisionDB).where(ComisionDB.id.in_(com_ids))  # type: ignore[attr-defined]
-    ).all())
-    com_map = {c.id: c for c in comisiones_db}
-    for c in comisiones_db:
-        materias_codigos.add(c.materia_codigo)
-    materias_db = list(session.exec(
-        select(MateriaDB).where(MateriaDB.codigo.in_(materias_codigos))  # type: ignore[attr-defined]
-    ).all()) if materias_codigos else []
-    mat_map = {m.codigo: m for m in materias_db}
-
-    for c in clases:
-        com = com_map.get(c.comision_id)
-        mat_code = com.materia_codigo if com else "?"
-        mat = mat_map.get(mat_code)
-        dow = c.fecha.weekday()
-        if dow >= len(DOW_TO_DIA):
-            continue
-        dia = DOW_TO_DIA[dow]
-        block = TimetableBlock(
-            materia_codigo=mat_code,
-            materia_nombre=mat.nombre if mat else mat_code,
-            comision_nombre=com.nombre if com else "?",
-            hora_inicio=c.hora_inicio,
-            hora_fin=c.hora_fin,
-            virtual=False,
-            en_periodo=True,
-        )
-        grid.setdefault(dia, []).append(block)
-    return grid
-
-
-def _calcular_divergencias(
-    session: Session, plan_id: str, aula_id: str, ciclo: CicloDB,
-) -> dict:
-    """Para cada (horario_id, comision_id) que en algún momento del ciclo
-    tuvo ese aula asignada, cuenta en cuántas semanas del ciclo el aula
-    fue efectivamente la asignada.
-
-    Devuelve un dict con dos números:
-        - n_uniformes: horarios donde TODAS las clases del ciclo apuntan
-          a este aula.
-        - n_divergentes: horarios donde algunas clases apuntan acá y
-          otras a otra aula (o sin aula).
-    """
-    todas = list(session.exec(
-        select(ClaseDB).where(
-            ClaseDB.plan_cursada_id == plan_id,
-            ClaseDB.fecha >= ciclo.fecha_inicio,
-            ClaseDB.fecha <= ciclo.fecha_fin,
-        )
-    ).all())
-    por_horario: dict[str, list[ClaseDB]] = defaultdict(list)
-    for c in todas:
-        por_horario[c.horario_id].append(c)
-
-    n_uniformes = 0
-    n_divergentes = 0
-    for hid, lista in por_horario.items():
-        aulas = {c.aula_id for c in lista}
-        if aulas == {aula_id}:
-            n_uniformes += 1
-        elif aula_id in aulas:
-            n_divergentes += 1
-    return {"n_uniformes": n_uniformes, "n_divergentes": n_divergentes}
-
-
-@st.dialog("Editar asignación de una clase")
-def _dialog_cambiar_aula(plan_id: str, clase_id: str) -> None:
-    from src.database.connection import get_session
-    from src.services.asignacion_aulas_service import (
-        aplicar_edicion_manual,
-        cambiar_tipo_clase_puntual,
-        clases_del_rango,
-        get_aulas_disponibles,
-        validar_edicion_manual,
-    )
-
-    with next(get_session()) as session:
-        clase = session.get(ClaseDB, clase_id)
-        if clase is None:
-            st.error("Clase no encontrada.")
-            return
-        com = session.get(ComisionDB, clase.comision_id)
-        mat_codigo = com.materia_codigo if com else "?"
-        mat = session.get(MateriaDB, mat_codigo) if mat_codigo != "?" else None
-
-        st.markdown(
-            f"**Materia:** {mat.nombre if mat else mat_codigo}  \n"
-            f"**Comisión:** {com.nombre if com else '?'}  \n"
-            f"**Tipo actual:** {clase.tipo_clase or 'sin determinar'}  \n"
-            f"**Día/Hora:** {clase.fecha.strftime('%a %d/%m')} "
-            f"{clase.hora_inicio.strftime('%H:%M')}–"
-            f"{clase.hora_fin.strftime('%H:%M')}"
-        )
-        if clase.aula_id:
-            aula_actual = session.get(AulaDB, clase.aula_id)
-            if aula_actual:
-                sede_actual = session.get(SedeDB, aula_actual.sede_id)
-                sede_nombre = sede_actual.nombre if sede_actual else "?"
-                st.caption(
-                    f"Aula actual: **{sede_nombre} · "
-                    f"{aula_actual.nombre}** (cap. {aula_actual.capacidad})"
-                )
-
-        modo = st.radio(
-            "Alcance del cambio",
-            options=[
-                "Esta clase puntual",
-                "Rango de fechas",
-                "De hoy en adelante",
-            ],
-            index=1,  # Default: rango (esquema semanal completo).
-            key=f"dlg_modo_{clase_id}",
-            help=(
-                "Por default se edita TODO el rango (esquema semanal). "
-                "Para cambios de una sola fecha usá 'Esta clase puntual'."
-            ),
-        )
-
-        # ── Selector de tipo de clase (sólo habilitado en modo puntual)
-        tipo_actual = clase.tipo_clase if clase.tipo_clase in (
-            "teorica", "laboratorio"
-        ) else "teorica"
-        nuevo_tipo = st.selectbox(
-            "Tipo de clase",
-            options=["teorica", "laboratorio"],
-            index=["teorica", "laboratorio"].index(tipo_actual),
-            key=f"dlg_tipo_{clase_id}",
-            help=(
-                "Cambiá el tipo sólo si esta clase puntual se va a "
-                "dictar excepcionalmente como laboratorio (o como "
-                "teórica). Sólo afecta esta fecha; el resto de las "
-                "semanas mantiene el tipo original."
-            ),
-        )
-        cambiando_tipo = (
-            nuevo_tipo != (clase.tipo_clase or "teorica")
-            and clase.tipo_clase is not None
-        )
-        if cambiando_tipo and modo != "Esta clase puntual":
-            st.error(
-                "El cambio de tipo de clase sólo se admite con alcance "
-                "'Esta clase puntual'. Cambiá el alcance arriba."
-            )
-            return
-        if cambiando_tipo:
-            st.warning(
-                f"Vas a cambiar el tipo de **{clase.tipo_clase}** → "
-                f"**{nuevo_tipo}** sólo para esta clase puntual. La "
-                "aula original quedará liberada para esa fecha y franja."
-            )
-
-        ciclo_id_clase = clase.plan_cursada_id
-        plan = session.get(PlanificacionCursadaDB, ciclo_id_clase)
-        ciclo = session.get(CicloDB, plan.ciclo_id) if plan and plan.ciclo_id else None
-        fecha_desde: date | None = clase.fecha
-        fecha_hasta: date | None = clase.fecha
-        if modo == "Rango de fechas" and ciclo:
-            c1, c2 = st.columns(2)
-            with c1:
-                fecha_desde = st.date_input(
-                    "Desde",
-                    value=ciclo.fecha_inicio,
-                    min_value=ciclo.fecha_inicio,
-                    max_value=ciclo.fecha_fin,
-                    key=f"dlg_fd_{clase_id}",
-                )
-            with c2:
-                fecha_hasta = st.date_input(
-                    "Hasta",
-                    value=ciclo.fecha_fin,
-                    min_value=ciclo.fecha_inicio,
-                    max_value=ciclo.fecha_fin,
-                    key=f"dlg_fh_{clase_id}",
-                )
-        elif modo == "De hoy en adelante" and ciclo:
-            fecha_desde = date.today()
-            fecha_hasta = ciclo.fecha_fin
-
-        clases_a_editar = (
-            [clase]
-            if modo == "Esta clase puntual"
-            else clases_del_rango(
-                session, clase_id,
-                fecha_desde=fecha_desde, fecha_hasta=fecha_hasta,
-            )
-        )
-        st.caption(f"Se editarán **{len(clases_a_editar)} clase(s)**.")
-
-        # Aulas disponibles según el tipo objetivo (si cambia tipo, usamos
-        # ese filtro; si no, dejamos el comportamiento histórico).
-        clase_ids = [c.id for c in clases_a_editar]
-        aulas_disp = get_aulas_disponibles(
-            session, plan_id, clase_ids,
-            tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
-        )
-        if not aulas_disp:
-            st.warning(
-                "No hay aulas compatibles disponibles en todas las "
-                "fechas y franjas elegidas. Probá un rango más chico "
-                "o cambiá el tipo de clase."
-            )
-            return
-        sede_map = _sede_nombre_map(session)
-        opciones = {
-            a.id: (
-                f"{sede_map.get(a.sede_id, '?')} · {a.nombre} "
-                f"(cap. {a.capacidad}, {a.tipo})"
-            )
-            for a in aulas_disp
-        }
-        sel_aula = st.selectbox(
-            "Aula nueva",
-            options=list(opciones.keys()),
-            format_func=lambda x: opciones[x],
-            key=f"dlg_aula_{clase_id}",
-        )
-
-        col_ok, col_no = st.columns(2)
-        with col_ok:
-            if st.button("Confirmar", type="primary", key=f"dlg_ok_{clase_id}"):
-                if cambiando_tipo:
-                    res = cambiar_tipo_clase_puntual(
-                        session, clase.id, nuevo_tipo, sel_aula,
-                    )
-                    if not res.ok:
-                        for e in res.errores:
-                            st.error(e)
-                        return
-                    for w in res.warnings:
-                        st.warning(w)
-                    st.success(
-                        f"Tipo cambiado a **{nuevo_tipo}** y aula "
-                        "reasignada para esta clase puntual."
-                    )
-                    st.rerun()
-                else:
-                    res = validar_edicion_manual(
-                        session, clase_ids, sel_aula,
-                    )
-                    if not res.ok:
-                        for e in res.errores:
-                            st.error(e)
-                        return
-                    for w in res.warnings:
-                        st.warning(w)
-                    n = aplicar_edicion_manual(
-                        session, clase_ids, sel_aula,
-                    )
-                    st.success(f"{n} clase(s) actualizada(s).")
-                    st.rerun()
-        with col_no:
-            if st.button("Cancelar", key=f"dlg_cancel_{clase_id}"):
-                st.rerun()
 
 
 DOW_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
@@ -406,89 +105,6 @@ def _carreras_para_clase(
         "label": label,
     }
 
-
-def _aplicar_filtros(
-    clases: list[ClaseDB],
-    info_por_clase: dict[str, dict],
-    filtros: dict,
-    aula_map: dict[str, AulaDB],
-    sede_map: dict[str, str],
-) -> list[ClaseDB]:
-    """Filtra una lista de ``ClaseDB`` según el dict de filtros.
-
-    Reglas relevantes:
-
-    - ``comunes_mode='Sólo comunes'``: una materia es común si pertenece
-      a más de una carrera. Si además hay carreras seleccionadas, la
-      materia debe pertenecer a (cualquiera de) las carreras
-      seleccionadas y NO ser exclusiva (es decir, también debe aparecer
-      en otra carrera fuera o dentro del set seleccionado, lo que es
-      lo mismo que ``len(carreras_codigos) >= 2``).
-    - ``comunes_mode='Sólo exclusivas'``: la materia debe pertenecer a
-      una única carrera (``len(carreras_codigos) == 1``), y si hay
-      carreras seleccionadas debe ser justamente alguna de ellas.
-    - ``comunes_mode='Todas'``: sin filtro extra.
-
-    El filtro ``carreras`` (multiselect) sigue actuando como restricción
-    independiente: si está seteado, sólo pasan materias que tengan
-    intersección con ese set.
-    """
-    out: list[ClaseDB] = []
-    f_carreras: set[str] = set(filtros.get("carreras") or [])
-    f_anios: set[int] = set(filtros.get("anios") or [])
-    f_cuatris: set[str] = set(filtros.get("cuatris") or [])
-    f_tipos: set[str] = set(filtros.get("tipos") or [])
-    f_dias: set[str] = set(filtros.get("dias") or [])
-    f_sedes: set[str] = set(filtros.get("sedes") or [])
-    f_solo_manuales: bool = bool(filtros.get("solo_manuales"))
-    f_busca: str = (filtros.get("buscar") or "").strip().lower()
-    f_aula: str | None = filtros.get("aula_id")
-    f_comunes_mode: str = filtros.get("comunes_mode") or "Todas"
-
-    for c in clases:
-        info = info_por_clase.get(c.id, {})
-        carr_codes: set[str] = info.get("carreras_codigos", set())
-        if f_aula and c.aula_id != f_aula:
-            continue
-        if f_carreras and not (carr_codes & f_carreras):
-            continue
-        if f_comunes_mode == "Sólo comunes":
-            # Común = aparece en >=2 carreras.
-            if len(carr_codes) < 2:
-                continue
-        elif f_comunes_mode == "Sólo exclusivas":
-            if len(carr_codes) != 1:
-                continue
-        if f_anios and not (info["anios"] & f_anios):
-            continue
-        if f_cuatris and not (info["cuatris"] & f_cuatris):
-            continue
-        if f_tipos:
-            tipo_label = c.tipo_clase or "sin determinar"
-            if tipo_label not in f_tipos:
-                continue
-        if f_dias:
-            dia_label = DOW_NAMES[c.fecha.weekday()] if c.fecha.weekday() < 7 else ""
-            if dia_label not in f_dias:
-                continue
-        if f_sedes:
-            aula = aula_map.get(c.aula_id) if c.aula_id else None
-            sede_id = aula.sede_id if aula else None
-            sede_nombre = sede_map.get(sede_id, "") if sede_id else ""
-            if sede_nombre not in f_sedes:
-                continue
-        if f_solo_manuales and not c.aula_asignada_manualmente:
-            continue
-        if f_busca:
-            mat_codigo = info.get("materia_codigo", "") or ""
-            mat_nombre = info.get("materia_nombre", "") or ""
-            if (
-                f_busca not in mat_codigo.lower()
-                and f_busca not in mat_nombre.lower()
-            ):
-                continue
-        out.append(c)
-    return out
 
 
 _DEFAULT_FILTROS: dict = {
@@ -759,6 +375,8 @@ def _build_horario_rows_v2(
     mat_map: dict[str, MateriaDB],
     aula_map: dict[str, AulaDB],
     plan_estudio_cache: dict,
+    *,
+    dictado_virtual_por_materia: dict[str, bool | None] | None = None,
 ) -> list[dict]:
     """Arma una fila por ``HorarioDB`` leyendo directamente
     ``HorarioDB.aula_id`` (el patrón persistido). NO infiere por
@@ -769,13 +387,23 @@ def _build_horario_rows_v2(
       - id, día, hora_inicio, hora_fin, tipo_clase del horario.
       - aula del patrón (objeto AulaDB o None).
       - info derivada de la materia (carreras, año, cuatri, etc.).
+      - `es_virtual`: bool resuelto via jerarquia horario > dictado >
+        materia (para diferenciar "no tiene aula porque el LP no
+        corrio" de "no tiene aula porque es virtual").
     """
+    from src.services.resolucion_jerarquica import resolve_virtual
+    _dv = dictado_virtual_por_materia or {}
     rows: list[dict] = []
     for h in horarios_db:
         com = com_map.get(h.comision_id)
         mat_codigo = com.materia_codigo if com else (h.codigo_materia or "")
         mat = mat_map.get(mat_codigo) if mat_codigo else None
         carr_info = _carreras_para_clase(mat_codigo, plan_estudio_cache)
+        es_virtual = resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=_dv.get(mat_codigo),
+            materia_virtual=(mat.virtual if mat else False),
+        )
         rows.append({
             "horario_id": h.id,
             "dia": h.dia,
@@ -788,6 +416,7 @@ def _build_horario_rows_v2(
             "tipo_clase": h.tipo_clase,
             "aula_id": h.aula_id,
             "aula_obj": aula_map.get(h.aula_id) if h.aula_id else None,
+            "es_virtual": es_virtual,
             **carr_info,
         })
     dia_idx = {d: i for i, d in enumerate(DOW_NAMES)}
@@ -891,7 +520,7 @@ def _build_grid_from_rows(
     return grid
 
 
-@st.dialog("Editar aula del patrón semanal")
+@st.dialog("Editar aula del horario")
 def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
     """Diálogo para cambiar el aula del PATRÓN (HorarioDB.aula_id).
 
@@ -936,9 +565,8 @@ def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
             st.caption("Aula actual: **sin asignar**")
 
         st.info(
-            "El cambio afecta el patrón semanal: todas las clases del "
-            "horario heredarán la nueva aula. Las excepciones puntuales "
-            "previas (clases con override manual) se mantienen."
+            "El cambio afecta a todo el horario: todas las clases de "
+            "ese horario semanal heredarán la nueva aula."
         )
 
         # Tipo de clase del patrón.
@@ -984,7 +612,7 @@ def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
         if horario.aula_id and horario.aula_id in [a.id for a in aulas_disp]:
             default_idx = opciones.index(horario.aula_id)
         sel_aula = st.selectbox(
-            "Aula del patrón",
+            "Aula asignada",
             options=opciones,
             index=default_idx,
             format_func=lambda x: labels[x],
@@ -1009,8 +637,8 @@ def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
                 for w in res.warnings:
                     st.warning(w)
                 st.success(
-                    "Patrón actualizado. Las clases del horario "
-                    "(sin excepciones manuales) heredaron el cambio."
+                    "Aula actualizada. Las clases del horario "
+                    "heredaron el cambio."
                 )
                 st.rerun()
         with col_no:
@@ -1045,12 +673,12 @@ def render_aula_cronograma(
         st.error("Ciclo del plan no encontrado.")
         return
 
-    st.subheader("📅 Patrón semanal de aulas")
+    st.subheader("📅 Aulas asignadas por horario")
     st.caption(
-        "El LP asigna aulas al patrón semanal (lo que se repite todas "
-        "las semanas). Las clases puntuales heredan automáticamente. "
-        "Si todavía no corriste el LP, los horarios aparecen como "
-        "'Sin asignar' y podés editarlos a mano."
+        "La asignación automática elige un aula para cada horario "
+        "semanal del plan (lo que se repite todas las semanas). Si "
+        "todavía no corriste la asignación, los horarios aparecen "
+        "como 'Sin asignar' y podés editarlos a mano."
     )
 
     # Comisiones del plan.
@@ -1101,9 +729,25 @@ def render_aula_cronograma(
 
     sede_map = _sede_nombre_map(session)
 
+    # Precargar virtualidad del dictado por materia del ciclo del plan
+    # para resolver `resolve_virtual` en cada fila.
+    from src.database.models import DictadoCicloDB, DictadoDB
+    dictado_virtual_por_materia: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(DictadoDB.materia_codigo, DictadoDB.virtual)
+            .join(
+                DictadoCicloDB,
+                DictadoDB.id == DictadoCicloDB.dictado_id,  # type: ignore[arg-type]
+            )
+            .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
+        ).all():
+            dictado_virtual_por_materia[mc] = v
+
     # Filas (1 por HorarioDB), leyendo aula_id directamente del patrón.
     rows = _build_horario_rows_v2(
         horarios_db, com_map, mat_map, aula_map, plan_estudio_cache,
+        dictado_virtual_por_materia=dictado_virtual_por_materia,
     )
 
     # Panel de filtros.
@@ -1117,7 +761,7 @@ def render_aula_cronograma(
     # Cronograma consolidado del patrón.
     if mostrar_cronograma:
         st.divider()
-        st.markdown("**Cronograma del patrón semanal**")
+        st.markdown("**Vista de cronograma semanal**")
         grid = _build_grid_from_rows(rows_filtradas, sede_map)
         if grid:
             config = get_or_create_config(session)
@@ -1133,7 +777,7 @@ def render_aula_cronograma(
 
     # Tabla del patrón.
     st.divider()
-    st.markdown("**Patrón semanal (filtros aplicados)**")
+    st.markdown("**Horarios asignados (filtros aplicados)**")
     n_sin_aula = sum(1 for r in rows if r.get("aula_id") is None)
     st.caption(
         f"{len(rows_filtradas)} de {len(rows)} horarios matchean los "
@@ -1158,9 +802,14 @@ def render_aula_cronograma(
     for r in rows_filtradas:
         aula = r.get("aula_obj")
         sede_nombre = sede_map.get(aula.sede_id, "?") if aula else "—"
-        aula_label = (
-            f"{sede_nombre} · {aula.nombre}" if aula else "📭 Sin asignar"
-        )
+        if aula:
+            aula_label = f"{sede_nombre} · {aula.nombre}"
+        elif r.get("es_virtual"):
+            # No requiere aula: el horario es virtual (resuelto por
+            # jerarquía horario > dictado > materia).
+            aula_label = "💻 Virtual (no requiere aula)"
+        else:
+            aula_label = "📭 Sin asignar"
         anios = r.get("anios", set())
         cuatris = r.get("cuatris", set())
         anio_lbl = (

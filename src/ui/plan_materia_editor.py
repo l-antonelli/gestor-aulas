@@ -31,6 +31,7 @@ from sqlmodel import col, select
 from src.database.connection import get_session
 from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
+    CarreraDB,
     CicloDB,
     ComisionDB,
     HorarioDB,
@@ -124,7 +125,7 @@ def _dialog_edit_horario():
             "Fin", value=pending["hora_fin"], key="_pme_dlg_fin",
         )
 
-    col_com, col_tipo = st.columns(2)
+    col_com, col_tipo, col_virt = st.columns(3)
     with col_com:
         new_com_lbl = st.selectbox(
             "Comisión",
@@ -145,9 +146,29 @@ def _dialog_edit_horario():
             ),
             key="_pme_dlg_tipo",
             help=(
-                "Sin determinar: el LP elige cuál de los bloques con "
-                "horas suficientes será de laboratorio. "
-                "Teórica/Laboratorio: forzar el tipo."
+                "Sin determinar: la asignación automática elige "
+                "cuál de los bloques con horas suficientes será de "
+                "laboratorio. Teórica/Laboratorio: fuerza el tipo."
+            ),
+        )
+    with col_virt:
+        _virtual_labels = ["Heredar", "Sí", "No"]
+        _pending_virtual = pending.get("virtual")  # Optional[bool]
+        _pending_virtual_lbl = (
+            "Sí" if _pending_virtual is True
+            else "No" if _pending_virtual is False
+            else "Heredar"
+        )
+        new_virtual_lbl = st.selectbox(
+            "Virtual",
+            options=_virtual_labels,
+            index=_virtual_labels.index(_pending_virtual_lbl),
+            key="_pme_dlg_virtual",
+            help=(
+                "Modalidad de este horario específico. "
+                "Heredar = usa lo que dice el dictado o la materia. "
+                "Sí = fuerza virtual (no se asigna aula). "
+                "No = fuerza presencial (aunque el dictado sea virtual)."
             ),
         )
 
@@ -175,6 +196,10 @@ def _dialog_edit_horario():
             )
             if _new_tipo_val != (pending.get("tipo_clase") or None):
                 cambios["tipo_clase"] = _new_tipo_val
+            _label_to_virtual_map = {"Heredar": None, "Sí": True, "No": False}
+            _new_virtual_val = _label_to_virtual_map.get(new_virtual_lbl)
+            if _new_virtual_val != pending.get("virtual"):
+                cambios["virtual"] = _new_virtual_val
 
             if cambios:
                 with next(get_session()) as session:
@@ -253,7 +278,7 @@ def _dialog_add_horario():
         f"{pending['hora_fin'].strftime('%H:%M')}"
     )
 
-    col_com, col_tipo = st.columns(2)
+    col_com, col_tipo, col_virt = st.columns(3)
     with col_com:
         new_com_lbl = st.selectbox(
             "Comisión",
@@ -268,11 +293,26 @@ def _dialog_add_horario():
             options=_tipo_options, index=0,
             key="_pme_dlg_add_tipo",
         )
+    with col_virt:
+        _virtual_labels = ["Heredar", "Sí", "No"]
+        new_virtual_lbl = st.selectbox(
+            "Virtual",
+            options=_virtual_labels, index=0,
+            key="_pme_dlg_add_virtual",
+            help=(
+                "Modalidad de este horario específico. "
+                "Heredar = usa lo que dice el dictado o la materia. "
+                "Sí = fuerza virtual (no se asigna aula). "
+                "No = fuerza presencial."
+            ),
+        )
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirmar", type="primary", use_container_width=True):
             _tipo_val = None if new_tipo == "sin determinar" else new_tipo
+            _label_to_virtual_map = {"Heredar": None, "Sí": True, "No": False}
+            _virtual_val = _label_to_virtual_map.get(new_virtual_lbl)
             with next(get_session()) as session:
                 _target_com_id = _com_options[new_com_lbl]
                 if _target_com_id is None:
@@ -302,6 +342,7 @@ def _dialog_add_horario():
                     hora_inicio=pending["hora_inicio"],
                     hora_fin=pending["hora_fin"],
                     tipo_clase=_tipo_val,
+                    virtual=_virtual_val,
                 )
                 session.add(_new_h)
                 session.commit()
@@ -375,7 +416,9 @@ def _render_plan_editable_calendar(
             materia_nombre=_mat_nombre,
             hora_inicio=h.hora_inicio,
             hora_fin=h.hora_fin,
-            comision=com.numero if com else None,
+            comision_id=h.comision_id,
+            comision_numero=com.numero if com else None,
+            comision_nombre=com.nombre if com else None,
         )
         grid_filt.setdefault(h.dia, []).append(block)
 
@@ -425,6 +468,7 @@ def _render_plan_editable_calendar(
             _baseline_hf = _h.hora_fin
             _tipo = _h.tipo_clase
             _com_id = _h.comision_id
+            _virtual = _h.virtual
         st.session_state["_pme_pending_click"] = {
             "plan_id": plan_id,
             "horario_id": action.entry_id,
@@ -434,6 +478,7 @@ def _render_plan_editable_calendar(
             "hora_fin": action.hora_fin,
             "comision_id": _com_id,
             "tipo_clase": _tipo,
+            "virtual": _virtual,
             "_baseline_dia": _baseline_dia,
             "_baseline_hi": _baseline_hi,
             "_baseline_hf": _baseline_hf,
@@ -449,6 +494,7 @@ def _render_plan_editable_calendar(
             _h = session.get(HorarioDB, action.entry_id)
             _tipo = _h.tipo_clase if _h else None
             _com_id = _h.comision_id if _h else None
+            _virtual = _h.virtual if _h else None
         st.session_state["_pme_pending_click"] = {
             "plan_id": plan_id,
             "horario_id": action.entry_id,
@@ -458,6 +504,7 @@ def _render_plan_editable_calendar(
             "hora_fin": action.hora_fin,
             "comision_id": _com_id,
             "tipo_clase": _tipo,
+            "virtual": _virtual,
             "_kp": kp,
             "_key": _key_str,
         }
@@ -552,8 +599,8 @@ def _editar_horas_materia(
             key=f"{kp}_hlab", label_visibility="collapsed",
             help=(
                 "Horas semanales fijas como laboratorio. Si tiene lab "
-                "asignado pero Hs lab = 0, se asume reserva ad-hoc "
-                "(decide el docente fuera del LP)."
+                "asignado pero Hs lab = 0, se asume reserva puntual "
+                "(la decide el docente por afuera del sistema)."
             ),
         )
 
@@ -567,8 +614,8 @@ def _editar_horas_materia(
         if has_lab and new_hlab == 0 and sum_ok:
             st.caption(
                 "ℹ️ Tiene laboratorios asignados con **Hs lab = 0** → "
-                "reserva ad-hoc: el LP no fija lab; los docentes lo "
-                "reservan caso por caso."
+                "reserva puntual: la asignación automática no fija "
+                "el lab; los docentes lo reservan caso por caso."
             )
 
         # Auto-save si suma OK y hay cambios
@@ -849,6 +896,12 @@ def _render_bulk_horario_editor(
         "Lunes": 0, "Martes": 1, "Miércoles": 2,
         "Jueves": 3, "Viernes": 4, "Sábado": 5,
     }
+    def _virtual_to_lbl(v: bool | None) -> str:
+        return "Sí" if v is True else "No" if v is False else "Heredar"
+
+    def _lbl_to_virtual(lbl: str) -> bool | None:
+        return {"Sí": True, "No": False}.get(lbl)
+
     _de_rows = []
     for _de_com in mat_coms:
         for _de_h in horarios_by_comision.get(_de_com.id, []):
@@ -859,13 +912,14 @@ def _render_bulk_horario_editor(
                 "Fin": _de_h.hora_fin,
                 "Comisión": _de_com.nombre,
                 "Tipo": _de_h.tipo_clase or "sin determinar",
+                "Virtual": _virtual_to_lbl(_de_h.virtual),
             })
 
     _de_df = (
         pd.DataFrame(_de_rows)
         if _de_rows
         else pd.DataFrame(
-            columns=["_hid", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
+            columns=["_hid", "Día", "Inicio", "Fin", "Comisión", "Tipo", "Virtual"]
         )
     )
     if not _de_df.empty:
@@ -904,6 +958,17 @@ def _render_bulk_horario_editor(
                 options=["sin determinar", "teorica", "laboratorio"],
                 default="sin determinar", width="small",
             ),
+            "Virtual": st.column_config.SelectboxColumn(
+                "Virtual",
+                options=["Heredar", "Sí", "No"],
+                default="Heredar", width="small",
+                help=(
+                    "Modalidad de este horario específico. "
+                    "Heredar = usa lo que dice el dictado o la materia. "
+                    "Sí = fuerza virtual (no se asigna aula). "
+                    "No = fuerza presencial."
+                ),
+            ),
         },
         num_rows="dynamic",
         use_container_width=True,
@@ -912,8 +977,9 @@ def _render_bulk_horario_editor(
     )
 
     # Detect changes
-    _de_orig_cmp = _de_df[["Día", "Inicio", "Fin", "Comisión", "Tipo"]].reset_index(drop=True)
-    _de_edit_cmp = _de_edited[["Día", "Inicio", "Fin", "Comisión", "Tipo"]].reset_index(drop=True)
+    _cmp_cols = ["Día", "Inicio", "Fin", "Comisión", "Tipo", "Virtual"]
+    _de_orig_cmp = _de_df[_cmp_cols].reset_index(drop=True)
+    _de_edit_cmp = _de_edited[_cmp_cols].reset_index(drop=True)
     _de_has_changes = (
         len(_de_orig_cmp) != len(_de_edit_cmp)
         or not _de_orig_cmp.equals(_de_edit_cmp)
@@ -947,6 +1013,9 @@ def _render_bulk_horario_editor(
                         None
                         if (_row.get("Tipo") or "sin determinar") == "sin determinar"
                         else str(_row["Tipo"])
+                    ),
+                    "virtual": _lbl_to_virtual(
+                        _row.get("Virtual") or "Heredar"
                     ),
                 })
 
@@ -1163,7 +1232,7 @@ def _render_comision_row(
     )
 
     with st.expander(_hdr, expanded=False):
-        # --- Fila editable: nombre / peso / esperados (read-only) ---
+        # --- Fila 1: nombre / peso / esperados (read-only) ---
         col_name, col_peso, col_esp = st.columns([3, 1.5, 1.5])
         with col_name:
             new_name = st.text_input(
@@ -1199,24 +1268,114 @@ def _render_comision_row(
             else:
                 st.caption("Esperados: —")
 
+        # --- Fila 2: cupo / carrera_asignada / descripción ---
+        col_cupo, col_carr, col_desc = st.columns([1.5, 2, 3])
+        with col_cupo:
+            # min_value=0 para tolerar comisiones legacy generadas con
+            # cupo=0 cuando la materia no tenía `cupo` seteado. El
+            # service (`update_comision` → `ComisionDB.cupo`) valida
+            # `gt=0`, pero el widget acepta 0 para poder MOSTRAR el
+            # valor actual sin romper el rerun. Al guardar, si sigue
+            # en 0 lo tratamos como "no cambia" (no lo empujamos al
+            # service, para no violar la constraint).
+            new_cupo = st.number_input(
+                "Cupo",
+                value=int(com.cupo) if int(com.cupo) >= 1 else 0,
+                min_value=0, step=1,
+                key=f"{key_ns}_com_cupo_{com.id}",
+                help=(
+                    "Cupo máximo de alumnos que se pueden anotar. "
+                    "Debe ser ≥ 1 para persistirse."
+                ),
+            )
+        with col_carr:
+            with next(get_session()) as _cs:
+                _all_carreras = list(_cs.exec(select(CarreraDB)).all())
+            _carr_opts = ["—"] + sorted([c.codigo for c in _all_carreras])
+            _current_carr = com.carrera_asignada or "—"
+            _default_idx = _carr_opts.index(_current_carr) if _current_carr in _carr_opts else 0
+            new_carr_label = st.selectbox(
+                "Carrera asignada",
+                options=_carr_opts,
+                index=_default_idx,
+                key=f"{key_ns}_com_carr_{com.id}",
+                help=(
+                    "Si tiene valor, la asignación automática "
+                    "restringe la sede del aula a las sedes de esa "
+                    "carrera (comisión orientada a una carrera en "
+                    "particular, por ejemplo Física III para "
+                    "Electrónica → Siberia). — = sin restricción "
+                    "especial (regla habitual por materia)."
+                ),
+            )
+        with col_desc:
+            new_desc = st.text_input(
+                "Descripción",
+                value=com.descripcion or "",
+                key=f"{key_ns}_com_desc_{com.id}",
+                help=(
+                    "Nota libre (ej. 'para alumnos de Electrónica')."
+                ),
+            )
+
         # Persist peso change immediately (sin botón)
         if abs(new_peso - com.coef_asignacion) > 1e-9:
             with next(get_session()) as _coef_s:
                 _upd_coef(_coef_s, com.id, new_peso)
             st.rerun()
 
-        # Save name change si cambió
+        # Save name / cupo / carrera_asignada / descripción si cambió.
+        # Cupo=0 no se persiste (ComisionDB tiene constraint gt=0): es
+        # el caso de comisiones legacy generadas cuando la materia no
+        # tenía cupo. El widget lo muestra, pero para guardar hay que
+        # subirlo a ≥1.
+        _new_carr = None if new_carr_label == "—" else new_carr_label
+        _cur_cupo = int(com.cupo)
+        _cur_desc = com.descripcion or ""
+        _cambios: dict = {}
         if new_name != com.nombre:
+            _cambios["nombre"] = new_name
+        if int(new_cupo) != _cur_cupo and int(new_cupo) >= 1:
+            _cambios["cupo"] = int(new_cupo)
+        if _new_carr != com.carrera_asignada:
+            _cambios["carrera_asignada"] = _new_carr
+        if new_desc != _cur_desc:
+            _cambios["descripcion"] = new_desc
+
+        if _cambios:
             if st.button(
-                "💾 Guardar nombre",
+                "💾 Guardar cambios",
                 key=f"{key_ns}_save_com_{com.id}",
+                type="primary",
             ):
+                from src.services.comision_service import update_comision
                 with next(get_session()) as session:
-                    db_com = session.get(ComisionDB, com.id)
-                    if db_com:
-                        db_com.nombre = new_name
-                        session.add(db_com)
-                        session.commit()
+                    # Audit log de carrera_asignada (afecta al LP).
+                    if "carrera_asignada" in _cambios:
+                        from src.services.change_log_service import (
+                            emit_event,
+                        )
+                        db_com_pre = session.get(ComisionDB, com.id)
+                        if db_com_pre is not None and db_com_pre.carrera_asignada != _new_carr:
+                            emit_event(
+                                session,
+                                entity_type="ComisionDB",
+                                entity_id=com.id,
+                                entity_label=(
+                                    f"{materia_codigo} · C{com.numero} "
+                                    f"({com.nombre})"
+                                ),
+                                action="updated",
+                                field="carrera_asignada",
+                                old_value=db_com_pre.carrera_asignada,
+                                new_value=_new_carr,
+                                reason=(
+                                    f"Edición desde plan_materia_editor "
+                                    f"(plan {com.plan_cursada_id})"
+                                ),
+                                origin="ui:planes",
+                            )
+                    update_comision(session, com.id, **_cambios)
                 st.success("Comisión actualizada")
                 st.rerun()
 
@@ -1294,23 +1453,62 @@ def _render_comision_row(
         st.divider()
 
         # --- Eliminar comisión (al pie del expander) ---
-        if st.button(
-            "🗑️ Eliminar comisión",
-            key=f"{key_ns}_del_com_{com.id}",
-            help="Borra la comisión y todos sus horarios. Irreversible.",
-        ):
-            with next(get_session()) as session:
-                hs = session.exec(
-                    select(HorarioDB).where(HorarioDB.comision_id == com.id)
-                ).all()
-                for h in hs:
-                    session.delete(h)
-                db_com = session.get(ComisionDB, com.id)
-                if db_com:
-                    session.delete(db_com)
-                session.commit()
-            st.success(f"Comisión '{com.nombre}' eliminada")
-            st.rerun()
+        # Dos pasos: primero borrar todos los horarios (con confirmación
+        # explícita); luego borrar la comisión vía `delete_comision` que
+        # revalida que no queden dependencias. Esta UX preserva la
+        # semántica destructiva pero pasa por el guardián del service.
+        _confirm_key = f"{key_ns}_del_com_confirm_{com.id}"
+        _pending_del = st.session_state.get(_confirm_key, False)
+        if not _pending_del:
+            if st.button(
+                "🗑️ Eliminar comisión",
+                key=f"{key_ns}_del_com_{com.id}",
+                help=(
+                    "Borra la comisión y todos sus horarios. "
+                    "Requiere confirmación."
+                ),
+            ):
+                st.session_state[_confirm_key] = True
+                st.rerun()
+        else:
+            st.warning(
+                f"⚠️ Vas a borrar '{com.nombre}' y sus "
+                f"{len(com_horarios)} horario(s). Es irreversible."
+            )
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                if st.button(
+                    "Confirmar borrado",
+                    key=f"{key_ns}_del_com_do_{com.id}",
+                    type="primary",
+                ):
+                    from src.services.comision_service import delete_comision
+                    with next(get_session()) as session:
+                        # 1) Borrar horarios de la comisión (necesario
+                        # para que delete_comision no bloquee).
+                        hs = session.exec(
+                            select(HorarioDB).where(
+                                HorarioDB.comision_id == com.id
+                            )
+                        ).all()
+                        for h in hs:
+                            session.delete(h)
+                        session.commit()
+                        # 2) delete_comision valida que no queden FKs.
+                        res = delete_comision(session, com.id)
+                    if res.ok:
+                        st.session_state.pop(_confirm_key, None)
+                        st.success(f"Comisión '{com.nombre}' eliminada")
+                        st.rerun()
+                    else:
+                        st.error("\n\n".join(res.errores))
+            with _c2:
+                if st.button(
+                    "Cancelar",
+                    key=f"{key_ns}_del_com_cancel_{com.id}",
+                ):
+                    st.session_state.pop(_confirm_key, None)
+                    st.rerun()
 
 
 # =============================================================================

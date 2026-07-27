@@ -30,6 +30,256 @@ from src.database.models import (
 # Helpers
 # =============================================================================
 
+def _get_horarios_virtuales_ahora(
+    session: Session, plan_id: str,
+) -> set[str]:
+    """Devuelve el set de ``horario_id`` que actualmente resuelven como
+    virtuales en el plan (según jerarquía horario > dictado > materia).
+
+    Se usa para filtrar diagnósticos del snapshot del LPRun cuando el
+    usuario marcó algún horario virtual **después** de correr el LP —
+    esos horarios ya no cuentan aunque el snapshot los siga listando.
+    """
+    from src.database.models import (
+        ComisionDB as _Com,
+        DictadoCicloDB as _DictCic,
+        DictadoDB as _Dict,
+        HorarioDB as _Hor,
+        MateriaDB as _Mat,
+        PlanificacionCursadaDB as _Plan,
+    )
+    from src.services.resolucion_jerarquica import resolve_virtual
+
+    plan = session.get(_Plan, plan_id)
+    if plan is None:
+        return set()
+    com_ids = list(session.exec(
+        select(_Com.id).where(_Com.plan_cursada_id == plan_id)
+    ).all())
+    if not com_ids:
+        return set()
+    hs = list(session.exec(
+        select(_Hor).where(_Hor.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    materias_codes = sorted({h.codigo_materia for h in hs})
+    materias = list(session.exec(
+        select(_Mat).where(_Mat.codigo.in_(materias_codes))  # type: ignore[attr-defined]
+    ).all()) if materias_codes else []
+    materia_virtual = {m.codigo: m.virtual for m in materias}
+    materia_dictado_virtual: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(_Dict.materia_codigo, _Dict.virtual)
+            .join(_DictCic, _Dict.id == _DictCic.dictado_id)  # type: ignore[arg-type]
+            .where(_DictCic.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dictado_virtual[mc] = v
+    return {
+        h.id for h in hs
+        if resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        )
+    }
+
+
+def _filtrar_diag_virtuales(
+    diag: Optional[dict], virtuales: set[str],
+) -> Optional[dict]:
+    """Devuelve una copia del `diag` (dict serializado de
+    `InfeasibilityDiagnosis`) con los items que **solo** referencian
+    horarios ahora-virtuales eliminados. Preserva items multi-horario
+    donde queda al menos un horario no-virtual (sólo actualiza los
+    contadores derivados donde es trivial).
+
+    Sin este filtro, tras marcar un horario virtual desde el inspector,
+    el snapshot cacheado del LPRun sigue mostrando ese horario como
+    "faltante", aunque el modelo ahora lo ignore.
+
+    Nota: `particion_problemas` no se filtra ni se renderiza en el
+    diagnóstico del tab Aulas — esa validación vive en la página de
+    detalle del plan (10 checks por materia).
+    """
+    if not diag or not virtuales:
+        return diag
+
+    def _keep_single(items: list[dict]) -> list[dict]:
+        return [
+            i for i in items
+            if i.get("horario_id") not in virtuales
+        ]
+
+    def _keep_multi(items: list[dict]) -> list[dict]:
+        out = []
+        for i in items:
+            ids = i.get("horario_ids") or []
+            filtered_ids = [x for x in ids if x not in virtuales]
+            if not filtered_ids:
+                continue
+            new = dict(i)
+            new["horario_ids"] = filtered_ids
+            # Actualizar contadores triviales si aparecen.
+            if "n_clases" in new:
+                new["n_clases"] = len(filtered_ids)
+            out.append(new)
+        return out
+
+    new_diag = dict(diag)
+    if diag.get("horarios_sin_aula_compatible"):
+        new_diag["horarios_sin_aula_compatible"] = _keep_single(
+            diag["horarios_sin_aula_compatible"]
+        )
+    for key in (
+        "franjas_saturadas",
+        "saturacion_por_tipo",
+        "hall_violators",
+    ):
+        if diag.get(key):
+            new_diag[key] = _keep_multi(diag[key])
+    return new_diag
+
+
+def _recompute_heatmap_por_sede_live(
+    session: Session, plan_id: str,
+) -> Optional[dict]:
+    """Recomputa el mapa de saturación por sede leyendo horarios frescos
+    de la DB (respetando `HorarioDB.virtual` actual y regla jerárquica
+    horario > dictado > materia).
+
+    Devuelve el mismo shape que `heatmap_por_sede` del `LPRunDB.details_json`
+    (para poder swapearlo sin cambiar el render). Devuelve None si el
+    plan no tiene comisiones/horarios.
+
+    Este helper existe porque el snapshot del último LPRun queda desac-
+    tualizado apenas el usuario marca un horario como virtual desde el
+    inspector de franja: el heatmap y el mensaje "Faltan N aulas" seguirían
+    contando el horario aunque ya no cuente. Con este recompute, la vista
+    se sincroniza con el estado real de la DB en cada rerun.
+    """
+    from src.database.models import (
+        ComisionDB as _Com,
+        DictadoCicloDB as _DictCic,
+        DictadoDB as _Dict,
+        HorarioDB as _Hor,
+        MateriaDB as _Mat,
+        MateriaLaboratorioDB as _MatLab,
+        PlanificacionCursadaDB as _Plan,
+        SedeDB as _Sede,
+    )
+    from src.services.asignacion_aulas_helpers import (
+        AulaSlot,
+        HorarioSlot,
+        compute_heatmap_por_sede,
+    )
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_carrera,
+        sedes_admisibles_para_materia,
+    )
+    from src.services.resolucion_jerarquica import resolve_virtual
+
+    plan = session.get(_Plan, plan_id)
+    if plan is None:
+        return None
+
+    com_ids = list(session.exec(
+        select(_Com.id).where(_Com.plan_cursada_id == plan_id)
+    ).all())
+    if not com_ids:
+        return None
+    coms = list(session.exec(
+        select(_Com).where(_Com.id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    _carrera_override_por_com = {c.id: c.carrera_asignada for c in coms}
+    hs_all = list(session.exec(
+        select(_Hor).where(_Hor.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    if not hs_all:
+        return None
+
+    materias_codes = sorted({h.codigo_materia for h in hs_all})
+    materias = list(session.exec(
+        select(_Mat).where(_Mat.codigo.in_(materias_codes))  # type: ignore[attr-defined]
+    ).all()) if materias_codes else []
+    materia_virtual = {m.codigo: m.virtual for m in materias}
+
+    # Virtual del dictado por materia del ciclo del plan.
+    materia_dictado_virtual: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(_Dict.materia_codigo, _Dict.virtual)
+            .join(_DictCic, _Dict.id == _DictCic.dictado_id)  # type: ignore[arg-type]
+            .where(_DictCic.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dictado_virtual[mc] = v
+
+    # Filtrar virtuales aplicando la misma jerarquía que el LP.
+    horario_slots: list[HorarioSlot] = []
+    for h in hs_all:
+        if resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        ):
+            continue
+        horario_slots.append(HorarioSlot(
+            id=h.id, dia=h.dia,
+            hora_inicio=h.hora_inicio, hora_fin=h.hora_fin,
+            materia_codigo=h.codigo_materia, tipo_clase=h.tipo_clase,
+        ))
+    if not horario_slots:
+        return None
+
+    # Aulas + sedes.
+    aulas_db = list(session.exec(select(AulaDB)).all())
+    aulas = [
+        AulaSlot(id=a.id, tipo=a.tipo, capacidad=a.capacidad)
+        for a in aulas_db
+    ]
+    aula_sede_id = {a.id: a.sede_id for a in aulas_db}
+    sedes = list(session.exec(select(_Sede)).all())
+    sede_nombre = {s.id: s.nombre for s in sedes}
+
+    # Materia lab map.
+    lab_pairs = list(session.exec(select(_MatLab)).all())
+    materia_lab_map: dict[str, set[str]] = {}
+    for ml in lab_pairs:
+        materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
+
+    # Sedes admisibles por materia (con override de comisión aplicado
+    # al horario, tomando la carrera_asignada de la comisión si existe).
+    # `compute_heatmap_por_sede` recibe el dict por-materia; para respetar
+    # el override por-comisión hacemos un pre-fold: si TODOS los horarios
+    # de una materia comparten el mismo override (o ninguno lo tiene), el
+    # dict por-materia es suficiente. Cuando hay override mixto, dejamos
+    # las sedes de la materia (fallback conservador) — la corrida del LP
+    # sí aplica override por comisión, y el "Detalle de horarios" del
+    # inspector también filtra bien por resolve_virtual.
+    hs_por_materia: dict[str, list[_Hor]] = {}
+    for h in hs_all:
+        hs_por_materia.setdefault(h.codigo_materia, []).append(h)
+    sedes_admis_por_mat: dict[str, set[str] | None] = {}
+    for mc in materias_codes:
+        overrides = {
+            _carrera_override_por_com.get(h.comision_id)
+            for h in hs_por_materia.get(mc, [])
+        }
+        overrides.discard(None)
+        if len(overrides) == 1:
+            (_car,) = overrides
+            if _car:
+                sedes_admis_por_mat[mc] = sedes_admisibles_para_carrera(
+                    session, _car,
+                )
+                continue
+        sedes_admis_por_mat[mc] = sedes_admisibles_para_materia(session, mc)
+
+    return compute_heatmap_por_sede(
+        horario_slots, aulas, materia_lab_map,
+        sedes_admis_por_mat, aula_sede_id, sede_nombre,
+    )
+
+
 def _build_dataframe(
     session: Session, run: LPRunDB,
 ) -> pd.DataFrame:
@@ -143,12 +393,12 @@ def _render_heatmap_carga(heatmap: dict, key_ns: str) -> None:
     if not heatmap or not heatmap.get("slots"):
         return
 
-    st.markdown("**📊 Heatmap de carga: clases simultáneas por franja**")
+    st.markdown("**📊 Mapa de calor de carga: clases simultáneas por franja**")
     st.caption(
-        "Cada celda cuenta cuántas clases están activas **a la vez** en "
-        "ese día y franja (las virtuales no cuentan). Si dos horarios "
-        "están consecutivos sin solapar, se ven como `1` en cada slot, "
-        "no como `2` (porque a ningún instante hay 2 simultáneas)."
+        "Cada celda cuenta cuántas clases están activas **al mismo tiempo** "
+        "en ese día y franja (las virtuales no cuentan). Si dos horarios "
+        "van consecutivos sin superponerse, se ven como `1` en cada franja, "
+        "no como `2` (porque en ningún instante hay 2 simultáneas)."
     )
 
     filtro = st.radio(
@@ -162,9 +412,9 @@ def _render_heatmap_carga(heatmap: dict, key_ns: str) -> None:
         horizontal=True,
         key=f"{key_ns}_heatmap_filtro",
         help=(
-            "Las clases sin determinar son aquellas cuyo tipo decidirá el "
-            "LP (cuando esté implementado el split teoría/lab). Hoy en "
-            "tu cronograma probablemente la mayoría está así."
+            "Las clases sin determinar son aquellas cuyo tipo lo decide "
+            "la asignación automática. Hoy en tu cronograma "
+            "probablemente la mayoría esté así."
         ),
     )
     matriz_key = {
@@ -287,11 +537,12 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
     st.caption(
         "Cada celda muestra **demanda/oferta** en esa sede para esa "
         "franja. La demanda son los horarios que la sede admite "
-        "(según R10 — sedes habilitadas para la carrera de la materia, "
-        "o sede default para materias comunes — y compatibilidad de "
-        "laboratorio). La oferta son las aulas de la sede del tipo "
-        "necesario. Verde ≤80% · amarillo 80–100% · rojo >100% "
-        "(saturación segura: más horarios que aulas)."
+        "(según la regla de sedes admisibles: sedes habilitadas para "
+        "la carrera de la materia o sede por defecto para materias "
+        "comunes, más la compatibilidad de laboratorio). La oferta "
+        "son las aulas de la sede del tipo necesario. Verde ≤80% · "
+        "amarillo 80–100% · rojo >100% (saturación segura: más "
+        "horarios que aulas)."
     )
 
     cat_label = {
@@ -317,8 +568,9 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
 
     if not sedes_con_demanda:
         st.info(
-            "Ninguna sede tiene demanda con la configuración de R10 "
-            "actual. Revisá las sedes habilitadas para las carreras."
+            "Ninguna sede tiene demanda con la configuración actual "
+            "de sedes admisibles. Revisá las sedes habilitadas para "
+            "cada carrera."
         )
         return
 
@@ -498,12 +750,16 @@ def _dialog_editar_horario(
         actual_dia = h.dia
         actual_hi = h.hora_inicio
         actual_hf = h.hora_fin
+        actual_virtual = h.virtual  # Optional[bool]
 
+    _virtual_lbl_map = {None: "Heredar", True: "Sí", False: "No"}
+    _actual_virtual_lbl = _virtual_lbl_map.get(actual_virtual, "Heredar")
     st.markdown(
         f"**Materia:** {materia_label}  \n"
         f"**Comisión:** {comision_label}  \n"
         f"**Actual:** {actual_dia} "
-        f"{actual_hi.strftime('%H:%M')}–{actual_hf.strftime('%H:%M')}"
+        f"{actual_hi.strftime('%H:%M')}–{actual_hf.strftime('%H:%M')}  \n"
+        f"**Virtual actual:** {_actual_virtual_lbl}"
     )
     st.divider()
 
@@ -532,15 +788,47 @@ def _dialog_editar_horario(
             key=f"edith_{horario_id}_hf",
         )
 
+    # Selector "Virtual": permite marcar el horario como virtual desde
+    # el inspector de franja. Sacar un horario a virtual descomprime la
+    # franja sin tener que moverlo (el LP no le asigna aula).
+    _v_labels = ["Heredar", "Sí", "No"]
+    nuevo_virtual_lbl = st.selectbox(
+        "Virtual",
+        options=_v_labels,
+        index=_v_labels.index(_actual_virtual_lbl)
+        if _actual_virtual_lbl in _v_labels else 0,
+        key=f"edith_{horario_id}_virtual",
+        help=(
+            "Marcar el horario como virtual descomprime la franja sin "
+            "moverlo (la asignación no le busca aula). Heredar = usa lo "
+            "que dice el dictado o la materia. Sí = fuerza virtual. "
+            "No = fuerza presencial (aunque el dictado sea virtual)."
+        ),
+    )
+    _new_virtual_val = {"Heredar": None, "Sí": True, "No": False}.get(
+        nuevo_virtual_lbl
+    )
+    _virtual_cambia = _new_virtual_val != actual_virtual
+
     sin_cambio = (
         nuevo_dia == actual_dia
         and nuevo_hi == actual_hi
         and nuevo_hf == actual_hf
+        and not _virtual_cambia
     )
 
-    # Preview de validaciones (sólo si hay cambio).
+    # Preview de validaciones. Solo hace falta cuando cambia el slot
+    # (día/hora), porque ahí es donde se puede generar choque o
+    # conflicto de paralelismo. Si el único cambio es `virtual`, se
+    # omite el preview (no altera slot ni asignación de aula fuera
+    # de este horario).
+    _slot_cambia = (
+        nuevo_dia != actual_dia
+        or nuevo_hi != actual_hi
+        or nuevo_hf != actual_hf
+    )
     preview = None
-    if not sin_cambio:
+    if _slot_cambia:
         with next(get_session()) as _sess:
             preview = preview_cambio_horario(
                 _sess, plan_id, horario_id,
@@ -551,7 +839,7 @@ def _dialog_editar_horario(
     # estamos trasladando el problema a otra franja también saturada.
     # Sólo aplica si tenemos heatmap_sede e info de sede.
     if (
-        not sin_cambio
+        _slot_cambia
         and heatmap_sede is not None
         and sede_id_inspeccionada is not None
         and preview is not None
@@ -723,9 +1011,28 @@ def _dialog_editar_horario(
                 )
 
     st.divider()
+
+    def _persist_virtual_if_changed(_sess) -> bool:
+        """Persiste HorarioDB.virtual si cambió. Devuelve True si tocó
+        algo. Corrida en la misma session que la del cambio de slot
+        (si aplica) para commit atómico."""
+        if not _virtual_cambia:
+            return False
+        _db_h = _sess.get(_HorarioDB, horario_id)
+        if _db_h is None:
+            return False
+        _db_h.virtual = _new_virtual_val
+        _sess.add(_db_h)
+        return True
+
     col_ok, col_cancel = st.columns(2)
     with col_ok:
-        # Texto del botón cambia según si hay conflictos.
+        # Casos:
+        # A) sin cambios → botón deshabilitado.
+        # B) solo cambia virtual → aplicar sin preview (no toca slot).
+        # C) cambia slot pero preview es None/error → bloquear.
+        # D) cambia slot con preview OK → aplicar (y persistir virtual
+        #    también si cambió, en la misma pasada).
         if sin_cambio:
             st.button(
                 "Sin cambios",
@@ -733,7 +1040,23 @@ def _dialog_editar_horario(
                 use_container_width=True,
                 key=f"edith_{horario_id}_save_disabled",
             )
+        elif not _slot_cambia and _virtual_cambia:
+            # Caso B: sólo virtual.
+            if st.button(
+                "✅ Aplicar cambio de virtualidad",
+                type="primary",
+                use_container_width=True,
+                key=f"edith_{horario_id}_save_virtual",
+            ):
+                with next(get_session()) as _sess:
+                    _persist_virtual_if_changed(_sess)
+                    _sess.commit()
+                st.success(
+                    "Virtualidad del horario actualizada."
+                )
+                st.rerun()
         elif preview is None or preview.error:
+            # Caso C.
             st.button(
                 "Confirmar y aplicar",
                 disabled=True,
@@ -741,6 +1064,7 @@ def _dialog_editar_horario(
                 key=f"edith_{horario_id}_save_blocked",
             )
         else:
+            # Caso D.
             label = (
                 "✅ Confirmar y aplicar"
                 if preview.es_seguro
@@ -758,6 +1082,9 @@ def _dialog_editar_horario(
                         _sess, horario_id,
                         nuevo_dia, nuevo_hi, nuevo_hf,
                     )
+                    if ok:
+                        _persist_virtual_if_changed(_sess)
+                        _sess.commit()
                 if ok:
                     st.success("Horario actualizado.")
                     st.rerun()
@@ -1049,11 +1376,11 @@ def _render_inspector_franja(
         f"**{len(items)} horario(s)** demandan {sede_nom} en este "
         "rango. Mismo criterio que el mapa de saturación: se "
         "excluyen virtuales y horarios cuya carrera no usa esta "
-        "sede (R10). Cada bloque se muestra **completo** (de su "
-        "hora_inicio a hora_fin) aunque cubra parcialmente el "
-        "rango. Color por **carrera** — bloques del mismo color "
-        "son de la misma carrera y por lo tanto NO se pueden "
-        "mover entre sí (rompería la cohorte)."
+        "sede (por la regla de sedes admisibles). Cada bloque se "
+        "muestra **completo** (de su hora de inicio a hora de fin) "
+        "aunque cubra parcialmente el rango. Color por **carrera** "
+        "— bloques del mismo color son de la misma carrera y por lo "
+        "tanto NO se pueden mover entre sí (rompería la cohorte)."
     )
 
     if not items:
@@ -1300,45 +1627,18 @@ def _render_diagnostico_infactibilidad(
     franjas = diag.get("franjas_saturadas", [])
     saturacion_tipo = diag.get("saturacion_por_tipo", [])
     hall_violators = diag.get("hall_violators", [])
-    particion = diag.get("particion_problemas", [])
     inventario = diag.get("inventario_aulas", {})
 
     _render_inventario(inventario)
 
-    if particion:
-        st.error(
-            f"**{len(particion)} comisión(es) con horas declaradas "
-            f"que no cuadran con sus horarios cargados**"
-        )
-        df_p = pd.DataFrame(particion)
-        if not df_p.empty:
-            st.dataframe(
-                df_p[[
-                    "materia", "hteo", "hlab", "suma_total",
-                    "suma_teorica_fijada", "suma_lab_fijado", "razon",
-                ]].rename(columns={
-                    "materia": "Materia",
-                    "hteo": "Horas teoría declaradas",
-                    "hlab": "Horas lab declaradas",
-                    "suma_total": "Total horas en horarios",
-                    "suma_teorica_fijada": "Horas marcadas como teoría",
-                    "suma_lab_fijado": "Horas marcadas como lab",
-                    "razon": "Razón",
-                }),
-                width='stretch', hide_index=True,
-            )
-        st.caption(
-            "🛠 Acciones posibles:\n"
-            "- **Ajustar las horas declaradas** de la materia "
-            "(página Materias).\n"
-            "- **Cambiar el tipo (teoría/lab)** de algún horario en "
-            "el cronograma.\n"
-            "- Verificar que **la suma total de duraciones** de los "
-            "horarios coincida con las horas semanales de la materia."
-        )
-        st.divider()
+    # NOTA: el bloque de `particion_problemas` (horas declaradas vs
+    # horarios cargados) se eliminó de este diagnóstico. Esa validación
+    # ya vive en la página de detalle del plan (10 checks por materia),
+    # que trabaja con datos en vivo desde la DB. Acá dependía del
+    # snapshot del LPRun y se desactualizaba apenas se cambiaban
+    # horarios/virtuales — generando falsas alarmas.
 
-    if (not sin_aula and not franjas and not particion
+    if (not sin_aula and not franjas
             and not saturacion_tipo and not hall_violators):
         # Si hay IIS, ese es el diagnóstico — saltamos el mensaje
         # genérico y caemos directo a la sección IIS al final de la
@@ -1346,11 +1646,12 @@ def _render_diagnostico_infactibilidad(
         # cerramos.
         if not (iis and iis.get("ran")):
             st.info(
-                "El solver no logró asignar aulas pero los chequeos "
-                "rápidos no encontraron una causa obvia. Probá poner "
-                "**λ sobre = 0, λ sub = 0** para descartar problemas "
-                "del penalty (no debería afectar la factibilidad, "
-                "pero ayuda como verificación)."
+                "La asignación no logró ubicar todas las aulas, pero "
+                "los chequeos rápidos no encontraron una causa obvia. "
+                "Probá poner los **pesos de sobre y sub-ocupación en "
+                "0** para descartar problemas de ponderación (no "
+                "debería afectar la factibilidad, pero ayuda como "
+                "verificación)."
             )
             return
 
@@ -1553,8 +1854,8 @@ def _render_diagnostico_infactibilidad(
             "laboratorios compatibles** con esas materias.\n"
             "- **Verificar el tipo de las clases**: si una es "
             "laboratorio y otras teóricas en la misma franja, "
-            "conviene fijar el tipo en el cronograma (así el LP "
-            "puede usar ambos pools de aulas)."
+            "conviene fijar el tipo en el cronograma (así la "
+            "asignación puede usar ambos grupos de aulas)."
         )
 
     # =========================================================================
@@ -1565,14 +1866,14 @@ def _render_diagnostico_infactibilidad(
         st.markdown("### 🔍 Diagnóstico cruzado")
         st.caption(
             "Cuando los chequeos rápidos de arriba no encuentran "
-            "ninguna causa pero el solver no logra asignar aulas, el "
-            "sistema prueba **ignorar temporalmente cada una de las "
-            "tres reglas blandas** del modelo, una a la vez, y ve si "
-            "el problema se resuelve. La regla que al ignorarse "
-            "permite resolver es la que está causando el conflicto. "
-            "Si más de una regla parece culpable, el sistema te marca "
-            "**la causa probable principal** (las otras suelen ser "
-            "efectos secundarios)."
+            "ninguna causa pero la asignación no logra ubicar todas "
+            "las aulas, el sistema prueba **ignorar temporalmente "
+            "cada una de las tres restricciones flexibles** del "
+            "modelo, una a la vez, y ve si el problema se resuelve. "
+            "La restricción que al ignorarse permite resolver es la "
+            "que está causando el conflicto. Si parece que hay más "
+            "de una culpable, se marca **la causa probable "
+            "principal** (las otras suelen ser efectos secundarios)."
         )
 
         principal = iis.get("principal")
@@ -1658,7 +1959,7 @@ def _render_diagnostico_infactibilidad(
                             ]].rename(columns={
                                 "materia_codigo": "Materia",
                                 "hlab_declarado": "Horas lab declaradas",
-                                "lab_resuelto": "Horas lab que el LP usaría",
+                                "lab_resuelto": "Horas lab según la asignación",
                                 "delta": "Diferencia",
                             }),
                             width='stretch', hide_index=True,
@@ -1667,7 +1968,7 @@ def _render_diagnostico_infactibilidad(
                         "**Cómo leer**: la primera columna son las "
                         "horas de laboratorio que la materia tiene "
                         "declaradas en el catálogo; la segunda es "
-                        "cuántas horas el LP asignaría como "
+                        "cuántas horas la asignación pondría como "
                         "laboratorio si pudiera elegir libremente. "
                         "Cuando difieren, hay un desajuste: o bien "
                         "el catálogo dice una cosa pero los horarios "
@@ -1690,7 +1991,7 @@ def _render_alpha_propuesto(
     if not cambios:
         st.success(
             "🟢 Los pesos actuales ya estaban óptimos. "
-            "El LP no propone cambios."
+            "La asignación no propone cambios."
         )
         return
 
@@ -1722,10 +2023,11 @@ def _render_alpha_propuesto(
         })
     df = pd.DataFrame(rows)
 
-    st.markdown("**🔄 Pesos propuestos por el LP (`coef_asignacion`)**")
+    st.markdown("**🔄 Pesos propuestos para redistribuir capacidad**")
     st.caption(
-        "El LP propone redistribuir los pesos para mejorar el ajuste a "
-        "la capacidad disponible. Las aulas asignadas en esta corrida "
+        "La asignación propone redistribuir el peso relativo de las "
+        "comisiones del mismo dictado para mejorar el ajuste a la "
+        "capacidad disponible. Las aulas asignadas en esta corrida "
         "**asumen los pesos propuestos**. Si descartás la propuesta, "
         "los pesos quedan como estaban pero las aulas asignadas pueden "
         "no ser óptimas para esos pesos viejos."
@@ -1749,7 +2051,7 @@ def _render_alpha_propuesto(
     # apretar "Aplicar" no se vuelva a mostrar como propuesta pendiente.
     applied_key = f"{key_ns}_alpha_applied_{run.id}"
     if st.session_state.get(applied_key):
-        st.success("✅ Pesos aplicados. Los nuevos coeficientes están persistidos.")
+        st.success("✅ Pesos aplicados. Los nuevos valores quedaron guardados.")
         return
 
     col_ok, col_no = st.columns(2)
@@ -1773,8 +2075,8 @@ def _render_alpha_propuesto(
                      key=f"{key_ns}_descartar_alpha"):
             st.info(
                 "Los pesos quedan como estaban. Si querés coherencia "
-                "con esos pesos, re-corré el LP con el toggle α "
-                "apagado."
+                "con esos pesos, volvé a correr la asignación con la "
+                "opción de redistribución desactivada."
             )
 
 
@@ -1802,7 +2104,13 @@ def render_resultado(
     # laboratorio, peor caso). Reemplaza el heatmap demanda/oferta global
     # y el panel de impacto R10. Es la herramienta principal para
     # responder "¿en qué sede × franja × tipo de aula me falta capacidad?".
-    heatmap_sede = details.get("heatmap_por_sede")
+    #
+    # Se **recomputa en vivo** desde la DB (respetando cambios recientes
+    # como marcar un horario virtual desde el inspector). Si el recompute
+    # falla o no hay data, cae al snapshot del LPRun (compat).
+    heatmap_sede = _recompute_heatmap_por_sede_live(session, run.plan_cursada_id)
+    if heatmap_sede is None:
+        heatmap_sede = details.get("heatmap_por_sede")
     if heatmap_sede:
         # ¿Hay alguna celda saturada en alguna sede? Por default expandido
         # cuando hay déficit (incluye ratios > 1.0).
@@ -1840,8 +2148,18 @@ def render_resultado(
 
     # Diagnóstico SIEMPRE arriba si hay causa estructural detectada,
     # incluso cuando el run resolvió OK (es informativo).
+    #
+    # Filtramos entries que referencian horarios ahora-virtuales: si el
+    # usuario marcó un horario virtual **después** del último LP run,
+    # ese horario ya no forma parte del modelo aunque el snapshot lo
+    # siga listando. Sin el filtro, se ve como "falta ese horario"
+    # cuando en realidad ya no cuenta.
     diag = details.get("infeasibility_diagnosis")
     iis = details.get("iis")
+    _virtuales_ahora = _get_horarios_virtuales_ahora(
+        session, run.plan_cursada_id,
+    )
+    diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
 
     if run.status != "optimal":
         st.markdown("### 🔍 Diagnóstico")

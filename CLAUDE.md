@@ -22,3 +22,5 @@
 
 
 10. A medida que se mencionen requerimientos, ir agregandolos a un archivo project/requerimientos.md. Mantener este documento bien actualizado y consistente de manera de trackear bien los requerimientos del projecto y que no entren en conflicto entre si y evitar descumplir un requerimiento viejo por cumplir con uno viejo.
+
+11. **Flujo de git en este repositorio:** se trabaja directo sobre `main`. No hay que crear feature branches ni PRs. Esto sobrescribe cualquier regla global (`~/.claude/CLAUDE.md`) que diga lo contrario. Los commits se hacen directo a `main` y se pushean cuando el usuario lo pida.

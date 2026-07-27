@@ -1,8 +1,16 @@
 # Implementación del LP de asignación de aulas
 
-> **Última actualización**: 2026-06-04
+> **Última actualización**: 2026-07-07
 > **Estado**: Fases 1 a 8 implementadas (incluye toggle α de
 > redistribución de pesos).
+>
+> **Actualización 2026-07-07 — Deprecación de clases puntuales**: se
+> eliminó del sistema la edición manual por fecha (`aplicar_edicion_manual`,
+> `cambiar_tipo_clase_puntual`, `clases_del_rango`, etc.) y el tab
+> "📅 Clases" de la página Planes. El LP y la UI trabajan
+> exclusivamente sobre el patrón semanal (`HorarioDB.aula_id`).
+> `ClaseDB` sigue existiendo como cache técnico y el LP propaga a
+> ella la asignación del patrón, pero el usuario no la edita.
 >
 > **Ver también**:
 > - Planteo formal: [`asignacion-aulas-LP.md`](../1.%20Diseño/asignacion-aulas-LP.md)
@@ -18,19 +26,18 @@ para el usuario.
 
 Decisiones de diseño que rigen toda la implementación:
 
-1. **Storage único**: la asignación de aula se guarda exclusivamente en
-   `ClaseDB.aula_id`. No existe un campo `HorarioDB.aula_id` ni una
-   tabla intermedia. La "semana modelo" se deriva agrupando `ClaseDB`
-   por `horario_id`.
-2. **El LP corre sobre la semana modelo, no sobre cada `ClaseDB`**: el
-   conjunto `C` del LP son los `HorarioDB` del plan. Después de
-   resolver, la solución se propaga a todas las `ClaseDB` con
-   `fecha ≥ fecha_desde` y `executed = False`. Esto reduce el modelo
-   a docenas/cientos de variables binarias en lugar de miles.
-3. **Re-run incremental**: cada corrida tiene un `fecha_desde` y NO
-   toca las clases anteriores ni las ya ejecutadas. Por default
-   respeta también las clases con `aula_asignada_manualmente=True`,
-   pero ese toggle se puede desactivar.
+1. **Storage del patrón**: la asignación del LP se guarda en
+   `HorarioDB.aula_id` (el "patrón semanal"). `ClaseDB.aula_id`
+   existe como cache técnico y `apply_solution` propaga desde el
+   patrón — no se edita desde la UI.
+2. **El LP corre sobre el patrón**: el conjunto `C` del LP son los
+   `HorarioDB` del plan (docenas/cientos, no miles como serían las
+   `ClaseDB`).
+3. **Re-run incremental**: cada corrida tiene un `fecha_desde` que
+   restringe la propagación cache a `ClaseDB`. El toggle "respetar
+   ediciones manuales" queda como capacidad del solver por si en el
+   futuro se vuelve a habilitar edición puntual, pero hoy no hay UI
+   que setee `aula_asignada_manualmente=True`.
 4. **Auditoría completa**: cada corrida genera un `LPRunDB` con su
    configuración, status, métricas top-line y un `details_json` con
    el detalle por horario y el diagnóstico estructural.
@@ -116,7 +123,7 @@ run_lp(session, plan_id, config)
 |---|---|
 | Aulas (`A`, `cap[a]`, `tipo[a]`) | `AulaDB` |
 | `A_lab(m)` | `MateriaLaboratorioDB` (M:N materia↔aula tipo lab) |
-| Horarios del plan | `HorarioDB` filtrando por `comision_id` de las comisiones del plan; se excluyen los de materias virtuales |
+| Horarios del plan | `HorarioDB` filtrando por `comision_id` de las comisiones del plan; se excluyen los que resuelven como virtuales según la jerarquía en 3 niveles (`HorarioDB.virtual > DictadoDB.virtual > MateriaDB.virtual`), aplicada vía `resolve_virtual(...)` |
 | `dur[h]` | `hora_fin − hora_inicio` del `HorarioDB` |
 | `insc[h]` | `total_esperado(materia(h)) × coef_asignacion(comision(h))`, computado por `plan_generation_service.get_inscriptos_esperados_por_comision` |
 | `hteo[m]`, `hlab[m]` | `MateriaDB.horas_teoria` y `horas_laboratorio` |
@@ -138,10 +145,13 @@ run_lp(session, plan_id, config)
   también heredan `HorarioDB.aula_id` automáticamente.
 - **`ClaseDB.tipo_clase`**: idem, hereda del patrón si la clase lo
   tenía en `None`.
-- **`ClaseDB.aula_asignada_manualmente`**: `False` para las pisadas
-  por el LP. Sólo se pone en `True` desde la UI de edición manual de
-  clases puntuales (excepciones por fecha). El LP las respeta cuando
-  `respetar_ediciones_manuales=True`.
+- **`ClaseDB.aula_asignada_manualmente`**: siempre `False` en el
+  flujo actual (la UI no expone la marca desde la deprecación de
+  clases puntuales en 2026-07-07). Se conserva en el modelo porque
+  el LP sigue soportando `respetar_ediciones_manuales=True` como
+  capacidad latente. Si en el futuro se re-habilita una vista de
+  edición por fecha que setee el flag, el LP la respetará
+  automáticamente.
 - **`LPRunDB`**: una fila por corrida. Histórico para auditar y
   comparar configuraciones.
 
@@ -167,8 +177,10 @@ estaban.
 
 - **Clases ya `executed=True`**: nunca se tocan, sin importar la
   configuración.
-- **Materias virtuales** (`MateriaDB.virtual=True`): sus horarios no
-  entran al LP en absoluto y sus `ClaseDB` nunca tienen aula.
+- **Horarios virtuales** (resueltos vía `resolve_virtual`,
+  jerarquía en 3 niveles `HorarioDB.virtual > DictadoDB.virtual >
+  MateriaDB.virtual`): no entran al LP en absoluto y sus `ClaseDB`
+  nunca tienen aula.
 - **Clases sin forecast** (materia sin serie histórica ni override):
   se asignan con `insc=0`, lo cual hace que el LP las ponga en el aula
   más chica disponible. Se reporta como warning en `LPRunDB`.
@@ -327,100 +339,18 @@ vistas e informes los muestren bien.
 
 ## 5. Edición manual de aula
 
-### 5.0 Dos niveles: patrón vs clase puntual
+> **Nota — deprecación de clases puntuales (2026-07-07)**: las
+> secciones 5.0–5.4 originalmente documentaban la edición manual de
+> `ClaseDB` (excepciones por fecha, cambio puntual de tipo). Ese
+> subsistema se eliminó: el LP y la UI trabajan solo sobre el patrón
+> semanal (`HorarioDB`). Las funciones `aplicar_edicion_manual`,
+> `cambiar_tipo_clase_puntual`, `clases_del_rango`,
+> `validar_edicion_manual`, `get_aulas_disponibles`, el diálogo
+> `_dialog_cambiar_aula` y el tab "📅 Clases" fueron removidos.
+> Queda vigente únicamente la edición del patrón (§ 5.5), renumerada
+> como § 5.1.
 
-Existen **dos niveles** de edición independientes:
-
-- **Patrón semanal** (`HorarioDB.aula_id`): la asignación que se
-  repite todas las semanas. Es lo que el LP escribe. Editarla afecta
-  todas las clases del horario que no tengan excepción manual.
-- **Clase puntual** (`ClaseDB.aula_id`): instancia de una fecha
-  específica. Editarla constituye una *excepción* respecto del patrón
-  y se marca con `aula_asignada_manualmente=True`.
-
-Las funciones del servicio respetan esta separación:
-
-| Nivel | Función | Targets |
-|---|---|---|
-| Patrón | `cambiar_aula_horario` | `HorarioDB` + propaga a `ClaseDB` no manuales |
-| Clase puntual | `aplicar_edicion_manual` | `ClaseDB` con flag manual=True |
-| Clase puntual (cambio de tipo) | `cambiar_tipo_clase_puntual` | `ClaseDB` con flag manual=True |
-
-### 5.1 Tres modos
-
-- **Esta clase puntual**: edita exactamente una `ClaseDB`.
-- **Rango de fechas**: edita las `ClaseDB` con misma `(comision_id,
-  día_de_la_semana, hora_inicio, hora_fin)` dentro del rango. Es decir,
-  agarra "el mismo slot semanal" repetido a lo largo del cuatrimestre.
-- **De hoy en adelante**: equivalente a rango con `fecha_desde=hoy` y
-  `fecha_hasta=ciclo.fecha_fin`.
-
-### 5.2 Validaciones pre-confirmación
-
-- **Tipo aula compatible** con `tipo_clase` (R3/R6): teóricas a aulas
-  teorica/anfiteatro; labs sólo a aulas en `MateriaLaboratorioDB` para
-  esa materia.
-- **No doble booking** (R4): el aula nueva no puede estar ocupada por
-  ninguna otra `ClaseDB` del plan en ninguna de las fechas/franjas
-  involucradas.
-- **Capacidad** (warning, no bloquea): si `cap[a] < esperados[c]`, se
-  muestra advertencia pero la edición sigue siendo válida.
-
-### 5.3 Helpers
-
-- **`get_aulas_disponibles(session, plan_id, clase_ids, *, tipo_objetivo=None)`**:
-  filtra el selector del dialog a sólo aulas factibles para todas las
-  fechas/franjas elegidas + tipo compatible. Si se pasa `tipo_objetivo`,
-  ignora el `tipo_clase` actual de las clases y filtra contra ese tipo
-  (sirve para previsualizar aulas cuando se está por cambiar el tipo).
-- **`validar_edicion_manual(session, clase_ids, aula_nueva_id)`**:
-  re-corre las 3 validaciones y devuelve `ValidationResult` con
-  errores/warnings.
-- **`aplicar_edicion_manual(session, clase_ids, aula_nueva_id)`**:
-  setea `aula_id` y `aula_asignada_manualmente=True` en todas las
-  clases del rango.
-- **`clases_del_rango(session, clase_ref_id, fecha_desde, fecha_hasta)`**:
-  devuelve las `ClaseDB` del mismo slot semanal en el rango.
-
-### 5.4 Cambio puntual de tipo de clase (excepción ad-hoc)
-
-Para casos donde una clase puntual cambia de modalidad sólo para una
-fecha (ej. una clase teórica que excepcionalmente se dicta como
-laboratorio o viceversa) existe la función:
-
-- **`cambiar_tipo_clase_puntual(session, clase_id, nuevo_tipo, aula_nueva_id)`**:
-  - Acepta `nuevo_tipo` ∈ {`"teorica"`, `"laboratorio"`}.
-  - Valida tipo↔aula contra el **nuevo** tipo (lab → debe estar en
-    `MateriaLaboratorioDB` para esa materia; teorica → aula tipo
-    `teorica` o `anfiteatro`).
-  - Valida no doble booking del aula destino en la fecha/franja.
-  - Persiste **sólo si todas las validaciones pasan**: setea
-    `tipo_clase`, `aula_id` y `aula_asignada_manualmente=True`.
-  - Devuelve `ValidationResult` (igual interfaz que el resto de la
-    edición manual).
-  - **No modifica `HorarioDB`**: la excepción es a nivel `ClaseDB`.
-    Las otras semanas del mismo horario mantienen su tipo y aula.
-  - **Liberación del aula original**: la clase pasa a apuntar al
-    aula nueva; el aula original queda libre en esa fecha y franja
-    (la ocupación se determina por `aula_id` actual, no por
-    historial). Reutilización manual: el usuario puede asignar otra
-    clase a esa franja; queda fuera de scope sugerirla
-    automáticamente (ver `RF-ADHOC-09` en
-    `project/requerimientos.md`).
-
-El diálogo de edición (`_dialog_cambiar_aula`) integra el selector
-"Tipo de clase" antes del selector de aula. Si el usuario lo cambia,
-el diálogo:
-
-1. Bloquea los modos "Rango" y "De hoy en adelante" (sólo se admite
-   alcance puntual para cambios de tipo).
-2. Muestra una advertencia explicando que el aula original quedará
-   liberada para esa fecha y franja.
-3. Filtra el selector de aulas usando `tipo_objetivo=nuevo_tipo`.
-4. Al confirmar, llama a `cambiar_tipo_clase_puntual` en lugar de
-   `validar_edicion_manual` + `aplicar_edicion_manual`.
-
-### 5.5 Edición del patrón (`HorarioDB.aula_id`)
+### 5.1 Edición del patrón (`HorarioDB.aula_id`)
 
 - **`cambiar_aula_horario(session, horario_id, aula_id, *, nuevo_tipo=None, propagar_a_clases=True)`**:
   - Setea `HorarioDB.aula_id = aula_id` (admite `None` para limpiar).

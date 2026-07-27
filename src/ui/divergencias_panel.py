@@ -81,8 +81,8 @@ def render_panel_divergencias(
     )
     st.caption(
         "Compara los dictados del ciclo contra las materias del plan "
-        "asignado + las reglas de recursado (MateriaDB/CarreraDB.dicta_"
-        "recursado). Cada fila tiene acciones para aplicar puntualmente "
+        "asignado y las reglas de recursado (a nivel materia y a nivel "
+        "carrera). Cada fila tiene acciones para aplicar puntualmente "
         "o promover la decisión a la regla general."
     )
 
@@ -94,9 +94,10 @@ def render_panel_divergencias(
             type="primary",
             key=f"btn_apply_all_divergencias_{ciclo_id}",
             help=(
-                "Aplica los cambios de to_create y to_delete. NO toca "
-                "'existen pero regla dice que no' (esos requieren "
-                "decision explicita por fila)."
+                "Aplica los cambios de 'materias sin dictado' y "
+                "'dictados huérfanos'. NO toca 'existen pero la regla "
+                "dice que no' (esos requieren decisión explícita "
+                "fila por fila)."
             ),
         ):
             with next(get_session()) as _s:
@@ -140,10 +141,10 @@ def render_panel_divergencias(
                 boton_label="⏭️ Omitir TODAS en regla",
                 confirm_prefix=f"omitir_{ciclo_id}",
                 help_text=(
-                    "Setea MateriaDB.dicta_recursado=False para TODAS "
-                    "las materias de esta lista. En ciclos futuros dejarán "
-                    "de aparecer como esperadas. NO crea ni borra dictados "
-                    "en este ciclo."
+                    "Marca 'no dicta recursado' en el catálogo para "
+                    "TODAS las materias de esta lista. En ciclos "
+                    "futuros dejarán de aparecer como esperadas. NO "
+                    "crea ni borra dictados en este ciclo."
                 ),
             )
             for it in drift.to_create:
@@ -171,11 +172,11 @@ def render_panel_divergencias(
         ):
             st.caption(
                 "El dictado fue creado (probablemente a mano) pero las "
-                "reglas actuales de MateriaDB/CarreraDB dicen que no "
-                "debería existir. **No se borran automáticamente**. "
+                "reglas actuales de la materia o de la carrera dicen "
+                "que no debería existir. **No se borran automáticamente**. "
                 "Elegí: borrarlos si fue error, o promover la decisión "
-                "a regla general para que en ciclos futuros no se marquen "
-                "como divergencia."
+                "a regla general para que en ciclos futuros no se "
+                "marquen como divergencia."
             )
             _render_bulk_promover(
                 ciclo_id, drift.rule_says_skip_but_exists, on_change_key,
@@ -183,10 +184,10 @@ def render_panel_divergencias(
                 boton_label="⬆️ Promover TODAS a regla",
                 confirm_prefix=f"promover_{ciclo_id}",
                 help_text=(
-                    "Setea MateriaDB.dicta_recursado=True para TODAS "
-                    "las materias de esta lista. En ciclos futuros pasarán "
-                    "a ser esperadas por defecto. NO crea ni borra "
-                    "dictados en este ciclo."
+                    "Marca 'sí dicta recursado' en el catálogo para "
+                    "TODAS las materias de esta lista. En ciclos "
+                    "futuros pasarán a ser esperadas por defecto. NO "
+                    "crea ni borra dictados en este ciclo."
                 ),
             )
             for it in drift.rule_says_skip_but_exists:
@@ -232,11 +233,11 @@ def _render_bulk_promover(
 
     # Modo confirmacion.
     st.warning(
-        f"⚠️ Vas a modificar **{n} materia(s) del catálogo** "
-        f"(`MateriaDB.dicta_recursado`). Esto **afecta todos los "
+        f"⚠️ Vas a modificar la regla de recursado de "
+        f"**{n} materia(s) del catálogo**. Esto **afecta todos los "
         f"ciclos futuros** — no sólo el actual. Los dictados del "
         f"ciclo actual **no se tocan** hasta que apliques manualmente "
-        f"(botón `⚡ Aplicar todo` o acciones fila-a-fila).",
+        f"(botón `⚡ Aplicar todo` o acciones fila por fila).",
     )
     _c1, _c2, _c_rest = st.columns([1.5, 1.2, 5])
     with _c1:
@@ -315,9 +316,9 @@ def _render_row_to_create(
             "⏭️ Omitir en regla",
             key=f"btn_skip_rule_{ciclo_id}_{item['materia_codigo']}",
             help=(
-                "Setear MateriaDB.dicta_recursado=False para que ciclos "
-                "futuros omitan esta materia automáticamente. NO crea "
-                "el dictado ni afecta otros ciclos existentes."
+                "Marcar la materia con 'no dicta recursado' para que "
+                "ciclos futuros la omitan automáticamente. NO crea el "
+                "dictado ni afecta otros ciclos existentes."
             ),
             use_container_width=True,
         ):
@@ -335,8 +336,8 @@ def _render_row_to_create(
                     )
             st.session_state[on_change_key] = True
             st.toast(
-                f"⏭️ {item['materia_codigo']}: dicta_recursado=False. "
-                "Aplica en ciclos futuros."
+                f"⏭️ {item['materia_codigo']}: marcada como 'no "
+                "dicta recursado'. Aplica en ciclos futuros."
             )
             st.rerun()
 
@@ -415,10 +416,10 @@ def _render_row_keep_skip(
             "⬆️ Promover a regla",
             key=f"btn_promote_{ciclo_id}_{item['materia_codigo']}",
             help=(
-                "Setear MateriaDB.dicta_recursado=True para que ciclos "
-                "futuros creen automáticamente el dictado de esta "
-                "materia. La regla nueva convierte esta divergencia en "
-                "el comportamiento esperado."
+                "Marcar la materia con 'sí dicta recursado' para que "
+                "ciclos futuros creen automáticamente el dictado. La "
+                "regla nueva convierte esta divergencia en el "
+                "comportamiento esperado."
             ),
             use_container_width=True,
         ):
@@ -436,7 +437,7 @@ def _render_row_keep_skip(
                     )
             st.session_state[on_change_key] = True
             st.toast(
-                f"⬆️ {item['materia_codigo']}: dicta_recursado=True. "
-                "Aplica en ciclos futuros."
+                f"⬆️ {item['materia_codigo']}: marcada como 'sí "
+                "dicta recursado'. Aplica en ciclos futuros."
             )
             st.rerun()

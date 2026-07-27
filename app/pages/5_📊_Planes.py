@@ -3,34 +3,22 @@
 Flujo: Cronograma (schedule) → Validar cobertura → Generar Plan → Clases
 """
 
-import uuid
 import streamlit as st
-import pandas as pd
-from collections import Counter
-from datetime import time, timedelta
+from datetime import timedelta
 from sqlmodel import select, func, col
 from src.database.connection import get_session, init_db
 from src.database.models import (
     PlanificacionCursadaDB, ComisionDB, HorarioDB, ClaseDB, MateriaDB,
-    ScheduleDB, ScheduleEntryDB,
     CicloPlanVersionDB, PlanCarreraVersionDB, PlanEstudioDB,
     CarreraDB, ConfiguracionHoraria,
 )
 from src.database.crud import ciclo_crud, get_or_create_config, update_config
 from src.services.plan_generation_service import (
-    generate_plan_from_schedule,
     generate_plan_from_preview,
     preview_plan_from_schedule,
     activate_plan,
     generate_time_slots,
-    build_timetable_grid,
-    MateriaPreview,
-    EntryPreview,
-    SchedulePreviewResult,
 )
-from src.services.clase_generation_service import generate_clases_for_plan
-from src.ui.calendar_render import render_timetable_calendar
-from src.domain.types import DIAS_SEMANA
 
 init_db()
 
@@ -85,11 +73,11 @@ if not ciclo_ids:
 
 (
     tab_generar, tab_general, tab_detalle, tab_grilla,
-    tab_clases, tab_aulas, tab_config,
+    tab_aulas, tab_config,
 ) = st.tabs([
     "📥 Generar Plan",
     "📋 Vista General", "🔍 Detalle del Plan",
-    "📋 Grilla Horaria", "📅 Clases", "🏛️ Aulas", "⚙️ Configuración",
+    "📋 Grilla Horaria", "🏛️ Aulas", "⚙️ Configuración",
 ])
 
 
@@ -281,22 +269,18 @@ def _render_plan_editor(
             .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)
             .where(ComisionDB.plan_cursada_id == sel_plan_id)
         ).one()
-        n_clases = session.exec(
-            select(func.count(ClaseDB.id))
-            .where(ClaseDB.plan_cursada_id == sel_plan_id)
+        n_horarios_con_aula = session.exec(
+            select(func.count(HorarioDB.id))
+            .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)
+            .where(ComisionDB.plan_cursada_id == sel_plan_id)
+            .where(HorarioDB.aula_id.is_not(None))  # type: ignore[union-attr]
         ).one()
-        n_clases_con_aula = session.exec(
-            select(func.count(ClaseDB.id))
-            .where(ClaseDB.plan_cursada_id == sel_plan_id)
-            .where(ClaseDB.aula_id.is_not(None))  # type: ignore[union-attr]
-        ).one()
-    
-    s1, s2, s3, s4, s5 = st.columns(5)
+
+    s1, s2, s3, s4 = st.columns(4)
     s1.metric("Materias", n_materias)
     s2.metric("Comisiones", n_comisiones)
     s3.metric("Horarios", n_horarios)
-    s4.metric("Clases", n_clases)
-    s5.metric("Con Aula", n_clases_con_aula)
+    s4.metric("Horarios con aula", n_horarios_con_aula)
     
     st.divider()
 
@@ -339,12 +323,12 @@ def _render_acciones_del_plan(
 
     with st.expander("✏️ Auto-completar tipo de horarios por materia", expanded=False):
         st.caption(
-            "Cuando una materia declara sólo horas de teoría (`hlab=0`) "
-            "o sólo de laboratorio (`hteo=0`), el tipo de cada horario "
-            "queda determinado de antemano. Esta acción persiste ese "
-            "tipo en `HorarioDB.tipo_clase` para que las vistas y el "
-            "LP no tengan que inferirlo cada vez. Sólo afecta horarios "
-            "con tipo todavía sin determinar."
+            "Cuando una materia declara sólo horas de teoría (o sólo "
+            "de laboratorio), el tipo de cada horario queda "
+            "determinado de antemano. Esta acción guarda ese tipo "
+            "directamente en cada horario para que las vistas y la "
+            "asignación de aulas no lo tengan que deducir cada vez. "
+            "Sólo afecta horarios con tipo todavía sin determinar."
         )
 
         # Mostrar cualquier resultado/error de la última corrida.
@@ -371,7 +355,8 @@ def _render_acciones_del_plan(
                 if preview.materias_mixtas:
                     _parts.append(
                         f"{len(preview.materias_mixtas)} materia(s) "
-                        "con teoría y laboratorio (lo decide el LP)"
+                        "con teoría y laboratorio (el tipo lo decide "
+                        "la asignación automática)"
                     )
                 if preview.materias_sin_horas:
                     _parts.append(
@@ -455,10 +440,14 @@ def _render_acciones_del_plan(
                     )
                 except Exception as _e:
                     import traceback
+                    # Loggeamos el traceback completo a stderr para
+                    # diagnóstico interno; al usuario le mostramos
+                    # sólo el mensaje amigable + detalle colapsable.
+                    traceback.print_exc()
                     st.session_state[result_key] = (
                         "error",
-                        f"❌ Error al aplicar: {_e}\n\n"
-                        f"```\n{traceback.format_exc()}\n```",
+                        "❌ No se pudo aplicar el cambio. "
+                        f"Detalle técnico: `{_e}`",
                     )
                 st.rerun()
 
@@ -743,8 +732,16 @@ with tab_general:
                     with col_info:
                         st.markdown(f"### {plan.nombre}")
                         st.markdown(f"**Estado:** {status_badge}")
-                        st.caption(plan.descripcion or "Sin descripcion")
-                        st.caption(f"Schedule: {plan.schedule_id or 'N/A'}")
+                        st.caption(plan.descripcion or "Sin descripción")
+                        # Resolver el nombre del cronograma origen si existe.
+                        _sched_nombre = "sin cronograma vinculado"
+                        if plan.schedule_id:
+                            from src.database.models import ScheduleDB as _SchedDB
+                            with next(get_session()) as _tmp_sess:
+                                _sch = _tmp_sess.get(_SchedDB, plan.schedule_id)
+                                if _sch:
+                                    _sched_nombre = _sch.nombre
+                        st.caption(f"Cronograma origen: {_sched_nombre}")
 
                     with col_metrics:
                         with next(get_session()) as session:
@@ -761,16 +758,11 @@ with tab_general:
                                 .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)
                                 .where(ComisionDB.plan_cursada_id == plan.id)
                             ).one()
-                            n_clases = session.exec(
-                                select(func.count(ClaseDB.id))
-                                .where(ClaseDB.plan_cursada_id == plan.id)
-                            ).one()
 
-                        m1, m2, m3, m4 = st.columns(4)
+                        m1, m2, m3 = st.columns(3)
                         m1.metric("Materias", n_materias)
                         m2.metric("Comisiones", n_comisiones)
                         m3.metric("Horarios", n_horarios)
-                        m4.metric("Clases", n_clases)
 
                     with col_actions:
                         if not plan.activo:
@@ -892,139 +884,6 @@ with tab_grilla:
 
 
 # =============================================================================
-# Tab 5: Clases
-# =============================================================================
-with tab_clases:
-    st.subheader("Clases del Plan")
-
-    sel_ciclo_clases = st.selectbox(
-        "Seleccionar Ciclo", options=ciclo_ids, key="planes_sel_ciclo_clases"
-    )
-
-    if sel_ciclo_clases:
-        with next(get_session()) as session:
-            planes_clases = session.exec(
-                select(PlanificacionCursadaDB)
-                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_clases)
-            ).all()
-
-        if not planes_clases:
-            st.info("No hay planes para este ciclo.")
-        else:
-            plan_options_clases = {p.id: f"{p.nombre} {'[ACTIVO]' if p.activo else ''}" for p in planes_clases}
-            sel_plan_clases_id = st.selectbox(
-                "Seleccionar Plan",
-                options=list(plan_options_clases.keys()),
-                format_func=lambda x: plan_options_clases[x],
-                key="planes_sel_plan_clases"
-            )
-
-            if sel_plan_clases_id:
-                with next(get_session()) as session:
-                    n_clases_total = session.exec(
-                        select(func.count(ClaseDB.id))
-                        .where(ClaseDB.plan_cursada_id == sel_plan_clases_id)
-                    ).one()
-
-                if n_clases_total == 0:
-                    st.info("Este plan no tiene clases generadas.")
-                    if st.button("Generar Clases", type="primary", key="btn_generar_clases"):
-                        with next(get_session()) as session:
-                            result = generate_clases_for_plan(session, sel_plan_clases_id)
-
-                        if result.errors:
-                            for err in result.errors:
-                                st.error(err)
-                        else:
-                            st.success(f"{result.clases_created} clases generadas")
-                            st.rerun()
-                else:
-                    # Summary metrics
-                    with next(get_session()) as session:
-                        n_ejecutadas = session.exec(
-                            select(func.count(ClaseDB.id))
-                            .where(ClaseDB.plan_cursada_id == sel_plan_clases_id)
-                            .where(ClaseDB.executed == True)  # noqa: E712
-                        ).one()
-                        n_con_aula = session.exec(
-                            select(func.count(ClaseDB.id))
-                            .where(ClaseDB.plan_cursada_id == sel_plan_clases_id)
-                            .where(ClaseDB.aula_id.is_not(None))  # type: ignore[union-attr]
-                        ).one()
-
-                    n_pendientes = n_clases_total - n_ejecutadas
-
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Total", n_clases_total)
-                    c2.metric("Ejecutadas", n_ejecutadas)
-                    c3.metric("Pendientes", n_pendientes)
-                    c4.metric("Con Aula", n_con_aula)
-
-                    st.divider()
-
-                    # Filterable table
-                    with next(get_session()) as session:
-                        clases = session.exec(
-                            select(ClaseDB)
-                            .where(ClaseDB.plan_cursada_id == sel_plan_clases_id)
-                            .order_by(ClaseDB.fecha, ClaseDB.hora_inicio)
-                        ).all()
-
-                        # Build lookup for comision → materia
-                        comision_ids = list({c.comision_id for c in clases})
-                        com_materia_map: dict[str, str] = {}
-                        com_nombre_map: dict[str, str] = {}
-                        if comision_ids:
-                            coms = session.exec(
-                                select(ComisionDB).where(col(ComisionDB.id).in_(comision_ids))
-                            ).all()
-                            for com in coms:
-                                com_materia_map[com.id] = com.materia_codigo
-                                com_nombre_map[com.id] = com.nombre
-
-                    # Filter controls
-                    col_f1, col_f2 = st.columns(2)
-                    materias_en_clases = sorted(set(com_materia_map.values()))
-                    with col_f1:
-                        filtro_materia = st.selectbox(
-                            "Filtrar por Materia",
-                            options=["Todas"] + materias_en_clases,
-                            key="clases_filtro_materia"
-                        )
-                    with col_f2:
-                        filtro_estado = st.selectbox(
-                            "Filtrar por Estado",
-                            options=["Todos", "Ejecutadas", "Pendientes"],
-                            key="clases_filtro_estado"
-                        )
-
-                    # Apply filters
-                    filtered = clases
-                    if filtro_materia != "Todas":
-                        filtered = [c for c in filtered if com_materia_map.get(c.comision_id) == filtro_materia]
-                    if filtro_estado == "Ejecutadas":
-                        filtered = [c for c in filtered if c.executed]
-                    elif filtro_estado == "Pendientes":
-                        filtered = [c for c in filtered if not c.executed]
-
-                    if filtered:
-                        clases_data = [{
-                            "Fecha": c.fecha.strftime("%d/%m/%Y"),
-                            "Dia": c.fecha.strftime("%A"),
-                            "Inicio": c.hora_inicio.strftime("%H:%M"),
-                            "Fin": c.hora_fin.strftime("%H:%M"),
-                            "Materia": com_materia_map.get(c.comision_id, "?"),
-                            "Comision": com_nombre_map.get(c.comision_id, "?"),
-                            "Ejecutada": "Si" if c.executed else "No",
-                            "Aula": c.aula_id or "-",
-                        } for c in filtered]
-                        st.dataframe(clases_data, use_container_width=True, hide_index=True)
-                        st.caption(f"Mostrando {len(filtered)} de {n_clases_total} clases")
-                    else:
-                        st.info("No hay clases que coincidan con los filtros.")
-
-
-# =============================================================================
 # Tab Aulas: LP de asignacion de aulas
 # =============================================================================
 with tab_aulas:
@@ -1126,7 +985,7 @@ with tab_config:
 
     # --- Preview of generated time slots ---
     st.divider()
-    st.markdown("#### Preview de franjas horarias")
+    st.markdown("#### Vista previa de franjas horarias")
 
     with next(get_session()) as session:
         config = get_or_create_config(session)
