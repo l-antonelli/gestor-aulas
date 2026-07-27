@@ -1,0 +1,24 @@
+[project]
+name = "gestor-aulas"
+version = "0.1.0"
+description = "Sistema de asignación de aulas para FCEIA - UNR"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "streamlit==1.52.2",
+    "streamlit-calendar==1.4.0",
+    "sqlmodel==0.0.31",
+    "pulp==3.3.2",
+    "pandas==2.3.3",
+    "pydantic==2.12.5",
+    "openpyxl==3.1.5",
+    "altair==6.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "hypothesis==6.148.7",
+]
+
+[tool.uv]
+package = false
