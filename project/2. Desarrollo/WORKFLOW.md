@@ -1,6 +1,19 @@
-# Workflow End-to-End del sistema
+# Workflow End-to-End del sistema (referencia técnica interna)
 
 > **Última actualización**: 2026-07-12
+>
+> ⚙️ **Este documento es la referencia técnica interna**: usa nombres
+> de tablas, servicios y detalles de implementación. Es útil para el
+> equipo de desarrollo o para redactar el informe académico.
+>
+> Para uso operativo por usuarios finales no técnicos, consultar el
+> **manual de usuario** en `project/3. Manual de Usuario/`, que cubre
+> los mismos flujos en lenguaje coloquial y con foco en tareas.
+>
+> **Advertencia**: este documento tiene contenido desactualizado
+> respecto del código actual. Ver `HALLAZGOS_AUDITORIA.md` (H23-H26)
+> para el detalle. Cuando haya divergencia entre este documento y el
+> código, prevalece el código.
 >
 > Documento operativo que describe el flujo completo del usuario en
 > `gestor-aulas` desde la carga inicial hasta la asignación de aulas.
