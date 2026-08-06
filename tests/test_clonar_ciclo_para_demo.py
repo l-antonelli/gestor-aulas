@@ -52,7 +52,7 @@ def _seed_basico(session: Session) -> str:
     )
     bridge = DictadoCicloDB(dictado_id="d1", ciclo_id="2026-1C")
     plan = PlanificacionCursadaDB(
-        id="plan-1", nombre="Plan Test", ciclo_id="2026-1C", activo=True,
+        id="plan-1", nombre="Plan Test", ciclo_id="2026-1C",
     )
     com = ComisionDB(
         id="c1", materia_codigo="M1", dictado_id="d1",
@@ -143,7 +143,6 @@ class TestClonarCiclo:
         assert len(nuevos) == 1
         plan_demo = nuevos[0]
         assert plan_demo.id != "plan-1"
-        assert plan_demo.activo is False
         assert "(demo)" in plan_demo.nombre
         assert "CASO EJEMPLO" in plan_demo.descripcion
 
@@ -288,7 +287,6 @@ class TestClonarCiclo:
         assert session.get(CicloDB, "2026-1C") is not None
         plan_orig = session.get(PlanificacionCursadaDB, "plan-1")
         assert plan_orig is not None
-        assert plan_orig.activo is True
         assert "demo" not in plan_orig.nombre.lower()
         # Comision original con plan_cursada_id original.
         c_orig = session.get(ComisionDB, "c1")

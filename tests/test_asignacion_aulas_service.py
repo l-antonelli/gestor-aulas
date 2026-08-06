@@ -68,7 +68,7 @@ def _seed_basic(session: Session) -> dict:
     )
     plan = PlanificacionCursadaDB(
         id="plan-1", nombre="Plan Test",
-        ciclo_id="2026-1C", activo=True,
+        ciclo_id="2026-1C",
     )
     sede = SedeDB(id="S1", nombre="Sede Test")
     session.add_all([ciclo, plan, sede])

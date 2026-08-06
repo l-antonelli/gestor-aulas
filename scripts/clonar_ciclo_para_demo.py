@@ -17,9 +17,9 @@ Que se clona:
   → nuevos UUIDs, mismo materia_codigo, preserva el flag `virtual`
   actual ("fotografia" del estado).
 - DictadoCicloDB → puente al ciclo nuevo + dictados nuevos.
-- PlanificacionCursadaDB → nuevo UUID, activo=False, descripcion con
-  marca "[CASO EJEMPLO DE SATURACION — clonado YYYY-MM-DD]".
-  schedule_id queda apuntando al schedule original (metadata historica).
+- PlanificacionCursadaDB → nuevo UUID, descripcion con marca
+  "[CASO EJEMPLO DE SATURACION — clonado YYYY-MM-DD]". schedule_id
+  queda apuntando al schedule original (metadata historica).
 - ComisionDB del plan → nuevos UUIDs, rewire de plan_cursada_id y
   dictado_id.
 - HorarioDB de las comisiones → nuevos UUIDs (con sufijo), rewire de
@@ -176,7 +176,6 @@ def clonar_ciclo(
             nombre=plan.nombre + " (demo)",
             descripcion=descripcion_demo,
             ciclo_id=nuevo_ciclo_id,
-            activo=False,  # arranque colapsado, no es el "activo"
             schedule_id=plan.schedule_id,  # apuntar al schedule original
             forecast_metodo_default=plan.forecast_metodo_default,
         ))
@@ -432,7 +431,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Clona un ciclo + plan + cascada para preservar un escenario "
-            "de demo. El clon queda con activo=False y descripcion marcada."
+            "de demo. El clon queda con descripcion marcada como caso "
+            "ejemplo."
         ),
     )
     parser.add_argument(

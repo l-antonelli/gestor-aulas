@@ -458,7 +458,7 @@ def _render_acciones_del_plan(
 #
 # Filosofia:
 # - Paso 1: Seleccion (ciclo + cronograma validado + metadata) y crear el plan
-#           inmediatamente como borrador (activo=False).
+#           inmediatamente.
 # - Paso 2: Edicion del plan recien creado, embebiendo el editor del tab
 #           "Detalle del Plan". El usuario hace los ajustes que quiera.
 #           Cancelar = borra el plan en cascada. Confirmar = sale del modo

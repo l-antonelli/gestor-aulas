@@ -224,7 +224,7 @@ class TestBuildTimetableGrid:
     def test_empty_grid_for_plan_without_comisiones(self, session):
         """A plan with no comisiones returns an empty grid."""
         plan = PlanificacionCursadaDB(
-            id=str(uuid.uuid4()), nombre="Empty", ciclo_id="fake", activo=False,
+            id=str(uuid.uuid4()), nombre="Empty", ciclo_id="fake",
         )
         session.add(plan)
         session.flush()

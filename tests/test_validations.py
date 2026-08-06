@@ -88,7 +88,7 @@ class TestValidarConflictosHorariosPlan:
         # Create plan with comisiones at different times
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Test",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -140,7 +140,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Conflict",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -197,7 +197,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="DiffYear",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -253,7 +253,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Anual",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -312,7 +312,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="MultiCom",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -376,7 +376,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="AllOverlap",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -450,7 +450,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="SingleOvl",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -504,7 +504,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="IgnoredPair",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -563,7 +563,7 @@ class TestValidarConflictosHorariosPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="SingleNoOvl",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -627,7 +627,7 @@ class TestValidarCoberturaPlan:
         # Create plan with comision + horario
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Covered",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -669,7 +669,7 @@ class TestValidarCoberturaPlan:
         # Plan without any comisiones for MISS1
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Missing",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.commit()
@@ -694,7 +694,7 @@ class TestIdentificarVirtualesPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Virtual",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -733,7 +733,7 @@ class TestIdentificarVirtualesPlan:
 
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="NoVirtual",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.flush()
@@ -754,7 +754,7 @@ class TestIdentificarVirtualesPlan:
         ciclo = base_data["ciclo"]
         plan = PlanificacionCursadaDB(
             id=str(uuid.uuid4()), nombre="Empty",
-            ciclo_id=ciclo.id, activo=False,
+            ciclo_id=ciclo.id,
         )
         session.add(plan)
         session.commit()

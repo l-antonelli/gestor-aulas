@@ -40,7 +40,7 @@ def _seed(session: Session) -> str:
     )
     plan = PlanificacionCursadaDB(
         id="plan-1", nombre="Plan Test",
-        ciclo_id="2026-1C", activo=True,
+        ciclo_id="2026-1C",
     )
     session.add_all([ciclo, plan])
     session.commit()

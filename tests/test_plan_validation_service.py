@@ -99,7 +99,7 @@ def setup_basic(session):
 
     plan = PlanificacionCursadaDB(
         id=str(uuid.uuid4()), nombre="Plan Test",
-        ciclo_id=ciclo.id, activo=False,
+        ciclo_id=ciclo.id,
     )
     session.add(plan)
     session.commit()

@@ -45,7 +45,7 @@ def setup_data(session):
 
     plan = PlanificacionCursadaDB(
         id="plan-1", nombre="Plan Test",
-        ciclo_id="2025-2C", activo=True,
+        ciclo_id="2025-2C",
     )
 
     comision = ComisionDB(
