@@ -545,12 +545,60 @@ asignador:
 
 1. **Desde el Cronograma por aula** (tab 🏛️ Aulas, expander al
    final): elegís el aula, ves su semana, y cada horario tiene un
-   botón "Editar aula" que abre un dialog para cambiarla. El
+   botón "Editar aula" que abre un diálogo para cambiarla. El
    sistema chequea compatibilidad de tipo, sede admisible y choques
    con otros horarios del plan antes de dejarte confirmar.
 2. **Desde la Grilla Horaria** o desde el editor por materia: si
    movés un horario a otro día u hora, el aula previamente asignada
    queda atada al horario pero puede volverse inconsistente.
+
+#### El diálogo "Editar aula del horario"
+
+El diálogo tiene un selector arriba: **"Aulas a mostrar"** con dos
+opciones:
+
+- **Sólo aulas libres en esta franja** (default): comportamiento
+  clásico. En el desplegable ves únicamente las aulas compatibles
+  que no están usadas por otro horario del plan en la misma franja.
+- **Todas las aulas (incluidas las ocupadas)**: además de las
+  libres, incluye las que están ocupadas por otro horario del plan,
+  con una etiqueta clara. Por ejemplo:
+  - `[LIBRE] Pellegrini · A-101 (cap. 30, teórica)`
+  - `[OCUPADA] Pellegrini · A-102 (cap. 40, teórica) — MAT 101 Comisión 2`
+  - `[OCUPADA parcialmente] Pellegrini · A-103 (cap. 35, teórica)`
+
+Si elegís un aula libre, el flujo es idéntico al histórico: apretás
+Confirmar y el aula queda asignada.
+
+Si elegís un aula ocupada con franja idéntica (`[OCUPADA]`), el
+diálogo despliega un **sub-formulario de resolución** para decidir
+qué hacer con el horario desplazado. Tenés hasta 3 opciones:
+
+- **Intercambiar aulas** (swap): el horario editado toma el aula
+  ocupada, y el horario desplazado recibe el aula que tenía el
+  editado. Es la opción más común cuando querés simplemente cambiar
+  quién ocupa qué aula.
+- **Reasignar a otra aula libre**: el editado toma el aula ocupada, y
+  el desplazado se va a otra aula libre que vos elegís de un
+  selector. Sólo aparece si hay al menos un aula libre compatible
+  con el desplazado.
+- **Dejar sin aula (marcar para revisar)**: el editado toma el aula
+  ocupada, y el desplazado queda sin aula asignada — pendiente de
+  revisión posterior. Usalo como último recurso.
+
+Debajo del sub-form aparece un **preview del cambio** con dos filas
+mostrando los dos horarios y sus aulas futuras, cada una con ✅ o ❌
+según compatibilidad. El botón **Confirmar** queda deshabilitado si
+hay incompatibilidades duras (tipo, sede, laboratorio) — corregí la
+elección antes de continuar.
+
+**Cuándo aparece `[OCUPADA parcialmente]`**: si el aula está usada
+por un horario del plan con una franja que se solapa parcialmente
+con la del horario que estás editando (por ejemplo, editás Lu 14-16
+y el aula tiene un horario Lu 15-17). En este caso el diálogo
+bloquea el intercambio directo: sólo se soporta swap cuando las
+franjas son idénticas. Para casos parciales, cambiá manualmente uno
+de los dos horarios primero.
 
 > ⚠️ **Después de mover horarios en la grilla**: el aula que el
 > asignador había puesto queda pegada al horario, y si el nuevo
