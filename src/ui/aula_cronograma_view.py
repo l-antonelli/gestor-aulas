@@ -524,15 +524,24 @@ def _build_grid_from_rows(
 def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
     """Diálogo para cambiar el aula del PATRÓN (HorarioDB.aula_id).
 
-    Permite además modificar el ``tipo_clase`` del patrón. Los cambios
-    se propagan a las ``ClaseDB`` que heredan (no a las que tienen
-    excepción manual).
+    Modos:
+    - Ver solo libres: muestra aulas compatibles sin ocupación en la
+      franja. Comportamiento clásico.
+    - Ver todas: incluye aulas ocupadas. Al elegir una ocupada, ofrece
+      resolver el conflicto con el desplazado (swap, reasignar a otra
+      libre, o dejar sin aula).
+
+    Los cambios se propagan a las ClaseDB que heredan (no a las que
+    tienen excepción manual).
     """
     from src.database.connection import get_session
     from src.database.models import HorarioDB
     from src.services.asignacion_aulas_service import (
         cambiar_aula_horario,
         get_aulas_disponibles_para_horario,
+        get_aulas_todas_para_horario,
+        preview_reasignacion_con_desplazamiento,
+        reasignar_con_desplazamiento,
     )
 
     with next(get_session()) as session:
@@ -583,69 +592,372 @@ def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
             horario.tipo_clase is not None and nuevo_tipo != horario.tipo_clase
         )
 
-        aulas_disp = get_aulas_disponibles_para_horario(
-            session, plan_id, horario_id,
-            tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
+        # =================================================================
+        # Selector de vista: sólo libres vs. todas las aulas
+        # =================================================================
+        vista = st.radio(
+            "Aulas a mostrar",
+            options=["libres", "todas"],
+            format_func=lambda v: (
+                "Sólo aulas libres en esta franja"
+                if v == "libres"
+                else "Todas las aulas (incluidas las ocupadas)"
+            ),
+            index=0,
+            key=f"dlg_h_vista_{horario_id}",
+            horizontal=True,
         )
-        if not aulas_disp:
-            st.warning(
-                "No hay aulas compatibles libres en esa franja "
-                "semanal. Probá cambiar el tipo o liberá el aula "
-                "asignada a otro horario."
+
+        sede_map = _sede_nombre_map(session)
+
+        if vista == "libres":
+            aulas_disp = get_aulas_disponibles_para_horario(
+                session, plan_id, horario_id,
+                tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
+            )
+            if not aulas_disp:
+                st.warning(
+                    "No hay aulas compatibles libres en esa franja "
+                    "semanal. Cambiá a **Todas las aulas** para elegir "
+                    "una ocupada y resolver el conflicto, o cambiá el "
+                    "tipo de clase."
+                )
+                _render_boton_cancelar(horario_id)
+                return
+
+            opciones = ["__NONE__"] + [a.id for a in aulas_disp]
+            labels = {
+                "__NONE__": "— Sin asignar —",
+                **{
+                    a.id: (
+                        f"{sede_map.get(a.sede_id, '?')} · {a.nombre} "
+                        f"(cap. {a.capacidad}, {a.tipo})"
+                    )
+                    for a in aulas_disp
+                },
+            }
+            default_idx = 0
+            if horario.aula_id and horario.aula_id in [a.id for a in aulas_disp]:
+                default_idx = opciones.index(horario.aula_id)
+            sel_aula = st.selectbox(
+                "Aula asignada",
+                options=opciones,
+                index=default_idx,
+                format_func=lambda x: labels[x],
+                key=f"dlg_h_aula_{horario_id}",
+            )
+
+            _render_confirmar_libre(
+                session, plan_id, horario_id, sel_aula,
+                nuevo_tipo if cambiando_tipo else None,
             )
             return
 
-        sede_map = _sede_nombre_map(session)
-        opciones = ["__NONE__"] + [a.id for a in aulas_disp]
-        labels = {
-            "__NONE__": "— Sin asignar —",
-            **{
-                a.id: (
-                    f"{sede_map.get(a.sede_id, '?')} · {a.nombre} "
-                    f"(cap. {a.capacidad}, {a.tipo})"
+        # ---------------------------------------------------------------
+        # Vista: TODAS las aulas
+        # ---------------------------------------------------------------
+        candidatas = get_aulas_todas_para_horario(
+            session, plan_id, horario_id,
+            tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
+        )
+        if not candidatas:
+            st.warning(
+                "No hay aulas compatibles con este horario "
+                "(considerá cambiar el tipo)."
+            )
+            _render_boton_cancelar(horario_id)
+            return
+
+        # Precomputar labels que incluyan info del ocupante cuando aplica.
+        def _label_para_candidata(c) -> str:
+            base = (
+                f"{sede_map.get(c.aula.sede_id, '?')} · {c.aula.nombre} "
+                f"(cap. {c.aula.capacidad}, {c.aula.tipo})"
+            )
+            if c.libre_en_franja:
+                return f"[LIBRE] {base}"
+            oc = c.ocupante
+            if oc is not None:
+                # Franja idéntica → swap posible.
+                oc_com = session.get(ComisionDB, oc.comision_id)
+                oc_mat = (
+                    oc_com.materia_codigo if oc_com else "?"
                 )
-                for a in aulas_disp
-            },
-        }
-        # Default = aula actual si sigue disponible, si no la primera.
+                oc_com_nombre = oc_com.nombre if oc_com else "?"
+                return (
+                    f"[OCUPADA] {base} — usada por "
+                    f"{oc_mat} {oc_com_nombre}"
+                )
+            # Ocupada por franja parcial — no aplica swap.
+            return f"[OCUPADA parcialmente] {base}"
+
+        opciones = ["__NONE__"] + [c.aula.id for c in candidatas]
+        labels = {"__NONE__": "— Sin asignar —"}
+        for c in candidatas:
+            labels[c.aula.id] = _label_para_candidata(c)
+
         default_idx = 0
-        if horario.aula_id and horario.aula_id in [a.id for a in aulas_disp]:
+        if horario.aula_id and horario.aula_id in [c.aula.id for c in candidatas]:
             default_idx = opciones.index(horario.aula_id)
         sel_aula = st.selectbox(
             "Aula asignada",
             options=opciones,
             index=default_idx,
             format_func=lambda x: labels[x],
-            key=f"dlg_h_aula_{horario_id}",
+            key=f"dlg_h_aula_all_{horario_id}",
         )
+
+        # Si el usuario eligió "Sin asignar" o el aula actual → flujo simple.
+        if sel_aula == "__NONE__":
+            _render_confirmar_libre(
+                session, plan_id, horario_id, sel_aula,
+                nuevo_tipo if cambiando_tipo else None,
+            )
+            return
+
+        # Determinar si es ocupada (candidata seleccionada tiene ocupante).
+        cand = next((c for c in candidatas if c.aula.id == sel_aula), None)
+        if cand is None:
+            _render_boton_cancelar(horario_id)
+            return
+
+        if cand.libre_en_franja:
+            # Es libre → mismo flujo que la vista de libres.
+            _render_confirmar_libre(
+                session, plan_id, horario_id, sel_aula,
+                nuevo_tipo if cambiando_tipo else None,
+            )
+            return
+
+        if not cand.ocupante_franja_identica:
+            st.error(
+                f"El aula **{cand.aula.nombre}** está ocupada por un "
+                f"horario con franja parcialmente distinta. Por ahora "
+                f"sólo se soporta intercambio con franjas idénticas. "
+                f"Elegí otra aula o liberá manualmente esa franja "
+                f"desde el horario correspondiente."
+            )
+            _render_boton_cancelar(horario_id)
+            return
+
+        # =============================================================
+        # Aula ocupada con franja idéntica → sub-form de resolución
+        # =============================================================
+        oc = cand.ocupante
+        assert oc is not None
+        oc_com = session.get(ComisionDB, oc.comision_id)
+        oc_mat = (
+            session.get(MateriaDB, oc_com.materia_codigo) if oc_com else None
+        )
+        oc_mat_nombre = (
+            oc_mat.nombre if oc_mat else (
+                oc_com.materia_codigo if oc_com else "?"
+            )
+        )
+        oc_aula = session.get(AulaDB, oc.aula_id) if oc.aula_id else None
+
+        st.divider()
+        st.markdown(
+            f"**Aula ocupada:** {cand.aula.nombre}  \n"
+            f"Actualmente asignada a: **{oc_mat_nombre}** — "
+            f"{oc_com.nombre if oc_com else '?'} "
+            f"(aula {oc_aula.nombre if oc_aula else '?'})"
+        )
+
+        # Buscar aulas libres alternativas para el desplazado (para el
+        # sub-selector "reasignar a otra libre").
+        alt_desp_cands = get_aulas_todas_para_horario(
+            session, plan_id, oc.id,
+        )
+        alt_desp_libres = [c for c in alt_desp_cands if c.libre_en_franja]
+
+        # Radio de acciones. Filtrar por disponibilidad.
+        opciones_accion = ["swap"]
+        if alt_desp_libres:
+            opciones_accion.append("reassign")
+        opciones_accion.append("unassign")
+
+        def _fmt_accion(a: str) -> str:
+            if a == "swap":
+                aula_orig_editado = (
+                    session.get(AulaDB, horario.aula_id)
+                    if horario.aula_id else None
+                )
+                nombre_orig = (
+                    aula_orig_editado.nombre if aula_orig_editado
+                    else "sin aula"
+                )
+                return f"Intercambiar aulas ({oc_mat_nombre} pasa a **{nombre_orig}**)"
+            if a == "reassign":
+                return "Reasignar a otra aula libre"
+            return "Dejar sin aula (marcar para revisar)"
+
+        accion = st.radio(
+            "¿Qué hacemos con la asignación actual?",
+            options=opciones_accion,
+            format_func=_fmt_accion,
+            key=f"dlg_h_accion_{horario_id}",
+        )
+
+        aula_para_desplazado: str | None = None
+        if accion == "reassign":
+            opciones_reassign = [c.aula.id for c in alt_desp_libres]
+            labels_reassign = {
+                c.aula.id: (
+                    f"{sede_map.get(c.aula.sede_id, '?')} · {c.aula.nombre} "
+                    f"(cap. {c.aula.capacidad}, {c.aula.tipo})"
+                )
+                for c in alt_desp_libres
+            }
+            aula_para_desplazado = st.selectbox(
+                f"Aula libre para {oc_mat_nombre}",
+                options=opciones_reassign,
+                format_func=lambda x: labels_reassign[x],
+                key=f"dlg_h_alt_{horario_id}",
+            )
+
+        # Preview del cambio.
+        prev = preview_reasignacion_con_desplazamiento(
+            session, plan_id, horario_id, sel_aula,
+            accion=accion,
+            aula_para_desplazado=aula_para_desplazado,
+        )
+
+        st.divider()
+        st.markdown("**Preview del cambio**")
+        _render_preview(session, sede_map, horario, oc, prev, cand.aula)
 
         col_ok, col_no = st.columns(2)
         with col_ok:
+            btn_disabled = not (prev.editado_ok and prev.desplazado_ok)
             if st.button(
                 "Confirmar", type="primary",
-                key=f"dlg_h_ok_{horario_id}",
+                key=f"dlg_h_ok_swap_{horario_id}",
+                disabled=btn_disabled,
+                help=(
+                    None if not btn_disabled
+                    else "Hay incompatibilidades — corregí antes de confirmar."
+                ),
             ):
-                aula_arg = None if sel_aula == "__NONE__" else sel_aula
-                tipo_arg = nuevo_tipo if cambiando_tipo else None
-                res = cambiar_aula_horario(
-                    session, horario_id, aula_arg, nuevo_tipo=tipo_arg,
+                # Tipo primero (si cambia), después la reasignación.
+                if cambiando_tipo:
+                    _res_tipo = cambiar_aula_horario(
+                        session, horario_id, horario.aula_id,
+                        nuevo_tipo=nuevo_tipo,
+                    )
+                    if not _res_tipo.ok:
+                        for e in _res_tipo.errores:
+                            st.error(e)
+                        return
+                res = reasignar_con_desplazamiento(
+                    session, plan_id, horario_id, sel_aula,
+                    accion=accion,
+                    aula_para_desplazado=aula_para_desplazado,
                 )
                 if not res.ok:
                     for e in res.errores:
                         st.error(e)
                     return
-                for w in res.warnings:
-                    st.warning(w)
                 st.success(
-                    "Aula actualizada. Las clases del horario "
-                    "heredaron el cambio."
+                    f"Aulas actualizadas. Las clases de "
+                    f"{mat.nombre if mat else mat_codigo} y "
+                    f"{oc_mat_nombre} heredaron los cambios."
                 )
                 st.rerun()
         with col_no:
             if st.button(
-                "Cancelar", key=f"dlg_h_cancel_{horario_id}",
+                "Cancelar", key=f"dlg_h_cancel_swap_{horario_id}",
             ):
                 st.rerun()
+
+
+def _render_boton_cancelar(horario_id: str) -> None:
+    """Botón Cancelar para las ramas de salida temprana del dialog."""
+    if st.button("Cancelar", key=f"dlg_h_cancel_only_{horario_id}"):
+        st.rerun()
+
+
+def _render_confirmar_libre(
+    session: "Session",
+    plan_id: str,
+    horario_id: str,
+    sel_aula: str,
+    nuevo_tipo: str | None,
+) -> None:
+    """Rama simple: aula libre o "sin asignar". Un solo botón
+    Confirmar / Cancelar."""
+    from src.services.asignacion_aulas_service import cambiar_aula_horario
+
+    col_ok, col_no = st.columns(2)
+    with col_ok:
+        if st.button(
+            "Confirmar", type="primary",
+            key=f"dlg_h_ok_libre_{horario_id}",
+        ):
+            aula_arg = None if sel_aula == "__NONE__" else sel_aula
+            res = cambiar_aula_horario(
+                session, horario_id, aula_arg, nuevo_tipo=nuevo_tipo,
+            )
+            if not res.ok:
+                for e in res.errores:
+                    st.error(e)
+                return
+            for w in res.warnings:
+                st.warning(w)
+            st.success(
+                "Aula actualizada. Las clases del horario heredaron "
+                "el cambio."
+            )
+            st.rerun()
+    with col_no:
+        if st.button(
+            "Cancelar", key=f"dlg_h_cancel_libre_{horario_id}",
+        ):
+            st.rerun()
+
+
+def _render_preview(
+    session: "Session",
+    sede_map: dict,
+    horario_editado: HorarioDB,
+    ocupante: HorarioDB,
+    prev,
+    aula_nueva: AulaDB,
+) -> None:
+    """Muestra el efecto hipotético del swap/reassign/unassign para
+    ambos horarios (editado y desplazado)."""
+    from src.database.models import ComisionDB, MateriaDB
+
+    # Editado.
+    com_ed = session.get(ComisionDB, horario_editado.comision_id)
+    mat_ed_codigo = com_ed.materia_codigo if com_ed else "?"
+    mat_ed = session.get(MateriaDB, mat_ed_codigo)
+    aula_ed_futura = session.get(AulaDB, prev.editado_aula_futura) if prev.editado_aula_futura else None
+    st.markdown(
+        f"- **{mat_ed.nombre if mat_ed else mat_ed_codigo}** — "
+        f"{com_ed.nombre if com_ed else '?'} → "
+        f"**{aula_ed_futura.nombre if aula_ed_futura else 'sin aula'}** "
+        f"{'✅' if prev.editado_ok else '❌'}"
+    )
+
+    # Desplazado.
+    com_de = session.get(ComisionDB, ocupante.comision_id)
+    mat_de_codigo = com_de.materia_codigo if com_de else "?"
+    mat_de = session.get(MateriaDB, mat_de_codigo)
+    aula_de_futura = (
+        session.get(AulaDB, prev.desplazado_aula_futura)
+        if prev.desplazado_aula_futura else None
+    )
+    st.markdown(
+        f"- **{mat_de.nombre if mat_de else mat_de_codigo}** — "
+        f"{com_de.nombre if com_de else '?'} → "
+        f"**{aula_de_futura.nombre if aula_de_futura else 'sin aula'}** "
+        f"{'✅' if prev.desplazado_ok else '❌'}"
+    )
+
+    if prev.errores:
+        for e in prev.errores:
+            st.error(e)
 
 
 def render_aula_cronograma(
