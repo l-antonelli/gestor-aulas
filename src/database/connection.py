@@ -191,6 +191,12 @@ def _run_migrations(eng):
     # eliminar las columnas de las tablas.
     _migrate_horario_entries_drop_carrera_asignada(eng)
 
+    # Eliminar `PlanificacionCursadaDB.activo`: quedaba de cuando existía
+    # el concepto de "plan activo del ciclo" que definía el patrón usado
+    # para generar clases puntuales. Con clases puntuales deprecadas, el
+    # flag no cumple ningún rol funcional. Migración idempotente.
+    _migrate_planificacion_cursada_drop_activo(eng)
+
 
 def _migrate_schedules_nullable_ciclo(eng):
     """Recreate schedules table so ciclo_id allows NULL.
@@ -920,6 +926,70 @@ def _migrate_horario_entries_drop_carrera_asignada(eng):
             ):
                 conn.exec_driver_sql(idx_sql)
             conn.commit()
+
+
+def _migrate_planificacion_cursada_drop_activo(eng):
+    """Elimina la columna `activo` de la tabla `planificaciones_cursada`.
+
+    La columna quedaba de cuando existía el concepto de "plan activo del
+    ciclo" que definía el patrón para generar clases puntuales. Con la
+    deprecación de clases puntuales (2026-07), el flag no cumple ningún
+    rol funcional.
+
+    Pasos:
+    1. Detectar si la columna `activo` existe (si no, no-op).
+    2. Recrear la tabla sin la columna, preservando el resto de los
+       campos e índices.
+
+    Idempotente.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "PRAGMA table_info(planificaciones_cursada)"
+        ).fetchall()
+        if not rows:
+            return  # tabla todavía no creada
+        cols = {r[1] for r in rows}
+        if "activo" not in cols:
+            return  # ya migrada
+
+        logger.info(
+            "Migrating planificaciones_cursada: dropping `activo` column"
+        )
+
+        conn.exec_driver_sql("""
+            CREATE TABLE planificaciones_cursada_tmp (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                nombre VARCHAR NOT NULL,
+                descripcion VARCHAR NOT NULL DEFAULT '',
+                ciclo_id VARCHAR NOT NULL,
+                schedule_id VARCHAR,
+                forecast_metodo_default VARCHAR NOT NULL DEFAULT 'media_movil',
+                FOREIGN KEY (ciclo_id) REFERENCES ciclos (id),
+                FOREIGN KEY (schedule_id) REFERENCES schedules (id)
+            )
+        """)
+        conn.exec_driver_sql("""
+            INSERT INTO planificaciones_cursada_tmp
+                (id, nombre, descripcion, ciclo_id, schedule_id,
+                 forecast_metodo_default)
+            SELECT id, nombre, descripcion, ciclo_id, schedule_id,
+                   forecast_metodo_default
+            FROM planificaciones_cursada
+        """)
+        conn.exec_driver_sql("DROP TABLE planificaciones_cursada")
+        conn.exec_driver_sql(
+            "ALTER TABLE planificaciones_cursada_tmp "
+            "RENAME TO planificaciones_cursada"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_planificaciones_cursada_ciclo_id "
+            "ON planificaciones_cursada (ciclo_id)"
+        )
+        conn.commit()
+        logger.info(
+            "Migration complete: dropped `activo` from planificaciones_cursada."
+        )
 
 
 def _seed_default_sede_if_empty(conn):

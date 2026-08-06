@@ -546,7 +546,6 @@ class PlanificacionCursadaDB(SQLModel, table=True):
     nombre: str
     descripcion: str = Field(default="")
     ciclo_id: str = Field(foreign_key="ciclos.id", index=True)
-    activo: bool = Field(default=False)
     schedule_id: Optional[str] = Field(default=None, foreign_key="schedules.id")
     # Metodo de forecast por defecto que se aplica a todas las materias del
     # plan, salvo override en `MateriaForecastConfigDB`. Valores:
