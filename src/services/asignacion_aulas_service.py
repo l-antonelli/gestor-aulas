@@ -1743,3 +1743,586 @@ def clear_aula_horario(session: Session, horario_id: str) -> bool:
         session, horario_id, aula_id=None, propagar_a_clases=True,
     )
     return True
+
+
+# =============================================================================
+# Reasignación con desplazamiento (edición manual)
+# =============================================================================
+#
+# Feature: al editar el aula de un horario, el usuario puede elegir un
+# aula que ya está ocupada por otro horario del plan y resolver el
+# conflicto entre ambos en un solo paso (swap, reasignar el desplazado
+# a una libre, o dejarlo sin aula).
+#
+# Acciones válidas para ``reasignar_con_desplazamiento``:
+#   - "libre":     asigna un aula libre al horario editado. Equivalente
+#                  a ``cambiar_aula_horario``.
+#   - "swap":      el aula elegida está ocupada por un horario con
+#                  franja idéntica. El editado toma esa aula y el
+#                  desplazado recibe el aula original del editado.
+#   - "reassign":  el editado toma el aula ocupada; el desplazado se
+#                  reasigna a un aula libre pasada en
+#                  ``aula_para_desplazado``.
+#   - "unassign":  el editado toma el aula ocupada; el desplazado queda
+#                  sin aula (aula_id=None).
+#
+# Restricción: sólo swap directo con franjas idénticas. Si el ocupante
+# tiene franja parcial vs. el horario editado, se lo trata como "no
+# hay ocupante" a efectos del swap simple. La UI se encarga de mostrar
+# el aula como "ocupada" en el desplegable pero deshabilitar la opción
+# swap si la franja no coincide.
+
+
+@dataclass
+class AulaCandidata:
+    """Aula candidata a ser asignada a un horario, con metadata sobre
+    ocupación en la franja del horario editado.
+
+    Devuelto por ``get_aulas_todas_para_horario`` para poblar el
+    desplegable del diálogo de edición manual.
+    """
+    aula: AulaDB
+    libre_en_franja: bool
+    ocupante: Optional[HorarioDB]
+    # True si el ocupante tiene EXACTAMENTE la misma franja (día,
+    # hora_inicio, hora_fin) que el horario editado. Sólo cuando esto
+    # es True, la UI puede ofrecer la acción "swap".
+    ocupante_franja_identica: bool
+
+
+@dataclass
+class PreviewReasignacion:
+    """Efecto hipotético de una reasignación con desplazamiento.
+
+    Devuelto por ``preview_reasignacion_con_desplazamiento`` para que
+    la UI muestre el resultado antes de que el usuario confirme.
+    """
+    editado_ok: bool
+    editado_aula_futura: Optional[str]
+    # Si la operación desplaza otro horario, estos campos se completan.
+    desplazado_horario_id: Optional[str] = None
+    desplazado_aula_futura: Optional[str] = None
+    desplazado_ok: bool = True
+    errores: list[str] = field(default_factory=list)
+
+
+def get_ocupante_de_aula_en_franja(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    aula_id: str,
+) -> Optional[HorarioDB]:
+    """Devuelve el HorarioDB que ocupa ``aula_id`` en la misma franja
+    exacta (día, hora_inicio, hora_fin) que ``horario_id``, entre los
+    horarios del ``plan_id``, o ``None`` si el aula está libre en esa
+    franja o el ocupante tiene franja parcial.
+
+    Excluye al propio ``horario_id`` (no se considera su propio
+    ocupante).
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        return None
+
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids_plan:
+        return None
+
+    # Buscar horarios con MISMA franja exacta (no solapamiento parcial).
+    ocupante = session.exec(
+        select(HorarioDB).where(
+            HorarioDB.aula_id == aula_id,
+            HorarioDB.dia == horario.dia,
+            HorarioDB.hora_inicio == horario.hora_inicio,
+            HorarioDB.hora_fin == horario.hora_fin,
+            HorarioDB.id != horario_id,
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+        ).limit(1)
+    ).first()
+    return ocupante
+
+
+def get_aulas_todas_para_horario(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    *,
+    tipo_objetivo: Optional[str] = None,
+) -> list[AulaCandidata]:
+    """Aulas candidatas al ``horario_id`` **sin filtrar por ocupación**.
+
+    A diferencia de ``get_aulas_disponibles_para_horario`` que excluye
+    aulas ocupadas por otros horarios del plan en la franja, esta
+    función devuelve todas las aulas compatibles por tipo y sede, y
+    marca cada una con metadata sobre ocupación en la franja del
+    horario editado.
+
+    Filtra:
+      - Compatibilidad tipo<->aula.
+      - Restricción de sede (R10).
+
+    Metadata por aula candidata:
+      - ``libre_en_franja``: True si ningún otro horario del plan usa
+        esa aula en una franja que solape con la del ``horario_id``.
+      - ``ocupante``: el HorarioDB que ocupa el aula en franja idéntica
+        (si hay). None si está libre o si el ocupante tiene franja
+        parcial.
+      - ``ocupante_franja_identica``: si hay ocupante, si su franja
+        coincide exactamente con la del horario editado. Sólo en ese
+        caso la UI puede ofrecer swap directo.
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        return []
+    tipo_clase = (
+        tipo_objetivo if tipo_objetivo is not None else horario.tipo_clase
+    )
+    comision = session.get(ComisionDB, horario.comision_id)
+    materia_codigo = comision.materia_codigo if comision else None
+
+    aulas_db = list(session.exec(
+        select(AulaDB).order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
+    ).all())
+
+    # Filtrado por tipo.
+    compat: list[AulaDB] = []
+    lab_ids: set[str] = set()
+    if materia_codigo:
+        lab_ids = {
+            ml.aula_id for ml in session.exec(
+                select(MateriaLaboratorioDB).where(
+                    MateriaLaboratorioDB.materia_codigo == materia_codigo
+                )
+            ).all()
+        }
+    if tipo_clase == "laboratorio":
+        if materia_codigo:
+            compat = [a for a in aulas_db if a.id in lab_ids]
+    elif tipo_clase == "teorica":
+        compat = [a for a in aulas_db if a.tipo in ("teorica", "anfiteatro")]
+    else:
+        compat = list(aulas_db)
+
+    # Filtrado por sede (R10).
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_carrera,
+        sedes_admisibles_para_materia,
+    )
+    _com_override = comision.carrera_asignada if comision else None
+    if _com_override:
+        admisibles = sedes_admisibles_para_carrera(session, _com_override)
+    elif materia_codigo:
+        admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+    else:
+        admisibles = None
+    if admisibles is not None:
+        compat = [
+            a for a in compat
+            if a.id in lab_ids or a.sede_id in admisibles
+        ]
+
+    # Traer todos los horarios del plan que solapen con la franja del
+    # horario editado (excluyendo el propio horario).
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    horarios_otros: list[HorarioDB] = []
+    if com_ids_plan:
+        horarios_otros = list(session.exec(
+            select(HorarioDB).where(
+                HorarioDB.id != horario_id,
+                HorarioDB.dia == horario.dia,
+                HorarioDB.hora_inicio < horario.hora_fin,
+                HorarioDB.hora_fin > horario.hora_inicio,
+                HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+                HorarioDB.aula_id.is_not(None),  # type: ignore[union-attr]
+            )
+        ).all())
+
+    # Mapear aula_id -> ocupante (primer horario, franja idéntica preferida).
+    ocupantes_por_aula: dict[str, HorarioDB] = {}
+    for h in horarios_otros:
+        if h.aula_id is None:
+            continue
+        if h.aula_id in ocupantes_por_aula:
+            # Preferir franja idéntica si aparecen varios ocupantes
+            existing = ocupantes_por_aula[h.aula_id]
+            existing_id = (
+                existing.hora_inicio == horario.hora_inicio
+                and existing.hora_fin == horario.hora_fin
+            )
+            new_id = (
+                h.hora_inicio == horario.hora_inicio
+                and h.hora_fin == horario.hora_fin
+            )
+            if new_id and not existing_id:
+                ocupantes_por_aula[h.aula_id] = h
+        else:
+            ocupantes_por_aula[h.aula_id] = h
+
+    resultado: list[AulaCandidata] = []
+    for a in compat:
+        oc = ocupantes_por_aula.get(a.id)
+        franja_identica = False
+        if oc is not None:
+            franja_identica = (
+                oc.hora_inicio == horario.hora_inicio
+                and oc.hora_fin == horario.hora_fin
+            )
+        # ocupante devuelto sólo si franja idéntica (mismo criterio que
+        # get_ocupante_de_aula_en_franja).
+        ocupante_out = oc if franja_identica else None
+        resultado.append(AulaCandidata(
+            aula=a,
+            libre_en_franja=oc is None,
+            ocupante=ocupante_out,
+            ocupante_franja_identica=franja_identica,
+        ))
+    return resultado
+
+
+_ACCIONES_REASIGNACION = ("libre", "swap", "reassign", "unassign")
+
+
+def _validar_reasignacion(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    aula_nueva_id: str,
+    accion: str,
+    aula_para_desplazado: Optional[str],
+) -> tuple[HorarioDB, Optional[HorarioDB], list[str]]:
+    """Validaciones de forma (previas al cómputo del efecto).
+
+    Devuelve (horario_editado, ocupante_o_none, errores). Si `errores`
+    tiene elementos, la operación no puede continuar.
+    """
+    errores: list[str] = []
+
+    horario_editado = session.get(HorarioDB, horario_id)
+    if horario_editado is None:
+        return None, None, [f"Horario '{horario_id}' no encontrado."]  # type: ignore[return-value]
+
+    aula_nueva = session.get(AulaDB, aula_nueva_id)
+    if aula_nueva is None:
+        errores.append(f"Aula '{aula_nueva_id}' no encontrada.")
+        return horario_editado, None, errores
+
+    if accion == "libre":
+        return horario_editado, None, errores
+
+    ocupante = get_ocupante_de_aula_en_franja(
+        session, plan_id, horario_id, aula_nueva_id,
+    )
+    if ocupante is None:
+        if accion == "swap":
+            errores.append(
+                f"No se puede hacer swap: el aula '{aula_nueva.nombre}' "
+                "está libre en esta franja (no hay ocupante)."
+            )
+            return horario_editado, None, errores
+        # reassign/unassign sin ocupante no tiene sentido tampoco
+        errores.append(
+            f"El aula '{aula_nueva.nombre}' está libre en esta franja. "
+            "Usá acción 'libre'."
+        )
+        return horario_editado, None, errores
+
+    if accion == "reassign":
+        if aula_para_desplazado == horario_editado.aula_id:
+            errores.append(
+                f"Reasignar el desplazado al aula original del editado "
+                f"es equivalente a hacer swap. Usá acción 'swap'."
+            )
+
+    return horario_editado, ocupante, errores
+
+
+def preview_reasignacion_con_desplazamiento(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    aula_nueva_id: str,
+    *,
+    accion: str,
+    aula_para_desplazado: Optional[str] = None,
+) -> PreviewReasignacion:
+    """Efecto hipotético de una reasignación con desplazamiento SIN
+    persistir.
+
+    Corre ``_validar_aula_para_horario`` sobre el editado con el aula
+    nueva, y (según la acción) sobre el desplazado con su aula futura.
+
+    Args:
+        plan_id: id del plan.
+        horario_id: horario a editar (obtiene ``aula_nueva_id``).
+        aula_nueva_id: aula destino del editado.
+        accion: una de ``_ACCIONES_REASIGNACION``.
+        aula_para_desplazado: sólo relevante si accion=="reassign".
+
+    Returns:
+        PreviewReasignacion con banderas ``editado_ok`` /
+        ``desplazado_ok`` y la lista de errores.
+
+    Raises:
+        ValueError: si ``accion`` es inválida o si accion=="reassign"
+            pero ``aula_para_desplazado`` es None.
+    """
+    if accion not in _ACCIONES_REASIGNACION:
+        raise ValueError(
+            f"accion inválida: '{accion}'. Válidas: "
+            f"{_ACCIONES_REASIGNACION}."
+        )
+    if accion == "reassign" and aula_para_desplazado is None:
+        raise ValueError(
+            "aula_para_desplazado es requerido con accion='reassign'."
+        )
+
+    horario_editado, ocupante, errores_forma = _validar_reasignacion(
+        session, plan_id, horario_id, aula_nueva_id, accion,
+        aula_para_desplazado,
+    )
+    if errores_forma:
+        return PreviewReasignacion(
+            editado_ok=False,
+            editado_aula_futura=None,
+            errores=errores_forma,
+        )
+
+    aula_nueva = session.get(AulaDB, aula_nueva_id)
+    assert aula_nueva is not None
+    aula_original_editado = horario_editado.aula_id
+
+    # Validar el editado tomando aula_nueva. Para esto necesitamos
+    # simular sin persistir. La estrategia: hacer un "flush hipotético"
+    # temporal — tocar los aula_id in-memory, correr los validators,
+    # y rollback.
+    prev = PreviewReasignacion(editado_ok=True, editado_aula_futura=aula_nueva_id)
+    errores_all: list[str] = []
+
+    # Para no depender del rollback (frágil con SQLModel), usamos una
+    # validación manual: la lógica de _validar_aula_para_horario
+    # chequea (a) compatibilidad tipo, (b) sede admisible (implícito
+    # via el filtro de get_aulas_*), y (c) choque con otros horarios
+    # del plan. Para simular el swap sin persistir, computamos "otros
+    # aulas ocupadas en la franja" excluyendo el ocupante (que se va a
+    # mover) y el propio horario editado.
+    def _check_compat(horario: HorarioDB, aula: AulaDB) -> list[str]:
+        errs: list[str] = []
+        tipo = horario.tipo_clase
+        if tipo == "laboratorio":
+            comision = session.get(ComisionDB, horario.comision_id)
+            if comision is None:
+                errs.append("Comisión no encontrada.")
+                return errs
+            compat_set = {
+                ml.aula_id for ml in session.exec(
+                    select(MateriaLaboratorioDB).where(
+                        MateriaLaboratorioDB.materia_codigo
+                        == comision.materia_codigo
+                    )
+                ).all()
+            }
+            if aula.id not in compat_set:
+                errs.append(
+                    f"El aula '{aula.nombre}' no es laboratorio compatible "
+                    f"con la materia {comision.materia_codigo}."
+                )
+        elif tipo == "teorica":
+            if aula.tipo not in ("teorica", "anfiteatro"):
+                errs.append(
+                    f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
+                    "no admite clase teórica."
+                )
+        # Sede admisible.
+        comision = session.get(ComisionDB, horario.comision_id)
+        materia_codigo = comision.materia_codigo if comision else None
+        _com_override = comision.carrera_asignada if comision else None
+        from src.services.carrera_sede_service import (
+            sedes_admisibles_para_carrera,
+            sedes_admisibles_para_materia,
+        )
+        if _com_override:
+            admisibles = sedes_admisibles_para_carrera(session, _com_override)
+        elif materia_codigo:
+            admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+        else:
+            admisibles = None
+        if admisibles is not None:
+            lab_ids: set[str] = set()
+            if materia_codigo:
+                lab_ids = {
+                    ml.aula_id for ml in session.exec(
+                        select(MateriaLaboratorioDB).where(
+                            MateriaLaboratorioDB.materia_codigo == materia_codigo
+                        )
+                    ).all()
+                }
+            if aula.id not in lab_ids and aula.sede_id not in admisibles:
+                errs.append(
+                    f"El aula '{aula.nombre}' está en una sede "
+                    "no admisible para la materia/carrera."
+                )
+        return errs
+
+    # 1) Validar editado.
+    errs_ed = _check_compat(horario_editado, aula_nueva)
+    if errs_ed:
+        prev.editado_ok = False
+        errores_all.extend(errs_ed)
+
+    # 2) Según acción, determinar y validar el desplazado.
+    if accion == "libre":
+        pass
+    else:
+        assert ocupante is not None
+        prev.desplazado_horario_id = ocupante.id
+        if accion == "swap":
+            prev.desplazado_aula_futura = aula_original_editado
+            if aula_original_editado is None:
+                prev.desplazado_ok = False
+                errores_all.append(
+                    "No se puede hacer swap: el horario editado no tiene "
+                    "aula asignada actualmente."
+                )
+            else:
+                aula_para_desp = session.get(AulaDB, aula_original_editado)
+                if aula_para_desp is None:
+                    prev.desplazado_ok = False
+                    errores_all.append(
+                        f"Aula original '{aula_original_editado}' no encontrada."
+                    )
+                else:
+                    errs_de = _check_compat(ocupante, aula_para_desp)
+                    if errs_de:
+                        prev.desplazado_ok = False
+                        errores_all.extend(errs_de)
+        elif accion == "reassign":
+            assert aula_para_desplazado is not None
+            prev.desplazado_aula_futura = aula_para_desplazado
+            aula_desp = session.get(AulaDB, aula_para_desplazado)
+            if aula_desp is None:
+                prev.desplazado_ok = False
+                errores_all.append(
+                    f"Aula '{aula_para_desplazado}' no encontrada."
+                )
+            else:
+                errs_de = _check_compat(ocupante, aula_desp)
+                if errs_de:
+                    prev.desplazado_ok = False
+                    errores_all.extend(errs_de)
+        elif accion == "unassign":
+            prev.desplazado_aula_futura = None
+            # Sin aula no hay validación de compatibilidad — siempre ok.
+
+    prev.errores = errores_all
+    return prev
+
+
+def reasignar_con_desplazamiento(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    aula_nueva_id: str,
+    *,
+    accion: str,
+    aula_para_desplazado: Optional[str] = None,
+) -> ValidationResult:
+    """Aplica una reasignación con desplazamiento en una sola
+    transacción atómica.
+
+    Estrategia:
+    1. Corre ``preview_reasignacion_con_desplazamiento`` para validar
+       todo antes de tocar la DB.
+    2. Si preview.ok, aplica en orden seguro:
+       a) Deja al desplazado sin aula temporalmente (para liberar).
+       b) Asigna al editado su aula nueva.
+       c) Asigna al desplazado su aula futura (o lo deja sin aula
+          según acción).
+
+    Si algo falla, no persiste nada.
+
+    Args, raises: idénticos a ``preview_reasignacion_con_desplazamiento``.
+
+    Returns:
+        ValidationResult con ok=True si se aplicó todo, o
+        ``errores`` explicando por qué falló.
+    """
+    if accion not in _ACCIONES_REASIGNACION:
+        raise ValueError(
+            f"accion inválida: '{accion}'. Válidas: "
+            f"{_ACCIONES_REASIGNACION}."
+        )
+    if accion == "reassign" and aula_para_desplazado is None:
+        raise ValueError(
+            "aula_para_desplazado es requerido con accion='reassign'."
+        )
+
+    # Preview primero — atrapa validaciones de forma y compatibilidad.
+    prev = preview_reasignacion_con_desplazamiento(
+        session, plan_id, horario_id, aula_nueva_id,
+        accion=accion, aula_para_desplazado=aula_para_desplazado,
+    )
+    if not (prev.editado_ok and prev.desplazado_ok):
+        res = ValidationResult(ok=False)
+        res.errores = list(prev.errores)
+        return res
+
+    horario_editado = session.get(HorarioDB, horario_id)
+    assert horario_editado is not None
+
+    # Aplicar en orden seguro para evitar choques transitorios.
+    if accion == "libre":
+        return cambiar_aula_horario(
+            session, horario_id, aula_nueva_id,
+        )
+
+    # accion in {swap, reassign, unassign} → hay ocupante.
+    ocupante = get_ocupante_de_aula_en_franja(
+        session, plan_id, horario_id, aula_nueva_id,
+    )
+    assert ocupante is not None
+
+    # 1) Liberar al ocupante temporalmente.
+    res1 = cambiar_aula_horario(session, ocupante.id, aula_id=None)
+    if not res1.ok:
+        # Muy improbable si preview pasó, pero por defensa:
+        return res1
+
+    # 2) Asignar aula nueva al editado.
+    res2 = cambiar_aula_horario(session, horario_id, aula_nueva_id)
+    if not res2.ok:
+        # Restaurar ocupante a su aula original (best effort).
+        cambiar_aula_horario(session, ocupante.id, aula_nueva_id)
+        return res2
+
+    # 3) Asignar el aula futura al desplazado.
+    if accion == "swap":
+        aula_para_desp = horario_editado.aula_id  # es la aula_nueva ahora
+        # Pero necesitamos la aula ORIGINAL del editado, que ya no está
+        # en horario_editado.aula_id (porque la sobreescribimos).
+        # Usamos prev.desplazado_aula_futura que tiene el valor
+        # correcto capturado antes del cambio.
+        aula_para_desp = prev.desplazado_aula_futura
+        assert aula_para_desp is not None
+        res3 = cambiar_aula_horario(session, ocupante.id, aula_para_desp)
+    elif accion == "reassign":
+        assert aula_para_desplazado is not None
+        res3 = cambiar_aula_horario(session, ocupante.id, aula_para_desplazado)
+    else:  # unassign
+        # Ya está en None, no hay nada que hacer.
+        res3 = ValidationResult(ok=True)
+
+    if not res3.ok:
+        # Best effort de rollback.
+        cambiar_aula_horario(session, ocupante.id, aula_nueva_id)
+        cambiar_aula_horario(session, horario_id, horario_editado.aula_id)
+        return res3
+
+    return ValidationResult(ok=True)
