@@ -24,7 +24,7 @@ Convenciones:
 
 | # | Prioridad | Categoría | Descripción corta |
 |---|---|---|---|
-| H01 | 🔴 | bug | Guardar en Inscriptos "Con datos" con filtro por cuatri borra silenciosamente el otro cuatri |
+| ~~H01~~ | ✅ | bug | ~~Guardar en Inscriptos "Con datos" con filtro por cuatri borra silenciosamente el otro cuatri~~ **Resuelto 2026-07-30** — nuevo `inscripcion_service.guardar_registros_materia` con UPSERT y scope restringido a cuatris visibles. |
 | H02 | 🔴 | bug | `apply_horario_edits` no limpia `HorarioDB.aula_id` al mover el slot: patrón queda con aula colgada |
 | H03 | 🔴 | bug | Borrar un `ScheduleDB` no borra sus comisiones template ni el plan derivado: FK dangling |
 | H04 | 🔴 | bug | Crear una `CarreraDB` desde la UI no crea la `PlanCarreraVersionDB`: la carrera queda inútil hasta que se detecta |
@@ -63,7 +63,7 @@ Convenciones:
 
 ---
 
-## H01 — Inscriptos "Con datos" borra silenciosamente el otro cuatri 🔴
+## H01 — Inscriptos "Con datos" borra silenciosamente el otro cuatri ✅ RESUELTO
 
 **Categoría**: `bug` funcional que **destruye datos del usuario sin
 aviso**.
@@ -92,12 +92,32 @@ saque el filtro.
 **Resultado esperado**: guardar sólo lo que se editó, respetando los
 otros cuatrimestres.
 
-**Fix propuesto** (para otra sesión): `DELETE WHERE materia_codigo = X
-AND cuatrimestre IN (cuatris_visibles)`, o filtrar `records` antes de
-pasar al editor y hacer diff explícito.
+**Fix aplicado** (2026-07-30):
 
-**Riesgo si no se arregla**: pérdida silenciosa de datos históricos que
-alimentan el forecast, y con él la asignación del LP.
+Se creó `src/services/inscripcion_service.py` con la función
+`guardar_registros_materia(session, codigo, registros, *,
+cuatris_visibles)` que reemplaza el `DELETE + INSERT` monolítico por
+un diff explícito:
+
+1. Trae las filas existentes de la materia **restringidas a los
+   `cuatris_visibles`**.
+2. Aplica UPDATE / INSERT según coincidencia por PK
+   `(materia_codigo, anio, cuatrimestre)`.
+3. Borra las filas visibles que ya no están en el editor (el usuario
+   las eliminó).
+4. **Las filas fuera de `cuatris_visibles` quedan intactas**.
+
+Además valida defensivamente que ninguna fila del editor tenga un
+cuatrimestre fuera del scope visible (bug en la UI).
+
+Test suite dedicada: `tests/test_inscripcion_service.py` (9 tests
+cubriendo el bug original, el flujo "Todos", eliminación de filas,
+inserción de filas nuevas, y validaciones defensivas).
+
+Integración en `app/pages/7_📈_Inscriptos.py:_render_materia_expander`:
+la lógica del botón "Guardar" ahora arma `RegistroInscripcion`s desde
+el editor y delega al service, pasando `cuatris_visibles` derivado del
+filtro superior del sidebar.
 
 ---
 

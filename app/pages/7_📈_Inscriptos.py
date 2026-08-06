@@ -9,7 +9,7 @@ desde Planes -> Detalle.
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from sqlmodel import select, col, delete
+from sqlmodel import select, col
 from src.database.connection import get_session, init_db
 from src.database.models import (
     InscripcionHistoricaDB, MateriaDB, PlanEstudioDB, CarreraDB,
@@ -18,6 +18,10 @@ from src.services.forecast_service import (
     METODO_LABELS,
     METODOS_DISPONIBLES,
     get_all_forecasts,
+)
+from src.services.inscripcion_service import (
+    RegistroInscripcion,
+    guardar_registros_materia,
 )
 from scripts.load_inscriptos import _normalize_code, _build_name_map
 
@@ -178,22 +182,33 @@ def _render_materia_expander(
                     "Guardar", type="primary",
                     key=f"{key_prefix}_save_{code}",
                 ):
-                    with next(get_session()) as sess:
-                        sess.exec(
-                            delete(InscripcionHistoricaDB)
-                            .where(InscripcionHistoricaDB.materia_codigo == code)
+                    _valid = edited.dropna(subset=["Año", "Cuatrimestre", "Inscriptos"])
+                    _cuatris_visibles = (
+                        {"1C", "2C", "Anual"} if cuatri_filter == "Todos"
+                        else {cuatri_filter}
+                    )
+                    _registros = [
+                        RegistroInscripcion(
+                            anio=int(r["Año"]),
+                            cuatrimestre=str(r["Cuatrimestre"]),
+                            inscriptos=int(r["Inscriptos"]),
                         )
-                        _valid = edited.dropna(subset=["Año", "Cuatrimestre", "Inscriptos"])
-                        for _, r in _valid.iterrows():
-                            sess.add(InscripcionHistoricaDB(
-                                materia_codigo=code,
-                                anio=int(r["Año"]),
-                                cuatrimestre=str(r["Cuatrimestre"]),
-                                inscriptos=int(r["Inscriptos"]),
-                            ))
-                        sess.commit()
-                    st.toast(f"{code}: {len(_valid)} registros guardados.")
-                    st.rerun()
+                        for _, r in _valid.iterrows()
+                    ]
+                    try:
+                        with next(get_session()) as sess:
+                            n_persistidas = guardar_registros_materia(
+                                sess, code, _registros,
+                                cuatris_visibles=_cuatris_visibles,
+                            )
+                    except ValueError as e:
+                        st.error(f"No se pudo guardar: {e}")
+                    else:
+                        st.toast(
+                            f"{code}: {n_persistidas} registro(s) guardado(s). "
+                            f"Los cuatrimestres fuera del filtro quedaron intactos."
+                        )
+                        st.rerun()
             else:
                 st.dataframe(df, hide_index=True, use_container_width=True)
 
