@@ -357,28 +357,17 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         )
 
     # =====================================================================
-    # Activacion gate
+    # Diagnóstico de conflictos bloqueantes
     # =====================================================================
     st.divider()
-    _has_blocker = summary.n_conflictos_horarios > 0
-    if _has_blocker:
+    if summary.n_conflictos_horarios > 0:
         st.error(
-            f"No se puede activar el plan: hay {summary.n_conflictos_horarios} "
-            f"conflicto(s) bloqueante(s) sin ignorar. Resolvelos o marcalos "
-            f"como ignorados (con razón) y volvé a validar."
+            f"Este plan tiene {summary.n_conflictos_horarios} conflicto(s) "
+            f"bloqueante(s) sin ignorar. Resolvelos o marcalos como "
+            f"ignorados (con razón) y volvé a validar."
         )
-    elif not plan.activo:
-        if st.button(
-            "Activar plan", type="primary",
-            key=f"{key_ns}_btn_activate",
-        ):
-            from src.services.plan_generation_service import activate_plan
-            with next(get_session()) as _as:
-                activate_plan(_as, plan_id)
-            st.success(f"Plan '{plan.nombre}' activado.")
-            st.rerun()
     else:
-        st.success(f"Plan '{plan.nombre}' está activo.")
+        st.success("Este plan no tiene conflictos bloqueantes.")
 
 
 # =============================================================================

@@ -16,7 +16,6 @@ from src.database.crud import ciclo_crud, get_or_create_config, update_config
 from src.services.plan_generation_service import (
     generate_plan_from_preview,
     preview_plan_from_schedule,
-    activate_plan,
     generate_time_slots,
 )
 
@@ -724,14 +723,11 @@ with tab_general:
             st.info("No hay planes para este ciclo. Carga un cronograma y genera uno desde la pestana Cronogramas.")
         else:
             for plan in planes:
-                status_badge = "🟢 ACTIVO" if plan.activo else "⚪ inactivo"
-
                 with st.container(border=True):
                     col_info, col_metrics, col_actions = st.columns([3, 4, 2])
 
                     with col_info:
                         st.markdown(f"### {plan.nombre}")
-                        st.markdown(f"**Estado:** {status_badge}")
                         st.caption(plan.descripcion or "Sin descripción")
                         # Resolver el nombre del cronograma origen si existe.
                         _sched_nombre = "sin cronograma vinculado"
@@ -765,13 +761,6 @@ with tab_general:
                         m3.metric("Horarios", n_horarios)
 
                     with col_actions:
-                        if not plan.activo:
-                            if st.button("Activar", key=f"gen_activate_{plan.id}"):
-                                with next(get_session()) as session:
-                                    activate_plan(session, plan.id)
-                                st.success(f"Plan '{plan.nombre}' activado")
-                                st.rerun()
-
                         if st.button("Eliminar", key=f"gen_delete_{plan.id}", type="secondary"):
                             with next(get_session()) as session:
                                 # Delete in FK order: clases → horarios → comisiones → plan
@@ -822,7 +811,7 @@ with tab_detalle:
         if not planes_detalle:
             st.info("No hay planes para este ciclo.")
         else:
-            plan_options = {p.id: f"{p.nombre} {'[ACTIVO]' if p.activo else ''}" for p in planes_detalle}
+            plan_options = {p.id: p.nombre for p in planes_detalle}
             sel_plan_id = st.selectbox(
                 "Seleccionar Plan",
                 options=list(plan_options.keys()),
@@ -863,10 +852,7 @@ with tab_grilla:
         if not planes_grilla:
             st.info("No hay planes para este ciclo.")
         else:
-            plan_options_grilla = {
-                p.id: f"{p.nombre} {'[ACTIVO]' if p.activo else ''}"
-                for p in planes_grilla
-            }
+            plan_options_grilla = {p.id: p.nombre for p in planes_grilla}
             sel_plan_grilla_id = st.selectbox(
                 "Seleccionar Plan",
                 options=list(plan_options_grilla.keys()),
@@ -903,10 +889,7 @@ with tab_aulas:
         if not planes_aulas:
             st.info("No hay planes para este ciclo.")
         else:
-            plan_options_aulas = {
-                p.id: f"{p.nombre} {'[ACTIVO]' if p.activo else ''}"
-                for p in planes_aulas
-            }
+            plan_options_aulas = {p.id: p.nombre for p in planes_aulas}
             sel_plan_aulas_id = st.selectbox(
                 "Seleccionar Plan",
                 options=list(plan_options_aulas.keys()),
