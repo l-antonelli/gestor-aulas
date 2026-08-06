@@ -16,7 +16,6 @@ from src.services.plan_generation_service import (
     generate_plan_from_schedule,
     generate_plan_from_preview,
     preview_plan_from_schedule,
-    activate_plan,
     generate_time_slots,
     build_timetable_grid,
     _derive_comisiones,
@@ -116,7 +115,6 @@ class TestGeneratePlanFromSchedule:
 
         assert result.plan is not None
         assert result.plan.nombre == "Plan Test"
-        assert result.plan.activo is False
         assert result.comisiones_created >= 2
         assert result.horarios_created == 4
         assert result.errors == []
@@ -141,42 +139,6 @@ class TestGeneratePlanFromSchedule:
 
         assert result.plan is None
         assert any("no encontrado" in e for e in result.errors)
-
-
-class TestActivatePlan:
-
-    def test_activate_plan(self, session, schedule):
-        result = generate_plan_from_schedule(
-            session, "sched-1", "Plan A", "2025-2C"
-        )
-        plan_id = result.plan.id
-
-        success = activate_plan(session, plan_id)
-        assert success is True
-
-        plan = session.get(PlanificacionCursadaDB, plan_id)
-        assert plan.activo is True
-
-    def test_activate_deactivates_others(self, session, schedule):
-        # Generate two plans
-        result_a = generate_plan_from_schedule(
-            session, "sched-1", "Plan A", "2025-2C"
-        )
-        activate_plan(session, result_a.plan.id)
-
-        result_b = generate_plan_from_schedule(
-            session, "sched-1", "Plan B", "2025-2C"
-        )
-        activate_plan(session, result_b.plan.id)
-
-        plan_a = session.get(PlanificacionCursadaDB, result_a.plan.id)
-        plan_b = session.get(PlanificacionCursadaDB, result_b.plan.id)
-
-        assert plan_a.activo is False
-        assert plan_b.activo is True
-
-    def test_activate_nonexistent_returns_false(self, session):
-        assert activate_plan(session, "NONEXISTENT") is False
 
 
 class TestGenerateTimeSlots:

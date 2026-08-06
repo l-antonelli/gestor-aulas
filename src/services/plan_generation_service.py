@@ -396,7 +396,6 @@ def generate_plan_from_preview(
         nombre=nombre,
         descripcion=descripcion,
         ciclo_id=ciclo_id,
-        activo=False,
         schedule_id=schedule_id,
         forecast_metodo_default=forecast_metodo_default,
     )
@@ -520,7 +519,6 @@ def generate_plan_from_schedule(
         id=plan_id,
         nombre=nombre,
         ciclo_id=ciclo_id,
-        activo=False,
         schedule_id=schedule_id,
     )
     session.add(plan)
@@ -727,33 +725,6 @@ def apply_horario_edits(
 
     session.commit()
     return updated, created, deleted
-
-
-def activate_plan(session: Session, plan_cursada_id: str) -> bool:
-    """
-    Activate a plan and deactivate all other plans for the same ciclo.
-
-    Returns True if the plan was found and activated.
-    """
-    plan = planificacion_crud.get(session, plan_cursada_id)
-    if plan is None:
-        return False
-
-    # Deactivate other plans for the same ciclo
-    other_plans = session.exec(
-        select(PlanificacionCursadaDB)
-        .where(PlanificacionCursadaDB.ciclo_id == plan.ciclo_id)
-        .where(PlanificacionCursadaDB.id != plan_cursada_id)
-    ).all()
-
-    for other in other_plans:
-        other.activo = False
-        session.add(other)
-
-    plan.activo = True
-    session.add(plan)
-    session.commit()
-    return True
 
 
 def generate_time_slots(config: ConfiguracionHoraria) -> list[tuple[time, time]]:
