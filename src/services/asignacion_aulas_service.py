@@ -1780,6 +1780,11 @@ class AulaCandidata:
 
     Devuelto por ``get_aulas_todas_para_horario`` para poblar el
     desplegable del diálogo de edición manual.
+
+    Los campos ``ocupante`` y ``ocupante_franja_identica`` mantienen la
+    API "un ocupante" para compatibilidad con el flujo de reasignación
+    simple (swap/reassign/unassign). Para el flujo de cascada usar
+    ``ocupantes`` que trae **todos** los horarios que solapan.
     """
     aula: AulaDB
     libre_en_franja: bool
@@ -1788,6 +1793,10 @@ class AulaCandidata:
     # hora_inicio, hora_fin) que el horario editado. Sólo cuando esto
     # es True, la UI puede ofrecer la acción "swap".
     ocupante_franja_identica: bool
+    # TODOS los horarios del plan que solapan con la franja del horario
+    # editado (usando esta aula). Puede tener 0, 1 o N elementos. La UI
+    # de cascada la usa para armar el árbol de decisiones.
+    ocupantes: list[HorarioDB] = field(default_factory=list)
 
 
 @dataclass
@@ -1945,46 +1954,117 @@ def get_aulas_todas_para_horario(
             )
         ).all())
 
-    # Mapear aula_id -> ocupante (primer horario, franja idéntica preferida).
-    ocupantes_por_aula: dict[str, HorarioDB] = {}
+    # Mapear aula_id -> lista de ocupantes que solapan.
+    ocupantes_por_aula: dict[str, list[HorarioDB]] = {}
     for h in horarios_otros:
         if h.aula_id is None:
             continue
-        if h.aula_id in ocupantes_por_aula:
-            # Preferir franja idéntica si aparecen varios ocupantes
-            existing = ocupantes_por_aula[h.aula_id]
-            existing_id = (
-                existing.hora_inicio == horario.hora_inicio
-                and existing.hora_fin == horario.hora_fin
-            )
-            new_id = (
-                h.hora_inicio == horario.hora_inicio
-                and h.hora_fin == horario.hora_fin
-            )
-            if new_id and not existing_id:
-                ocupantes_por_aula[h.aula_id] = h
-        else:
-            ocupantes_por_aula[h.aula_id] = h
+        ocupantes_por_aula.setdefault(h.aula_id, []).append(h)
 
     resultado: list[AulaCandidata] = []
     for a in compat:
-        oc = ocupantes_por_aula.get(a.id)
-        franja_identica = False
-        if oc is not None:
-            franja_identica = (
+        todos_oc = ocupantes_por_aula.get(a.id, [])
+        # Buscar un ocupante con franja idéntica (preferido para swap).
+        oc_identico: Optional[HorarioDB] = None
+        for oc in todos_oc:
+            if (
                 oc.hora_inicio == horario.hora_inicio
                 and oc.hora_fin == horario.hora_fin
-            )
-        # ocupante devuelto sólo si franja idéntica (mismo criterio que
-        # get_ocupante_de_aula_en_franja).
-        ocupante_out = oc if franja_identica else None
+            ):
+                oc_identico = oc
+                break
+        franja_identica = oc_identico is not None
+        # Compat con API vieja: ``ocupante`` sólo se completa si hay
+        # franja idéntica.
+        ocupante_out = oc_identico if franja_identica else None
         resultado.append(AulaCandidata(
             aula=a,
-            libre_en_franja=oc is None,
+            libre_en_franja=not todos_oc,
             ocupante=ocupante_out,
             ocupante_franja_identica=franja_identica,
+            ocupantes=list(todos_oc),
         ))
     return resultado
+
+
+def get_horarios_afectados(
+    session: Session,
+    plan_id: str,
+    horario_id: str,
+    aula_id: str,
+) -> list[HorarioDB]:
+    """Devuelve todos los HorarioDB del plan que solapan con la franja
+    del ``horario_id`` usando ``aula_id``.
+
+    Solapan si mismo día y sus rangos [hora_inicio, hora_fin) se
+    intersectan (misma franja, franja parcial, contenida o contenedora).
+
+    Excluye al propio ``horario_id``. Devuelve lista vacía si el aula
+    no tiene ningún horario del plan que solape.
+
+    Uso: base para armar el árbol de cascada de desplazamientos.
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        return []
+
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids_plan:
+        return []
+
+    afectados = list(session.exec(
+        select(HorarioDB).where(
+            HorarioDB.aula_id == aula_id,
+            HorarioDB.dia == horario.dia,
+            HorarioDB.hora_inicio < horario.hora_fin,
+            HorarioDB.hora_fin > horario.hora_inicio,
+            HorarioDB.id != horario_id,
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+        )
+    ).all())
+    return afectados
+
+
+def solapamiento_franjas(
+    dia_a: str, hi_a, hf_a, dia_b: str, hi_b, hf_b,
+) -> Optional[tuple]:
+    """Devuelve el rango de solapamiento (hi, hf) entre dos franjas, o
+    None si no solapan.
+
+    Ambas franjas son (dia, hora_inicio, hora_fin). Solapan si mismo
+    día y sus rangos se intersectan.
+    """
+    if dia_a != dia_b:
+        return None
+    hi = max(hi_a, hi_b)
+    hf = min(hf_a, hf_b)
+    if hi >= hf:
+        return None
+    return (hi, hf)
+
+
+def tipo_solapamiento(
+    dia_a: str, hi_a, hf_a, dia_b: str, hi_b, hf_b,
+) -> str:
+    """Clasifica el tipo de solapamiento entre dos franjas.
+
+    Devuelve:
+        - "sin_solape" si no comparten día o rangos.
+        - "identico" si mismo día e iguales hora_inicio y hora_fin.
+        - "parcial" si mismo día y solapan sin ser idénticos.
+    """
+    if dia_a != dia_b:
+        return "sin_solape"
+    if hi_a == hi_b and hf_a == hf_b:
+        return "identico"
+    sol = solapamiento_franjas(dia_a, hi_a, hf_a, dia_b, hi_b, hf_b)
+    if sol is None:
+        return "sin_solape"
+    return "parcial"
 
 
 _ACCIONES_REASIGNACION = ("libre", "swap", "reassign", "unassign")

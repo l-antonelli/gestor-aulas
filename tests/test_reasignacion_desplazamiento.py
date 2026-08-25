@@ -35,9 +35,12 @@ from src.services.asignacion_aulas_service import (
     AulaCandidata,
     PreviewReasignacion,
     get_aulas_todas_para_horario,
+    get_horarios_afectados,
     get_ocupante_de_aula_en_franja,
     preview_reasignacion_con_desplazamiento,
     reasignar_con_desplazamiento,
+    solapamiento_franjas,
+    tipo_solapamiento,
 )
 
 
@@ -446,3 +449,274 @@ class TestReasignarValidaciones:
         # aula original del editado, exigir accion="swap" y bloquear.
         assert res.ok is False
         assert any("swap" in e.lower() for e in res.errores)
+
+
+# =============================================================================
+# Fase A1: AulaCandidata.ocupantes (lista) + get_horarios_afectados
+# =============================================================================
+
+def _seed_multi_ocupantes(session: Session):
+    """Escenario: MAT Lu 8-11 (edito este), aula X ocupada por FIS Lu
+    8-10 y QUI Lu 9-11 (dos horarios que solapan parcialmente con MAT).
+
+    - Aula X (donde queremos poner MAT).
+    - Aula Y libre.
+    - Aula Z ocupada por BIO Lu 8-11 (franja idéntica a MAT).
+    """
+    ciclo = CicloDB(
+        id="2026-1C", anio=2026, numero=1,
+        fecha_inicio=date(2026, 3, 9), fecha_fin=date(2026, 7, 3),
+    )
+    plan = PlanificacionCursadaDB(
+        id="plan-1", nombre="Plan Test", ciclo_id="2026-1C",
+    )
+    sede = SedeDB(id="S1", nombre="Sede Test")
+    session.add_all([ciclo, plan, sede])
+    for m in ("MAT", "FIS", "QUI", "BIO"):
+        session.add(MateriaDB(
+            codigo=m, nombre=f"Materia {m}",
+            horas_semanales=3, horas_teoria=3, horas_laboratorio=0,
+        ))
+        session.add(DictadoDB(
+            id=f"dict-{m}", materia_codigo=m,
+            dictado_codigo=f"{m}-2026-1C",
+        ))
+        session.add(DictadoCicloDB(dictado_id=f"dict-{m}", ciclo_id="2026-1C"))
+    for aid in ("X", "Y", "Z"):
+        session.add(AulaDB(
+            id=aid, sede_id="S1", codigo_aula=aid, nombre=f"Aula {aid}",
+            capacidad=30, tipo="teorica",
+        ))
+    session.commit()
+
+    # MAT Lu 8-11 en Y (donde está)
+    com_mat = str(uuid.uuid4())
+    hor_mat = str(uuid.uuid4())
+    session.add(ComisionDB(
+        id=com_mat, materia_codigo="MAT",
+        plan_cursada_id="plan-1", comision_key="MAT-001",
+        nombre="Comisión 1", numero=1, cupo=30,
+    ))
+    session.add(HorarioDB(
+        id=hor_mat, comision_id=com_mat, codigo_materia="MAT",
+        dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        tipo_clase="teorica", aula_id="Y",
+    ))
+
+    # FIS Lu 8-10 en X
+    com_fis = str(uuid.uuid4())
+    hor_fis = str(uuid.uuid4())
+    session.add(ComisionDB(
+        id=com_fis, materia_codigo="FIS",
+        plan_cursada_id="plan-1", comision_key="FIS-001",
+        nombre="Comisión 1", numero=1, cupo=30,
+    ))
+    session.add(HorarioDB(
+        id=hor_fis, comision_id=com_fis, codigo_materia="FIS",
+        dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        tipo_clase="teorica", aula_id="X",
+    ))
+
+    # QUI Lu 9-11 en X (parcial vs MAT y contigua con FIS)
+    com_qui = str(uuid.uuid4())
+    hor_qui = str(uuid.uuid4())
+    session.add(ComisionDB(
+        id=com_qui, materia_codigo="QUI",
+        plan_cursada_id="plan-1", comision_key="QUI-001",
+        nombre="Comisión 1", numero=1, cupo=30,
+    ))
+    session.add(HorarioDB(
+        id=hor_qui, comision_id=com_qui, codigo_materia="QUI",
+        dia="Lunes", hora_inicio=time(9, 0), hora_fin=time(11, 0),
+        tipo_clase="teorica", aula_id="X",
+    ))
+
+    # BIO Lu 8-11 en Z (franja idéntica a MAT)
+    com_bio = str(uuid.uuid4())
+    hor_bio = str(uuid.uuid4())
+    session.add(ComisionDB(
+        id=com_bio, materia_codigo="BIO",
+        plan_cursada_id="plan-1", comision_key="BIO-001",
+        nombre="Comisión 1", numero=1, cupo=30,
+    ))
+    session.add(HorarioDB(
+        id=hor_bio, comision_id=com_bio, codigo_materia="BIO",
+        dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        tipo_clase="teorica", aula_id="Z",
+    ))
+
+    session.commit()
+    return {
+        "hor_mat": hor_mat, "hor_fis": hor_fis,
+        "hor_qui": hor_qui, "hor_bio": hor_bio,
+    }
+
+
+class TestAulaCandidataOcupantesList:
+    """Nuevo campo AulaCandidata.ocupantes: contiene TODOS los horarios
+    que solapan con la franja del editado en esa aula (no solo el de
+    franja idéntica). Base para la lógica de cascada."""
+
+    def test_aula_libre_ocupantes_vacio(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cands = get_aulas_todas_para_horario(
+            session, "plan-1", refs["hor_mat"],
+        )
+        by_id = {c.aula.id: c for c in cands}
+        # Y es la propia aula del editado — vacía.
+        assert by_id["Y"].ocupantes == []
+        assert by_id["Y"].libre_en_franja is True
+
+    def test_aula_con_dos_solapamientos_parciales(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cands = get_aulas_todas_para_horario(
+            session, "plan-1", refs["hor_mat"],
+        )
+        by_id = {c.aula.id: c for c in cands}
+        # X tiene FIS Lu 8-10 y QUI Lu 9-11 (ambos solapan con MAT Lu 8-11)
+        oc_ids = {oc.id for oc in by_id["X"].ocupantes}
+        assert oc_ids == {refs["hor_fis"], refs["hor_qui"]}
+        # Ninguno tiene franja idéntica a MAT (Lu 8-11)
+        assert by_id["X"].ocupante_franja_identica is False
+        assert by_id["X"].ocupante is None  # API vieja: sólo franja idéntica
+        assert by_id["X"].libre_en_franja is False
+
+    def test_aula_con_ocupante_identico(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cands = get_aulas_todas_para_horario(
+            session, "plan-1", refs["hor_mat"],
+        )
+        by_id = {c.aula.id: c for c in cands}
+        # Z tiene BIO Lu 8-11 (franja idéntica)
+        assert len(by_id["Z"].ocupantes) == 1
+        assert by_id["Z"].ocupantes[0].id == refs["hor_bio"]
+        assert by_id["Z"].ocupante_franja_identica is True
+        assert by_id["Z"].ocupante is not None
+        assert by_id["Z"].ocupante.id == refs["hor_bio"]
+
+
+class TestGetHorariosAfectados:
+    """get_horarios_afectados debe devolver TODOS los horarios que
+    solapan (incluye franja idéntica, contenida, contenedora y
+    parcialmente superpuesta)."""
+
+    def test_aula_libre_devuelve_lista_vacia(self, session):
+        refs = _seed_multi_ocupantes(session)
+        afectados = get_horarios_afectados(
+            session, "plan-1", refs["hor_mat"], "Y",
+        )
+        # Y es la propia aula del editado, otros horarios en Y = ninguno
+        assert afectados == []
+
+    def test_aula_con_dos_parciales(self, session):
+        refs = _seed_multi_ocupantes(session)
+        afectados = get_horarios_afectados(
+            session, "plan-1", refs["hor_mat"], "X",
+        )
+        ids = {h.id for h in afectados}
+        assert ids == {refs["hor_fis"], refs["hor_qui"]}
+
+    def test_aula_con_franja_identica(self, session):
+        refs = _seed_multi_ocupantes(session)
+        afectados = get_horarios_afectados(
+            session, "plan-1", refs["hor_mat"], "Z",
+        )
+        assert len(afectados) == 1
+        assert afectados[0].id == refs["hor_bio"]
+
+    def test_no_incluye_horario_propio(self, session):
+        refs = _seed_multi_ocupantes(session)
+        # MAT en Y con franja Lu 8-11 — si preguntamos por Y desde el
+        # propio MAT, no debería salir MAT.
+        afectados = get_horarios_afectados(
+            session, "plan-1", refs["hor_mat"], "Y",
+        )
+        assert refs["hor_mat"] not in {h.id for h in afectados}
+
+    def test_horarios_de_otro_plan_no_aparecen(self, session):
+        refs = _seed_multi_ocupantes(session)
+        # Creo otro plan con un horario en X. No debe aparecer.
+        plan2 = PlanificacionCursadaDB(
+            id="plan-2", nombre="Otro plan", ciclo_id="2026-1C",
+        )
+        session.add(plan2)
+        com_x = str(uuid.uuid4())
+        session.add(ComisionDB(
+            id=com_x, materia_codigo="FIS",
+            plan_cursada_id="plan-2", comision_key="FIS-plan2",
+            nombre="Otra", numero=1, cupo=30,
+        ))
+        session.add(HorarioDB(
+            id="h-p2", comision_id=com_x, codigo_materia="FIS",
+            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="teorica", aula_id="X",
+        ))
+        session.commit()
+
+        afectados = get_horarios_afectados(
+            session, "plan-1", refs["hor_mat"], "X",
+        )
+        # Solo FIS y QUI del plan-1
+        assert "h-p2" not in {h.id for h in afectados}
+
+
+class TestSolapamientoHelpers:
+    """Helpers de cálculo de solapamiento entre franjas."""
+
+    def test_franjas_identicas(self):
+        rango = solapamiento_franjas(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(8, 0), time(11, 0),
+        )
+        assert rango == (time(8, 0), time(11, 0))
+        assert tipo_solapamiento(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(8, 0), time(11, 0),
+        ) == "identico"
+
+    def test_franja_parcial(self):
+        rango = solapamiento_franjas(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(10, 0), time(13, 0),
+        )
+        assert rango == (time(10, 0), time(11, 0))
+        assert tipo_solapamiento(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(10, 0), time(13, 0),
+        ) == "parcial"
+
+    def test_franja_contenida(self):
+        # 9-10 dentro de 8-11
+        rango = solapamiento_franjas(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(9, 0), time(10, 0),
+        )
+        assert rango == (time(9, 0), time(10, 0))
+        # 9-10 no es idéntico a 8-11, por lo tanto parcial
+        assert tipo_solapamiento(
+            "Lunes", time(8, 0), time(11, 0),
+            "Lunes", time(9, 0), time(10, 0),
+        ) == "parcial"
+
+    def test_franjas_disjuntas(self):
+        # 8-10 y 10-12 son contiguas pero no solapan (rango semi-abierto)
+        rango = solapamiento_franjas(
+            "Lunes", time(8, 0), time(10, 0),
+            "Lunes", time(10, 0), time(12, 0),
+        )
+        assert rango is None
+        assert tipo_solapamiento(
+            "Lunes", time(8, 0), time(10, 0),
+            "Lunes", time(10, 0), time(12, 0),
+        ) == "sin_solape"
+
+    def test_dias_distintos(self):
+        rango = solapamiento_franjas(
+            "Lunes", time(8, 0), time(11, 0),
+            "Martes", time(8, 0), time(11, 0),
+        )
+        assert rango is None
+        assert tipo_solapamiento(
+            "Lunes", time(8, 0), time(11, 0),
+            "Martes", time(8, 0), time(11, 0),
+        ) == "sin_solape"
