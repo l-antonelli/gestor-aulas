@@ -2067,6 +2067,424 @@ def tipo_solapamiento(
     return "parcial"
 
 
+# =============================================================================
+# Reasignación en cascada (árbol de decisiones)
+# =============================================================================
+#
+# Modelo: cuando un usuario elige un aula ocupada para el horario que
+# edita, cada horario ocupante del aula queda "desplazado" y necesita
+# una decisión de qué hacer con él. Si el usuario decide reasignarlo a
+# otra aula que también está ocupada, esos nuevos desplazados forman
+# el nivel siguiente del árbol. Y así recursivamente.
+#
+# El nivel raíz (nivel 0) es el horario editado por el usuario. Los
+# nodos internos son horarios desplazados. Cada nodo tiene una
+# ``aula_elegida`` (o None si "dejar sin aula") y una lista de
+# ``hijos``, uno por cada horario adicional que se desplaza por elegir
+# esa aula.
+
+
+@dataclass
+class NodoCascada:
+    """Nodo del árbol de decisiones de reasignación en cascada.
+
+    Estructura:
+    - Nivel 0 (raíz): el horario que el usuario editó explícitamente.
+    - Nivel N>0: un horario que se desplaza por una decisión del nivel
+      N-1.
+
+    ``aula_elegida`` es None si la decisión es "dejar sin aula".
+
+    ``hijos`` refleja los horarios adicionales que se desplazan al
+    tomar esa decisión. Si ``aula_elegida`` es None o es libre, no hay
+    hijos.
+
+    ``accion`` documenta la naturaleza de la decisión:
+    - "libre": el aula elegida está libre en la franja (sin hijos).
+    - "swap": sólo válido en el nivel raíz — intercambia con un
+      ocupante de franja idéntica.
+    - "reassign": el editado toma el aula elegida y cada ocupante se
+      resuelve en su propio sub-nodo hijo.
+    - "unassign": raíz sin aula (nada elegido) — no común pero
+      admitido para completar un ciclo.
+    - "sin_aula": el nodo (desplazado) queda sin aula. Sin hijos.
+    """
+    horario_id: str
+    aula_elegida: Optional[str]
+    accion: str  # "libre" | "swap" | "reassign" | "unassign" | "sin_aula"
+    hijos: list["NodoCascada"] = field(default_factory=list)
+
+
+_ACCIONES_NODO = ("libre", "swap", "reassign", "unassign", "sin_aula")
+
+
+@dataclass
+class EfectoNodo:
+    """Efecto planificado sobre un horario dentro de una cascada.
+
+    Uno por horario afectado en el árbol (raíz + descendientes).
+    ``ok`` es True si el efecto no tiene errores duros (compatibilidad
+    de tipo, sede, laboratorio). ``warnings`` son advertencias no
+    bloqueantes.
+    """
+    horario_id: str
+    aula_futura: Optional[str]
+    ok: bool
+    errores: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    nivel: int = 0
+    # Rango de solapamiento con el padre (si aplica). Formato "HH:MM–HH:MM".
+    solapamiento_con_padre: Optional[str] = None
+    tipo_solapamiento_con_padre: Optional[str] = None  # identico | parcial | None
+
+
+@dataclass
+class PlanEjecucion:
+    """Resultado de planificar una cascada de reasignación.
+
+    ``efectos`` es la lista plana de efectos ordenada por DFS del árbol
+    (raíz primero, después hijos). ``ok`` es True si TODOS los efectos
+    son ok. ``errores_globales`` incluye ciclos detectados y otros
+    problemas estructurales del árbol.
+    """
+    ok: bool
+    efectos: list[EfectoNodo]
+    errores_globales: list[str] = field(default_factory=list)
+
+    @property
+    def tiene_warnings(self) -> bool:
+        return any(e.warnings for e in self.efectos)
+
+
+def _validar_arbol_ciclos(cascada: NodoCascada) -> list[str]:
+    """Detecta ciclos en el árbol de cascada.
+
+    Un ciclo ocurre cuando un horario aparece más de una vez en la
+    cadena de ancestros. Ejemplo: A→B (hijo de A), B→A (hijo de B con
+    aula original de A). El usuario terminaría re-asignando A a un
+    aula que luego se le vuelve a asignar por el desplazamiento
+    inverso.
+
+    Estrategia: DFS marcando ancestros en el camino desde la raíz. Si
+    un nodo tiene el mismo horario_id que uno de sus ancestros, ciclo.
+    """
+    errores: list[str] = []
+
+    def _dfs(nodo: NodoCascada, camino: tuple[str, ...]):
+        if nodo.horario_id in camino:
+            errores.append(
+                f"Ciclo detectado en la cascada: el horario "
+                f"'{nodo.horario_id}' aparece más de una vez en la cadena "
+                f"de decisiones (camino: {' → '.join(camino)} → "
+                f"{nodo.horario_id}). Elegí otra aula para cortar el ciclo."
+            )
+            return
+        nuevo_camino = camino + (nodo.horario_id,)
+        for h in nodo.hijos:
+            _dfs(h, nuevo_camino)
+
+    _dfs(cascada, tuple())
+    return errores
+
+
+def _check_compat_para_horario(
+    session: Session,
+    horario: HorarioDB,
+    aula: AulaDB,
+) -> list[str]:
+    """Chequea si ``aula`` es compatible con ``horario`` en cuanto a
+    tipo, sede admisible y laboratorio. Devuelve lista de errores."""
+    errs: list[str] = []
+    tipo = horario.tipo_clase
+    if tipo == "laboratorio":
+        comision = session.get(ComisionDB, horario.comision_id)
+        if comision is None:
+            errs.append("Comisión no encontrada.")
+            return errs
+        compat_set = {
+            ml.aula_id for ml in session.exec(
+                select(MateriaLaboratorioDB).where(
+                    MateriaLaboratorioDB.materia_codigo
+                    == comision.materia_codigo
+                )
+            ).all()
+        }
+        if aula.id not in compat_set:
+            errs.append(
+                f"El aula '{aula.nombre}' no es laboratorio compatible "
+                f"con la materia {comision.materia_codigo}."
+            )
+    elif tipo == "teorica":
+        if aula.tipo not in ("teorica", "anfiteatro"):
+            errs.append(
+                f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
+                "no admite clase teórica."
+            )
+    # Sede admisible.
+    comision = session.get(ComisionDB, horario.comision_id)
+    materia_codigo = comision.materia_codigo if comision else None
+    _com_override = comision.carrera_asignada if comision else None
+    from src.services.carrera_sede_service import (
+        sedes_admisibles_para_carrera,
+        sedes_admisibles_para_materia,
+    )
+    if _com_override:
+        admisibles = sedes_admisibles_para_carrera(session, _com_override)
+    elif materia_codigo:
+        admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+    else:
+        admisibles = None
+    if admisibles is not None:
+        lab_ids: set[str] = set()
+        if materia_codigo:
+            lab_ids = {
+                ml.aula_id for ml in session.exec(
+                    select(MateriaLaboratorioDB).where(
+                        MateriaLaboratorioDB.materia_codigo == materia_codigo
+                    )
+                ).all()
+            }
+        if aula.id not in lab_ids and aula.sede_id not in admisibles:
+            errs.append(
+                f"El aula '{aula.nombre}' está en una sede "
+                "no admisible para la materia/carrera."
+            )
+    return errs
+
+
+def validar_y_planificar_cascada(
+    session: Session,
+    plan_id: str,
+    cascada: NodoCascada,
+) -> PlanEjecucion:
+    """Valida un árbol de decisiones de cascada sin persistir.
+
+    Recorre el árbol en DFS y calcula, para cada nodo, cuál es su aula
+    futura y qué errores/warnings genera. Detecta ciclos, verifica
+    compatibilidad (tipo, sede, laboratorio) y agrega warnings cuando
+    el swap involucra franjas parciales.
+
+    NO valida choques residuales entre horarios que quedan en la
+    cascada: eso lo hace el planificador cuando compone el plan
+    final. La validación aquí es por horario individual.
+
+    Args:
+        plan_id: plan al que pertenece el horario editado.
+        cascada: NodoCascada raíz (nivel 0).
+
+    Returns:
+        PlanEjecucion con lista de efectos y flag ok.
+
+    Raises:
+        ValueError: si ``cascada.accion`` no es válida o si hay
+            inconsistencias graves en la estructura del árbol.
+    """
+    if cascada.accion not in _ACCIONES_NODO:
+        raise ValueError(
+            f"Acción raíz inválida: '{cascada.accion}'. "
+            f"Válidas: {_ACCIONES_NODO}."
+        )
+
+    errores_globales = _validar_arbol_ciclos(cascada)
+    if errores_globales:
+        return PlanEjecucion(ok=False, efectos=[], errores_globales=errores_globales)
+
+    efectos: list[EfectoNodo] = []
+
+    def _dfs(nodo: NodoCascada, nivel: int, padre: Optional[NodoCascada]):
+        horario = session.get(HorarioDB, nodo.horario_id)
+        if horario is None:
+            efectos.append(EfectoNodo(
+                horario_id=nodo.horario_id,
+                aula_futura=None,
+                ok=False,
+                errores=[f"Horario '{nodo.horario_id}' no encontrado."],
+                nivel=nivel,
+            ))
+            return
+
+        # Determinar aula futura según acción.
+        if nodo.accion == "sin_aula":
+            aula_futura = None
+        elif nodo.accion == "swap":
+            # Sólo válido en raíz. La aula futura del NODO SWAP es la
+            # aula elegida. El swap desplaza al ocupante idéntico que
+            # se resuelve como hijo con acción explícita.
+            if nivel != 0:
+                efectos.append(EfectoNodo(
+                    horario_id=nodo.horario_id,
+                    aula_futura=None,
+                    ok=False,
+                    errores=[
+                        "La acción 'swap' sólo es válida en el nivel raíz "
+                        "de la cascada. En niveles internos usá 'reassign' "
+                        "o 'sin_aula'."
+                    ],
+                    nivel=nivel,
+                ))
+                return
+            aula_futura = nodo.aula_elegida
+        else:  # libre, reassign, unassign
+            aula_futura = nodo.aula_elegida
+
+        errs: list[str] = []
+        warns: list[str] = []
+
+        if aula_futura is not None:
+            aula = session.get(AulaDB, aula_futura)
+            if aula is None:
+                errs.append(f"Aula '{aula_futura}' no encontrada.")
+            else:
+                errs.extend(_check_compat_para_horario(
+                    session, horario, aula,
+                ))
+
+        # Solapamiento con padre.
+        solape_str: Optional[str] = None
+        tipo_sol: Optional[str] = None
+        if padre is not None:
+            padre_horario = session.get(HorarioDB, padre.horario_id)
+            if padre_horario is not None:
+                tipo_sol = tipo_solapamiento(
+                    padre_horario.dia, padre_horario.hora_inicio,
+                    padre_horario.hora_fin,
+                    horario.dia, horario.hora_inicio, horario.hora_fin,
+                )
+                if tipo_sol == "parcial":
+                    rango = solapamiento_franjas(
+                        padre_horario.dia, padre_horario.hora_inicio,
+                        padre_horario.hora_fin,
+                        horario.dia, horario.hora_inicio, horario.hora_fin,
+                    )
+                    if rango:
+                        solape_str = (
+                            f"{rango[0].strftime('%H:%M')}"
+                            f"–{rango[1].strftime('%H:%M')}"
+                        )
+                        warns.append(
+                            "Este horario solapa parcialmente con el "
+                            f"padre (rango en común: {solape_str}). Si el "
+                            "aula del padre no cubre toda la franja de "
+                            "este horario, parte queda descubierta."
+                        )
+                elif tipo_sol == "identico":
+                    solape_str = "franja completa"
+
+        efectos.append(EfectoNodo(
+            horario_id=nodo.horario_id,
+            aula_futura=aula_futura,
+            ok=len(errs) == 0,
+            errores=errs,
+            warnings=warns,
+            nivel=nivel,
+            solapamiento_con_padre=solape_str,
+            tipo_solapamiento_con_padre=tipo_sol,
+        ))
+
+        for h in nodo.hijos:
+            _dfs(h, nivel + 1, nodo)
+
+    _dfs(cascada, 0, None)
+
+    ok = all(e.ok for e in efectos)
+    return PlanEjecucion(
+        ok=ok,
+        efectos=efectos,
+        errores_globales=[],
+    )
+
+
+def aplicar_cascada(
+    session: Session,
+    plan_id: str,
+    cascada: NodoCascada,
+) -> ValidationResult:
+    """Aplica un árbol de decisiones de cascada en transacción atómica.
+
+    Estrategia:
+    1. Llama a ``validar_y_planificar_cascada`` para verificar el árbol.
+    2. Si no ok, devuelve error sin tocar nada.
+    3. Si ok, aplica los efectos en orden seguro:
+       a) Limpia el aula de todos los desplazados (nivel > 0) para
+          liberar sus aulas y evitar choques transitorios.
+       b) Asigna al editado su aula nueva.
+       c) Asigna a cada desplazado su aula futura (o lo deja en None
+          si acción es "sin_aula").
+    4. Si algún paso falla mientras se aplica, best-effort rollback
+       restaurando los aula_id originales.
+
+    Args:
+        plan_id: plan al que pertenece la cascada.
+        cascada: árbol raíz.
+
+    Returns:
+        ValidationResult con ok=True si se aplicó todo, o errores.
+
+    Raises:
+        ValueError: si la cascada es inválida en forma.
+    """
+    plan = validar_y_planificar_cascada(session, plan_id, cascada)
+    if not plan.ok:
+        res = ValidationResult(ok=False)
+        res.errores = list(plan.errores_globales) + [
+            err for e in plan.efectos for err in e.errores
+        ]
+        return res
+
+    # Snapshot de aula_id original por horario, para rollback.
+    horario_ids = [e.horario_id for e in plan.efectos]
+    snapshot: dict[str, Optional[str]] = {}
+    for hid in horario_ids:
+        h = session.get(HorarioDB, hid)
+        if h is not None:
+            snapshot[hid] = h.aula_id
+
+    def _rollback():
+        for hid, aula_orig in snapshot.items():
+            cambiar_aula_horario(session, hid, aula_orig)
+
+    # Paso 1: liberar aula de todos los efectos con nivel > 0.
+    for efecto in plan.efectos:
+        if efecto.nivel == 0:
+            continue
+        r = cambiar_aula_horario(session, efecto.horario_id, None)
+        if not r.ok:
+            _rollback()
+            res = ValidationResult(ok=False)
+            res.errores = [
+                f"Falló liberar el horario '{efecto.horario_id}' "
+                "(paso 1 de la cascada)."
+            ] + list(r.errores)
+            return res
+
+    # Paso 2: asignar aula del editado (raíz).
+    raiz = plan.efectos[0]
+    r = cambiar_aula_horario(session, raiz.horario_id, raiz.aula_futura)
+    if not r.ok:
+        _rollback()
+        res = ValidationResult(ok=False)
+        res.errores = [
+            f"Falló asignar aula al horario raíz."
+        ] + list(r.errores)
+        return res
+
+    # Paso 3: asignar aulas a los desplazados (nivel > 0).
+    for efecto in plan.efectos[1:]:
+        r = cambiar_aula_horario(
+            session, efecto.horario_id, efecto.aula_futura,
+        )
+        if not r.ok:
+            _rollback()
+            res = ValidationResult(ok=False)
+            res.errores = [
+                f"Falló asignar aula al horario '{efecto.horario_id}' "
+                f"(nivel {efecto.nivel})."
+            ] + list(r.errores)
+            return res
+
+    return ValidationResult(ok=True)
+
+
 _ACCIONES_REASIGNACION = ("libre", "swap", "reassign", "unassign")
 
 

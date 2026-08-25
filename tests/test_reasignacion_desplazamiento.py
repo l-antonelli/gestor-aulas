@@ -33,7 +33,10 @@ from src.database.models import (
 )
 from src.services.asignacion_aulas_service import (
     AulaCandidata,
+    NodoCascada,
+    PlanEjecucion,
     PreviewReasignacion,
+    aplicar_cascada,
     get_aulas_todas_para_horario,
     get_horarios_afectados,
     get_ocupante_de_aula_en_franja,
@@ -41,6 +44,7 @@ from src.services.asignacion_aulas_service import (
     reasignar_con_desplazamiento,
     solapamiento_franjas,
     tipo_solapamiento,
+    validar_y_planificar_cascada,
 )
 
 
@@ -720,3 +724,321 @@ class TestSolapamientoHelpers:
             "Lunes", time(8, 0), time(11, 0),
             "Martes", time(8, 0), time(11, 0),
         ) == "sin_solape"
+
+
+# =============================================================================
+# Fase A2: NodoCascada + validar_y_planificar_cascada + aplicar_cascada
+# =============================================================================
+
+class TestValidarYPlanificarCascada:
+
+    def test_cascada_trivial_editado_a_aula_libre(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="Y",  # ya está en Y, "libre" desde su propia
+            accion="libre",
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is True
+        assert len(plan.efectos) == 1
+        assert plan.efectos[0].horario_id == refs["hor_mat"]
+        assert plan.efectos[0].aula_futura == "Y"
+        assert plan.efectos[0].nivel == 0
+
+    def test_cascada_reassign_a_aula_con_un_ocupante_parcial(self, session):
+        """MAT (Lu 8-11) va a X, que tiene FIS (Lu 8-10) parcial. Un
+        solo hijo bajo la raíz. FIS se manda a "sin_aula"."""
+        refs = _seed_multi_ocupantes(session)
+        # Sólo tomo el ocupante FIS para simplificar el ejemplo (QUI se
+        # ignora por ahora — la UI iterará ambos).
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida=None,
+                    accion="sin_aula",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is True
+        assert len(plan.efectos) == 2
+        # Raíz
+        raiz = plan.efectos[0]
+        assert raiz.horario_id == refs["hor_mat"]
+        assert raiz.aula_futura == "X"
+        # Hijo
+        hijo = plan.efectos[1]
+        assert hijo.horario_id == refs["hor_fis"]
+        assert hijo.aula_futura is None
+        assert hijo.nivel == 1
+        # Warning por franja parcial
+        assert hijo.tipo_solapamiento_con_padre == "parcial"
+        assert hijo.solapamiento_con_padre is not None
+        assert any("parcial" in w.lower() for w in hijo.warnings)
+
+    def test_cascada_reassign_a_aula_libre_no_dispara_hijos(self, session):
+        """Reasignar FIS a un aula libre (Y no está usada porque MAT
+        se movió). El hijo no tiene sub-hijos."""
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",  # asumo libre porque MAT se movió
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is True
+        efectos_por_id = {e.horario_id: e for e in plan.efectos}
+        assert efectos_por_id[refs["hor_fis"]].aula_futura == "Y"
+        assert efectos_por_id[refs["hor_fis"]].ok is True
+
+    def test_cascada_profundidad_dos_niveles(self, session):
+        """MAT→X (parcial FIS), FIS→Z (idéntico BIO), BIO→Y."""
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Z",
+                    accion="reassign",
+                    hijos=[
+                        NodoCascada(
+                            horario_id=refs["hor_bio"],
+                            aula_elegida="Y",
+                            accion="reassign",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is True
+        assert len(plan.efectos) == 3
+        assert plan.efectos[0].nivel == 0
+        assert plan.efectos[1].nivel == 1
+        assert plan.efectos[2].nivel == 2
+
+    def test_ciclo_directo_es_bloqueado(self, session):
+        """A→B, B→A: ciclo de 2 pasos."""
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",
+                    accion="reassign",
+                    hijos=[
+                        # Ciclo: MAT vuelve a aparecer
+                        NodoCascada(
+                            horario_id=refs["hor_mat"],
+                            aula_elegida="X",
+                            accion="reassign",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is False
+        assert any("ciclo" in e.lower() for e in plan.errores_globales)
+
+    def test_swap_en_nivel_interno_falla(self, session):
+        """Swap sólo válido en raíz."""
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",
+                    accion="swap",  # inválido en nivel > 0
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is False
+        efectos_por_id = {e.horario_id: e for e in plan.efectos}
+        assert not efectos_por_id[refs["hor_fis"]].ok
+        assert any(
+            "swap" in err.lower() and "raíz" in err.lower()
+            for err in efectos_por_id[refs["hor_fis"]].errores
+        )
+
+    def test_incompatibilidad_tipo_bloquea(self, session):
+        """FIS marcada laboratorio compatible sólo con LAB1. Al asignarle
+        Y (teórica), el efecto es not ok."""
+        refs = _seed_multi_ocupantes(session)
+        # Convierto FIS en laboratorio con lab compatible LAB1 (que no
+        # existe todavía en este fixture — la agrego)
+        session.add(AulaDB(
+            id="LAB1", sede_id="S1", codigo_aula="LAB1", nombre="Lab 1",
+            capacidad=20, tipo="laboratorio",
+        ))
+        h_fis = session.get(HorarioDB, refs["hor_fis"])
+        h_fis.tipo_clase = "laboratorio"
+        session.add(h_fis)
+        session.add(MateriaLaboratorioDB(materia_codigo="FIS", aula_id="LAB1"))
+        session.commit()
+
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",  # teórica, no lab
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is False
+
+
+class TestAplicarCascada:
+
+    def test_aplicar_simple_editado_a_aula_libre(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",
+                    accion="reassign",
+                ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida=None,
+                    accion="sin_aula",
+                ),
+            ],
+        )
+        res = aplicar_cascada(session, "plan-1", cascada)
+        assert res.ok is True
+        assert session.get(HorarioDB, refs["hor_mat"]).aula_id == "X"
+        assert session.get(HorarioDB, refs["hor_fis"]).aula_id == "Y"
+        assert session.get(HorarioDB, refs["hor_qui"]).aula_id is None
+
+    def test_aplicar_cascada_de_dos_niveles(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Z",
+                    accion="reassign",
+                    hijos=[
+                        NodoCascada(
+                            horario_id=refs["hor_bio"],
+                            aula_elegida="Y",
+                            accion="reassign",
+                        ),
+                    ],
+                ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida=None,
+                    accion="sin_aula",
+                ),
+            ],
+        )
+        res = aplicar_cascada(session, "plan-1", cascada)
+        assert res.ok is True
+        assert session.get(HorarioDB, refs["hor_mat"]).aula_id == "X"
+        assert session.get(HorarioDB, refs["hor_fis"]).aula_id == "Z"
+        assert session.get(HorarioDB, refs["hor_bio"]).aula_id == "Y"
+        assert session.get(HorarioDB, refs["hor_qui"]).aula_id is None
+
+    def test_rollback_completo_si_falla(self, session):
+        """Si algún efecto falla, ningún horario debería quedar
+        modificado (rollback)."""
+        refs = _seed_multi_ocupantes(session)
+        # Guardo estado original
+        mat_orig = session.get(HorarioDB, refs["hor_mat"]).aula_id
+        fis_orig = session.get(HorarioDB, refs["hor_fis"]).aula_id
+        bio_orig = session.get(HorarioDB, refs["hor_bio"]).aula_id
+
+        # Fabrico un caso que valide OK pero falle en aplicación:
+        # convierto BIO en laboratorio SIN aula compatible → la validación
+        # inicial ya lo detecta y devuelve error.
+        h_bio = session.get(HorarioDB, refs["hor_bio"])
+        h_bio.tipo_clase = "laboratorio"
+        session.add(h_bio)
+        session.commit()
+
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Z",
+                    accion="reassign",
+                    hijos=[
+                        NodoCascada(
+                            horario_id=refs["hor_bio"],
+                            aula_elegida="Y",  # teórica, BIO ya no matchea
+                            accion="reassign",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        res = aplicar_cascada(session, "plan-1", cascada)
+        assert res.ok is False
+        # Nada cambió
+        assert session.get(HorarioDB, refs["hor_mat"]).aula_id == mat_orig
+        assert session.get(HorarioDB, refs["hor_fis"]).aula_id == fis_orig
+        assert session.get(HorarioDB, refs["hor_bio"]).aula_id == bio_orig
+
+    def test_ciclo_bloquea_aplicacion(self, session):
+        refs = _seed_multi_ocupantes(session)
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Y",
+                    accion="reassign",
+                    hijos=[
+                        NodoCascada(
+                            horario_id=refs["hor_mat"],
+                            aula_elegida="X",
+                            accion="reassign",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        res = aplicar_cascada(session, "plan-1", cascada)
+        assert res.ok is False
+        assert any("ciclo" in e.lower() for e in res.errores)
