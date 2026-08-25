@@ -562,43 +562,79 @@ opciones:
   que no están usadas por otro horario del plan en la misma franja.
 - **Todas las aulas (incluidas las ocupadas)**: además de las
   libres, incluye las que están ocupadas por otro horario del plan,
-  con una etiqueta clara. Por ejemplo:
+  con una etiqueta clara según cuántos horarios están afectados.
+  Ejemplos:
   - `[LIBRE] Pellegrini · A-101 (cap. 30, teórica)`
-  - `[OCUPADA] Pellegrini · A-102 (cap. 40, teórica) — MAT 101 Comisión 2`
-  - `[OCUPADA parcialmente] Pellegrini · A-103 (cap. 35, teórica)`
+  - `[1 horario afectado] Pellegrini · A-102 (cap. 40, teórica) — MAT 101`
+  - `[2 horarios afectados] Pellegrini · A-103 (cap. 35, teórica) — FIS 201, QUI 101`
 
-Si elegís un aula libre, el flujo es idéntico al histórico: apretás
-Confirmar y el aula queda asignada.
+Si elegís un aula libre, el flujo es directo: apretás Confirmar y
+el aula queda asignada.
 
-Si elegís un aula ocupada con franja idéntica (`[OCUPADA]`), el
-diálogo despliega un **sub-formulario de resolución** para decidir
-qué hacer con el horario desplazado. Tenés hasta 3 opciones:
+**Si elegís un aula ocupada** — sin importar si hay 1 ó N horarios
+afectados y sin importar si sus franjas coinciden exactamente o
+sólo se solapan parcialmente — se despliega un **flujo de cascada**:
 
-- **Intercambiar aulas** (swap): el horario editado toma el aula
-  ocupada, y el horario desplazado recibe el aula que tenía el
-  editado. Es la opción más común cuando querés simplemente cambiar
-  quién ocupa qué aula.
-- **Reasignar a otra aula libre**: el editado toma el aula ocupada, y
-  el desplazado se va a otra aula libre que vos elegís de un
-  selector. Sólo aparece si hay al menos un aula libre compatible
-  con el desplazado.
-- **Dejar sin aula (marcar para revisar)**: el editado toma el aula
-  ocupada, y el desplazado queda sin aula asignada — pendiente de
-  revisión posterior. Usalo como último recurso.
+- Debajo del selector principal aparece un **bloque por cada
+  horario afectado**, indicando materia, comisión, día/hora y el
+  rango en común con el horario editado (por ejemplo, "solapa en
+  09:00–10:00" o "misma franja").
+- Cada bloque tiene su **propio selector de aula**. Podés elegir:
+  - Una aula libre para ese horario desplazado.
+  - Otra aula ocupada (la cascada se profundiza: aparecen los
+    bloques de los nuevos afectados).
+  - Dejar sin aula (opción "— Sin asignar —").
+- Si querés simplemente **intercambiar aulas**, elegí para el
+  horario desplazado el aula que tenía originalmente el editado.
+  El sistema lo trata como una reasignación más — no hay una
+  opción "swap" separada.
 
-Debajo del sub-form aparece un **preview del cambio** con dos filas
-mostrando los dos horarios y sus aulas futuras, cada una con ✅ o ❌
-según compatibilidad. El botón **Confirmar** queda deshabilitado si
-hay incompatibilidades duras (tipo, sede, laboratorio) — corregí la
-elección antes de continuar.
+**Ejemplo de cascada de 2 niveles**: editás MAT que estaba en A-101 y
+elegís A-102. En A-102 hay FIS. Para FIS elegís A-103, pero en A-103
+hay QUI. Aparece un nuevo bloque para QUI, donde podés dejarlo sin
+aula o buscarle otra. Cuando todos los bloques tienen decisión
+tomada y las validaciones dan verde, apretás Confirmar y se aplica
+todo en una única operación atómica.
 
-**Cuándo aparece `[OCUPADA parcialmente]`**: si el aula está usada
-por un horario del plan con una franja que se solapa parcialmente
-con la del horario que estás editando (por ejemplo, editás Lu 14-16
-y el aula tiene un horario Lu 15-17). En este caso el diálogo
-bloquea el intercambio directo: sólo se soporta swap cuando las
-franjas son idénticas. Para casos parciales, cambiá manualmente uno
-de los dos horarios primero.
+#### Solapamientos parciales
+
+Si un horario afectado tiene una franja que se solapa **parcialmente**
+con el horario editado (no la misma franja completa), aparece un
+**warning** en el preview indicando que sólo parte del horario queda
+cubierta. El sistema no bloquea el cambio pero te avisa para que
+verifiques manualmente si es aceptable.
+
+#### Preview global del cambio
+
+Debajo de todos los bloques aparece un **resumen** con la lista
+completa de horarios afectados en orden — el editado primero, después
+sus desplazados directos, después los desplazados de los desplazados,
+y así. Cada línea muestra:
+
+- ✅ si todo cierra.
+- ⚠️ si hay warnings (típicamente solapamientos parciales).
+- ❌ si hay incompatibilidades duras (aula de tipo distinto, sede no
+  admisible, laboratorio no compatible).
+
+El botón **Confirmar** queda deshabilitado si algún horario tiene ❌.
+Corregí las elecciones antes de continuar. Si sólo hay ⚠️, podés
+confirmar igual — el sistema respeta tu criterio.
+
+#### Detección de ciclos
+
+Si accidentalmente armás una cadena que vuelve a un horario ya
+decidido (por ejemplo, MAT desplaza a FIS, y FIS termina asignándose
+a la aula original de MAT en un sub-paso), el sistema detecta el
+ciclo y muestra un error indicando cuál es la cadena problemática.
+Cambiá alguna decisión para romper el ciclo.
+
+#### Aplicación atómica
+
+Cuando apretás Confirmar, todos los cambios se aplican en una **única
+transacción**. Si alguno falla en el proceso, se revierte todo lo
+aplicado hasta ese punto — el plan queda exactamente como estaba
+antes de abrir el diálogo. Nunca vas a quedar en un estado a mitad
+de camino.
 
 > ⚠️ **Después de mover horarios en la grilla**: el aula que el
 > asignador había puesto queda pegada al horario, y si el nuevo
