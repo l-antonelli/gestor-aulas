@@ -2386,12 +2386,135 @@ def validar_y_planificar_cascada(
 
     _dfs(cascada, 0, None)
 
+    # Validación cruzada de choques residuales:
+    # después de aplicar todos los efectos, ¿algún par de horarios del
+    # plan quedaría en la misma aula con franjas solapadas?
+    #
+    # El estado final que estamos construyendo es:
+    # - Para cada horario tocado por la cascada, su ``aula_futura``.
+    # - Para el resto de horarios del plan, su ``aula_id`` actual.
+    _errores_choques = _detectar_choques_residuales(
+        session, plan_id, efectos,
+    )
+    for horario_id, err in _errores_choques:
+        # Adjuntar el error al efecto correspondiente y marcarlo not-ok.
+        for e in efectos:
+            if e.horario_id == horario_id:
+                e.errores.append(err)
+                e.ok = False
+                break
+
     ok = all(e.ok for e in efectos)
     return PlanEjecucion(
         ok=ok,
         efectos=efectos,
         errores_globales=[],
     )
+
+
+def _detectar_choques_residuales(
+    session: Session,
+    plan_id: str,
+    efectos: list[EfectoNodo],
+) -> list[tuple[str, str]]:
+    """Detecta choques entre horarios del plan que resultarían de
+    aplicar los ``efectos`` de la cascada.
+
+    Un choque es: dos horarios distintos del plan quedan con la misma
+    aula (aula_futura no None) y sus franjas se solapan.
+
+    Devuelve lista de (horario_id, mensaje) — un par por cada efecto
+    que participa en un choque. Cada choque genera 2 entradas (una por
+    cada horario del par).
+    """
+    # 1) Construir el "estado final": aula_id → lista de (horario_id,
+    # dia, hora_inicio, hora_fin). Empezamos con el estado actual del
+    # plan y sobreescribimos con las asignaciones futuras de la cascada.
+    tocados_por_cascada = {e.horario_id: e for e in efectos}
+
+    # Traer todos los horarios del plan.
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids_plan:
+        return []
+
+    horarios_plan = list(session.exec(
+        select(HorarioDB).where(
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+        )
+    ).all())
+
+    # Estado final por horario_id: (aula_id, dia, hi, hf).
+    estado_final: dict[str, tuple[Optional[str], str, "object", "object"]] = {}
+    for h in horarios_plan:
+        aula_final = h.aula_id
+        if h.id in tocados_por_cascada:
+            aula_final = tocados_por_cascada[h.id].aula_futura
+        estado_final[h.id] = (aula_final, h.dia, h.hora_inicio, h.hora_fin)
+
+    # 2) Agrupar por aula → detectar solapamientos entre pares.
+    por_aula: dict[str, list[tuple[str, str, "object", "object"]]] = {}
+    for hid, (aula, dia, hi, hf) in estado_final.items():
+        if aula is None:
+            continue
+        por_aula.setdefault(aula, []).append((hid, dia, hi, hf))
+
+    # 3) Para cada aula con más de un horario, buscar pares que solapen.
+    errores_por_horario: list[tuple[str, str]] = []
+    for aula_id, items in por_aula.items():
+        n = len(items)
+        if n < 2:
+            continue
+        aula_nombre = None
+        aula_obj = session.get(AulaDB, aula_id)
+        aula_nombre = aula_obj.nombre if aula_obj else aula_id
+        for i in range(n):
+            hid_i, dia_i, hi_i, hf_i = items[i]
+            for j in range(i + 1, n):
+                hid_j, dia_j, hi_j, hf_j = items[j]
+                # Sólo interesa si al menos uno de los dos fue tocado
+                # por la cascada — los choques preexistentes no son
+                # responsabilidad de la cascada.
+                if (hid_i not in tocados_por_cascada
+                        and hid_j not in tocados_por_cascada):
+                    continue
+                sol = solapamiento_franjas(
+                    dia_i, hi_i, hf_i, dia_j, hi_j, hf_j,
+                )
+                if sol is None:
+                    continue
+                # Choque real.
+                # Mensaje: enunciar quién queda en la misma aula.
+                # Buscar meta legible.
+                def _meta(hid: str) -> str:
+                    h = session.get(HorarioDB, hid)
+                    if h is None:
+                        return hid
+                    com = session.get(ComisionDB, h.comision_id)
+                    mat = com.materia_codigo if com else "?"
+                    com_nombre = com.nombre if com else "?"
+                    return (
+                        f"{mat} — {com_nombre} "
+                        f"({h.dia} {h.hora_inicio.strftime('%H:%M')}"
+                        f"–{h.hora_fin.strftime('%H:%M')})"
+                    )
+                meta_i = _meta(hid_i)
+                meta_j = _meta(hid_j)
+                msg = (
+                    f"Choque con otro horario: '{aula_nombre}' quedaría "
+                    f"usada por {meta_i} y {meta_j} en franjas solapadas "
+                    f"({sol[0].strftime('%H:%M')}"
+                    f"–{sol[1].strftime('%H:%M')}). Elegí aulas distintas "
+                    "para uno de ellos."
+                )
+                if hid_i in tocados_por_cascada:
+                    errores_por_horario.append((hid_i, msg))
+                if hid_j in tocados_por_cascada:
+                    errores_por_horario.append((hid_j, msg))
+    return errores_por_horario
 
 
 def aplicar_cascada(

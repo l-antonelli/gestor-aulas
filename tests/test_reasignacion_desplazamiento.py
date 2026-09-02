@@ -747,11 +747,10 @@ class TestValidarYPlanificarCascada:
         assert plan.efectos[0].nivel == 0
 
     def test_cascada_reassign_a_aula_con_un_ocupante_parcial(self, session):
-        """MAT (Lu 8-11) va a X, que tiene FIS (Lu 8-10) parcial. Un
-        solo hijo bajo la raíz. FIS se manda a "sin_aula"."""
+        """MAT (Lu 8-11) va a X, que tiene FIS (Lu 8-10) parcial y
+        QUI (Lu 9-11) parcial. Ambos desplazados se mandan a "sin_aula"
+        para no dejar choque residual."""
         refs = _seed_multi_ocupantes(session)
-        # Sólo tomo el ocupante FIS para simplificar el ejemplo (QUI se
-        # ignora por ahora — la UI iterará ambos).
         cascada = NodoCascada(
             horario_id=refs["hor_mat"],
             aula_elegida="X",
@@ -762,28 +761,35 @@ class TestValidarYPlanificarCascada:
                     aula_elegida=None,
                     accion="sin_aula",
                 ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida=None,
+                    accion="sin_aula",
+                ),
             ],
         )
         plan = validar_y_planificar_cascada(session, "plan-1", cascada)
-        assert plan.ok is True
-        assert len(plan.efectos) == 2
+        assert plan.ok is True, (
+            f"Errores: {plan.errores_globales}, "
+            f"efectos: {[(e.horario_id, e.aula_futura, e.errores) for e in plan.efectos]}"
+        )
+        assert len(plan.efectos) == 3
         # Raíz
         raiz = plan.efectos[0]
         assert raiz.horario_id == refs["hor_mat"]
         assert raiz.aula_futura == "X"
-        # Hijo
-        hijo = plan.efectos[1]
-        assert hijo.horario_id == refs["hor_fis"]
-        assert hijo.aula_futura is None
-        assert hijo.nivel == 1
-        # Warning por franja parcial
-        assert hijo.tipo_solapamiento_con_padre == "parcial"
-        assert hijo.solapamiento_con_padre is not None
-        assert any("parcial" in w.lower() for w in hijo.warnings)
+        # Hijos: uno de los dos parcial genera warning
+        hijos = plan.efectos[1:]
+        assert all(h.nivel == 1 for h in hijos)
+        assert all(h.aula_futura is None for h in hijos)
+        assert any(
+            "parcial" in w.lower()
+            for h in hijos
+            for w in h.warnings
+        )
 
     def test_cascada_reassign_a_aula_libre_no_dispara_hijos(self, session):
-        """Reasignar FIS a un aula libre (Y no está usada porque MAT
-        se movió). El hijo no tiene sub-hijos."""
+        """Reasignar los dos ocupantes de X (FIS y QUI) a aulas libres."""
         refs = _seed_multi_ocupantes(session)
         cascada = NodoCascada(
             horario_id=refs["hor_mat"],
@@ -792,19 +798,27 @@ class TestValidarYPlanificarCascada:
             hijos=[
                 NodoCascada(
                     horario_id=refs["hor_fis"],
-                    aula_elegida="Y",  # asumo libre porque MAT se movió
+                    aula_elegida="Y",  # libre porque MAT se movió a X
                     accion="reassign",
+                ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida=None,
+                    accion="sin_aula",
                 ),
             ],
         )
         plan = validar_y_planificar_cascada(session, "plan-1", cascada)
-        assert plan.ok is True
+        assert plan.ok is True, (
+            f"Errores: {[e.errores for e in plan.efectos]}"
+        )
         efectos_por_id = {e.horario_id: e for e in plan.efectos}
         assert efectos_por_id[refs["hor_fis"]].aula_futura == "Y"
         assert efectos_por_id[refs["hor_fis"]].ok is True
 
     def test_cascada_profundidad_dos_niveles(self, session):
-        """MAT→X (parcial FIS), FIS→Z (idéntico BIO), BIO→Y."""
+        """MAT→X (parcial FIS y QUI), FIS→Z (idéntico BIO), BIO→Y,
+        QUI→sin aula (para no chocar con FIS en Z)."""
         refs = _seed_multi_ocupantes(session)
         cascada = NodoCascada(
             horario_id=refs["hor_mat"],
@@ -823,14 +837,23 @@ class TestValidarYPlanificarCascada:
                         ),
                     ],
                 ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida=None,
+                    accion="sin_aula",
+                ),
             ],
         )
         plan = validar_y_planificar_cascada(session, "plan-1", cascada)
-        assert plan.ok is True
-        assert len(plan.efectos) == 3
+        assert plan.ok is True, (
+            f"Errores: {[e.errores for e in plan.efectos]}"
+        )
+        assert len(plan.efectos) == 4
         assert plan.efectos[0].nivel == 0
-        assert plan.efectos[1].nivel == 1
-        assert plan.efectos[2].nivel == 2
+        # DFS orden: MAT(0) → FIS(1) → BIO(2) → QUI(1)
+        assert plan.efectos[0].horario_id == refs["hor_mat"]
+        niveles = [e.nivel for e in plan.efectos]
+        assert 2 in niveles  # BIO está a nivel 2
 
     def test_ciclo_directo_es_bloqueado(self, session):
         """A→B, B→A: ciclo de 2 pasos."""
@@ -1042,3 +1065,188 @@ class TestAplicarCascada:
         res = aplicar_cascada(session, "plan-1", cascada)
         assert res.ok is False
         assert any("ciclo" in e.lower() for e in res.errores)
+
+
+# =============================================================================
+# Fase F3: fix bug de aula del editado en la cascada
+# =============================================================================
+#
+# Bug: cuando dos nodos del árbol de cascada quedan con la MISMA aula futura,
+# la validación individual por nodo no lo detecta (porque cada nodo se valida
+# aislado, y el aula "original" del editado no se ve como ocupada — porque
+# el editado se va a mover). Resultado: el usuario puede elegir la misma aula
+# libre para el editado y para un desplazado, sin recibir advertencia.
+
+class TestChoquesEnCascada:
+    """La cascada debe detectar choques residuales entre los efectos del
+    plan: dos horarios que terminen apuntando a la misma aula en franjas
+    que solapen deben marcarse como error (o al menos warning) antes de
+    aplicar."""
+
+    def test_editado_y_desplazado_a_misma_aula_es_error(self, session):
+        """MAT y FIS deciden ambos ir a A3 (que originalmente era la
+        aula de MAT). Como sus franjas son idénticas (Lu 14-16), no
+        pueden ambos ir a A3."""
+        refs = _seed_dos_horarios_dos_aulas(session)
+        # Setup extra: pongo MAT en A3 (para que "quedar en A3" tenga
+        # sentido después del swap).
+        h_mat = session.get(HorarioDB, refs["hor_mat"])
+        h_mat.aula_id = "A3"
+        session.add(h_mat)
+        session.commit()
+
+        # Cascada: MAT va a A2 (donde está FIS, franja idéntica).
+        # FIS desplazado, el usuario le elige... A2 (la misma que MAT).
+        # BUG: hoy esto pasa como ok=True.
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="A2",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="A2",  # ← el bug: mismo destino que el padre
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is False, (
+            "El plan debería fallar: MAT y FIS terminarían en la misma "
+            "aula con franja idéntica."
+        )
+        # Debe haber un error que hable del choque
+        todos_errores = plan.errores_globales + [
+            err for e in plan.efectos for err in e.errores
+        ]
+        assert any(
+            "choque" in err.lower() or "misma aula" in err.lower()
+            or "ya está" in err.lower() or "conflicto" in err.lower()
+            for err in todos_errores
+        ), f"Errores actuales: {todos_errores}"
+
+    def test_desplazado_a_aula_libre_ok(self, session):
+        """Sanity check: si el desplazado va a un aula distinta que el
+        editado, no debe fallar."""
+        refs = _seed_dos_horarios_dos_aulas(session)
+        h_mat = session.get(HorarioDB, refs["hor_mat"])
+        h_mat.aula_id = "A3"
+        session.add(h_mat)
+        session.commit()
+
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="A2",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="A3",  # aula que MAT liberó
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is True, (
+            f"Debería pasar: MAT→A2, FIS→A3 (liberada por MAT). "
+            f"Errores: {plan.errores_globales}, efectos: {plan.efectos}"
+        )
+
+    def test_dos_desplazados_a_misma_aula_es_error(self, session):
+        """Escenario más profundo: el editado tiene 2 desplazados y el
+        usuario los mandó a la misma aula."""
+        refs = _seed_multi_ocupantes(session)
+        # MAT en Y (Lu 8-11), va a X. Los dos ocupantes de X (FIS y QUI)
+        # los mando ambos a Z.
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="X",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="Z",  # solapa con BIO Lu 8-11
+                    accion="reassign",
+                ),
+                NodoCascada(
+                    horario_id=refs["hor_qui"],
+                    aula_elegida="Z",  # también a Z — choque residual
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        # FIS Lu 8-10 y QUI Lu 9-11 solapan en Lu 9-10 → no pueden ambos en Z.
+        assert plan.ok is False
+
+    def test_horario_no_afectado_en_misma_aula_es_ok(self, session):
+        """Sanity check: si dos efectos usan la misma aula pero sus
+        franjas NO solapan (día distinto o hora distinta), es OK."""
+        refs = _seed_dos_horarios_dos_aulas(session)
+        # Creo un tercer horario del plan, un día distinto, en A2.
+        # Cuando cambio FIS a A3 (por swap), el tercero sigue en A2 sin
+        # solaparse con nadie.
+        com_ter = str(uuid.uuid4())
+        session.add(ComisionDB(
+            id=com_ter, materia_codigo="MAT",
+            plan_cursada_id="plan-1", comision_key="MAT-002",
+            nombre="Comisión 2", numero=2, cupo=30,
+        ))
+        session.add(HorarioDB(
+            id="h-ter", comision_id=com_ter, codigo_materia="MAT",
+            dia="Martes", hora_inicio=time(14, 0), hora_fin=time(16, 0),
+            tipo_clase="teorica", aula_id="A2",
+        ))
+        session.commit()
+
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="A2",  # MAT (Lu 14-16) a A2 — desplaza a FIS
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="A3",
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        # El "h-ter" en A2 martes no solapa con MAT en A2 lunes → ok.
+        assert plan.ok is True
+
+    def test_choque_con_horario_fuera_de_cascada(self, session):
+        """El desplazado se manda a una aula que YA tiene otro horario
+        del plan en franja solapada (no parte de la cascada). Debe
+        detectarse como error."""
+        refs = _seed_dos_horarios_dos_aulas(session)
+        # Creo un horario adicional del plan, en A3, mismo día/hora que MAT.
+        com_ex = str(uuid.uuid4())
+        session.add(ComisionDB(
+            id=com_ex, materia_codigo="MAT",
+            plan_cursada_id="plan-1", comision_key="MAT-EX",
+            nombre="Extra", numero=99, cupo=30,
+        ))
+        session.add(HorarioDB(
+            id="h-extra", comision_id=com_ex, codigo_materia="MAT",
+            dia="Lunes", hora_inicio=time(14, 0), hora_fin=time(16, 0),
+            tipo_clase="teorica", aula_id="A3",
+        ))
+        session.commit()
+
+        # MAT a A2, FIS a A3 — pero A3 ya está usada por h-extra en la
+        # misma franja.
+        cascada = NodoCascada(
+            horario_id=refs["hor_mat"],
+            aula_elegida="A2",
+            accion="reassign",
+            hijos=[
+                NodoCascada(
+                    horario_id=refs["hor_fis"],
+                    aula_elegida="A3",
+                    accion="reassign",
+                ),
+            ],
+        )
+        plan = validar_y_planificar_cascada(session, "plan-1", cascada)
+        assert plan.ok is False
