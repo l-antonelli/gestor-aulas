@@ -1125,6 +1125,149 @@ def _accion_para_aula_hijo(candidatas, aula_id: Optional[str]) -> str:
     return "reassign"
 
 
+def _render_calendarios_impacto(
+    session: "Session",
+    plan_id: str,
+    plan,
+) -> None:
+    """Muestra un calendario por cada aula involucrada en la cascada,
+    con dos vistas lado a lado: estado actual (izquierda) y estado
+    resultante (derecha).
+
+    "Aulas involucradas" = todas las aulas que:
+    - eran usadas por algún horario tocado por la cascada (antes),
+    - van a ser usadas por algún horario tocado por la cascada (después).
+    """
+    from src.database.models import HorarioDB, ComisionDB, MateriaDB, AulaDB
+    from src.services.plan_generation_service import TimetableBlock
+
+    # Set de aulas involucradas.
+    aulas_ids: set[str] = set()
+    for ef in plan.efectos:
+        # Aula futura.
+        if ef.aula_futura:
+            aulas_ids.add(ef.aula_futura)
+        # Aula previa (leyendo estado actual de la DB).
+        h = session.get(HorarioDB, ef.horario_id)
+        if h and h.aula_id:
+            aulas_ids.add(h.aula_id)
+
+    if not aulas_ids:
+        st.info(
+            "No hay aulas involucradas en el cambio (todos los horarios "
+            "afectados quedan sin aula)."
+        )
+        return
+
+    # Traer horarios del plan (los que están en las aulas involucradas
+    # en el estado actual O futuro).
+    com_ids_plan = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    horarios_plan = list(session.exec(
+        select(HorarioDB).where(
+            HorarioDB.comision_id.in_(com_ids_plan),  # type: ignore[attr-defined]
+        )
+    ).all())
+
+    # Índice: horario_id → efecto (para saber aula futura si aplica).
+    efectos_por_h = {ef.horario_id: ef for ef in plan.efectos}
+
+    sede_map = _sede_nombre_map(session)
+    config = get_or_create_config(session)
+
+    for aula_id in sorted(aulas_ids):
+        aula = session.get(AulaDB, aula_id)
+        if aula is None:
+            continue
+        sede_nombre = sede_map.get(aula.sede_id, "?")
+
+        st.markdown(
+            f"#### {sede_nombre} · {aula.nombre} "
+            f"(cap. {aula.capacidad}, {aula.tipo})"
+        )
+
+        # Construir dos grillas: antes y después.
+        grid_antes: dict[str, list[TimetableBlock]] = {}
+        grid_despues: dict[str, list[TimetableBlock]] = {}
+
+        for h in horarios_plan:
+            com = session.get(ComisionDB, h.comision_id)
+            mat = (
+                session.get(MateriaDB, com.materia_codigo) if com else None
+            )
+            mat_nombre = (
+                mat.nombre if mat
+                else (com.materia_codigo if com else "?")
+            )
+            mat_codigo = com.materia_codigo if com else "?"
+            com_nombre = com.nombre if com else "?"
+
+            # Antes.
+            if h.aula_id == aula_id:
+                block = TimetableBlock(
+                    materia_codigo=mat_codigo,
+                    materia_nombre=mat_nombre,
+                    comision_nombre=com_nombre,
+                    hora_inicio=h.hora_inicio,
+                    hora_fin=h.hora_fin,
+                    virtual=False,
+                    en_periodo=True,
+                    aula_label=aula.nombre,
+                )
+                grid_antes.setdefault(h.dia, []).append(block)
+
+            # Después: si está tocado por la cascada, usa aula_futura;
+            # si no, sigue con su aula_id actual.
+            ef = efectos_por_h.get(h.id)
+            aula_final = ef.aula_futura if ef else h.aula_id
+            if aula_final == aula_id:
+                # Marca visual: si este horario fue tocado por la cascada,
+                # se prefija el título para destacarlo.
+                tocado = ef is not None
+                block = TimetableBlock(
+                    materia_codigo=mat_codigo,
+                    materia_nombre=(
+                        f"★ {mat_nombre}" if tocado else mat_nombre
+                    ),
+                    comision_nombre=com_nombre,
+                    hora_inicio=h.hora_inicio,
+                    hora_fin=h.hora_fin,
+                    virtual=False,
+                    en_periodo=True,
+                    aula_label=aula.nombre,
+                )
+                grid_despues.setdefault(h.dia, []).append(block)
+
+        c_antes, c_despues = st.columns(2)
+        with c_antes:
+            st.caption("Antes")
+            if not grid_antes:
+                st.info("El aula estaba libre en las franjas visibles.")
+            else:
+                render_timetable_calendar(
+                    grid_data=grid_antes,
+                    config=config,
+                    key=f"cal_impacto_antes_{aula_id}",
+                    titulo_compacto=True,
+                )
+        with c_despues:
+            st.caption("Después (★ = horario tocado por la cascada)")
+            if not grid_despues:
+                st.info(
+                    "El aula quedaría libre en las franjas visibles."
+                )
+            else:
+                render_timetable_calendar(
+                    grid_data=grid_despues,
+                    config=config,
+                    key=f"cal_impacto_despues_{aula_id}",
+                    titulo_compacto=True,
+                )
+
+
 def _confirmar_cascada(
     session, plan_id: str, root_horario_id: str,
     estado: dict, nuevo_tipo: str | None,
@@ -1176,6 +1319,11 @@ def _confirmar_cascada(
                 st.error(f"{indent}&nbsp;&nbsp;{err}")
             for w in ef.warnings:
                 st.warning(f"{indent}&nbsp;&nbsp;{w}")
+
+    # Vista de calendarios: uno por cada aula afectada.
+    st.divider()
+    st.markdown("### Vista antes / después por aula")
+    _render_calendarios_impacto(session, plan_id, plan)
 
     st.divider()
     col_ok, col_no = st.columns(2)
