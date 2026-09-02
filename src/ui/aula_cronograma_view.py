@@ -1339,13 +1339,53 @@ def render_aula_cronograma(
         )
         return
 
-    MAX_FILAS = 300
-    if len(rows_filtradas) > MAX_FILAS:
-        st.caption(
-            f"Mostrando los primeros {MAX_FILAS} de "
-            f"{len(rows_filtradas)}. Refiná los filtros."
+    # =====================================================
+    # Paginación
+    # =====================================================
+    _page_size_key = f"{key_ns}_page_size"
+    _page_num_key = f"{key_ns}_page_num"
+    if _page_size_key not in st.session_state:
+        st.session_state[_page_size_key] = 20
+    if _page_num_key not in st.session_state:
+        st.session_state[_page_num_key] = 1
+
+    _pag_c1, _pag_c2, _pag_c3 = st.columns([2, 2, 6])
+    with _pag_c1:
+        page_size = st.selectbox(
+            "Por página",
+            options=[10, 20, 30, 50, 100],
+            index=[10, 20, 30, 50, 100].index(
+                st.session_state[_page_size_key]
+            ),
+            key=f"{key_ns}_page_size_sel",
         )
-        rows_filtradas = rows_filtradas[:MAX_FILAS]
+    total_rows = len(rows_filtradas)
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    # Si cambió page_size y la página actual ya no existe, resetear a 1.
+    if st.session_state[_page_num_key] > total_pages:
+        st.session_state[_page_num_key] = 1
+    st.session_state[_page_size_key] = page_size
+
+    with _pag_c2:
+        page_num = st.number_input(
+            f"Página (1–{total_pages})",
+            min_value=1,
+            max_value=total_pages,
+            value=st.session_state[_page_num_key],
+            step=1,
+            key=f"{key_ns}_page_num_input",
+        )
+        st.session_state[_page_num_key] = page_num
+    with _pag_c3:
+        start = (page_num - 1) * page_size + 1
+        end = min(page_num * page_size, total_rows)
+        st.caption(
+            f"Mostrando {start}–{end} de {total_rows} horarios "
+            f"(página {page_num} de {total_pages})."
+        )
+
+    start_idx = (page_num - 1) * page_size
+    rows_filtradas = rows_filtradas[start_idx:start_idx + page_size]
 
     for r in rows_filtradas:
         aula = r.get("aula_obj")
