@@ -806,7 +806,7 @@ def _render_flujo_cascada_inline(
         st.caption("Sin cambios respecto del estado actual.")
 
 
-@st.dialog("Confirmar cambio de aula")
+@st.dialog("Confirmar cambio de aula", width="large")
 def _open_confirmar_dialog(
     plan_id: str,
     root_horario_id: str,
@@ -1131,8 +1131,12 @@ def _render_calendarios_impacto(
     plan,
 ) -> None:
     """Muestra un calendario por cada aula involucrada en la cascada,
-    con dos vistas lado a lado: estado actual (izquierda) y estado
-    resultante (derecha).
+    con dos vistas apiladas verticalmente: estado actual (arriba) y
+    estado resultante (abajo).
+
+    Las materias tocadas por la cascada se resaltan a todo color; las
+    demás materias del aula se pintan en gris atenuado para dejar
+    visualmente destacados sólo los bloques relevantes.
 
     "Aulas involucradas" = todas las aulas que:
     - eran usadas por algún horario tocado por la cascada (antes),
@@ -1144,10 +1148,8 @@ def _render_calendarios_impacto(
     # Set de aulas involucradas.
     aulas_ids: set[str] = set()
     for ef in plan.efectos:
-        # Aula futura.
         if ef.aula_futura:
             aulas_ids.add(ef.aula_futura)
-        # Aula previa (leyendo estado actual de la DB).
         h = session.get(HorarioDB, ef.horario_id)
         if h and h.aula_id:
             aulas_ids.add(h.aula_id)
@@ -1159,8 +1161,6 @@ def _render_calendarios_impacto(
         )
         return
 
-    # Traer horarios del plan (los que están en las aulas involucradas
-    # en el estado actual O futuro).
     com_ids_plan = list(session.exec(
         select(ComisionDB.id).where(
             ComisionDB.plan_cursada_id == plan_id,
@@ -1172,8 +1172,17 @@ def _render_calendarios_impacto(
         )
     ).all())
 
-    # Índice: horario_id → efecto (para saber aula futura si aplica).
+    # Efectos indexados y set de materias tocadas por la cascada (para
+    # resaltar en los calendarios; el resto se atenúa).
     efectos_por_h = {ef.horario_id: ef for ef in plan.efectos}
+    materias_tocadas: set[str] = set()
+    for ef in plan.efectos:
+        h = session.get(HorarioDB, ef.horario_id)
+        if h is None:
+            continue
+        com = session.get(ComisionDB, h.comision_id)
+        if com and com.materia_codigo:
+            materias_tocadas.add(com.materia_codigo)
 
     sede_map = _sede_nombre_map(session)
     config = get_or_create_config(session)
@@ -1188,8 +1197,11 @@ def _render_calendarios_impacto(
             f"#### {sede_nombre} · {aula.nombre} "
             f"(cap. {aula.capacidad}, {aula.tipo})"
         )
+        st.caption(
+            "Los bloques en color son las materias afectadas por el "
+            "cambio; el resto queda en gris para no distraer."
+        )
 
-        # Construir dos grillas: antes y después.
         grid_antes: dict[str, list[TimetableBlock]] = {}
         grid_despues: dict[str, list[TimetableBlock]] = {}
 
@@ -1205,7 +1217,8 @@ def _render_calendarios_impacto(
             mat_codigo = com.materia_codigo if com else "?"
             com_nombre = com.nombre if com else "?"
 
-            # Antes.
+            # Antes: horarios cuya aula_id actual es la aula que estamos
+            # dibujando.
             if h.aula_id == aula_id:
                 block = TimetableBlock(
                     materia_codigo=mat_codigo,
@@ -1219,13 +1232,10 @@ def _render_calendarios_impacto(
                 )
                 grid_antes.setdefault(h.dia, []).append(block)
 
-            # Después: si está tocado por la cascada, usa aula_futura;
-            # si no, sigue con su aula_id actual.
+            # Después: aula final tras aplicar la cascada.
             ef = efectos_por_h.get(h.id)
             aula_final = ef.aula_futura if ef else h.aula_id
             if aula_final == aula_id:
-                # Marca visual: si este horario fue tocado por la cascada,
-                # se prefija el título para destacarlo.
                 tocado = ef is not None
                 block = TimetableBlock(
                     materia_codigo=mat_codigo,
@@ -1241,31 +1251,35 @@ def _render_calendarios_impacto(
                 )
                 grid_despues.setdefault(h.dia, []).append(block)
 
-        c_antes, c_despues = st.columns(2)
-        with c_antes:
-            st.caption("Antes")
-            if not grid_antes:
-                st.info("El aula estaba libre en las franjas visibles.")
-            else:
-                render_timetable_calendar(
-                    grid_data=grid_antes,
-                    config=config,
-                    key=f"cal_impacto_antes_{aula_id}",
-                    titulo_compacto=True,
-                )
-        with c_despues:
-            st.caption("Después (★ = horario tocado por la cascada)")
-            if not grid_despues:
-                st.info(
-                    "El aula quedaría libre en las franjas visibles."
-                )
-            else:
-                render_timetable_calendar(
-                    grid_data=grid_despues,
-                    config=config,
-                    key=f"cal_impacto_despues_{aula_id}",
-                    titulo_compacto=True,
-                )
+        # Antes.
+        st.markdown("**Antes**")
+        if not grid_antes:
+            st.info("El aula estaba libre en las franjas visibles.")
+        else:
+            render_timetable_calendar(
+                grid_data=grid_antes,
+                config=config,
+                key=f"cal_impacto_antes_{aula_id}",
+                titulo_compacto=True,
+                resaltar_codigos=materias_tocadas,
+            )
+
+        # Después.
+        st.markdown("**Después** (★ = horario tocado por la cascada)")
+        if not grid_despues:
+            st.info(
+                "El aula quedaría libre en las franjas visibles."
+            )
+        else:
+            render_timetable_calendar(
+                grid_data=grid_despues,
+                config=config,
+                key=f"cal_impacto_despues_{aula_id}",
+                titulo_compacto=True,
+                resaltar_codigos=materias_tocadas,
+            )
+
+        st.divider()
 
 
 def _confirmar_cascada(

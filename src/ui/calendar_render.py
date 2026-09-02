@@ -275,6 +275,9 @@ def render_schedule_calendar(
 # ---------------------------------------------------------------------------
 # Render para Planes / Grilla Horaria (TimetableBlock) — read-only
 # ---------------------------------------------------------------------------
+GRIS_ATENUADO = ("#3a3a3a", "#9a9a9a")
+
+
 def render_timetable_calendar(
     grid_data: dict[str, list[TimetableBlock]],
     config: ConfiguracionHoraria,
@@ -284,6 +287,7 @@ def render_timetable_calendar(
     hora_min_override: Optional[time] = None,
     hora_max_override: Optional[time] = None,
     titulo_compacto: bool = False,
+    resaltar_codigos: Optional[set[str]] = None,
 ) -> Optional[dict]:
     """Renderiza un plan de cursada como calendario semanal FullCalendar (read-only).
 
@@ -334,7 +338,15 @@ def render_timetable_calendar(
         if dow is None:
             continue
         for b in blocks:
-            if color_by_carrera:
+            # Resaltado: si se pasó ``resaltar_codigos`` y la materia
+            # del bloque NO está en el set, se pinta gris atenuado
+            # (para dejar visualmente destacados sólo los relevantes).
+            if (
+                resaltar_codigos is not None
+                and b.materia_codigo not in resaltar_codigos
+            ):
+                bg, fg = GRIS_ATENUADO
+            elif color_by_carrera:
                 if b.carrera_codigo and b.carrera_codigo in car_colors:
                     bg, fg = car_colors[b.carrera_codigo]
                 else:
