@@ -1251,35 +1251,40 @@ def _render_calendarios_impacto(
         with st.expander(titulo_exp, expanded=(idx == 0)):
             st.caption(
                 "Los bloques en color son las materias afectadas por el "
-                "cambio; el resto queda en gris para no distraer."
+                "cambio; el resto queda en gris para no distraer. "
+                "★ = horario tocado por la cascada."
             )
-            st.markdown("**Antes**")
-            if not grid_antes:
-                st.info("El aula estaba libre en las franjas visibles.")
-            else:
-                render_timetable_calendar(
-                    grid_data=grid_antes,
-                    config=config,
-                    key=f"cal_impacto_antes_{aula_id}",
-                    titulo_compacto=True,
-                    resaltar_codigos=materias_tocadas,
-                    mostrar_leyenda=False,
-                )
-
-            st.markdown("**Después** (★ = horario tocado por la cascada)")
-            if not grid_despues:
-                st.info(
-                    "El aula quedaría libre en las franjas visibles."
-                )
-            else:
-                render_timetable_calendar(
-                    grid_data=grid_despues,
-                    config=config,
-                    key=f"cal_impacto_despues_{aula_id}",
-                    titulo_compacto=True,
-                    resaltar_codigos=materias_tocadas,
-                    mostrar_leyenda=False,
-                )
+            col_antes, col_despues = st.columns(2)
+            with col_antes:
+                st.markdown("**Antes**")
+                if not grid_antes:
+                    st.info(
+                        "El aula estaba libre en las franjas visibles."
+                    )
+                else:
+                    render_timetable_calendar(
+                        grid_data=grid_antes,
+                        config=config,
+                        key=f"cal_impacto_antes_{aula_id}",
+                        titulo_compacto=True,
+                        resaltar_codigos=materias_tocadas,
+                        mostrar_leyenda=False,
+                    )
+            with col_despues:
+                st.markdown("**Después**")
+                if not grid_despues:
+                    st.info(
+                        "El aula quedaría libre en las franjas visibles."
+                    )
+                else:
+                    render_timetable_calendar(
+                        grid_data=grid_despues,
+                        config=config,
+                        key=f"cal_impacto_despues_{aula_id}",
+                        titulo_compacto=True,
+                        resaltar_codigos=materias_tocadas,
+                        mostrar_leyenda=False,
+                    )
 
 
 def _confirmar_cascada(
