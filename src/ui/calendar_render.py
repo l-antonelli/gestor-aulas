@@ -288,6 +288,7 @@ def render_timetable_calendar(
     hora_max_override: Optional[time] = None,
     titulo_compacto: bool = False,
     resaltar_codigos: Optional[set[str]] = None,
+    mostrar_leyenda: bool = True,
 ) -> Optional[dict]:
     """Renderiza un plan de cursada como calendario semanal FullCalendar (read-only).
 
@@ -422,27 +423,28 @@ def render_timetable_calendar(
         key=key,
     )
 
-    if color_by_carrera and (car_colors or hay_comunes):
-        legend_colors = dict(car_colors)
-        legend_names = dict(car_names)
-        if hay_comunes:
-            # Usamos el label como "código" para que la leyenda quede
-            # legible (no muestra "__comun__ — ...").
-            legend_colors[COMUN_LABEL] = COMUN_COLOR
-            legend_names[COMUN_LABEL] = ""
-        _render_legend(legend_colors, legend_names, title="Carreras:")
-    else:
-        _render_legend(mat_colors, mat_names)
+    if mostrar_leyenda:
+        if color_by_carrera and (car_colors or hay_comunes):
+            legend_colors = dict(car_colors)
+            legend_names = dict(car_names)
+            if hay_comunes:
+                # Usamos el label como "código" para que la leyenda quede
+                # legible (no muestra "__comun__ — ...").
+                legend_colors[COMUN_LABEL] = COMUN_COLOR
+                legend_names[COMUN_LABEL] = ""
+            _render_legend(legend_colors, legend_names, title="Carreras:")
+        else:
+            _render_legend(mat_colors, mat_names)
 
-    st.markdown(
-        '<div style="font-size:0.85em;margin-top:8px;">'
-        '<span style="display:inline-block;width:14px;height:14px;'
-        'border:3px solid #FF9800;border-radius:2px;vertical-align:middle;'
-        'margin-right:4px;"></span> Fuera del cuatrimestre planificado · '
-        '[V] Virtual'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+        st.markdown(
+            '<div style="font-size:0.85em;margin-top:8px;">'
+            '<span style="display:inline-block;width:14px;height:14px;'
+            'border:3px solid #FF9800;border-radius:2px;vertical-align:middle;'
+            'margin-right:4px;"></span> Fuera del cuatrimestre planificado · '
+            '[V] Virtual'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     return result
 

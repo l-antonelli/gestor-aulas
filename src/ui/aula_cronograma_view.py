@@ -1187,20 +1187,12 @@ def _render_calendarios_impacto(
     sede_map = _sede_nombre_map(session)
     config = get_or_create_config(session)
 
-    for aula_id in sorted(aulas_ids):
+    aulas_ordenadas = sorted(aulas_ids)
+    for idx, aula_id in enumerate(aulas_ordenadas):
         aula = session.get(AulaDB, aula_id)
         if aula is None:
             continue
         sede_nombre = sede_map.get(aula.sede_id, "?")
-
-        st.markdown(
-            f"#### {sede_nombre} · {aula.nombre} "
-            f"(cap. {aula.capacidad}, {aula.tipo})"
-        )
-        st.caption(
-            "Los bloques en color son las materias afectadas por el "
-            "cambio; el resto queda en gris para no distraer."
-        )
 
         grid_antes: dict[str, list[TimetableBlock]] = {}
         grid_despues: dict[str, list[TimetableBlock]] = {}
@@ -1251,35 +1243,43 @@ def _render_calendarios_impacto(
                 )
                 grid_despues.setdefault(h.dia, []).append(block)
 
-        # Antes.
-        st.markdown("**Antes**")
-        if not grid_antes:
-            st.info("El aula estaba libre en las franjas visibles.")
-        else:
-            render_timetable_calendar(
-                grid_data=grid_antes,
-                config=config,
-                key=f"cal_impacto_antes_{aula_id}",
-                titulo_compacto=True,
-                resaltar_codigos=materias_tocadas,
+        titulo_exp = (
+            f"{sede_nombre} · {aula.nombre} "
+            f"(cap. {aula.capacidad}, {aula.tipo})"
+        )
+        # Primera aula abierta por default; el resto plegadas.
+        with st.expander(titulo_exp, expanded=(idx == 0)):
+            st.caption(
+                "Los bloques en color son las materias afectadas por el "
+                "cambio; el resto queda en gris para no distraer."
             )
+            st.markdown("**Antes**")
+            if not grid_antes:
+                st.info("El aula estaba libre en las franjas visibles.")
+            else:
+                render_timetable_calendar(
+                    grid_data=grid_antes,
+                    config=config,
+                    key=f"cal_impacto_antes_{aula_id}",
+                    titulo_compacto=True,
+                    resaltar_codigos=materias_tocadas,
+                    mostrar_leyenda=False,
+                )
 
-        # Después.
-        st.markdown("**Después** (★ = horario tocado por la cascada)")
-        if not grid_despues:
-            st.info(
-                "El aula quedaría libre en las franjas visibles."
-            )
-        else:
-            render_timetable_calendar(
-                grid_data=grid_despues,
-                config=config,
-                key=f"cal_impacto_despues_{aula_id}",
-                titulo_compacto=True,
-                resaltar_codigos=materias_tocadas,
-            )
-
-        st.divider()
+            st.markdown("**Después** (★ = horario tocado por la cascada)")
+            if not grid_despues:
+                st.info(
+                    "El aula quedaría libre en las franjas visibles."
+                )
+            else:
+                render_timetable_calendar(
+                    grid_data=grid_despues,
+                    config=config,
+                    key=f"cal_impacto_despues_{aula_id}",
+                    titulo_compacto=True,
+                    resaltar_codigos=materias_tocadas,
+                    mostrar_leyenda=False,
+                )
 
 
 def _confirmar_cascada(
