@@ -522,141 +522,310 @@ def _build_grid_from_rows(
     return grid
 
 
-@st.dialog("Editar aula del horario")
-def _dialog_cambiar_aula_horario(plan_id: str, horario_id: str) -> None:
-    """Diálogo para cambiar el aula del PATRÓN (HorarioDB.aula_id).
+def _render_horario_expander(
+    session: "Session",
+    plan_id: str,
+    key_ns: str,
+    r: dict,
+    sede_map: dict,
+) -> None:
+    """Renderiza un horario del listado como expander plegable con
+    controles de edición inline.
 
-    Modos:
-    - Ver solo libres: muestra aulas compatibles sin ocupación en la
-      franja. Comportamiento clásico.
-    - Ver todas: incluye aulas ocupadas. Al elegir una ocupada, ofrece
-      resolver el conflicto con el desplazado (swap, reasignar a otra
-      libre, o dejar sin aula).
-
-    Los cambios se propagan a las ClaseDB que heredan (no a las que
-    tienen excepción manual).
+    Título condensado: "Día HH:MM–HH:MM · Materia · Código · Comisión
+    · Sede · Aula". Adentro: detalles + selector de tipo + selector
+    de aula. Cuando el usuario cambia algo, aparece un botón "Ver
+    cambio propuesto" que abre el diálogo de confirmación con el
+    preview de cascada.
     """
-    from src.database.connection import get_session
+    from src.database.models import HorarioDB, AulaDB
+
+    aula = r.get("aula_obj")
+    sede_nombre = sede_map.get(aula.sede_id, "?") if aula else "—"
+    if aula:
+        aula_label = f"{sede_nombre} · {aula.nombre}"
+    elif r.get("es_virtual"):
+        aula_label = "💻 Virtual (no requiere aula)"
+    else:
+        aula_label = "📭 Sin asignar"
+
+    anios = r.get("anios", set())
+    cuatris = r.get("cuatris", set())
+    anio_lbl = (
+        "/".join(f"{a}°" for a in sorted(anios)) if anios else "—"
+    )
+    cuatri_lbl = (
+        "/".join(sorted(cuatris)) if cuatris else "—"
+    )
+    carrera_lbl = r.get("label", "—")
+
+    dia = r["dia"]
+    hi = r["hora_inicio"].strftime("%H:%M")
+    hf = r["hora_fin"].strftime("%H:%M")
+    materia = r["materia_nombre"]
+    codigo = r.get("materia_codigo", "?")
+    comision = r["comision_nombre"]
+    horario_id = r["horario_id"]
+
+    # Título condensado. En un renglón, evitando emojis para no ruidear.
+    titulo = (
+        f"{dia} {hi}–{hf} · {materia} · {codigo} · "
+        f"{comision} · {aula_label}"
+    )
+
+    with st.expander(titulo, expanded=False):
+        # Detalles.
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                f"**Materia:** {materia}  \n"
+                f"**Código:** {codigo}  \n"
+                f"**Comisión:** {comision}  \n"
+                f"**Día y horario:** {dia} {hi}–{hf}"
+            )
+        with c2:
+            st.markdown(
+                f"**Carreras:** {carrera_lbl}  \n"
+                f"**Año/Cuatri:** {anio_lbl} · {cuatri_lbl}  \n"
+                f"**Aula actual:** {aula_label}  \n"
+                f"**Tipo:** {r.get('tipo_clase') or 'sin determinar'}"
+            )
+
+        st.divider()
+
+        # Controles de edición inline.
+        _render_controles_edicion_horario(
+            session, plan_id, key_ns, horario_id,
+        )
+
+
+def _render_controles_edicion_horario(
+    session: "Session",
+    plan_id: str,
+    key_ns: str,
+    horario_id: str,
+) -> None:
+    """Renderiza los controles de edición inline de un horario: selector
+    de tipo, selector de aula (libres o todas), y botón "Ver cambio
+    propuesto" que abre el diálogo de confirmación cuando hay cambios.
+    """
     from src.database.models import HorarioDB
     from src.services.asignacion_aulas_service import (
         get_aulas_disponibles_para_horario,
+        get_aulas_todas_para_horario,
     )
 
-    with next(get_session()) as session:
-        horario = session.get(HorarioDB, horario_id)
-        if horario is None:
-            st.error("Horario no encontrado.")
-            return
-        com = session.get(ComisionDB, horario.comision_id)
-        mat_codigo = com.materia_codigo if com else "?"
-        mat = session.get(MateriaDB, mat_codigo) if mat_codigo != "?" else None
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        st.error("Horario no encontrado.")
+        return
 
-        st.markdown(
-            f"**Materia:** {mat.nombre if mat else mat_codigo}  \n"
-            f"**Comisión:** {com.nombre if com else '?'}  \n"
-            f"**Día/Hora:** {horario.dia} "
-            f"{horario.hora_inicio.strftime('%H:%M')}–"
-            f"{horario.hora_fin.strftime('%H:%M')}  \n"
-            f"**Tipo actual:** {horario.tipo_clase or 'sin determinar'}"
+    # Tipo de clase.
+    tipo_actual = horario.tipo_clase if horario.tipo_clase in (
+        "teorica", "laboratorio"
+    ) else "teorica"
+    nuevo_tipo = st.selectbox(
+        "Tipo de clase",
+        options=["teorica", "laboratorio"],
+        index=["teorica", "laboratorio"].index(tipo_actual),
+        key=f"{key_ns}_exp_tipo_{horario_id}",
+    )
+    cambiando_tipo = (
+        horario.tipo_clase is not None
+        and nuevo_tipo != horario.tipo_clase
+    )
+
+    # Vista de aulas: solo libres o todas.
+    vista = st.radio(
+        "Aulas a mostrar",
+        options=["libres", "todas"],
+        format_func=lambda v: (
+            "Sólo aulas libres en esta franja"
+            if v == "libres"
+            else "Todas las aulas (incluidas las ocupadas)"
+        ),
+        index=0,
+        key=f"{key_ns}_exp_vista_{horario_id}",
+        horizontal=True,
+    )
+
+    sede_map = _sede_nombre_map(session)
+
+    if vista == "libres":
+        aulas_disp = get_aulas_disponibles_para_horario(
+            session, plan_id, horario_id,
+            tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
         )
-        if horario.aula_id:
-            aula_actual = session.get(AulaDB, horario.aula_id)
-            if aula_actual:
-                sede_actual = session.get(SedeDB, aula_actual.sede_id)
-                sede_nombre = sede_actual.nombre if sede_actual else "?"
-                st.caption(
-                    f"Aula actual: **{sede_nombre} · "
-                    f"{aula_actual.nombre}** (cap. {aula_actual.capacidad})"
+        if not aulas_disp:
+            st.info(
+                "No hay aulas compatibles libres en esta franja. "
+                "Cambiá a 'Todas las aulas' para elegir una ocupada "
+                "y resolver el conflicto."
+            )
+            return
+
+        opciones = ["__NONE__"] + [a.id for a in aulas_disp]
+        labels = {
+            "__NONE__": "— Sin asignar —",
+            **{
+                a.id: (
+                    f"{sede_map.get(a.sede_id, '?')} · {a.nombre} "
+                    f"(cap. {a.capacidad}, {a.tipo})"
+                )
+                for a in aulas_disp
+            },
+        }
+        default_idx = 0
+        if horario.aula_id and horario.aula_id in [a.id for a in aulas_disp]:
+            default_idx = opciones.index(horario.aula_id)
+
+        sel_aula = st.selectbox(
+            "Aula asignada",
+            options=opciones,
+            index=default_idx,
+            format_func=lambda x: labels[x],
+            key=f"{key_ns}_exp_aula_libres_{horario_id}",
+        )
+        aula_arg = None if sel_aula == "__NONE__" else sel_aula
+        hay_cambio = (aula_arg != horario.aula_id) or cambiando_tipo
+
+        if hay_cambio:
+            if st.button(
+                "Ver cambio propuesto",
+                type="primary",
+                key=f"{key_ns}_exp_ver_libres_{horario_id}",
+            ):
+                # Sembrar el estado de cascada con la decisión simple.
+                estado = _get_state(horario_id)
+                estado["aula_elegida"] = aula_arg
+                estado["accion"] = "libre" if aula_arg else "sin_aula"
+                estado["hijos"] = {}
+                _open_confirmar_dialog(
+                    plan_id, horario_id,
+                    nuevo_tipo if cambiando_tipo else None,
                 )
         else:
-            st.caption("Aula actual: **sin asignar**")
+            st.caption("Sin cambios respecto del estado actual.")
+        return
 
+    # Vista: TODAS las aulas — con soporte de cascada.
+    _render_flujo_cascada_inline(
+        session, plan_id, horario_id, sede_map,
+        nuevo_tipo if cambiando_tipo else None, key_ns,
+    )
+
+
+def _render_flujo_cascada_inline(
+    session: "Session",
+    plan_id: str,
+    root_horario_id: str,
+    sede_map: dict,
+    nuevo_tipo: Optional[str],
+    key_ns: str,
+) -> None:
+    """Como `_render_flujo_cascada` pero adaptado para vivir dentro
+    del expander en lugar del popup. La confirmación final abre un
+    popup con el preview y los calendarios."""
+    from src.database.models import HorarioDB
+    from src.services.asignacion_aulas_service import (
+        get_aulas_todas_para_horario,
+    )
+
+    horario_root = session.get(HorarioDB, root_horario_id)
+    if horario_root is None:
+        st.error("Horario no encontrado.")
+        return
+
+    estado = _get_state(root_horario_id)
+
+    candidatas = get_aulas_todas_para_horario(
+        session, plan_id, root_horario_id,
+        tipo_objetivo=nuevo_tipo,
+    )
+    if not candidatas:
+        st.warning(
+            "No hay aulas compatibles con este horario "
+            "(considerá cambiar el tipo)."
+        )
+        return
+
+    aula_elegida = _render_selector_aula(
+        session, sede_map, candidatas,
+        estado_actual=estado["aula_elegida"],
+        aula_original=horario_root.aula_id,
+        widget_key=f"{key_ns}_expc_{root_horario_id}_root_sel",
+    )
+
+    if aula_elegida != estado["aula_elegida"]:
+        estado["aula_elegida"] = aula_elegida
+        estado["accion"] = _accion_para_aula_raiz(candidatas, aula_elegida)
+        _podar_hijos_no_afectados(session, plan_id, estado)
+
+    if aula_elegida is None:
         st.info(
-            "El cambio afecta a todo el horario: todas las clases de "
-            "ese horario semanal heredarán la nueva aula."
+            "Se dejará este horario sin aula. Podés reasignarlo más "
+            "adelante."
         )
-
-        # Tipo de clase del patrón.
-        tipo_actual = horario.tipo_clase if horario.tipo_clase in (
-            "teorica", "laboratorio"
-        ) else "teorica"
-        nuevo_tipo = st.selectbox(
-            "Tipo de clase",
-            options=["teorica", "laboratorio"],
-            index=["teorica", "laboratorio"].index(tipo_actual),
-            key=f"dlg_h_tipo_{horario_id}",
+    else:
+        cand_root = next(
+            (c for c in candidatas if c.aula.id == aula_elegida), None,
         )
-        cambiando_tipo = (
-            horario.tipo_clase is not None and nuevo_tipo != horario.tipo_clase
-        )
-
-        # =================================================================
-        # Selector de vista: sólo libres vs. todas las aulas
-        # =================================================================
-        vista = st.radio(
-            "Aulas a mostrar",
-            options=["libres", "todas"],
-            format_func=lambda v: (
-                "Sólo aulas libres en esta franja"
-                if v == "libres"
-                else "Todas las aulas (incluidas las ocupadas)"
-            ),
-            index=0,
-            key=f"dlg_h_vista_{horario_id}",
-            horizontal=True,
-        )
-
-        sede_map = _sede_nombre_map(session)
-
-        if vista == "libres":
-            aulas_disp = get_aulas_disponibles_para_horario(
-                session, plan_id, horario_id,
-                tipo_objetivo=(nuevo_tipo if cambiando_tipo else None),
+        if cand_root and cand_root.libre_en_franja:
+            st.success(f"El aula **{cand_root.aula.nombre}** está libre.")
+        elif cand_root and cand_root.ocupantes:
+            n_ocupantes = len(cand_root.ocupantes)
+            st.warning(
+                f"⚠️ Este cambio afecta **{n_ocupantes} horario(s)** del "
+                f"plan que están usando el aula **{cand_root.aula.nombre}** "
+                f"en franjas que se solapan con {horario_root.dia} "
+                f"{horario_root.hora_inicio.strftime('%H:%M')}"
+                f"–{horario_root.hora_fin.strftime('%H:%M')}. "
+                f"Decidí qué hacer con cada uno:"
             )
-            if not aulas_disp:
-                st.warning(
-                    "No hay aulas compatibles libres en esa franja "
-                    "semanal. Cambiá a **Todas las aulas** para elegir "
-                    "una ocupada y resolver el conflicto, o cambiá el "
-                    "tipo de clase."
+            for oc in cand_root.ocupantes:
+                _render_nodo_desplazado(
+                    session, plan_id, root_horario_id,
+                    padre_dict=estado, oc_horario=oc, sede_map=sede_map,
+                    nivel=1,
                 )
-                _render_boton_cancelar(horario_id)
-                return
 
-            opciones = ["__NONE__"] + [a.id for a in aulas_disp]
-            labels = {
-                "__NONE__": "— Sin asignar —",
-                **{
-                    a.id: (
-                        f"{sede_map.get(a.sede_id, '?')} · {a.nombre} "
-                        f"(cap. {a.capacidad}, {a.tipo})"
-                    )
-                    for a in aulas_disp
-                },
-            }
-            default_idx = 0
-            if horario.aula_id and horario.aula_id in [a.id for a in aulas_disp]:
-                default_idx = opciones.index(horario.aula_id)
-            sel_aula = st.selectbox(
-                "Aula asignada",
-                options=opciones,
-                index=default_idx,
-                format_func=lambda x: labels[x],
-                key=f"dlg_h_aula_{horario_id}",
-            )
+    # Detectar si hay cambios respecto del estado actual.
+    hay_cambio = (
+        estado["aula_elegida"] != horario_root.aula_id
+        or nuevo_tipo is not None
+        or bool(estado.get("hijos"))
+    )
+    if hay_cambio:
+        if st.button(
+            "Ver cambio propuesto",
+            type="primary",
+            key=f"{key_ns}_expc_ver_{root_horario_id}",
+        ):
+            _open_confirmar_dialog(plan_id, root_horario_id, nuevo_tipo)
+    else:
+        st.caption("Sin cambios respecto del estado actual.")
 
-            _render_confirmar_libre(
-                session, plan_id, horario_id, sel_aula,
-                nuevo_tipo if cambiando_tipo else None,
-            )
-            return
 
-        # ---------------------------------------------------------------
-        # Vista: TODAS las aulas — con soporte de cascada de desplazamientos
-        # ---------------------------------------------------------------
-        _render_flujo_cascada(
-            session, plan_id, horario_id, sede_map,
-            nuevo_tipo if cambiando_tipo else None,
+@st.dialog("Confirmar cambio de aula")
+def _open_confirmar_dialog(
+    plan_id: str,
+    root_horario_id: str,
+    nuevo_tipo: Optional[str],
+) -> None:
+    """Popup de confirmación con el preview del cambio y calendarios
+    de cada aula afectada. Aplica la cascada al confirmar.
+    """
+    from src.database.connection import get_session
+    from src.services.asignacion_aulas_service import (
+        cambiar_aula_horario,
+        aplicar_cascada,
+    )
+    from src.database.models import HorarioDB
+
+    with next(get_session()) as session:
+        estado = _get_state(root_horario_id)
+        _confirmar_cascada(
+            session, plan_id, root_horario_id, estado, nuevo_tipo,
         )
 
 
@@ -777,106 +946,6 @@ def _dict_a_nodo_cascada(nodo_dict: dict):
         ],
     )
 
-
-def _render_flujo_cascada(
-    session,
-    plan_id: str,
-    root_horario_id: str,
-    sede_map: dict,
-    nuevo_tipo: str | None,
-) -> None:
-    """Renderiza el flujo de vista 'Todas las aulas' con soporte de
-    cascada. La raíz es siempre ``root_horario_id`` (el horario que el
-    usuario abrió el diálogo para editar).
-
-    Sub-diseño:
-    - Selector de aula al tope (todas las aulas compatibles).
-    - Si se elige un aula libre o "sin asignar" → confirmar directo.
-    - Si se elige un aula con ocupantes → renderiza recursivamente un
-      bloque por cada ocupante con sus propias opciones.
-    - Preview global al pie con validaciones cruzadas.
-    """
-    from src.database.models import HorarioDB
-    from src.services.asignacion_aulas_service import (
-        get_aulas_todas_para_horario,
-    )
-
-    horario_root = session.get(HorarioDB, root_horario_id)
-    if horario_root is None:
-        st.error("Horario no encontrado.")
-        return
-
-    estado = _get_state(root_horario_id)
-
-    # === Selector de aula del nodo raíz ===
-    candidatas = get_aulas_todas_para_horario(
-        session, plan_id, root_horario_id,
-        tipo_objetivo=nuevo_tipo,
-    )
-    if not candidatas:
-        st.warning(
-            "No hay aulas compatibles con este horario "
-            "(considerá cambiar el tipo)."
-        )
-        _render_boton_cancelar(root_horario_id)
-        return
-
-    aula_elegida = _render_selector_aula(
-        session, sede_map, candidatas,
-        estado_actual=estado["aula_elegida"],
-        aula_original=horario_root.aula_id,
-        widget_key=f"dlg_casc_{root_horario_id}_root_sel",
-    )
-
-    # Actualizar estado si cambió.
-    if aula_elegida != estado["aula_elegida"]:
-        estado["aula_elegida"] = aula_elegida
-        # Determinar acción raíz según lo elegido.
-        estado["accion"] = _accion_para_aula_raiz(candidatas, aula_elegida)
-        _podar_hijos_no_afectados(session, plan_id, estado)
-
-    # Si eligió "sin asignar" o aula libre, es flujo simple.
-    if aula_elegida is None:
-        st.info(
-            "Se dejará este horario sin aula. Podés reasignarlo más "
-            "adelante."
-        )
-        _confirmar_cascada(session, plan_id, root_horario_id, estado,
-                           nuevo_tipo)
-        return
-
-    cand_root = next((c for c in candidatas if c.aula.id == aula_elegida),
-                     None)
-    if cand_root is None:
-        _render_boton_cancelar(root_horario_id)
-        return
-
-    if cand_root.libre_en_franja:
-        st.success(f"El aula **{cand_root.aula.nombre}** está libre.")
-        _confirmar_cascada(session, plan_id, root_horario_id, estado,
-                           nuevo_tipo)
-        return
-
-    # === Aula con ocupantes → renderizar cada uno con sus opciones ===
-    st.divider()
-    n_ocupantes = len(cand_root.ocupantes)
-    st.warning(
-        f"⚠️ Este cambio afecta **{n_ocupantes} horario(s)** del plan "
-        f"que están usando el aula **{cand_root.aula.nombre}** en franjas "
-        f"que se solapan con {horario_root.dia} "
-        f"{horario_root.hora_inicio.strftime('%H:%M')}"
-        f"–{horario_root.hora_fin.strftime('%H:%M')}. "
-        f"Decidí qué hacer con cada uno:"
-    )
-
-    for oc in cand_root.ocupantes:
-        _render_nodo_desplazado(
-            session, plan_id, root_horario_id,
-            padre_dict=estado, oc_horario=oc, sede_map=sede_map,
-            nivel=1,
-        )
-
-    _confirmar_cascada(session, plan_id, root_horario_id, estado, nuevo_tipo)
 
 
 def _accion_para_aula_raiz(candidatas, aula_id: Optional[str]) -> str:
@@ -1155,44 +1224,6 @@ def _confirmar_cascada(
             st.rerun()
 
 
-def _render_confirmar_libre(
-    session: "Session",
-    plan_id: str,
-    horario_id: str,
-    sel_aula: str,
-    nuevo_tipo: str | None,
-) -> None:
-    """Rama simple: aula libre o "sin asignar". Un solo botón
-    Confirmar / Cancelar."""
-    from src.services.asignacion_aulas_service import cambiar_aula_horario
-
-    col_ok, col_no = st.columns(2)
-    with col_ok:
-        if st.button(
-            "Confirmar", type="primary",
-            key=f"dlg_h_ok_libre_{horario_id}",
-        ):
-            aula_arg = None if sel_aula == "__NONE__" else sel_aula
-            res = cambiar_aula_horario(
-                session, horario_id, aula_arg, nuevo_tipo=nuevo_tipo,
-            )
-            if not res.ok:
-                for e in res.errores:
-                    st.error(e)
-                return
-            for w in res.warnings:
-                st.warning(w)
-            st.success(
-                "Aula actualizada. Las clases del horario heredaron "
-                "el cambio."
-            )
-            st.rerun()
-    with col_no:
-        if st.button(
-            "Cancelar", key=f"dlg_h_cancel_libre_{horario_id}",
-        ):
-            st.rerun()
-
 
 
 
@@ -1388,46 +1419,6 @@ def render_aula_cronograma(
     rows_filtradas = rows_filtradas[start_idx:start_idx + page_size]
 
     for r in rows_filtradas:
-        aula = r.get("aula_obj")
-        sede_nombre = sede_map.get(aula.sede_id, "?") if aula else "—"
-        if aula:
-            aula_label = f"{sede_nombre} · {aula.nombre}"
-        elif r.get("es_virtual"):
-            # No requiere aula: el horario es virtual (resuelto por
-            # jerarquía horario > dictado > materia).
-            aula_label = "💻 Virtual (no requiere aula)"
-        else:
-            aula_label = "📭 Sin asignar"
-        anios = r.get("anios", set())
-        cuatris = r.get("cuatris", set())
-        anio_lbl = (
-            "/".join(f"{a}°" for a in sorted(anios)) if anios else "—"
+        _render_horario_expander(
+            session, plan_id, key_ns, r, sede_map,
         )
-        cuatri_lbl = (
-            "/".join(sorted(cuatris)) if cuatris else "—"
-        )
-        carrera_lbl = r.get("label", "—")
-        cola, colb, colc = st.columns([4, 4, 1])
-        with cola:
-            st.markdown(
-                f"**{r['dia']}** "
-                f"{r['hora_inicio'].strftime('%H:%M')}–"
-                f"{r['hora_fin'].strftime('%H:%M')} · "
-                f"{r['materia_nombre']} ({r['comision_nombre']})"
-            )
-            st.caption(
-                f"📚 {carrera_lbl} · {anio_lbl} · {cuatri_lbl} · "
-                f"tipo: {r.get('tipo_clase') or 'sin determinar'}"
-            )
-        with colb:
-            st.markdown(f"🏛️ {aula_label}")
-        with colc:
-            if st.button(
-                "Editar",
-                key=f"{key_ns}_edit_h_{r['horario_id']}",
-                help=(
-                    "Reasigna el aula del patrón. Las clases del "
-                    "horario sin excepción manual heredarán el cambio."
-                ),
-            ):
-                _dialog_cambiar_aula_horario(plan_id, r["horario_id"])
