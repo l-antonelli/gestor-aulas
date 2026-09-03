@@ -1453,6 +1453,7 @@ def _render_calendarios_impacto(
                         resaltar_codigos=materias_tocadas,
                         mostrar_leyenda=False,
                         mat_color_override=mat_color_override,
+                        height_px=380,
                     )
             with col_despues:
                 st.markdown("**Después**")
@@ -1469,6 +1470,7 @@ def _render_calendarios_impacto(
                         resaltar_codigos=materias_tocadas,
                         mostrar_leyenda=False,
                         mat_color_override=mat_color_override,
+                        height_px=380,
                     )
 
 
@@ -1545,25 +1547,26 @@ def _confirmar_cascada(
             nodo_est = _buscar_nodo_en_estado(estado, ef.horario_id)
 
             with st.container(border=True):
-                st.markdown(
-                    f"{indent}{icono} **{mat_nombre}** — {com_nombre}"
-                    + (f"  \n{indent}<small>{franja_txt}</small>"
-                       if franja_txt else ""),
-                    unsafe_allow_html=True,
-                )
-                col_antes, col_despues = st.columns(2)
-                with col_antes:
-                    st.markdown("**Antes**")
-                    st.markdown(f"🏛️ {aula_previa_txt}")
-                with col_despues:
-                    st.markdown("**Después**")
-                    st.markdown(f"🏛️ {aula_futura_txt}")
-                    # Checkbox sólo tiene sentido si la asignación va a
-                    # tener aula. Si el efecto es "sin aula", ocultamos.
+                # Fila 1: cabecera con todos los datos + checkbox manual
+                # (a la derecha). Se colapsa toda la info identificatoria
+                # del horario en una sola línea para máxima compacidad.
+                col_head, col_chk = st.columns([5, 2])
+                with col_head:
+                    header_parts = [
+                        f"{indent}{icono} **{mat_nombre}** — {com_nombre}",
+                    ]
+                    if franja_txt:
+                        header_parts.append(
+                            f"<small>· {franja_txt}</small>"
+                        )
+                    st.markdown(
+                        " ".join(header_parts),
+                        unsafe_allow_html=True,
+                    )
+                with col_chk:
                     if ef.aula_futura is not None and nodo_est is not None:
                         default_manual = nodo_est.get("marcar_manual")
                         if default_manual is None:
-                            # Default: tildado (asignación manual explícita).
                             default_manual = True
                         chk_key = (
                             f"dlg_casc_{root_horario_id}_manual_"
@@ -1579,6 +1582,15 @@ def _confirmar_cascada(
                             ),
                         )
                         nodo_est["marcar_manual"] = val
+
+                # Fila 2: antes → después en línea, sin repetir headers.
+                st.markdown(
+                    f"{indent}<small>"
+                    f"**Antes:** 🏛️ {aula_previa_txt} &nbsp;→&nbsp; "
+                    f"**Después:** 🏛️ {aula_futura_txt}"
+                    f"</small>",
+                    unsafe_allow_html=True,
+                )
 
                 for err in ef.errores:
                     st.error(err)

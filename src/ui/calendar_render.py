@@ -290,6 +290,7 @@ def render_timetable_calendar(
     resaltar_codigos: Optional[set[str]] = None,
     mostrar_leyenda: bool = True,
     mat_color_override: Optional[dict[str, tuple[str, str]]] = None,
+    height_px: Optional[int] = None,
 ) -> Optional[dict]:
     """Renderiza un plan de cursada como calendario semanal FullCalendar (read-only).
 
@@ -423,6 +424,11 @@ def render_timetable_calendar(
         options["slotMinTime"] = _fmt_time(hora_min_override)
     if hora_max_override is not None:
         options["slotMaxTime"] = _fmt_time(hora_max_override)
+    # Override de altura (para vistas embebidas donde el default de
+    # 650px es demasiado alto — ej. calendarios apilados en un
+    # diálogo o inspector).
+    if height_px is not None:
+        options["height"] = height_px
 
     _inject_tab_fix(options["height"])
     result = calendar(
