@@ -1806,7 +1806,10 @@ def render_aula_cronograma(
         return
 
     # =====================================================
-    # Paginación
+    # Paginación — controles agrupados en un container prolijo:
+    # dos selectores en la primera fila y el caption "Mostrando…"
+    # debajo, en vez de tres columnas horizontales que quedaban
+    # desprolijas cuando el ancho se apretaba.
     # =====================================================
     _page_size_key = f"{key_ns}_page_size"
     _page_num_key = f"{key_ns}_page_num"
@@ -1815,34 +1818,38 @@ def render_aula_cronograma(
     if _page_num_key not in st.session_state:
         st.session_state[_page_num_key] = 1
 
-    _pag_c1, _pag_c2, _pag_c3 = st.columns([2, 2, 6])
-    with _pag_c1:
-        page_size = st.selectbox(
-            "Por página",
-            options=[10, 20, 30, 50, 100],
-            index=[10, 20, 30, 50, 100].index(
-                st.session_state[_page_size_key]
-            ),
-            key=f"{key_ns}_page_size_sel",
-        )
     total_rows = len(rows_filtradas)
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    # Si cambió page_size y la página actual ya no existe, resetear a 1.
-    if st.session_state[_page_num_key] > total_pages:
-        st.session_state[_page_num_key] = 1
-    st.session_state[_page_size_key] = page_size
 
-    with _pag_c2:
-        page_num = st.number_input(
-            f"Página (1–{total_pages})",
-            min_value=1,
-            max_value=total_pages,
-            value=st.session_state[_page_num_key],
-            step=1,
-            key=f"{key_ns}_page_num_input",
-        )
-        st.session_state[_page_num_key] = page_num
-    with _pag_c3:
+    with st.container(border=True):
+        st.markdown("**📄 Paginación**")
+        _pag_c1, _pag_c2 = st.columns(2)
+        with _pag_c1:
+            page_size = st.selectbox(
+                "Por página",
+                options=[10, 20, 30, 50, 100],
+                index=[10, 20, 30, 50, 100].index(
+                    st.session_state[_page_size_key]
+                ),
+                key=f"{key_ns}_page_size_sel",
+            )
+        total_pages = max(1, (total_rows + page_size - 1) // page_size)
+        # Si cambió page_size y la página actual ya no existe,
+        # resetear a 1.
+        if st.session_state[_page_num_key] > total_pages:
+            st.session_state[_page_num_key] = 1
+        st.session_state[_page_size_key] = page_size
+
+        with _pag_c2:
+            page_num = st.number_input(
+                f"Página (1–{total_pages})",
+                min_value=1,
+                max_value=total_pages,
+                value=st.session_state[_page_num_key],
+                step=1,
+                key=f"{key_ns}_page_num_input",
+            )
+            st.session_state[_page_num_key] = page_num
+
         start = (page_num - 1) * page_size + 1
         end = min(page_num * page_size, total_rows)
         st.caption(
