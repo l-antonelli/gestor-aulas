@@ -2325,18 +2325,27 @@ def render_resultado(
     """
     details = json.loads(run.details_json or "{}")
 
-    # Mapa de saturación POR SEDE: para cada sede, día × franja con
-    # demanda vs oferta de aulas (separado por categoría: teórica,
-    # laboratorio, peor caso). Reemplaza el heatmap demanda/oferta global
-    # y el panel de impacto R10. Es la herramienta principal para
-    # responder "¿en qué sede × franja × tipo de aula me falta capacidad?".
-    #
-    # Se **recomputa en vivo** desde la DB (respetando cambios recientes
-    # como marcar un horario virtual desde el inspector). Si el recompute
-    # falla o no hay data, cae al snapshot del LPRun (compat).
+    # Recomputo del heatmap en vivo (respeta cambios post-LP como
+    # marcar un horario virtual desde el inspector).
     heatmap_sede = _recompute_heatmap_por_sede_live(session, run.plan_cursada_id)
     if heatmap_sede is None:
         heatmap_sede = details.get("heatmap_por_sede")
+
+    # Diagnóstico: filtramos horarios ahora-virtuales para que no
+    # aparezcan como "falta ese horario" tras cambios posteriores al
+    # último LP run.
+    diag = details.get("infeasibility_diagnosis")
+    iis = details.get("iis")
+    _virtuales_ahora = _get_horarios_virtuales_ahora(
+        session, run.plan_cursada_id,
+    )
+    diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
+
+    # ======================================================
+    # Sección 1: Gestión de Asignaciones
+    # ======================================================
+    st.markdown("## 🧭 Gestión de asignaciones")
+
     if heatmap_sede:
         # ¿Hay alguna celda saturada en alguna sede? Por default expandido
         # cuando hay déficit (incluye ratios > 1.0).
@@ -2353,39 +2362,33 @@ def render_resultado(
             if _hay_saturacion:
                 break
         with st.expander(
-            "🔥 Mapa de saturación por sede",
+            "🔥 Mapa de Saturación",
             expanded=(run.status != "optimal" or _hay_saturacion),
         ):
             _render_heatmap_por_sede(heatmap_sede, key_ns=key_ns)
 
-        # Inspector de franja: dado uno o más días + slots, muestra
-        # los horarios que intersectan en un calendario semanal
-        # coloreado por carrera. Útil para evaluar movimientos
-        # manuales del cronograma cuando una franja está saturada.
-        with st.expander(
-            "🔍 Inspeccionar franja",
-            expanded=False,
-        ):
-            _render_inspector_franja(
-                heatmap_sede,
-                plan_id=run.plan_cursada_id,
-                key_ns=key_ns,
+            # "Ver detalle" (equivale al inspector de franja) dentro
+            # del mapa. Streamlit no permite expanders anidados, así
+            # que se implementa como toggle.
+            st.divider()
+            _ver_detalle_key = f"{key_ns}_ver_detalle_toggle"
+            if _ver_detalle_key not in st.session_state:
+                st.session_state[_ver_detalle_key] = False
+            mostrar_detalle = st.toggle(
+                "🔍 Ver detalle de una franja",
+                key=_ver_detalle_key,
+                help=(
+                    "Muestra un cronograma coloreado por carrera y "
+                    "controles para editar día/hora de los horarios "
+                    "en el rango seleccionado."
+                ),
             )
-
-    # Diagnóstico SIEMPRE arriba si hay causa estructural detectada,
-    # incluso cuando el run resolvió OK (es informativo).
-    #
-    # Filtramos entries que referencian horarios ahora-virtuales: si el
-    # usuario marcó un horario virtual **después** del último LP run,
-    # ese horario ya no forma parte del modelo aunque el snapshot lo
-    # siga listando. Sin el filtro, se ve como "falta ese horario"
-    # cuando en realidad ya no cuenta.
-    diag = details.get("infeasibility_diagnosis")
-    iis = details.get("iis")
-    _virtuales_ahora = _get_horarios_virtuales_ahora(
-        session, run.plan_cursada_id,
-    )
-    diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
+            if mostrar_detalle:
+                _render_inspector_franja(
+                    heatmap_sede,
+                    plan_id=run.plan_cursada_id,
+                    key_ns=key_ns,
+                )
 
     if run.status != "optimal":
         st.markdown("### 🔍 Diagnóstico")
@@ -2395,44 +2398,56 @@ def render_resultado(
             st.info("No se generó diagnóstico para esta corrida.")
         return
 
-    # Caso óptimo: si hubo diagnóstico (que el LP toleró), avisamos.
-    if diag and (
-        diag.get("horarios_sin_aula_compatible")
-        or diag.get("franjas_saturadas")
-        or diag.get("particion_problemas")
-    ):
+    # Advertencias estructurales — filtramos entries vacías post-filtro
+    # de virtuales para no mostrar el mensaje engañoso de "no logró
+    # ubicar todas las aulas" cuando en realidad el snapshot quedó
+    # obsoleto.
+    _sin_aula = diag.get("horarios_sin_aula_compatible") if diag else None
+    _franjas = diag.get("franjas_saturadas") if diag else None
+    _saturacion = diag.get("saturacion_por_tipo") if diag else None
+    _hall = diag.get("hall_violators") if diag else None
+    if diag and (_sin_aula or _franjas or _saturacion or _hall):
         with st.expander("⚠️ Advertencias estructurales detectadas", expanded=False):
             _render_diagnostico_infactibilidad(diag, iis=iis)
 
-    # Si el run usó α activo y hay propuesta, mostrar el diff y los
-    # botones de aplicar/descartar antes del detalle por horario.
+    # ======================================================
+    # Sección 2: Ajustes avanzados (α) — solo si aplica
+    # ======================================================
     alpha_diff = details.get("alpha_propuestos", [])
     if run.activar_alpha and alpha_diff:
         st.divider()
         _render_alpha_propuesto(session, run, alpha_diff, key_ns)
 
+    # ======================================================
+    # Sección 3: Detalles adicionales
+    # ======================================================
     df = _build_dataframe(session, run)
     if df.empty:
         st.info("No hay detalle por horario para mostrar.")
         return
 
-    # Tabla coloreada.
-    st.markdown("**Detalle por horario**")
-    styled = df.style.map(_color_estado, subset=["Estado"]).format({
-        "Esperados": "{:.0f}",
-        "Cap": "{:.0f}",
-        "Δ": "{:+.0f}",
-    })
-    st.dataframe(styled, width='stretch', hide_index=True)
+    st.markdown("## 📎 Detalles adicionales")
+    with st.expander("📋 Detalle por horario", expanded=False):
+        st.caption(
+            "Estado de ocupación de cada horario asignado en la "
+            "última corrida."
+        )
+        styled = df.style.map(_color_estado, subset=["Estado"]).format({
+            "Esperados": "{:.0f}",
+            "Cap": "{:.0f}",
+            "Δ": "{:+.0f}",
+        })
+        st.dataframe(styled, width='stretch', hide_index=True)
 
     # Candidatas a partir comisión.
     cand = _candidatas_partir_comision(df)
     if not cand.empty:
-        st.divider()
-        st.markdown("**🪓 Candidatas a partir comisión**")
-        st.caption(
-            "Materias con horarios sobre-ocupados, ordenadas por exceso "
-            "total de alumnos. Subir `n_comisiones` distribuye los "
-            "esperados en más aulas."
-        )
-        st.dataframe(cand, width='stretch', hide_index=True)
+        with st.expander(
+            "🪓 Candidatas a partir comisión", expanded=False,
+        ):
+            st.caption(
+                "Materias con horarios sobre-ocupados, ordenadas por "
+                "exceso total de alumnos. Subir `n_comisiones` "
+                "distribuye los esperados en más aulas."
+            )
+            st.dataframe(cand, width='stretch', hide_index=True)

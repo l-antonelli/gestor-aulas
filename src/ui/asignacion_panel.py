@@ -240,35 +240,7 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             st.error(p)
         return
 
-    with st.expander(
-        "ℹ️ Qué horarios entran a la asignación", expanded=False,
-    ):
-        st.markdown(
-            "La asignación intenta encontrarle un aula a cada horario "
-            "presencial del plan. **No** entran los siguientes horarios "
-            "(se ignoran sin generar error):\n\n"
-            "- Horarios de materias **virtuales** del catálogo (la "
-            "materia está marcada como virtual).\n"
-            "- Horarios cuyo **dictado del ciclo** está marcado como "
-            "**virtual**. Útil para recursados que se dictan por Zoom "
-            "este cuatrimestre — el dictado existe y la cobertura del "
-            "cronograma lo cuenta como cubierto, pero no consume aula. "
-            "Configurable desde **Ciclos → 📚 Dictados**, columna "
-            "**Virtual**.\n"
-            "- Horarios individuales marcados como **virtuales**. "
-            "Permite mezclar modalidades dentro de un mismo dictado "
-            "(por ejemplo, teoría virtual + laboratorio presencial).\n\n"
-            "Si la asignación no encuentra solución, lo más común es "
-            "que haya horarios del 2C en el cronograma del plan que "
-            "en realidad deberían estar marcados como virtuales "
-            "(recursados). Revisalos en Dictados antes de tocar las "
-            "tolerancias."
-        )
-
-    # Sugerencia: si hay horarios cuyo tipo se podría auto-completar,
-    # avisamos antes de correr el LP. No bloquea (la red de seguridad
-    # del LP los infiere igual en memoria), pero recomendamos
-    # persistirlos para que las vistas e informes los muestren bien.
+    # Sugerencias antes de correr — informativas, no bloquean.
     from src.services.plan_actions_service import (
         preview_auto_completar_tipos,
     )
@@ -287,7 +259,60 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             "correr, así que no bloquea esta corrida."
         )
 
-    cfg = _render_config_form(session, plan_id, key_ns)
+    # ======================================================
+    # Sección: Última corrida (summary)
+    # ======================================================
+    latest = get_latest_run(session, plan_id)
+    if latest is not None:
+        st.markdown("### 📊 Última corrida")
+        _render_summary(latest)
+    else:
+        st.info(
+            "Todavía no se ejecutó ninguna asignación para este plan. "
+            "Configurá los parámetros abajo y apretá **🚀 Asignar aulas**."
+        )
+
+    # ======================================================
+    # Sección: Correr la asignación
+    # ======================================================
+    st.divider()
+    _run_key = f"{key_ns}_show_run_form"
+    if _run_key not in st.session_state:
+        st.session_state[_run_key] = latest is None  # abre si nunca corrió
+    with st.expander(
+        "🚀 Correr la asignación (config + botón)",
+        expanded=st.session_state[_run_key],
+    ):
+        st.markdown(
+            "Configurá los parámetros y apretá **🚀 Asignar aulas** para "
+            "correr una nueva corrida. Los resultados aparecen abajo."
+        )
+        with st.expander(
+            "ℹ️ Qué horarios entran a la asignación", expanded=False,
+        ):
+            st.markdown(
+                "La asignación intenta encontrarle un aula a cada horario "
+                "presencial del plan. **No** entran los siguientes horarios "
+                "(se ignoran sin generar error):\n\n"
+                "- Horarios de materias **virtuales** del catálogo (la "
+                "materia está marcada como virtual).\n"
+                "- Horarios cuyo **dictado del ciclo** está marcado como "
+                "**virtual**. Útil para recursados que se dictan por Zoom "
+                "este cuatrimestre — el dictado existe y la cobertura del "
+                "cronograma lo cuenta como cubierto, pero no consume aula. "
+                "Configurable desde **Ciclos → 📚 Dictados**, columna "
+                "**Virtual**.\n"
+                "- Horarios individuales marcados como **virtuales**. "
+                "Permite mezclar modalidades dentro de un mismo dictado "
+                "(por ejemplo, teoría virtual + laboratorio presencial).\n\n"
+                "Si la asignación no encuentra solución, lo más común es "
+                "que haya horarios del 2C en el cronograma del plan que "
+                "en realidad deberían estar marcados como virtuales "
+                "(recursados). Revisalos en Dictados antes de tocar las "
+                "tolerancias."
+            )
+
+        cfg = _render_config_form(session, plan_id, key_ns)
 
     if cfg is not None:
         with st.spinner("Asignando aulas…"):
@@ -310,19 +335,17 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             )
         st.rerun()
 
-    # Mostrar el último run (puede haber sido recién creado o de antes).
-    latest = get_latest_run(session, plan_id)
+    # ======================================================
+    # Sección: Resultado detallado (con Gestión + Detalles adicionales)
+    # ======================================================
     if latest is not None:
-        st.divider()
-        _render_summary(latest)
-        # render_resultado decide internamente: si es óptimo muestra la
-        # tabla, si no es óptimo muestra el diagnóstico estructural.
         st.divider()
         from src.ui.asignacion_resultado_ui import render_resultado
         render_resultado(session, latest, key_ns=f"{key_ns}_res")
 
-    # Vista cronograma por aula: independiente del run (sólo necesita
-    # que existan clases con aula). Va abajo de todo en un expander.
+    # ======================================================
+    # Sección: Cronograma por aula (independiente del run)
+    # ======================================================
     st.divider()
     with st.expander("📅 Cronograma por aula", expanded=False):
         from src.ui.aula_cronograma_view import render_aula_cronograma
