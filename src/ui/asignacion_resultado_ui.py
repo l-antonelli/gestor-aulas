@@ -274,10 +274,120 @@ def _recompute_heatmap_por_sede_live(
                 continue
         sedes_admis_por_mat[mc] = sedes_admisibles_para_materia(session, mc)
 
-    return compute_heatmap_por_sede(
+    heatmap = compute_heatmap_por_sede(
         horario_slots, aulas, materia_lab_map,
         sedes_admis_por_mat, aula_sede_id, sede_nombre,
     )
+
+    # Enriquecer con "aulas libres" por celda usando el estado actual
+    # de HorarioDB.aula_id. Para cada (sede × día × slot × categoría),
+    # calculamos qué aulas del pool están libres — o sea, ninguna
+    # HorarioDB del plan con esa aula asignada activa en la celda.
+    _agregar_aulas_libres_al_heatmap(
+        heatmap,
+        horarios_db=hs_all,
+        aulas_db=aulas_db,
+    )
+    return heatmap
+
+
+def _agregar_aulas_libres_al_heatmap(
+    heatmap: dict, horarios_db: list, aulas_db: list,
+) -> None:
+    """Enriquece cada celda del ``heatmap`` con la lista de aulas
+    libres por sede × categoría. Se hace in-place: agrega la key
+    ``aulas_libres`` a cada `data[sede][categoria]` como matriz
+    [slot][dia] -> list[(aula_nombre, capacidad, tipo)].
+
+    Un aula se considera "libre" en una celda si ningún HorarioDB del
+    plan con esa aula asignada al patrón está activo en esa
+    celda (día + solapamiento con la franja).
+    """
+    if not heatmap or "data" not in heatmap:
+        return
+    dias = heatmap.get("dias", [])
+    slots = heatmap.get("slots", [])
+    if not dias or not slots:
+        return
+    n_slots = len(slots)
+    n_dias = len(dias)
+    dia_idx = {d: i for i, d in enumerate(dias)}
+
+    # Reconstruir slot_bounds desde los labels "HH:MM-HH:MM".
+    def _label_to_bounds(lbl: str) -> tuple[int, int]:
+        a_txt, b_txt = lbl.split("-")
+        ah, am = map(int, a_txt.split(":"))
+        bh, bm = map(int, b_txt.split(":"))
+        return (ah * 60 + am, bh * 60 + bm)
+
+    slot_bounds = [_label_to_bounds(s) for s in slots]
+
+    # Para cada aula, marcar en qué celdas está ocupada por algún
+    # HorarioDB del plan.
+    aula_meta = {a.id: (a.nombre, a.capacidad, a.tipo, a.sede_id) for a in aulas_db}
+    aulas_por_sede: dict[str, dict[str, list[str]]] = {}
+    for aid, (_n, _c, tipo, sede) in aula_meta.items():
+        if tipo in ("teorica", "anfiteatro"):
+            aulas_por_sede.setdefault(sede, {}).setdefault("teorica", []).append(aid)
+        elif tipo == "laboratorio":
+            aulas_por_sede.setdefault(sede, {}).setdefault("laboratorio", []).append(aid)
+
+    # Marcar ocupaciones: (aula_id, si, di) -> True si el aula tiene un
+    # horario del plan activo en esa celda.
+    ocupada: dict[tuple[str, int, int], bool] = {}
+    for h in horarios_db:
+        if not h.aula_id:
+            continue
+        di = dia_idx.get(h.dia)
+        if di is None:
+            continue
+        h_s = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_e = h.hora_fin.hour * 60 + h.hora_fin.minute
+        for si, (a, b) in enumerate(slot_bounds):
+            if h_s < b and h_e > a:
+                ocupada[(h.aula_id, si, di)] = True
+
+    # Para cada sede × categoría × celda, computar aulas libres.
+    for sede_id, cats in aulas_por_sede.items():
+        if sede_id not in heatmap["data"]:
+            continue
+        for cat in ("teorica", "laboratorio"):
+            aulas_ids_cat = cats.get(cat, [])
+            if cat not in heatmap["data"][sede_id]:
+                continue
+            libres_matrix: list[list[list[tuple]]] = [
+                [[] for _ in range(n_dias)] for _ in range(n_slots)
+            ]
+            for si in range(n_slots):
+                for di in range(n_dias):
+                    for aid in aulas_ids_cat:
+                        if not ocupada.get((aid, si, di)):
+                            nombre, cap, tipo, _sede = aula_meta[aid]
+                            libres_matrix[si][di].append(
+                                (nombre, cap)
+                            )
+            heatmap["data"][sede_id][cat]["aulas_libres"] = libres_matrix
+
+        # "peor": aulas libres del tipo con peor ratio. Como el peor
+        # varía por celda, usamos la unión de teorica+laboratorio como
+        # "todas las aulas libres compatibles" — decisión conservadora.
+        if "peor" in heatmap["data"][sede_id]:
+            libres_peor: list[list[list[tuple]]] = [
+                [[] for _ in range(n_dias)] for _ in range(n_slots)
+            ]
+            for si in range(n_slots):
+                for di in range(n_dias):
+                    seen: set[str] = set()
+                    for cat in ("teorica", "laboratorio"):
+                        lst = heatmap["data"][sede_id].get(cat, {}).get(
+                            "aulas_libres", [[]]
+                        )
+                        if si < len(lst) and di < len(lst[si]):
+                            for nom_cap in lst[si][di]:
+                                if nom_cap[0] not in seen:
+                                    seen.add(nom_cap[0])
+                                    libres_peor[si][di].append(nom_cap)
+            heatmap["data"][sede_id]["peor"]["aulas_libres"] = libres_peor
 
 
 def _build_dataframe(
@@ -488,6 +598,12 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
         ratio_v = ratio[i0:i1 + 1]
         demanda_v = demanda[i0:i1 + 1]
         oferta_v = oferta[i0:i1 + 1]
+        # Aulas libres por celda (opcional; enriquecido en la UI live).
+        aulas_libres_raw = cat_data.get("aulas_libres")
+        if aulas_libres_raw:
+            aulas_libres_v = aulas_libres_raw[i0:i1 + 1]
+        else:
+            aulas_libres_v = None
 
         # Resumen para el header del expander: max ratio + un emoji
         # según el peor bucket de la sede. Expandido por default sólo
@@ -518,6 +634,18 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
             f"{n_lab} laboratorio(s) · {resumen}"
         )
 
+        def _fmt_libres(items: list) -> str:
+            if not items:
+                return "(ninguna)"
+            # items: list de (nombre, capacidad)
+            n = len(items)
+            visibles = items[:6]
+            piezas = [f"{nombre} ({cap})" for nombre, cap in visibles]
+            txt = ", ".join(piezas)
+            if n > 6:
+                txt += f", +{n - 6} más"
+            return txt
+
         with st.expander(header, expanded=max_ratio > 1.0):
             long_rows = []
             for si, slot_label in enumerate(slots_v):
@@ -525,6 +653,13 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                     d = int(demanda_v[si][di])
                     o = int(oferta_v[si][di])
                     r_ = float(ratio_v[si][di])
+                    libres_lst = (
+                        aulas_libres_v[si][di]
+                        if aulas_libres_v is not None
+                        else []
+                    )
+                    n_libres = len(libres_lst)
+                    libres_str = _fmt_libres(libres_lst)
                     long_rows.append({
                         "slot": slot_label,
                         "dia": dia,
@@ -533,6 +668,8 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                         "ratio": r_,
                         "bucket": _bucket(r_),
                         "etiqueta": (f"{d}/{o}" if d > 0 else ""),
+                        "n_libres": n_libres,
+                        "aulas_libres": libres_str,
                     })
             df_long = pd.DataFrame(long_rows)
 
@@ -560,6 +697,8 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                     alt.Tooltip("demanda:Q", title="Horarios"),
                     alt.Tooltip("oferta:Q", title="Aulas"),
                     alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+                    alt.Tooltip("n_libres:Q", title="N° aulas libres"),
+                    alt.Tooltip("aulas_libres:N", title="Aulas libres"),
                 ],
             )
             text = base.mark_text(fontSize=9, fontWeight="bold").encode(
