@@ -84,7 +84,16 @@ def _carreras_para_clase(
     cache: dict[str, list[tuple[str, str, int | None, str | None]]],
 ) -> dict:
     """Resume las carreras / años / cuatris de una materia para filtrar
-    y mostrar."""
+    y mostrar.
+
+    Devuelve además ``ubicaciones``: set de tuplas
+    ``(carrera_codigo, anio, cuatri)`` con las combinaciones exactas
+    en las que la materia aparece en ``PlanEstudioDB``. Sirve para
+    filtrar con semántica **estricta** (la tupla completa tiene que
+    existir), en contraste con los sets sueltos ``carreras_codigos``
+    / ``anios`` / ``cuatris`` que pueden dar falsos positivos si se
+    combinan como filtros independientes.
+    """
     entries = cache.get(materia_codigo, [])
     if not entries:
         return {
@@ -92,18 +101,23 @@ def _carreras_para_clase(
             "carreras_nombres": [],
             "anios": set(),
             "cuatris": set(),
+            "ubicaciones": set(),
             "label": "—",
         }
     carreras_codigos = {e[0] for e in entries}
     carreras_nombres = sorted({e[1] for e in entries})
     anios = {e[2] for e in entries if e[2] is not None}
     cuatris = {e[3] for e in entries if e[3] is not None}
+    ubicaciones: set[tuple[str, int | None, str | None]] = {
+        (e[0], e[2], e[3]) for e in entries
+    }
     label = ", ".join(carreras_nombres)
     return {
         "carreras_codigos": carreras_codigos,
         "carreras_nombres": carreras_nombres,
         "anios": anios,
         "cuatris": cuatris,
+        "ubicaciones": ubicaciones,
         "label": label,
     }
 
@@ -241,30 +255,48 @@ def _build_filtros_panel(
                 ),
             )
 
-            r2c1, r2c2, r2c3 = st.columns(3)
-            with r2c1:
-                sel_carreras = st.multiselect(
-                    "Carrera",
-                    options=carrera_opts_codes,
-                    default=aplicados.get("carreras", []),
-                    format_func=lambda c: f"{c} · {todas_carreras.get(c, c)}",
-                    key=f"{key_ns}_form_carreras",
+            # Filtro por ubicación en el plan de estudio. Los tres
+            # campos operan como una TUPLA: la materia tiene que estar
+            # en `PlanEstudioDB` con la combinación exacta (dimensión
+            # vacía = "cualquiera"). Se agrupan visualmente para que
+            # el usuario entienda que actúan combinados y no como
+            # filtros independientes.
+            with st.container(border=True):
+                st.markdown(
+                    "**📚 Ubicación en el plan de estudio**"
                 )
-            with r2c2:
-                sel_anios = st.multiselect(
-                    "Año del plan",
-                    options=anio_opts,
-                    default=aplicados.get("anios", []),
-                    format_func=lambda a: f"{a}°",
-                    key=f"{key_ns}_form_anios",
+                st.caption(
+                    "Filtran combinados: la materia tiene que estar en "
+                    "el plan de estudio con esa **combinación exacta** "
+                    "de carrera/año/cuatrimestre. Dejar un campo vacío "
+                    "significa 'cualquiera' en esa dimensión."
                 )
-            with r2c3:
-                sel_cuatris = st.multiselect(
-                    "Cuatrimestre del plan",
-                    options=cuatri_opts,
-                    default=aplicados.get("cuatris", []),
-                    key=f"{key_ns}_form_cuatris",
-                )
+                r2c1, r2c2, r2c3 = st.columns(3)
+                with r2c1:
+                    sel_carreras = st.multiselect(
+                        "Carrera",
+                        options=carrera_opts_codes,
+                        default=aplicados.get("carreras", []),
+                        format_func=lambda c: (
+                            f"{c} · {todas_carreras.get(c, c)}"
+                        ),
+                        key=f"{key_ns}_form_carreras",
+                    )
+                with r2c2:
+                    sel_anios = st.multiselect(
+                        "Año del plan",
+                        options=anio_opts,
+                        default=aplicados.get("anios", []),
+                        format_func=lambda a: f"{a}°",
+                        key=f"{key_ns}_form_anios",
+                    )
+                with r2c3:
+                    sel_cuatris = st.multiselect(
+                        "Cuatrimestre del plan",
+                        options=cuatri_opts,
+                        default=aplicados.get("cuatris", []),
+                        key=f"{key_ns}_form_cuatris",
+                    )
 
             r3c1, r3c2, r3c3 = st.columns(3)
             with r3c1:
@@ -461,6 +493,16 @@ def _aplicar_filtros_horarios_v2(
     f_sin_aula: bool = bool(filtros.get("sin_aula"))
     f_excl_virt: bool = bool(filtros.get("excluir_virtuales"))
 
+    # Filtro estricto de (carrera, anio, cuatri): la materia tiene que
+    # tener AL MENOS una ubicación en PlanEstudioDB que satisfaga las
+    # dimensiones filtradas. Cada dimensión vacía se interpreta como
+    # "cualquiera". Evita falsos positivos que se daban antes cuando
+    # las 3 dimensiones se filtraban con intersecciones independientes
+    # (ej. F14 aparecía en Electrónica 5º 1C porque estaba en A/1/1C,
+    # en E/2/1C y en M/5/1C — la tupla (A, 5, 1C) no existía pero
+    # cada dimensión pasaba por su cuenta).
+    filtro_combinado_activo = bool(f_carreras or f_anios or f_cuatris)
+
     out: list[dict] = []
     for r in rows:
         carr_codes: set[str] = r.get("carreras_codigos", set())
@@ -470,18 +512,23 @@ def _aplicar_filtros_horarios_v2(
             continue
         if f_sin_aula and r.get("aula_id") is not None:
             continue
-        if f_carreras and not (carr_codes & f_carreras):
-            continue
+        if filtro_combinado_activo:
+            ubicaciones: set[tuple[str, int | None, str | None]] = (
+                r.get("ubicaciones", set())
+            )
+            if not any(
+                (not f_carreras or car in f_carreras)
+                and (not f_anios or anio in f_anios)
+                and (not f_cuatris or cuatri in f_cuatris)
+                for car, anio, cuatri in ubicaciones
+            ):
+                continue
         if f_comunes_mode == "Sólo comunes":
             if len(carr_codes) < 2:
                 continue
         elif f_comunes_mode == "Sólo exclusivas":
             if len(carr_codes) != 1:
                 continue
-        if f_anios and not (r.get("anios", set()) & f_anios):
-            continue
-        if f_cuatris and not (r.get("cuatris", set()) & f_cuatris):
-            continue
         if f_tipos:
             tipo_label = r.get("tipo_clase") or "sin determinar"
             if tipo_label not in f_tipos:
