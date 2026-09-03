@@ -812,21 +812,23 @@ def apply_solution(
     fecha_desde: date,
     respetar_manuales: bool = True,
 ) -> ApplyResult:
-    """Aplica la solución del LP al PATRÓN (HorarioDB) y propaga a ClaseDB.
+    """Aplica la solución del asignador al PATRÓN (``HorarioDB``).
 
     Para cada ``(horario_id, aula_id)`` en ``solution.x_assignments``:
 
-    1. Setea ``HorarioDB.aula_id = aula_id`` y, si el LP resolvió el
-       ``tipo_clase`` y el horario lo tenía en None, también lo
-       persiste a nivel patrón.
-    2. Propaga el aula a las ``ClaseDB`` del plan que cumplen
-       ``fecha >= fecha_desde`` y ``executed=False``. Si
-       ``respetar_manuales=True``, no toca las que tienen
-       ``aula_asignada_manualmente=True`` (excepciones puntuales del
-       usuario). Si False, el LP retoma el control y el flag se baja.
+    1. Si ``respetar_manuales=True`` y el horario tiene
+       ``aula_asignada_manualmente=True``, **NO se toca** (la aula la
+       eligió el usuario a mano y quiere que se respete).
+    2. Si no, setea ``HorarioDB.aula_id = aula_id`` y baja el flag
+       (queda como asignada por el asignador). Si el asignador
+       resolvió el ``tipo_clase`` y el horario lo tenía en None,
+       también lo persiste.
+    3. Propaga el aula a las ``ClaseDB`` no ejecutadas del plan (con
+       ``fecha >= fecha_desde``) como cache técnico.
 
-    De este modo el "patrón" queda explícito en ``HorarioDB`` y las
-    ``ClaseDB`` actúan como instancias que heredan, salvo excepciones.
+    ``ClaseDB.aula_asignada_manualmente`` está deprecado (se usaba en
+    la era de clases puntuales); acá lo bajamos siempre para mantener
+    consistencia.
     """
     if solution.status != "optimal":
         return ApplyResult()
@@ -834,16 +836,44 @@ def apply_solution(
     apply_result = ApplyResult()
 
     for horario_id, aula_id in solution.x_assignments.items():
-        # 1) Escribir al patron.
+        # 1) Chequear si el patrón está protegido como manual.
         horario = session.get(HorarioDB, horario_id)
-        tipo_nuevo = solution.tipo_resuelto.get(horario_id)
-        if horario is not None:
-            horario.aula_id = aula_id
-            if tipo_nuevo is not None and horario.tipo_clase is None:
-                horario.tipo_clase = tipo_nuevo
-            session.add(horario)
+        if horario is None:
+            continue
 
-        # 2) Propagar a clases (herencia).
+        if respetar_manuales and horario.aula_asignada_manualmente:
+            # Patrón blindado. NO tocamos el patrón pero SÍ propagamos
+            # el aula del patrón a las ClaseDB no ejecutadas (por si
+            # las clases se generaron antes de que el patrón se marcara
+            # manual y quedaron con otra aula).
+            apply_result.n_ediciones_manuales_respetadas += 1
+            if horario.aula_id is not None:
+                # Traer todas las clases del horario y filtrar en Python
+                # (evita el problema de NULL != <valor> en SQL, que
+                # devuelve NULL en lugar de TRUE).
+                clases_todas = list(session.exec(
+                    select(ClaseDB).where(
+                        ClaseDB.horario_id == horario_id,
+                        ClaseDB.fecha >= fecha_desde,
+                        ClaseDB.executed == False,  # noqa: E712
+                        ClaseDB.plan_cursada_id == plan_id,
+                    )
+                ).all())
+                for c in clases_todas:
+                    if c.aula_id != horario.aula_id:
+                        c.aula_id = horario.aula_id
+                        session.add(c)
+            continue
+
+        # 2) Escribir al patrón.
+        tipo_nuevo = solution.tipo_resuelto.get(horario_id)
+        horario.aula_id = aula_id
+        horario.aula_asignada_manualmente = False
+        if tipo_nuevo is not None and horario.tipo_clase is None:
+            horario.tipo_clase = tipo_nuevo
+        session.add(horario)
+
+        # 3) Propagar a clases (cache técnico).
         query = select(ClaseDB).where(
             ClaseDB.horario_id == horario_id,
             ClaseDB.fecha >= fecha_desde,
@@ -852,13 +882,8 @@ def apply_solution(
         )
         clases = list(session.exec(query).all())
         for c in clases:
-            if respetar_manuales and c.aula_asignada_manualmente:
-                apply_result.n_ediciones_manuales_respetadas += 1
-                continue
             c.aula_id = aula_id
             c.aula_asignada_manualmente = False
-            # Propagar tipo_clase si el LP lo decidió (sólo para los que
-            # tenían None en el horario).
             if tipo_nuevo is not None and c.tipo_clase is None:
                 c.tipo_clase = tipo_nuevo
             session.add(c)
@@ -1552,19 +1577,22 @@ def cambiar_aula_horario(
     *,
     nuevo_tipo: Optional[str] = None,
     propagar_a_clases: bool = True,
+    marcar_manual: Optional[bool] = None,
 ) -> ValidationResult:
     """Cambia el aula del PATRÓN (``HorarioDB.aula_id``) y propaga a
-    las ``ClaseDB`` que heredan (las que tienen
-    ``aula_asignada_manualmente=False``).
+    las ``ClaseDB`` como cache técnico.
 
     Args:
         horario_id: id del HorarioDB a modificar.
-        aula_id: aula nueva. Si ``None``, deja el patrón sin asignar
-          (las clases que heredaban quedan también con aula NULL).
+        aula_id: aula nueva. Si ``None``, deja el patrón sin asignar.
         nuevo_tipo: si se especifica, también modifica el ``tipo_clase``
           del patrón antes de validar.
         propagar_a_clases: si True (default), propaga el cambio a las
-          ClaseDB del horario que no son excepciones manuales.
+          ClaseDB no ejecutadas del horario.
+        marcar_manual: si True, marca el horario con
+          ``aula_asignada_manualmente=True`` (el asignador lo va a
+          respetar en futuras corridas). Si False, lo desmarca. Si
+          ``None``, no toca el flag (preserva su valor actual).
 
     Returns:
         ValidationResult con ``ok=True`` si el cambio se aplicó. Si
@@ -1582,13 +1610,17 @@ def cambiar_aula_horario(
         horario.aula_id = None
         if nuevo_tipo is not None:
             horario.tipo_clase = nuevo_tipo
+        if marcar_manual is not None:
+            horario.aula_asignada_manualmente = marcar_manual
+        else:
+            # Sin aula no tiene sentido el flag "manual" — lo apagamos.
+            horario.aula_asignada_manualmente = False
         session.add(horario)
         if propagar_a_clases:
             clases = list(session.exec(
                 select(ClaseDB).where(
                     ClaseDB.horario_id == horario_id,
                     ClaseDB.executed == False,  # noqa: E712
-                    ClaseDB.aula_asignada_manualmente == False,  # noqa: E712
                 )
             ).all())
             for c in clases:
@@ -1614,6 +1646,8 @@ def cambiar_aula_horario(
     horario.aula_id = aula.id
     if nuevo_tipo is not None:
         horario.tipo_clase = nuevo_tipo
+    if marcar_manual is not None:
+        horario.aula_asignada_manualmente = marcar_manual
     session.add(horario)
 
     if propagar_a_clases:
@@ -1621,7 +1655,6 @@ def cambiar_aula_horario(
             select(ClaseDB).where(
                 ClaseDB.horario_id == horario_id,
                 ClaseDB.executed == False,  # noqa: E712
-                ClaseDB.aula_asignada_manualmente == False,  # noqa: E712
             )
         ).all())
         for c in clases:
@@ -2111,6 +2144,12 @@ class NodoCascada:
     aula_elegida: Optional[str]
     accion: str  # "libre" | "swap" | "reassign" | "unassign" | "sin_aula"
     hijos: list["NodoCascada"] = field(default_factory=list)
+    # Si True, la asignación resultante se marca como manual
+    # (`HorarioDB.aula_asignada_manualmente=True`) para que el
+    # asignador la respete en futuras corridas. Default None = usar
+    # el default de la UI (típicamente True cuando el usuario asigna
+    # explícitamente un aula, False cuando queda sin aula).
+    marcar_manual: Optional[bool] = None
 
 
 _ACCIONES_NODO = ("libre", "swap", "reassign", "unassign", "sin_aula")
@@ -2134,6 +2173,9 @@ class EfectoNodo:
     # Rango de solapamiento con el padre (si aplica). Formato "HH:MM–HH:MM".
     solapamiento_con_padre: Optional[str] = None
     tipo_solapamiento_con_padre: Optional[str] = None  # identico | parcial | None
+    # Propagado desde `NodoCascada.marcar_manual`. Si None, la
+    # aplicación no toca el flag existente. Si True/False lo setea.
+    marcar_manual: Optional[bool] = None
 
 
 @dataclass
@@ -2375,6 +2417,7 @@ def validar_y_planificar_cascada(
             nivel=nivel,
             solapamiento_con_padre=solape_str,
             tipo_solapamiento_con_padre=tipo_sol,
+            marcar_manual=nodo.marcar_manual,
         ))
 
         for h in nodo.hijos:
@@ -2585,7 +2628,10 @@ def aplicar_cascada(
 
     # Paso 2: asignar aula del editado (raíz).
     raiz = plan.efectos[0]
-    r = cambiar_aula_horario(session, raiz.horario_id, raiz.aula_futura)
+    r = cambiar_aula_horario(
+        session, raiz.horario_id, raiz.aula_futura,
+        marcar_manual=raiz.marcar_manual,
+    )
     if not r.ok:
         _rollback()
         res = ValidationResult(ok=False)
@@ -2598,6 +2644,7 @@ def aplicar_cascada(
     for efecto in plan.efectos[1:]:
         r = cambiar_aula_horario(
             session, efecto.horario_id, efecto.aula_futura,
+            marcar_manual=efecto.marcar_manual,
         )
         if not r.ok:
             _rollback()

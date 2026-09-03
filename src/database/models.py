@@ -330,6 +330,13 @@ class HorarioDB(SQLModel, table=True):
     aula_id: Optional[str] = Field(
         default=None, foreign_key="aulas.id", index=True,
     )
+    # True si la aula del patrón fue seteada por una edición manual del
+    # usuario. El asignador respeta estas asignaciones por default
+    # (toggle "Respetar ediciones manuales" del panel de aulas). Si
+    # False, el aula la asignó (o va a asignar) el asignador.
+    # El usuario puede marcar/desmarcar este flag desde el diálogo de
+    # reasignación y desde la tabla de manuales.
+    aula_asignada_manualmente: bool = Field(default=False)
     # Override de virtualidad a nivel horario. Sigue la regla "nivel
     # mas especifico manda" (ver `resolve_virtual`):
     #   None  = heredar del dictado (default).

@@ -480,20 +480,28 @@ class TestRunLPFechaDesde:
 class TestRunLPRespetarManuales:
 
     def test_respetar_manuales_no_pisa(self, session):
+        """Cuando el HorarioDB del patrón está marcado como manual,
+        el asignador no lo toca (aunque el aula elegida por el usuario
+        sea distinta a la óptima). El flag ahora vive en HorarioDB,
+        no en ClaseDB."""
         c1, c2 = _seed_plan_con_clases(session)
-        # Marcar c1 como editada a mano con un aula específica.
-        c1.aula_id = "a2"
-        c1.aula_asignada_manualmente = True
-        session.add(c1)
+        # Recuperar los horarios del patrón (uno por clase).
+        h1 = session.get(HorarioDB, c1.horario_id)
+        # Marcar el horario como manual con aula específica.
+        h1.aula_id = "a2"
+        h1.aula_asignada_manualmente = True
+        session.add(h1)
         session.commit()
 
         cfg = LPConfig(respetar_ediciones_manuales=True)
         run = run_lp(session, "plan-1", config=cfg)
 
+        session.refresh(h1)
         session.refresh(c1)
-        session.refresh(c2)
-        assert c1.aula_id == "a2"  # respetada
-        assert c1.aula_asignada_manualmente is True
+        assert h1.aula_id == "a2"  # patrón respetado
+        assert h1.aula_asignada_manualmente is True
+        # La clase hereda del patrón sin tocar.
+        assert c1.aula_id == "a2"
         assert run.n_ediciones_manuales_respetadas == 1
 
     def test_lab_split_decide_tipo(self, session):
@@ -565,21 +573,27 @@ class TestRunLPRespetarManuales:
         assert set(tipos.values()) == {"teorica", "laboratorio"}
 
     def test_no_respetar_manuales_pisa(self, session):
+        """Con el toggle apagado, el asignador pisa incluso los
+        horarios marcados como manuales y baja el flag."""
         c1, c2 = _seed_plan_con_clases(session)
-        c1.aula_id = "a2"
-        c1.aula_asignada_manualmente = True
-        session.add(c1)
+        h1 = session.get(HorarioDB, c1.horario_id)
+        h1.aula_id = "a2"
+        h1.aula_asignada_manualmente = True
+        session.add(h1)
         session.commit()
 
         cfg = LPConfig(respetar_ediciones_manuales=False)
         run_lp(session, "plan-1", config=cfg)
 
+        session.refresh(h1)
         session.refresh(c1)
         session.refresh(c2)
-        # Ambas deberían quedar con la aula que eligió el LP, y el flag
-        # bajado a False (el LP retomó el control).
-        assert c1.aula_id == c2.aula_id
-        assert c1.aula_asignada_manualmente is False
+        # El horario ahora tiene el aula del asignador y el flag bajado.
+        assert h1.aula_asignada_manualmente is False
+        # Las clases heredan el aula del patrón (idénticas).
+        h2 = session.get(HorarioDB, c2.horario_id)
+        assert c1.aula_id == h1.aula_id
+        assert c2.aula_id == h2.aula_id
 
 
 def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
