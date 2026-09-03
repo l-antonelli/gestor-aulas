@@ -62,6 +62,151 @@ def _precheck(session: Session, plan_id: str) -> tuple[bool, list[str]]:
 # Config form
 # =============================================================================
 
+def _render_tabla_manuales(
+    session: Session, plan_id: str, key_ns: str,
+) -> None:
+    """Lista los HorarioDB del plan con
+    ``aula_asignada_manualmente=True`` con opción de desmarcarlos.
+
+    Se muestra sólo cuando el toggle "Respetar ediciones manuales"
+    está activo (el caller ya lo verifica). Sirve para que el usuario
+    revise qué asignaciones va a proteger la próxima corrida y pueda
+    liberarlas fácilmente.
+    """
+    from src.database.models import (
+        AulaDB, ComisionDB, HorarioDB, MateriaDB, SedeDB,
+    )
+    from src.services.asignacion_aulas_service import (
+        cambiar_aula_horario,
+    )
+
+    com_ids = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids:
+        return
+    horarios_manuales = list(session.exec(
+        select(HorarioDB)
+        .where(HorarioDB.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+        .where(HorarioDB.aula_asignada_manualmente == True)  # noqa: E712
+    ).all())
+
+    with st.expander(
+        f"🔒 Asignaciones manuales protegidas "
+        f"({len(horarios_manuales)})",
+        expanded=False,
+    ):
+        st.caption(
+            "Estas asignaciones tienen el flag **'manual'** activado: "
+            "el asignador NO las va a pisar mientras el toggle "
+            "'Respetar ediciones manuales' esté activo. Destildá el "
+            "flag de las que quieras liberar."
+        )
+
+        if not horarios_manuales:
+            st.info(
+                "No hay asignaciones marcadas como manuales todavía. "
+                "Se marcan desde el diálogo de reasignación del "
+                "cronograma por aula."
+            )
+            return
+
+        # Pre-cargar datos relacionados para labels legibles.
+        aula_ids = {h.aula_id for h in horarios_manuales if h.aula_id}
+        com_ids_h = {h.comision_id for h in horarios_manuales}
+        aulas_map = {
+            a.id: a for a in session.exec(
+                select(AulaDB).where(AulaDB.id.in_(aula_ids))  # type: ignore[attr-defined]
+            ).all()
+        } if aula_ids else {}
+        coms_map = {
+            c.id: c for c in session.exec(
+                select(ComisionDB).where(
+                    ComisionDB.id.in_(com_ids_h)  # type: ignore[attr-defined]
+                )
+            ).all()
+        }
+        mat_codes = {c.materia_codigo for c in coms_map.values()}
+        mats_map = {
+            m.codigo: m for m in session.exec(
+                select(MateriaDB).where(
+                    MateriaDB.codigo.in_(mat_codes)  # type: ignore[attr-defined]
+                )
+            ).all()
+        } if mat_codes else {}
+        sede_ids = {a.sede_id for a in aulas_map.values() if a.sede_id}
+        sede_map = {
+            s.id: s.nombre for s in session.exec(
+                select(SedeDB).where(SedeDB.id.in_(sede_ids))  # type: ignore[attr-defined]
+            ).all()
+        } if sede_ids else {}
+
+        # Sort por día + hora + materia.
+        DIAS_ORDER = {
+            "Lunes": 0, "Martes": 1, "Miércoles": 2,
+            "Jueves": 3, "Viernes": 4, "Sábado": 5,
+        }
+        horarios_manuales.sort(
+            key=lambda h: (
+                DIAS_ORDER.get(h.dia, 99),
+                h.hora_inicio,
+                mats_map.get(h.codigo_materia).nombre  # type: ignore[union-attr]
+                if h.codigo_materia in mats_map
+                else h.codigo_materia,
+            )
+        )
+
+        # Header + filas.
+        col_widths = [3, 2, 2, 2, 1]
+        h1, h2, h3, h4, h5 = st.columns(col_widths)
+        h1.markdown("**Materia**")
+        h2.markdown("**Comisión**")
+        h3.markdown("**Día / Franja**")
+        h4.markdown("**Aula**")
+        h5.markdown("")
+
+        for horario in horarios_manuales:
+            com = coms_map.get(horario.comision_id)
+            mat = mats_map.get(horario.codigo_materia)
+            mat_nombre = (
+                mat.nombre if mat else horario.codigo_materia
+            )
+            com_nombre = com.nombre if com else "?"
+            aula = aulas_map.get(horario.aula_id) if horario.aula_id else None
+            sede_nom = (
+                sede_map.get(aula.sede_id, "?") if aula else "—"
+            )
+            aula_txt = (
+                f"{sede_nom} · {aula.nombre}" if aula else "sin aula"
+            )
+            hf = (
+                f"{horario.dia} "
+                f"{horario.hora_inicio.strftime('%H:%M')}"
+                f"–{horario.hora_fin.strftime('%H:%M')}"
+            )
+
+            c1, c2, c3, c4, c5 = st.columns(col_widths)
+            c1.write(mat_nombre)
+            c2.write(com_nombre)
+            c3.write(hf)
+            c4.write(aula_txt)
+            if c5.button(
+                "🔓 Liberar",
+                key=f"{key_ns}_liberar_{horario.id}",
+                help=(
+                    "Baja el flag 'manual' de este horario. La próxima "
+                    "corrida del asignador podrá reasignar esta aula."
+                ),
+            ):
+                cambiar_aula_horario(
+                    session, horario.id, horario.aula_id,
+                    marcar_manual=False,
+                )
+                st.rerun()
+
+
 def _render_config_form(
     session: Session, plan_id: str, key_ns: str,
 ) -> LPConfig | None:
@@ -79,6 +224,13 @@ def _render_config_form(
         # rango futuro vacío).
         if default_fecha < ciclo.fecha_inicio:
             default_fecha = ciclo.fecha_inicio
+
+    # Fuera del form: si el toggle "Respetar ediciones manuales" está
+    # activo, mostramos la tabla de asignaciones ya marcadas como
+    # manuales con controles para desmarcarlas.
+    _respetar_state = st.session_state.get(f"{key_ns}_respetar", True)
+    if _respetar_state:
+        _render_tabla_manuales(session, plan_id, key_ns)
 
     with st.form(f"{key_ns}_lp_form"):
         st.markdown("**Configuración de la asignación de aulas**")
