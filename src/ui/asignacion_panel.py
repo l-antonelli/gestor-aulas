@@ -564,17 +564,77 @@ def _compute_estado_metricas(
                 ):
                     colisiones += 1
 
+    # Desactualizados: horarios cuya aula actual ya NO es compatible
+    # con las reglas vigentes (R3 tipo, R6 lab, R10 sede admisible).
+    # Detecta asignaciones heredadas de corridas viejas donde las
+    # reglas eran distintas (ej: se cambió la carrera admisible de
+    # una comisión, o la sede default de comunes, o el tipo de aula).
+    desactualizados = _contar_desactualizados(
+        session, plan_id, horarios_no_virt,
+    )
+
     return {
         "asignados": asignados, "total": total,
         "sobre": sobre, "manuales": manuales,
         "colisiones": colisiones,
+        "desactualizados": desactualizados,
+    }
+
+
+def _contar_desactualizados(
+    session: Session, plan_id: str, horarios_no_virt: list[HorarioDB],
+) -> dict:
+    """Detecta horarios cuyo ``aula_id`` actual ya no es admisible
+    según las reglas vigentes (compat matrix del LP).
+
+    Devuelve ``{"count": int, "detalle": list[dict]}`` con los primeros
+    N desactualizados para mostrar en el banner.
+
+    Razón habitual: la asignación fue seteada por una corrida vieja
+    del LP, y desde entonces cambió alguna regla (R10 sede admisible,
+    tipo de aula, compatibilidad lab). El aula está seteada pero el
+    LP la rechazaría hoy — el flujo se ve inconsistente al usuario
+    (aparecen "aulas libres" en franjas saturadas porque hay horarios
+    que "escaparon" a sedes que hoy no admiten).
+    """
+    from src.services.asignacion_aulas_service import (
+        build_inputs, LPConfig,
+    )
+    try:
+        inputs = build_inputs(session, plan_id, LPConfig())
+    except Exception:
+        return {"count": 0, "detalle": []}
+
+    horario_ids_lp = {h.id for h in inputs.horarios}
+    desactualizados: list[dict] = []
+    for h in horarios_no_virt:
+        if h.aula_id is None:
+            continue
+        if h.id not in horario_ids_lp:
+            # Filtrado del LP (virtual, sin forecast, etc.); no
+            # aplica compat.
+            continue
+        if not inputs.compat.get((h.id, h.aula_id), False):
+            desactualizados.append({
+                "horario_id": h.id,
+                "codigo_materia": h.codigo_materia,
+                "dia": h.dia,
+                "hora_inicio": h.hora_inicio.strftime("%H:%M"),
+                "hora_fin": h.hora_fin.strftime("%H:%M"),
+                "aula_id": h.aula_id,
+                "manual": h.aula_asignada_manualmente,
+            })
+
+    return {
+        "count": len(desactualizados),
+        "detalle": desactualizados,
     }
 
 
 def _render_estado_metricas(metricas: dict) -> None:
     """Renderiza la fila de métricas top del expander Estado de
-    Asignaciones."""
-    c1, c2, c3, c4 = st.columns(4)
+    Asignaciones + banner de desactualizados si aplica."""
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(
         "Asignados",
         f"{metricas['asignados']}/{metricas['total']}",
@@ -621,6 +681,108 @@ def _render_estado_metricas(metricas: dict) -> None:
             "va a respetar como restricción en la próxima corrida."
         ),
     )
+    desact = metricas.get("desactualizados", {"count": 0, "detalle": []})
+    n_desact = desact.get("count", 0)
+    if n_desact > 0:
+        c5.metric(
+            "Desactualizados ⚠️",
+            n_desact,
+            help=(
+                "Horarios cuya aula actual ya no es admisible según las "
+                "reglas vigentes (sede/tipo/compatibilidad lab). Suelen "
+                "ser herencia de una corrida vieja del LP con reglas "
+                "distintas — el asignador las rechazaría hoy."
+            ),
+        )
+    else:
+        c5.metric(
+            "Desactualizados",
+            0,
+            help=(
+                "Horarios cuya aula actual ya no es admisible según "
+                "las reglas vigentes. Cero es el valor esperado."
+            ),
+        )
+
+
+def _render_banner_desactualizados(
+    session: Session, metricas: dict,
+) -> None:
+    """Banner explicativo cuando hay asignaciones desactualizadas.
+
+    Se muestra arriba del contenido del panel para dejar claro por
+    qué las métricas y las 'aulas libres' pueden parecer
+    inconsistentes (ver hallazgo del usuario 2026-09-03).
+    """
+    desact = metricas.get("desactualizados", {"count": 0, "detalle": []})
+    n_desact = desact.get("count", 0)
+    if n_desact == 0:
+        return
+
+    detalle = desact.get("detalle", [])
+    st.warning(
+        f"⚠️ **{n_desact} horario(s) tienen aulas que ya no son "
+        f"admisibles según las reglas vigentes.** Esto suele pasar "
+        f"cuando la última corrida del asignador se hizo con reglas "
+        f"distintas (carrera admisible de una comisión, sede default "
+        f"de comunes, tipo de aula, etc.) y desde entonces cambiaron.\n"
+        f"\n**Consecuencia visible**: el mapa de saturación y las "
+        f"'aulas libres' pueden parecer contradictorios — hay aulas "
+        f"libres en franjas 'saturadas' porque algunos horarios "
+        f"están usando aulas de sedes que hoy no los admiten. Al "
+        f"correr el asignador de nuevo, esos horarios se moverían a "
+        f"su sede correcta y la saturación real quedaría expuesta."
+    )
+    with st.expander(
+        f"Ver detalle de los {n_desact} horarios desactualizados",
+        expanded=False,
+    ):
+        from src.database.models import AulaDB, SedeDB
+        aula_ids = {d["aula_id"] for d in detalle if d.get("aula_id")}
+        aulas_db = list(session.exec(
+            select(AulaDB).where(
+                AulaDB.id.in_(aula_ids)  # type: ignore[attr-defined]
+            )
+        ).all()) if aula_ids else []
+        aula_map = {a.id: a for a in aulas_db}
+        sede_ids = {a.sede_id for a in aulas_db if a.sede_id}
+        sede_map = {
+            s.id: s.nombre for s in session.exec(
+                select(SedeDB).where(
+                    SedeDB.id.in_(sede_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+        } if sede_ids else {}
+
+        st.caption(
+            "Muestro hasta 50 desactualizados. Al correr la "
+            "asignación de nuevo, el LP va a intentar re-ubicarlos "
+            "en aulas admisibles."
+        )
+        rows: list[dict] = []
+        for d in detalle[:50]:
+            aula = aula_map.get(d.get("aula_id"))
+            sede_nom = (
+                sede_map.get(aula.sede_id, "?") if aula else "—"
+            )
+            rows.append({
+                "Materia": d.get("codigo_materia", ""),
+                "Día": d.get("dia", ""),
+                "Horario": (
+                    f"{d.get('hora_inicio')}–{d.get('hora_fin')}"
+                ),
+                "Aula actual": (
+                    f"{sede_nom} · {aula.nombre}"
+                    if aula else "(aula borrada)"
+                ),
+                "Manual": "🔒" if d.get("manual") else "",
+            })
+        import pandas as pd
+        st.dataframe(
+            pd.DataFrame(rows),
+            width="stretch",
+            hide_index=True,
+        )
 
 
 # =============================================================================
@@ -660,6 +822,11 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     # Expander: Estado de Asignaciones (métricas + mapa + tabla)
     # ======================================================
     metricas = _compute_estado_metricas(session, plan_id, latest)
+    # Banner de desactualizados: si hay asignaciones que ya no son
+    # admisibles con las reglas vigentes, avisar antes de que el
+    # usuario mire el mapa (donde la inconsistencia se manifiesta
+    # como "aulas libres en franjas saturadas").
+    _render_banner_desactualizados(session, metricas)
     with st.expander("📊 Estado de asignaciones", expanded=True):
         _render_estado_metricas(metricas)
         if latest is not None:

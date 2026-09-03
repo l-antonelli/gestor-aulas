@@ -1813,3 +1813,35 @@ class TestComputeEstadoMetricas:
         m = _compute_estado_metricas(session, "plan-1", None)
         assert m["total"] == 0
         assert m["asignados"] == 0
+
+    def test_desactualizados_cero_cuando_compat_ok(self, session):
+        """Después de correr el LP, ningún horario queda desactualizado."""
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        _seed_plan_con_clases(session)
+        run_lp(session, "plan-1")
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["desactualizados"]["count"] == 0
+
+    def test_desactualizados_detecta_aula_incompatible(self, session):
+        """Asigno manualmente una aula que no es compatible (aula de
+        laboratorio a un horario teórico) → aparece como desactualizado.
+        """
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        c1, _ = _seed_plan_con_clases(session)
+        # Agregar un aula de laboratorio y asignársela al horario teórico.
+        session.add(AulaDB(
+            id="a_lab", sede_id="S1", codigo_aula="a_lab",
+            nombre="Lab", capacidad=20, tipo="laboratorio",
+        ))
+        session.commit()
+
+        h = session.get(HorarioDB, c1.horario_id)
+        h.aula_id = "a_lab"
+        session.add(h)
+        session.commit()
+
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["desactualizados"]["count"] == 1
+        det = m["desactualizados"]["detalle"][0]
+        assert det["aula_id"] == "a_lab"
+        assert det["codigo_materia"] == "M1"
