@@ -217,12 +217,11 @@ def _build_filtros_panel(
     aula_id_options = ["__ALL__"] + list(aula_opts.keys())
 
     with st.expander("🎛️ Filtros", expanded=True):
-        # Container "Aula" (Sede + Aula agrupadas visualmente). Sede
-        # vive fuera del form porque tiene que actualizar en cascada
-        # las opciones del selector de Aula sin esperar submit; para
-        # que igualmente se vean juntas, envolvemos ambas — la Sede
-        # queda arriba, y el Aula la abrimos como primer campo del
-        # form dentro del mismo container.
+        # Container 1: Aula (Sede + Aula agrupadas). Ambos widgets
+        # viven FUERA del form porque necesitan cascada inmediata
+        # (Sede filtra las opciones de Aula sin esperar submit) y
+        # porque envolverlos con `st.form` agregaría un borde extra
+        # que confunde la agrupación visual.
         with st.container(border=True):
             st.markdown("**🏛️ Aula**")
             st.multiselect(
@@ -235,168 +234,161 @@ def _build_filtros_panel(
                     "aulas queda restringido a esas sedes."
                 ),
             )
+            # Si la aula previamente aplicada ya no está disponible
+            # (porque cambió la sede), reseteamos el default.
+            aula_actual = aplicados.get("aula_id")
+            if aula_actual not in aula_opts:
+                aula_actual = None
+            aula_default_idx = (
+                aula_id_options.index(aula_actual)
+                if aula_actual in aula_id_options else 0
+            )
+            sel_aula_id = st.selectbox(
+                "Aula",
+                options=aula_id_options,
+                index=aula_default_idx,
+                format_func=lambda x: (
+                    "— Todas —" if x == "__ALL__" else aula_opts[x]
+                ),
+                key=f"{key_ns}_form_aula",
+                help=(
+                    "Si seleccionás un aula puntual, las métricas de "
+                    "divergencia se restringen a esa aula. Si activás "
+                    "'Mostrar cronograma' abajo, el calendario se ve "
+                    "tanto con aula puntual como sin ella."
+                ),
+            )
 
-            with st.form(key=f"{key_ns}_filtros_form", clear_on_submit=False):
-                # Si la aula previamente aplicada ya no está
-                # disponible (porque cambió la sede), reseteamos el
-                # default.
-                aula_actual = aplicados.get("aula_id")
-                if aula_actual not in aula_opts:
-                    aula_actual = None
-                aula_default_idx = (
-                    aula_id_options.index(aula_actual)
-                    if aula_actual in aula_id_options else 0
+        # Form sin borde (border=False) para que sólo se vea el
+        # container "📚 Ubicación en el plan de estudio" y no un
+        # container envolvente extra alrededor de todos los campos.
+        with st.form(
+            key=f"{key_ns}_filtros_form",
+            clear_on_submit=False,
+            border=False,
+        ):
+            # Container 2: Ubicación en el plan de estudio. Los tres
+            # campos operan como una TUPLA (semántica estricta).
+            with st.container(border=True):
+                st.markdown(
+                    "**📚 Ubicación en el plan de estudio**"
                 )
-                sel_aula_id = st.selectbox(
-                    "Aula",
-                    options=aula_id_options,
-                    index=aula_default_idx,
-                    format_func=lambda x: (
-                        "— Todas —" if x == "__ALL__" else aula_opts[x]
+                st.caption(
+                    "Filtran combinados: la materia tiene que estar "
+                    "en el plan de estudio con esa **combinación "
+                    "exacta** de carrera/año/cuatrimestre. Dejar un "
+                    "campo vacío significa 'cualquiera' en esa "
+                    "dimensión."
+                )
+                r2c1, r2c2, r2c3 = st.columns(3)
+                with r2c1:
+                    sel_carreras = st.multiselect(
+                        "Carrera",
+                        options=carrera_opts_codes,
+                        default=aplicados.get("carreras", []),
+                        format_func=lambda c: (
+                            f"{c} · {todas_carreras.get(c, c)}"
+                        ),
+                        key=f"{key_ns}_form_carreras",
+                    )
+                with r2c2:
+                    sel_anios = st.multiselect(
+                        "Año del plan",
+                        options=anio_opts,
+                        default=aplicados.get("anios", []),
+                        format_func=lambda a: f"{a}°",
+                        key=f"{key_ns}_form_anios",
+                    )
+                with r2c3:
+                    sel_cuatris = st.multiselect(
+                        "Cuatrimestre del plan",
+                        options=cuatri_opts,
+                        default=aplicados.get("cuatris", []),
+                        key=f"{key_ns}_form_cuatris",
+                    )
+
+            # Filtros generales (sin container envolvente).
+            r3c1, r3c2, r3c3 = st.columns(3)
+            with r3c1:
+                sel_tipos = st.multiselect(
+                    "Tipo de clase",
+                    options=["teorica", "laboratorio", "sin determinar"],
+                    default=aplicados.get("tipos", []),
+                    key=f"{key_ns}_form_tipos",
+                )
+            with r3c2:
+                sel_dias = st.multiselect(
+                    "Día de la semana",
+                    options=DOW_NAMES,
+                    default=aplicados.get("dias", []),
+                    key=f"{key_ns}_form_dias",
+                )
+            with r3c3:
+                comunes_default = aplicados.get("comunes_mode", "Todas")
+                sel_comunes = st.selectbox(
+                    "Compartidas entre carreras",
+                    options=_COMUNES_OPTS,
+                    index=(
+                        _COMUNES_OPTS.index(comunes_default)
+                        if comunes_default in _COMUNES_OPTS else 0
                     ),
-                    key=f"{key_ns}_form_aula",
+                    key=f"{key_ns}_form_comunes",
                     help=(
-                        "Si seleccionás un aula puntual, las métricas "
-                        "de divergencia se restringen a esa aula. Si "
-                        "activás 'Mostrar cronograma' abajo, el "
-                        "calendario se ve tanto con aula puntual como "
-                        "sin ella."
+                        "Comunes = materias que aparecen en más de "
+                        "una carrera. Si además filtraste por "
+                        "carreras, se interseca: comunes que "
+                        "pertenezcan a alguna de las elegidas."
                     ),
                 )
 
-                # Filtro por ubicación en el plan de estudio. Los tres
-                # campos operan como una TUPLA: la materia tiene que
-                # estar en `PlanEstudioDB` con la combinación exacta
-                # (dimensión vacía = "cualquiera"). Se agrupan
-                # visualmente para que el usuario entienda que actúan
-                # combinados y no como filtros independientes.
-                with st.container(border=True):
-                    st.markdown(
-                        "**📚 Ubicación en el plan de estudio**"
-                    )
-                    st.caption(
-                        "Filtran combinados: la materia tiene que "
-                        "estar en el plan de estudio con esa "
-                        "**combinación exacta** de "
-                        "carrera/año/cuatrimestre. Dejar un campo "
-                        "vacío significa 'cualquiera' en esa "
-                        "dimensión."
-                    )
-                    r2c1, r2c2, r2c3 = st.columns(3)
-                    with r2c1:
-                        sel_carreras = st.multiselect(
-                            "Carrera",
-                            options=carrera_opts_codes,
-                            default=aplicados.get("carreras", []),
-                            format_func=lambda c: (
-                                f"{c} · {todas_carreras.get(c, c)}"
-                            ),
-                            key=f"{key_ns}_form_carreras",
-                        )
-                    with r2c2:
-                        sel_anios = st.multiselect(
-                            "Año del plan",
-                            options=anio_opts,
-                            default=aplicados.get("anios", []),
-                            format_func=lambda a: f"{a}°",
-                            key=f"{key_ns}_form_anios",
-                        )
-                    with r2c3:
-                        sel_cuatris = st.multiselect(
-                            "Cuatrimestre del plan",
-                            options=cuatri_opts,
-                            default=aplicados.get("cuatris", []),
-                            key=f"{key_ns}_form_cuatris",
-                        )
+            sel_buscar = st.text_input(
+                "Buscar materia (código o nombre)",
+                value=aplicados.get("buscar", ""),
+                key=f"{key_ns}_form_buscar",
+                placeholder="Ej: '5.3' o 'Práctica Profesional'",
+            )
 
-                r3c1, r3c2, r3c3 = st.columns(3)
-                with r3c1:
-                    sel_tipos = st.multiselect(
-                        "Tipo de clase",
-                        options=[
-                            "teorica", "laboratorio", "sin determinar",
-                        ],
-                        default=aplicados.get("tipos", []),
-                        key=f"{key_ns}_form_tipos",
-                    )
-                with r3c2:
-                    sel_dias = st.multiselect(
-                        "Día de la semana",
-                        options=DOW_NAMES,
-                        default=aplicados.get("dias", []),
-                        key=f"{key_ns}_form_dias",
-                    )
-                with r3c3:
-                    comunes_default = aplicados.get(
-                        "comunes_mode", "Todas",
-                    )
-                    sel_comunes = st.selectbox(
-                        "Compartidas entre carreras",
-                        options=_COMUNES_OPTS,
-                        index=(
-                            _COMUNES_OPTS.index(comunes_default)
-                            if comunes_default in _COMUNES_OPTS else 0
-                        ),
-                        key=f"{key_ns}_form_comunes",
-                        help=(
-                            "Comunes = materias que aparecen en más "
-                            "de una carrera. Si además filtraste por "
-                            "carreras, se interseca: comunes que "
-                            "pertenezcan a alguna de las elegidas."
-                        ),
-                    )
-
-                sel_buscar = st.text_input(
-                    "Buscar materia (código o nombre)",
-                    value=aplicados.get("buscar", ""),
-                    key=f"{key_ns}_form_buscar",
-                    placeholder="Ej: '5.3' o 'Práctica Profesional'",
+            r4c1, r4c2, r4c3, r4c4, r4c5 = st.columns([1, 1, 1, 1, 1])
+            with r4c1:
+                sel_sin_aula = st.checkbox(
+                    "Sólo sin asignar",
+                    value=aplicados.get("sin_aula", False),
+                    key=f"{key_ns}_form_sin_aula",
+                    help=(
+                        "Mostrar sólo los horarios que no tienen aula "
+                        "asignada todavía."
+                    ),
                 )
-
-                r4c1, r4c2, r4c3, r4c4, r4c5 = st.columns(
-                    [1, 1, 1, 1, 1]
+            with r4c2:
+                sel_excl_virt = st.checkbox(
+                    "Excluir virtuales",
+                    value=aplicados.get("excluir_virtuales", False),
+                    key=f"{key_ns}_form_excluir_virtuales",
+                    help=(
+                        "Ocultar los horarios virtuales (no requieren "
+                        "aula física). Útil combinado con 'Sólo sin "
+                        "asignar' para revisar sólo los que faltan "
+                        "asignar de verdad."
+                    ),
                 )
-                with r4c1:
-                    sel_sin_aula = st.checkbox(
-                        "Sólo sin asignar",
-                        value=aplicados.get("sin_aula", False),
-                        key=f"{key_ns}_form_sin_aula",
-                        help=(
-                            "Mostrar sólo los horarios que no tienen "
-                            "aula asignada todavía."
-                        ),
-                    )
-                with r4c2:
-                    sel_excl_virt = st.checkbox(
-                        "Excluir virtuales",
-                        value=aplicados.get("excluir_virtuales", False),
-                        key=f"{key_ns}_form_excluir_virtuales",
-                        help=(
-                            "Ocultar los horarios virtuales (no "
-                            "requieren aula física). Útil combinado "
-                            "con 'Sólo sin asignar' para revisar sólo "
-                            "los que faltan asignar de verdad."
-                        ),
-                    )
-                with r4c3:
-                    sel_mostrar_crono = st.checkbox(
-                        "Mostrar cronograma",
-                        value=aplicados.get("mostrar_cronograma", False),
-                        key=f"{key_ns}_form_mostrar_crono",
-                        help=(
-                            "Renderiza el calendario consolidado del "
-                            "esquema semanal con los horarios "
-                            "filtrados."
-                        ),
-                    )
-                with r4c4:
-                    aplicar = st.form_submit_button(
-                        "✅ Aplicar filtros", type="primary",
-                    )
-                with r4c5:
-                    limpiar = st.form_submit_button(
-                        "🔄 Limpiar",
-                    )
+            with r4c3:
+                sel_mostrar_crono = st.checkbox(
+                    "Mostrar cronograma",
+                    value=aplicados.get("mostrar_cronograma", False),
+                    key=f"{key_ns}_form_mostrar_crono",
+                    help=(
+                        "Renderiza el calendario consolidado del "
+                        "esquema semanal con los horarios filtrados."
+                    ),
+                )
+            with r4c4:
+                aplicar = st.form_submit_button(
+                    "✅ Aplicar filtros", type="primary",
+                )
+            with r4c5:
+                limpiar = st.form_submit_button(
+                    "🔄 Limpiar",
+                )
 
         if limpiar:
             st.session_state[state_key] = dict(_DEFAULT_FILTROS)
