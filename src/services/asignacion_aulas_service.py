@@ -49,7 +49,6 @@ from src.services.asignacion_aulas_helpers import (
     InfeasibilityDiagnosis,
     ValidationResult,
     compute_compat,
-    compute_heatmap_carga,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
     validar_particion_factible,
@@ -906,11 +905,11 @@ def _build_details_json(
             "under": under,
             "estado": estado,
         })
-    heatmap = compute_heatmap_carga(inputs.horarios)
-    # Heatmap PARTICIONADO POR SEDE — reemplaza al heatmap demanda/oferta
-    # global y al panel de impacto R10. Permite ver exactamente en qué
-    # sede × franja × tipo de aula falta capacidad: la herramienta
-    # principal cuando la restricción de sedes (R10) genera saturación.
+    # Heatmap PARTICIONADO POR SEDE — la herramienta principal para
+    # ver exactamente en qué sede × franja × tipo de aula falta capacidad
+    # (la restricción de sedes R10 puede generar saturación).
+    # El heatmap de carga global (día × franja, sin discriminar sede
+    # ni tipo) se deprecó porque no aportaba nada útil sobre este.
     from src.services.asignacion_aulas_helpers import (
         compute_heatmap_por_sede,
     )
@@ -951,7 +950,6 @@ def _build_details_json(
         "horarios": detalle_horarios,
         "n_sobreocupados": n_sobre,
         "n_subutilizados": n_sub,
-        "heatmap_carga": heatmap,
         "heatmap_por_sede": heatmap_por_sede,
         "alpha_propuestos": alpha_diff,
     }
