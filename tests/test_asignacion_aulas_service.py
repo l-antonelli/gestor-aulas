@@ -775,6 +775,104 @@ class TestRunLPHorariosReasignados:
         assert run2.n_horarios_reasignados == 0
 
 
+class TestRunLPChangeLogRollup:
+    """Fase 2 del tracker: una corrida del LP genera UN solo evento
+    agregado en ChangeLogDB (no N eventos por HorarioDB modificado).
+    Los hooks automáticos se silencian durante ``apply_solution`` via
+    ``change_context(skip_hooks=True)``.
+    """
+
+    def test_corrida_emite_un_solo_evento_agregado(self, session):
+        """Plan con 2 horarios; una corrida del LP genera exactamente
+        UN evento tipo LPRunDB en el change log, no 2 eventos tipo
+        HorarioDB."""
+        from src.database.models import ChangeLogDB
+        _seed_plan_con_clases(session)
+
+        # Contar eventos previos (los que emitió el seed).
+        prev = list(session.exec(select(ChangeLogDB)).all())
+        prev_ids = {e.id for e in prev}
+
+        run = run_lp(session, "plan-1")
+        assert run.status == "optimal"
+
+        nuevos = [
+            e for e in session.exec(select(ChangeLogDB)).all()
+            if e.id not in prev_ids
+        ]
+        # Sólo el evento agregado del LP.
+        assert len(nuevos) == 1, (
+            f"Se esperaba 1 evento (LPRunDB agregado), got {len(nuevos)}: "
+            f"{[(e.entity_type, e.action, e.field) for e in nuevos]}"
+        )
+        assert nuevos[0].entity_type == "LPRunDB"
+        assert nuevos[0].action == "created"
+        assert nuevos[0].origin == "lp:run"
+        assert nuevos[0].entity_id == run.id
+
+    def test_evento_agregado_contiene_lista_de_reasignaciones(self, session):
+        from src.database.models import ChangeLogDB
+        _seed_plan_con_clases(session)
+        run_lp(session, "plan-1")
+
+        evento = list(session.exec(
+            select(ChangeLogDB).where(
+                ChangeLogDB.entity_type == "LPRunDB",
+            )
+        ).all())[0]
+        payload = json.loads(evento.new_value)
+        assert "reasignaciones" in payload
+        assert len(payload["reasignaciones"]) == 1
+        entry = payload["reasignaciones"][0]
+        assert set(entry.keys()) == {"horario_id", "aula_previa", "aula_nueva"}
+        assert entry["aula_previa"] is None  # arrancaba sin aula
+        assert entry["aula_nueva"] in ("a1", "a2")
+
+    def test_corrida_sin_cambios_no_emite_evento(self, session):
+        """Si el LP corre sin reasignar nada (segunda corrida idempotente),
+        NO se emite un evento agregado — evita ruido en el feed."""
+        from src.database.models import ChangeLogDB
+        _seed_plan_con_clases(session)
+        run_lp(session, "plan-1")
+
+        # Contar eventos LPRunDB después de la primera corrida.
+        n_prev = len(list(session.exec(
+            select(ChangeLogDB).where(ChangeLogDB.entity_type == "LPRunDB")
+        ).all()))
+
+        # Segunda corrida idempotente.
+        run2 = run_lp(session, "plan-1")
+        assert run2.n_horarios_reasignados == 0
+
+        n_post = len(list(session.exec(
+            select(ChangeLogDB).where(ChangeLogDB.entity_type == "LPRunDB")
+        ).all()))
+        assert n_post == n_prev
+
+    def test_hooks_manuales_sobre_horarios_siguen_funcionando(self, session):
+        """La supresión de hooks se aplica sólo durante apply_solution.
+        Una edición manual de un HorarioDB después de la corrida debe
+        seguir generando su evento individual normalmente.
+        """
+        from src.database.models import ChangeLogDB
+        c1, _ = _seed_plan_con_clases(session)
+        run_lp(session, "plan-1")
+
+        # Edición manual del patrón (fuera del contexto skip_hooks).
+        h1 = session.get(HorarioDB, c1.horario_id)
+        h1.aula_asignada_manualmente = True
+        session.add(h1)
+        session.commit()
+
+        eventos_horario = list(session.exec(
+            select(ChangeLogDB).where(
+                ChangeLogDB.entity_type == "HorarioDB",
+                ChangeLogDB.field == "aula_asignada_manualmente",
+            )
+        ).all())
+        assert len(eventos_horario) == 1
+
+
 def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
     """Seed con un dictado, dos comisiones del mismo dictado, total
     esperado=120, coef inicial [1.0, 0.0], dos aulas iguales cap=60.

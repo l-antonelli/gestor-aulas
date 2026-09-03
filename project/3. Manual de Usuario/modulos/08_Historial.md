@@ -100,12 +100,15 @@ El sistema registra automáticamente los cambios sobre estas entidades:
 Esto es tan importante como lo anterior. Los siguientes cambios **no
 dejan rastro individual** en el historial:
 
-- **Corridas del asignador**: hoy cada horario reasignado por el LP
-  emite un evento individual (`HorarioDB.aula_id` cambió). En una
-  próxima iteración esto va a pasar a **una sola fila agregada por
-  corrida** vinculada al LPRun, para evitar inundar el feed. La fila
-  de LPRun ya guarda hoy toda la solución, tolerancias y detalle por
-  horario — sigue siendo la fuente única de "qué hizo el asignador".
+- **Corridas del asignador**: no emiten un evento por cada horario
+  reasignado. En su lugar, cada corrida óptima que efectivamente
+  cambia alguna asignación genera **una sola fila agregada** en el
+  historial (entidad `LPRunDB`, action `created`, origin `lp:run`)
+  con el detalle de reasignaciones (`horario_id`, `aula_previa`,
+  `aula_nueva`) en el `new_value`. Las corridas idempotentes (mismos
+  parámetros, sin cambios en el patrón) NO emiten evento. La fila de
+  `LPRunDB` sigue guardando la solución completa, tolerancias y
+  métricas por su lado.
 - Ediciones sobre la serie histórica de inscriptos.
 - Ediciones sobre los overrides manuales del forecast (el "Total
   esperado (manual)" del plan).

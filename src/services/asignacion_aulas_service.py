@@ -854,6 +854,10 @@ class ApplyResult:
     # Cantidad de pins manuales (``HorarioDB.aula_asignada_manualmente=True``)
     # que el LP respetó como restricción en esta corrida.
     n_ediciones_manuales_respetadas: int = 0
+    # Lista de reasignaciones concretas: cada elemento es
+    # ``{"horario_id": str, "aula_previa": str|None, "aula_nueva": str}``.
+    # Se usa para el evento agregado en el change log (Fase 2).
+    reasignaciones: list[dict] = field(default_factory=list)
 
 
 def apply_solution(
@@ -908,6 +912,11 @@ def apply_solution(
         session.add(horario)
         if aula_previa != aula_id:
             apply_result.n_horarios_reasignados += 1
+            apply_result.reasignaciones.append({
+                "horario_id": horario_id,
+                "aula_previa": aula_previa,
+                "aula_nueva": aula_id,
+            })
 
         # 3) Propagar a clases (cache técnico).
         query = select(ClaseDB).where(
@@ -1468,18 +1477,53 @@ def run_lp(
         else:
             fecha_desde = date.today()
 
+    # Operación bulk: el LP puede reasignar cientos de horarios. Los
+    # hooks automáticos del change log se silencian durante el apply
+    # y se reemplazan por un único evento agregado (ver más abajo).
+    from src.services.change_log_service import change_context, emit_event
     if solution.status == "optimal":
-        apply_result = apply_solution(
-            session, plan_id, solution, fecha_desde,
-            respetar_manuales=cfg.respetar_ediciones_manuales,
-        )
+        with change_context(skip_hooks=True):
+            apply_result = apply_solution(
+                session, plan_id, solution, fecha_desde,
+                respetar_manuales=cfg.respetar_ediciones_manuales,
+            )
     else:
         apply_result = ApplyResult()
 
-    return persist_run(
+    run = persist_run(
         session, plan_id, cfg, inputs, solution, fecha_desde,
         apply_result, diagnosis=diagnosis, iis=iis_result,
     )
+
+    # Evento agregado del LP: una sola fila en ChangeLogDB por corrida.
+    # Sólo se emite cuando el LP corrió con status óptimo y al menos
+    # una reasignación real ocurrió; una corrida que no cambia nada
+    # tampoco genera ruido en el feed.
+    if solution.status == "optimal" and apply_result.n_horarios_reasignados > 0:
+        plan_obj = session.get(PlanificacionCursadaDB, plan_id)
+        plan_label = plan_obj.nombre if plan_obj else plan_id
+        emit_event(
+            session,
+            entity_type="LPRunDB",
+            entity_id=run.id,
+            entity_label=f"Corrida LP · {plan_label}",
+            action="created",
+            reason=(
+                f"reasignó {apply_result.n_horarios_reasignados} "
+                f"horarios · respetó "
+                f"{apply_result.n_ediciones_manuales_respetadas} pins "
+                f"manuales"
+            ),
+            new_value={
+                "run_id": run.id,
+                "plan_id": plan_id,
+                "reasignaciones": apply_result.reasignaciones,
+            },
+            origin="lp:run",
+        )
+        session.commit()
+
+    return run
 
 
 def aplicar_alpha_propuesto(

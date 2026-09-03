@@ -147,6 +147,13 @@ TRACKED_ENTITIES: dict[type, dict] = {
 
 _current_origin: ContextVar[str] = ContextVar("_current_origin", default="auto")
 _current_reason: ContextVar[str] = ContextVar("_current_reason", default="")
+# Cuando está True, los hooks automáticos de insert/update/delete NO
+# emiten filas en ChangeLogDB. Se usa en operaciones bulk (típicamente
+# el LP) que emiten un evento agregado explícito en lugar de N filas
+# individuales.
+_current_skip_hooks: ContextVar[bool] = ContextVar(
+    "_current_skip_hooks", default=False,
+)
 
 
 class change_context:
@@ -158,17 +165,36 @@ class change_context:
         with change_context(origin="ui:ciclos", reason="..."):
             session.commit()
 
+    Con ``skip_hooks=True`` los hooks automáticos no emiten filas
+    durante el bloque. Sirve para operaciones bulk (LP) que registran
+    su cambio mediante un evento agregado explícito y no quieren
+    generar N filas individuales. Ejemplo:
+
+        with change_context(skip_hooks=True):
+            apply_solution(...)  # muta 100 HorarioDB sin emitir hooks
+        # Después, un solo emit_event(...) por corrida.
+
     Al salir del bloque, restaura los valores previos.
     """
 
-    def __init__(self, *, origin: str = "auto", reason: str = ""):
+    def __init__(
+        self,
+        *,
+        origin: str = "auto",
+        reason: str = "",
+        skip_hooks: bool = False,
+    ):
         self.origin = origin
         self.reason = reason
+        self.skip_hooks = skip_hooks
         self._tokens: list = []
 
     def __enter__(self):
         self._tokens.append((_current_origin, _current_origin.set(self.origin)))
         self._tokens.append((_current_reason, _current_reason.set(self.reason)))
+        self._tokens.append(
+            (_current_skip_hooks, _current_skip_hooks.set(self.skip_hooks))
+        )
         return self
 
     def __exit__(self, *args):
@@ -264,6 +290,8 @@ def _entity_pk(instance: Any) -> str:
 
 
 def _on_after_insert(mapper, connection, target) -> None:
+    if _current_skip_hooks.get():
+        return
     cfg = TRACKED_ENTITIES.get(type(target))
     if cfg is None:
         return
@@ -277,6 +305,8 @@ def _on_after_insert(mapper, connection, target) -> None:
 
 
 def _on_after_delete(mapper, connection, target) -> None:
+    if _current_skip_hooks.get():
+        return
     cfg = TRACKED_ENTITIES.get(type(target))
     if cfg is None:
         return
@@ -290,6 +320,8 @@ def _on_after_delete(mapper, connection, target) -> None:
 
 
 def _on_after_update(mapper, connection, target) -> None:
+    if _current_skip_hooks.get():
+        return
     cfg = TRACKED_ENTITIES.get(type(target))
     if cfg is None:
         return

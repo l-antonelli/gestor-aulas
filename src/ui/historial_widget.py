@@ -58,6 +58,7 @@ ENTITY_LABEL = {
     "PlanificacionCursadaDB": "Plan de cursada",
     "ScheduleDB": "Cronograma",
     "ScheduleEntryDB": "Entrada de cronograma",
+    "LPRunDB": "Corrida del asignador",
 }
 
 

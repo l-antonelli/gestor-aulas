@@ -128,7 +128,13 @@ persist_run(session, plan_id, config, inputs, solution, fecha_desde,
     → LPRunDB
 
 run_lp(session, plan_id, config)
-    └── wrapper end-to-end de los anteriores.
+    └── wrapper end-to-end.
+    └── envuelve apply_solution con change_context(skip_hooks=True)
+        para silenciar hooks del change log durante la mutación bulk.
+    └── si la corrida reasigna ≥1 horario, emite UN evento agregado
+        en ChangeLogDB (entity_type=LPRunDB, origin='lp:run') con la
+        lista de reasignaciones en new_value. Corridas idempotentes
+        no emiten evento.
 ```
 
 ### 2.3 Datos de entrada
