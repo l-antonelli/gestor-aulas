@@ -103,6 +103,10 @@ build_model(inputs, config)
     └── R6: si t[h]=0 → aula teórica; si t[h]=1 → A_lab(materia)
     └── R7: over[h] ≥ insc[h] − Σ x[h,a]·cap[a]·(1+tol_over);
             under[h] ≥ Σ x[h,a]·cap[a]·(1−tol_under) − insc[h]
+    └── R11: x[h, a*] = 1 para cada pin manual (h con
+             aula_asignada_manualmente=True y toggle activo). Si
+             el pin apunta a un par no compatible, se emite una
+             restricción imposible para reportar infactibilidad.
     → (pulp.LpProblem, vars_dict)
 
 solve(prob, vars_dict, config)
@@ -181,14 +185,25 @@ estaban.
 ### 3.2 Toggle "respetar ediciones manuales"
 
 - **ON (default)**: los `HorarioDB` con
-  `aula_asignada_manualmente=True` no se pisan. Quedan con su aula
-  previa intacta y el LP la propaga a las `ClaseDB` afectadas por
-  `fecha_desde`. Aparecen en `LPRunDB.n_ediciones_manuales_respetadas`.
-  El panel muestra un expander con la lista de horarios protegidos y
-  permite liberar cualquiera de ellos (baja el flag a `False`).
-- **OFF**: el LP retoma el control absoluto. Los patrones manuales
-  se pisan; el flag se baja a `False` sobre cada horario que la LP
-  reasigna.
+  `aula_asignada_manualmente=True` **entran como restricción R11 al
+  modelo** (`x[h, a*] == 1`). El LP resuelve el resto de las
+  asignaciones **sujeto a** los pins, no ignorándolos. Esto asegura
+  que la solución reportada por el solver coincide con la que se
+  aplica, y que las restricciones estructurales (R4 no doble
+  booking, R6 tipo↔aula, R7 penalty) se resuelven consistentemente.
+  El flag se **preserva** en `apply_solution` (no se baja tras la
+  corrida). Aparecen en `LPRunDB.n_ediciones_manuales_respetadas`.
+  El panel muestra un expander con la lista de horarios protegidos
+  y permite liberar cualquiera de ellos.
+
+  Si un pin apunta a un aula que ya no es compatible con el horario
+  (cambió el tipo, la sede admisible, etc.), el LP reporta
+  infactibilidad — el usuario tiene que resolver el conflicto
+  liberando el pin desde la UI.
+
+- **OFF**: el LP retoma el control absoluto. Los pins se ignoran al
+  construir el modelo (no se emite R11) y el flag se baja a `False`
+  sobre cada horario que la LP reasigna.
 
 ### 3.3 Casos especiales
 

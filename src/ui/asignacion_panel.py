@@ -371,11 +371,13 @@ def _render_summary(run: LPRunDB) -> None:
         ),
     )
     c3.metric(
-        "Clases actualizadas", run.n_clases_actualizadas,
+        "Horarios reasignados", run.n_horarios_reasignados,
         help=(
-            "Instancias de clase concretas (día + fecha) cuyo aula se "
-            "actualizó a raíz de esta corrida. Sólo cuenta clases con "
-            "fecha ≥ 'Aplicar desde' y no ejecutadas."
+            "Cantidad de horarios del patrón cuya aula cambió respecto "
+            "al valor previo. Un valor bajo puede significar que la "
+            "asignación anterior ya era óptima, que la mayoría de los "
+            "horarios están pinneados como manuales, o que los "
+            "parámetros de esta corrida no afectan la solución."
         ),
     )
     c4.metric(

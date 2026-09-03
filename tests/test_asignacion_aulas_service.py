@@ -596,6 +596,185 @@ class TestRunLPRespetarManuales:
         assert c2.aula_id == h2.aula_id
 
 
+class TestRunLPPinManual:
+    """El pin manual (`HorarioDB.aula_asignada_manualmente=True` +
+    `respetar_ediciones_manuales=True`) debe entrar al LP como
+    restricción ``x[h, a*] == 1``, NO como filtro post-solve.
+
+    Esto asegura que:
+    - La solución que reporta el LP coincide con la que se persiste.
+    - Las restricciones estructurales (R4 no doble booking, R6 tipo↔aula,
+      R7 penalty) se resuelven consistentemente con los pins.
+    - El resto de las asignaciones se optimizan **sujetas** a los pins,
+      no ignorándolos.
+    """
+
+    def _seed_dos_horarios_simultaneos(self, session: Session) -> dict:
+        """Dos comisiones distintas, mismo horario (Lunes 8-10). Están
+        en simultaneidad ⇒ R4 fuerza aulas distintas. La materia
+        `HOT` tiene 25 esperados; la `COLD`, 5. Aulas: `a_grande`
+        cap=30, `a_chica` cap=10.
+
+        Sin pins, el LP asigna `a_grande` → HOT y `a_chica` → COLD
+        (minimiza over/under).
+        """
+        ctx = _seed_basic(session)
+        ciclo = ctx["ciclo"]
+        ciclo.fecha_inicio = date(2026, 3, 9)
+        ciclo.fecha_fin = date(2026, 3, 15)
+        session.add(ciclo)
+        session.commit()
+
+        _add_materia_con_serie(session, "HOT", ciclo, esperados=25)
+        _add_materia_con_serie(session, "COLD", ciclo, esperados=5)
+
+        h_hot = _add_comision_horario(
+            session, "plan-1", "HOT", "Lunes", 8, 10,
+        )
+        h_cold = _add_comision_horario(
+            session, "plan-1", "COLD", "Lunes", 8, 10,
+        )
+        session.add_all([
+            AulaDB(
+                id="a_grande", sede_id="S1", codigo_aula="a_grande",
+                nombre="Grande", capacidad=30,
+            ),
+            AulaDB(
+                id="a_chica", sede_id="S1", codigo_aula="a_chica",
+                nombre="Chica", capacidad=10,
+            ),
+        ])
+        session.commit()
+        return {"h_hot": h_hot, "h_cold": h_cold}
+
+    def test_baseline_sin_pins_asigna_optimo(self, session):
+        """Sanity: sin pins el LP asigna grande→HOT, chica→COLD."""
+        ctx = self._seed_dos_horarios_simultaneos(session)
+        run = run_lp(session, "plan-1")
+        assert run.status == "optimal"
+        session.refresh(ctx["h_hot"])
+        session.refresh(ctx["h_cold"])
+        assert ctx["h_hot"].aula_id == "a_grande"
+        assert ctx["h_cold"].aula_id == "a_chica"
+
+    def test_pin_manual_fuerza_aula_en_solucion_del_lp(self, session):
+        """Bug: si pin manual está seteado con aula subóptima
+        (`a_chica` para HOT), la solución del LP debería reflejarlo:
+        `x_assignments[h_hot] == 'a_chica'` y `x_assignments[h_cold]
+        == 'a_grande'` (forzado por R4 + pin). Antes del fix, el LP
+        ignoraba el pin y reportaba `a_grande` para HOT, dejando la
+        solución del solver inconsistente con lo que se aplicaba.
+        """
+        ctx = self._seed_dos_horarios_simultaneos(session)
+        h_hot = ctx["h_hot"]
+        h_hot.aula_id = "a_chica"
+        h_hot.aula_asignada_manualmente = True
+        session.add(h_hot)
+        session.commit()
+
+        # Ejecutar en modo dry para inspeccionar la solución del LP
+        # (sin persistir).
+        _inputs, sol = run_lp_dry(session, "plan-1", config=LPConfig())
+
+        assert sol.status == "optimal"
+        # La solución del LP respeta el pin.
+        assert sol.x_assignments.get(h_hot.id) == "a_chica", (
+            f"LP debe fijar h_hot a 'a_chica' (pin manual); "
+            f"got {sol.x_assignments.get(h_hot.id)}"
+        )
+        # Por R4 (simultaneidad), el otro horario tiene que ir a la
+        # otra aula.
+        assert sol.x_assignments.get(ctx["h_cold"].id) == "a_grande", (
+            f"LP debe reubicar h_cold a 'a_grande' porque 'a_chica' "
+            f"está fijada; got {sol.x_assignments.get(ctx['h_cold'].id)}"
+        )
+
+    def test_pin_manual_infactible_reporta_status(self, session):
+        """Si el pin apunta a un aula no compatible (o ya fija en el
+        mismo slot para otro horario), el LP debe reportar infactible
+        para que el usuario vea el problema, en vez de silenciarlo.
+        """
+        ctx = self._seed_dos_horarios_simultaneos(session)
+        # Ambos horarios pinneados a la misma aula → viola R4.
+        for h in (ctx["h_hot"], ctx["h_cold"]):
+            h.aula_id = "a_grande"
+            h.aula_asignada_manualmente = True
+            session.add(h)
+        session.commit()
+
+        run = run_lp(session, "plan-1")
+
+        assert run.status == "infeasible", (
+            f"Dos pins conflictivos deberían reportar infactible; "
+            f"got {run.status}"
+        )
+
+    def test_pin_ignorado_si_toggle_off(self, session):
+        """Con `respetar_ediciones_manuales=False`, los pins se
+        ignoran incluso si el flag está seteado en el HorarioDB. El
+        LP resuelve como si no hubiera pins."""
+        ctx = self._seed_dos_horarios_simultaneos(session)
+        h_hot = ctx["h_hot"]
+        h_hot.aula_id = "a_chica"
+        h_hot.aula_asignada_manualmente = True
+        session.add(h_hot)
+        session.commit()
+
+        cfg = LPConfig(respetar_ediciones_manuales=False)
+        _inputs, sol = run_lp_dry(session, "plan-1", config=cfg)
+
+        assert sol.status == "optimal"
+        # Sin pin, el LP vuelve al óptimo estructural.
+        assert sol.x_assignments.get(h_hot.id) == "a_grande"
+
+    def test_pin_preserva_flag_manual_tras_apply(self, session):
+        """Con toggle ON, `apply_solution` NO baja el flag del horario
+        pinneado. En corridas siguientes, el pin sigue activo."""
+        ctx = self._seed_dos_horarios_simultaneos(session)
+        h_hot = ctx["h_hot"]
+        h_hot.aula_id = "a_chica"
+        h_hot.aula_asignada_manualmente = True
+        session.add(h_hot)
+        session.commit()
+
+        run = run_lp(session, "plan-1")
+        assert run.status == "optimal"
+
+        session.refresh(h_hot)
+        assert h_hot.aula_id == "a_chica"
+        assert h_hot.aula_asignada_manualmente is True, (
+            "El flag manual debe preservarse tras apply — si se baja, "
+            "la siguiente corrida podría reasignar libremente."
+        )
+        assert run.n_ediciones_manuales_respetadas == 1
+
+
+class TestRunLPHorariosReasignados:
+    """La métrica ``n_horarios_reasignados`` cuenta HorarioDB cuyo
+    ``aula_id`` cambió respecto al valor previo. Reemplaza a la
+    métrica ``n_clases_actualizadas`` (que contaba ClaseDB, cache
+    técnico deprecado, y podía dar 0 aunque el patrón cambiara).
+    """
+
+    def test_primera_corrida_cuenta_todos_como_reasignados(self, session):
+        """Plan sin aula_id previo → cualquier asignación cuenta como
+        reasignación (None → aula)."""
+        _seed_plan_con_clases(session)
+        run = run_lp(session, "plan-1")
+        assert run.status == "optimal"
+        # Único horario, arrancaba con aula_id=None → cambió.
+        assert run.n_horarios_reasignados == 1
+
+    def test_segunda_corrida_sin_cambios_cuenta_cero(self, session):
+        """Correr dos veces con los mismos parámetros: la segunda no
+        debería reasignar nada."""
+        _seed_plan_con_clases(session)
+        run_lp(session, "plan-1")
+        run2 = run_lp(session, "plan-1")
+        assert run2.status == "optimal"
+        assert run2.n_horarios_reasignados == 0
+
+
 def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
     """Seed con un dictado, dos comisiones del mismo dictado, total
     esperado=120, coef inicial [1.0, 0.0], dos aulas iguales cap=60.

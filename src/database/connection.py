@@ -95,6 +95,12 @@ def _run_migrations(eng):
         # del asignador; el usuario marca las manuales editando desde
         # el diálogo de reasignación.
         "ALTER TABLE horarios ADD COLUMN aula_asignada_manualmente BOOLEAN NOT NULL DEFAULT 0",
+        # Contador de horarios cuya asignación de aula cambió en una
+        # corrida del LP. Reemplaza a ``n_clases_actualizadas`` como
+        # métrica user-facing (ese campo contaba filas ``ClaseDB``, el
+        # cache técnico deprecado, y podía dar 0 aunque el patrón
+        # hubiera cambiado). Default 0 en runs históricos.
+        "ALTER TABLE lp_runs ADD COLUMN n_horarios_reasignados INTEGER NOT NULL DEFAULT 0",
         # Restriccion de sede por carrera (R10):
         # - es_default_comunes en sedes: marca la sede a la que se
         #   mandan las materias comunes (>=2 carreras). Como mucho una

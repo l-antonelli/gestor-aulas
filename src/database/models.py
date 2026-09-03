@@ -690,6 +690,12 @@ class LPRunDB(SQLModel, table=True):
     objective_value: Optional[float] = Field(default=None)
     n_horarios_total: int = Field(default=0, ge=0)
     n_horarios_asignados: int = Field(default=0, ge=0)
+    # Horarios cuyo ``aula_id`` cambió respecto al valor previo en esta
+    # corrida. Reemplaza a ``n_clases_actualizadas`` como métrica
+    # user-facing "cuántas asignaciones cambiaron".
+    n_horarios_reasignados: int = Field(default=0, ge=0)
+    # ``n_clases_actualizadas`` cuenta filas ``ClaseDB`` (cache
+    # técnico deprecado); se conserva por compatibilidad histórica.
     n_clases_actualizadas: int = Field(default=0, ge=0)
     n_clases_sobreocupadas: int = Field(default=0, ge=0)
     n_clases_subutilizadas: int = Field(default=0, ge=0)

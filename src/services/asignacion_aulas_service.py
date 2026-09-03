@@ -112,6 +112,12 @@ class LPInputs:
     # por dictado en R9) y comision_id -> coef actual (para diff).
     dictado_de_comision: dict[str, Optional[str]] = field(default_factory=dict)
     coef_actual: dict[str, float] = field(default_factory=dict)
+    # Pins manuales: horario_id -> aula_id que el LP debe fijar como
+    # ``x[h, a] == 1``. Se puebla desde ``HorarioDB.aula_id`` sólo si
+    # ``HorarioDB.aula_asignada_manualmente=True`` **y**
+    # ``config.respetar_ediciones_manuales=True``. Sin pins, el dict
+    # queda vacío y el LP resuelve libre.
+    aulas_fijas: dict[str, str] = field(default_factory=dict)
     # Errores no fatales detectados durante build_inputs (materias sin
     # forecast, virtuales filtradas, etc.). El caller decide si abortar.
     warnings: list[str] = field(default_factory=list)
@@ -221,6 +227,14 @@ def build_inputs(
     }
     carrera_asignada_de_horario: dict[str, str] = {}
 
+    # Pins manuales: horario_id -> aula_id fijada por el usuario.
+    # Se pueblan sólo si el toggle está activo y el horario tiene el
+    # flag + un aula concreta. Los pins que apuntan a un aula que ya
+    # no existe (borrada del catálogo) se descartan silenciosamente
+    # (el flujo de borrado del aula ya libera el aula_id del horario).
+    aulas_fijas: dict[str, str] = {}
+    aulas_ids_validas = {a.id for a in aulas}
+
     for h in horarios_db:
         # Resolver virtualidad con jerarquia horario > dictado > materia.
         # Los tres niveles pueden ser None (heredar del padre) excepto
@@ -270,6 +284,14 @@ def build_inputs(
             (hf.hour + hf.minute / 60 + hf.second / 3600)
             - (hi.hour + hi.minute / 60 + hi.second / 3600)
         )
+        # Pin manual (si el toggle está activo).
+        if (
+            config.respetar_ediciones_manuales
+            and h.aula_asignada_manualmente
+            and h.aula_id is not None
+            and h.aula_id in aulas_ids_validas
+        ):
+            aulas_fijas[h.id] = h.aula_id
 
     # Forecast por comisión, multiplicar por duración para tener
     # esperados por horario (en realidad es lo mismo: insc[h] = total ×
@@ -382,6 +404,7 @@ def build_inputs(
         total_esp=total_esp,
         dictado_de_comision=dictado_de_comision,
         coef_actual=coef_actual,
+        aulas_fijas=aulas_fijas,
         warnings=warnings,
     )
 
@@ -561,6 +584,25 @@ def build_model(
         prob += (
             pulp.lpSum(x[(h.id, aid)] for aid in compat_aulas) == 1,
             f"R1_{h.id}",
+        )
+
+    # R11: pins de ediciones manuales. Cuando el usuario marcó
+    # ``HorarioDB.aula_asignada_manualmente=True`` y el toggle
+    # "respetar ediciones manuales" está activo, el LP debe fijar
+    # ``x[h, a*] == 1`` para esa aula. Si el pin apunta a un aula
+    # incompatible (perdió compatibilidad post-edición: cambió tipo,
+    # sede, etc.), se emite una restricción imposible para que el
+    # LP reporte infactibilidad en vez de silenciarla.
+    for hid, aid_fija in inputs.aulas_fijas.items():
+        if (hid, aid_fija) not in x:
+            prob += (
+                pulp.lpSum([]) == 1,
+                f"R11_pin_incompat_{hid}",
+            )
+            continue
+        prob += (
+            x[(hid, aid_fija)] == 1,
+            f"R11_pin_{hid}",
         )
 
     # R4: para cada (aula, grupo de simultaneidad), suma de x ≤ 1.
@@ -800,8 +842,17 @@ def run_lp_dry(
 
 @dataclass
 class ApplyResult:
-    """Resultado de propagar la solución del LP a las ClaseDB."""
+    """Resultado de aplicar la solución del LP al patrón + cache."""
+    # Cuántos HorarioDB del patrón quedaron con un ``aula_id``
+    # distinto al que tenían antes de esta corrida. Es la métrica
+    # que refleja "cuántas asignaciones realmente cambiaron".
+    n_horarios_reasignados: int = 0
+    # Cuántas ``ClaseDB`` (cache técnico deprecado) se actualizaron.
+    # Se conserva por compatibilidad con ``LPRunDB.n_clases_actualizadas``
+    # y para el flujo legacy de generar clases por fecha.
     n_clases_actualizadas: int = 0
+    # Cantidad de pins manuales (``HorarioDB.aula_asignada_manualmente=True``)
+    # que el LP respetó como restricción en esta corrida.
     n_ediciones_manuales_respetadas: int = 0
 
 
@@ -836,42 +887,27 @@ def apply_solution(
     apply_result = ApplyResult()
 
     for horario_id, aula_id in solution.x_assignments.items():
-        # 1) Chequear si el patrón está protegido como manual.
         horario = session.get(HorarioDB, horario_id)
         if horario is None:
             continue
 
-        if respetar_manuales and horario.aula_asignada_manualmente:
-            # Patrón blindado. NO tocamos el patrón pero SÍ propagamos
-            # el aula del patrón a las ClaseDB no ejecutadas (por si
-            # las clases se generaron antes de que el patrón se marcara
-            # manual y quedaron con otra aula).
+        # 1) Escribir al patrón. Si el horario estaba pinneado como
+        # manual y el toggle está activo, el LP ya trajo el aula
+        # manual en la solución (por R11) — la escritura es
+        # idempotente y preservamos el flag. Si no, el flag baja.
+        era_manual = respetar_manuales and horario.aula_asignada_manualmente
+        if era_manual:
             apply_result.n_ediciones_manuales_respetadas += 1
-            if horario.aula_id is not None:
-                # Traer todas las clases del horario y filtrar en Python
-                # (evita el problema de NULL != <valor> en SQL, que
-                # devuelve NULL en lugar de TRUE).
-                clases_todas = list(session.exec(
-                    select(ClaseDB).where(
-                        ClaseDB.horario_id == horario_id,
-                        ClaseDB.fecha >= fecha_desde,
-                        ClaseDB.executed == False,  # noqa: E712
-                        ClaseDB.plan_cursada_id == plan_id,
-                    )
-                ).all())
-                for c in clases_todas:
-                    if c.aula_id != horario.aula_id:
-                        c.aula_id = horario.aula_id
-                        session.add(c)
-            continue
 
-        # 2) Escribir al patrón.
+        aula_previa = horario.aula_id
         tipo_nuevo = solution.tipo_resuelto.get(horario_id)
         horario.aula_id = aula_id
-        horario.aula_asignada_manualmente = False
+        horario.aula_asignada_manualmente = era_manual
         if tipo_nuevo is not None and horario.tipo_clase is None:
             horario.tipo_clase = tipo_nuevo
         session.add(horario)
+        if aula_previa != aula_id:
+            apply_result.n_horarios_reasignados += 1
 
         # 3) Propagar a clases (cache técnico).
         query = select(ClaseDB).where(
@@ -1083,6 +1119,7 @@ def persist_run(
         objective_value=solution.objective,
         n_horarios_total=len(inputs.horarios),
         n_horarios_asignados=len(solution.x_assignments),
+        n_horarios_reasignados=apply_result.n_horarios_reasignados,
         n_clases_actualizadas=apply_result.n_clases_actualizadas,
         n_clases_sobreocupadas=n_sobre,
         n_clases_subutilizadas=n_sub,
