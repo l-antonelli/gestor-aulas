@@ -145,13 +145,16 @@ run_lp(session, plan_id, config)
   también heredan `HorarioDB.aula_id` automáticamente.
 - **`ClaseDB.tipo_clase`**: idem, hereda del patrón si la clase lo
   tenía en `None`.
-- **`ClaseDB.aula_asignada_manualmente`**: siempre `False` en el
-  flujo actual (la UI no expone la marca desde la deprecación de
-  clases puntuales en 2026-07-07). Se conserva en el modelo porque
-  el LP sigue soportando `respetar_ediciones_manuales=True` como
-  capacidad latente. Si en el futuro se re-habilita una vista de
-  edición por fecha que setee el flag, el LP la respetará
-  automáticamente.
+- **`ClaseDB.aula_asignada_manualmente`**: DEPRECADO. El flag vive
+  ahora en `HorarioDB.aula_asignada_manualmente` (nivel patrón). El
+  campo sigue existiendo en `ClaseDB` sólo por compatibilidad de
+  esquema, pero ninguna parte del flujo lo consulta ni lo escribe.
+- **`HorarioDB.aula_asignada_manualmente`**: se pone en `True` desde
+  el diálogo de reasignación en cascada cuando el usuario tilda
+  "Marcar como manual" en la nueva asignación (default: tildado).
+  Se puede bajar a `False` desde la tabla "Asignaciones manuales
+  protegidas" que se muestra debajo del toggle "Respetar ediciones
+  manuales" en el panel de configuración del LP.
 - **`LPRunDB`**: una fila por corrida. Histórico para auditar y
   comparar configuraciones.
 
@@ -167,11 +170,15 @@ estaban.
 
 ### 3.2 Toggle "respetar ediciones manuales"
 
-- **ON (default)**: las `ClaseDB` con `aula_asignada_manualmente=True`
-  no se pisan. Quedan con su aula previa intacta. Aparecen en
-  `LPRunDB.n_ediciones_manuales_respetadas`.
-- **OFF**: el LP retoma el control absoluto. Las clases manuales se
-  pisan y el flag se baja a `False`.
+- **ON (default)**: los `HorarioDB` con
+  `aula_asignada_manualmente=True` no se pisan. Quedan con su aula
+  previa intacta y el LP la propaga a las `ClaseDB` afectadas por
+  `fecha_desde`. Aparecen en `LPRunDB.n_ediciones_manuales_respetadas`.
+  El panel muestra un expander con la lista de horarios protegidos y
+  permite liberar cualquiera de ellos (baja el flag a `False`).
+- **OFF**: el LP retoma el control absoluto. Los patrones manuales
+  se pisan; el flag se baja a `False` sobre cada horario que la LP
+  reasigna.
 
 ### 3.3 Casos especiales
 
@@ -399,15 +406,22 @@ El diálogo `_dialog_cambiar_aula_horario` (en
 
 ### 6.3 Detalle del resultado (`asignacion_resultado_ui.py`)
 
-- Heatmap de carga (siempre, expandido cuando el LP falla).
+- Mapa de saturación por franja (siempre visible, en vivo sobre la
+  DB actual).
 - Si el run no es óptimo: diagnóstico estructural arriba.
 - Si el run es óptimo:
   - **Métricas agregadas** (5–6).
   - **Tabla por horario** con `Materia | Comisión | Día | Horario |
-    Aula | Cap | Esperados | Δ | Estado` coloreada (verde/amarillo/
-    rojo según gap vs tolerancias).
+    Aula | Sede | Manual 🔒 | Cap | Esperados | Δ | Estado`
+    coloreada (verde/amarillo/rojo según gap vs tolerancias). La
+    tabla se **recomputa en vivo** desde `HorarioDB` (no del
+    snapshot del último `LPRun`), de modo que refleja cambios
+    manuales posteriores a la corrida. Los umbrales
+    (`tol_over`/`tol_under`) sí se toman del run vigente para
+    mantener consistencia con la última decisión del asignador.
   - **Candidatas a partir comisión**: materias con horarios
-    sobre-ocupados, ordenadas por exceso total de alumnos.
+    sobre-ocupados, ordenadas por exceso total de alumnos. Se
+    computa sobre la misma tabla en vivo.
 
 ### 6.4 Cronograma y gestión de aulas (`aula_cronograma_view.py`)
 

@@ -19,7 +19,6 @@ from sqlmodel import Session, select
 from src.database.models import (
     AulaDB,
     ComisionDB,
-    HorarioDB,
     LPRunDB,
     MateriaDB,
     SedeDB,
@@ -393,51 +392,117 @@ def _agregar_aulas_libres_al_heatmap(
 def _build_dataframe(
     session: Session, run: LPRunDB,
 ) -> pd.DataFrame:
-    """Arma el DataFrame por horario a partir de details_json + lookups
-    de la base."""
-    details = json.loads(run.details_json or "{}")
-    horarios_detalle = details.get("horarios", [])
-    if not horarios_detalle:
+    """Arma el DataFrame por horario **leyendo la DB en vivo** (no el
+    snapshot del último LPRun).
+
+    El estado de asignación (aula + tipo + capacidad + esperados) se
+    calcula sobre el estado actual del plan, respetando ediciones
+    manuales, cambios de aulas del catálogo, y cambios de forecast
+    o comisiones que hayan ocurrido después de la última corrida.
+
+    Se toman los parámetros de tolerancia y virtualidad del `run` para
+    mantener consistencia con la última decisión del asignador.
+    """
+    from src.services.plan_generation_service import (
+        get_inscriptos_esperados_por_comision,
+    )
+    from src.services.resolucion_jerarquica import resolve_virtual
+    from src.database.models import (
+        ComisionDB as _Com,
+        DictadoCicloDB as _DictCic,
+        DictadoDB as _Dict,
+        HorarioDB as _Hor,
+        MateriaDB as _Mat,
+        PlanificacionCursadaDB as _Plan,
+    )
+
+    plan = session.get(_Plan, run.plan_cursada_id)
+    if plan is None:
         return pd.DataFrame()
 
-    horario_ids = [h["horario_id"] for h in horarios_detalle]
-    horarios_db = list(session.exec(
-        select(HorarioDB).where(HorarioDB.id.in_(horario_ids))  # type: ignore[attr-defined]
+    # Traer horarios del plan (filtrando virtuales, mismo criterio que
+    # el LP y el heatmap live).
+    com_ids = list(session.exec(
+        select(_Com.id).where(_Com.plan_cursada_id == plan.id)
     ).all())
-    horarios_map = {h.id: h for h in horarios_db}
+    if not com_ids:
+        return pd.DataFrame()
+    coms = list(session.exec(
+        select(_Com).where(_Com.id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    coms_map = {c.id: c for c in coms}
 
-    comision_ids = {h.comision_id for h in horarios_db}
-    comisiones_db = list(session.exec(
-        select(ComisionDB).where(ComisionDB.id.in_(comision_ids))  # type: ignore[attr-defined]
-    ).all()) if comision_ids else []
-    comisiones_map = {c.id: c for c in comisiones_db}
+    hs_all = list(session.exec(
+        select(_Hor).where(_Hor.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    materia_codigos = sorted({h.codigo_materia for h in hs_all})
+    materias = list(session.exec(
+        select(_Mat).where(_Mat.codigo.in_(materia_codigos))  # type: ignore[attr-defined]
+    ).all()) if materia_codigos else []
+    materia_virtual = {m.codigo: m.virtual for m in materias}
+    mat_map = {m.codigo: m for m in materias}
 
-    materias_codigos = {h.codigo_materia for h in horarios_db}
-    materias_db = list(session.exec(
-        select(MateriaDB).where(MateriaDB.codigo.in_(materias_codigos))  # type: ignore[attr-defined]
-    ).all()) if materias_codigos else []
-    materias_map = {m.codigo: m for m in materias_db}
+    materia_dictado_virtual: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(_Dict.materia_codigo, _Dict.virtual)
+            .join(_DictCic, _Dict.id == _DictCic.dictado_id)  # type: ignore[arg-type]
+            .where(_DictCic.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dictado_virtual[mc] = v
 
-    aulas_ids_solucion = {h["aula_id"] for h in horarios_detalle if h["aula_id"]}
-    aulas_db = list(session.exec(
-        select(AulaDB).where(AulaDB.id.in_(aulas_ids_solucion))  # type: ignore[attr-defined]
-    ).all()) if aulas_ids_solucion else []
-    aulas_map = {a.id: a for a in aulas_db}
+    horarios_no_virtuales = [
+        h for h in hs_all
+        if not resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        )
+    ]
+    if not horarios_no_virtuales:
+        return pd.DataFrame()
 
-    sedes_ids = {a.sede_id for a in aulas_db}
-    sedes_db = list(session.exec(
-        select(SedeDB).where(SedeDB.id.in_(sedes_ids))  # type: ignore[attr-defined]
-    ).all()) if sedes_ids else []
-    sede_nombre_por_id = {s.id: s.nombre for s in sedes_db}
+    # Esperados por comisión (forecast).
+    esperados_por_com = get_inscriptos_esperados_por_comision(
+        session, plan.id,
+    )
+
+    # Aulas + sedes.
+    aula_ids = {h.aula_id for h in horarios_no_virtuales if h.aula_id}
+    aulas_db_all = list(session.exec(
+        select(AulaDB).where(AulaDB.id.in_(aula_ids))  # type: ignore[attr-defined]
+    ).all()) if aula_ids else []
+    aula_map = {a.id: a for a in aulas_db_all}
+    sede_ids = {a.sede_id for a in aulas_db_all if a.sede_id}
+    sede_nombre_por_id = {
+        s.id: s.nombre for s in session.exec(
+            select(SedeDB).where(SedeDB.id.in_(sede_ids))  # type: ignore[attr-defined]
+        ).all()
+    } if sede_ids else {}
+
+    # Umbrales del último run (para clasificar sobre/sub-ocupación de
+    # forma consistente con la corrida vigente).
+    tol_over = run.tol_over
+    tol_under = run.tol_under
 
     rows = []
-    for d in horarios_detalle:
-        h = horarios_map.get(d["horario_id"])
-        if h is None:
-            continue
-        com = comisiones_map.get(h.comision_id)
-        mat = materias_map.get(h.codigo_materia)
-        aula = aulas_map.get(d["aula_id"]) if d["aula_id"] else None
+    for h in horarios_no_virtuales:
+        com = coms_map.get(h.comision_id)
+        mat = mat_map.get(h.codigo_materia)
+        aula = aula_map.get(h.aula_id) if h.aula_id else None
+        cap = aula.capacidad if aula else 0
+        insc = float(esperados_por_com.get(h.comision_id, 0.0) or 0.0)
+        delta = cap - insc
+        # Estado consistente con LP: sobre si cap < insc*(1-tol_over),
+        # sub si cap > insc*(1+tol_under), ok en el medio.
+        if insc <= 0:
+            estado = "ok"
+        elif cap < insc * (1 - tol_over):
+            estado = "sobre"
+        elif cap > insc * (1 + tol_under):
+            estado = "sub"
+        else:
+            estado = "ok"
         rows.append({
             "Materia": mat.nombre if mat else h.codigo_materia,
             "Comisión": com.nombre if com else "?",
@@ -445,11 +510,15 @@ def _build_dataframe(
             "Inicio": h.hora_inicio.strftime("%H:%M"),
             "Fin": h.hora_fin.strftime("%H:%M"),
             "Aula": aula.nombre if aula else "—",
-            "Sede": sede_nombre_por_id.get(aula.sede_id, "—") if aula else "—",
-            "Cap": d["cap"],
-            "Esperados": d["insc"],
-            "Δ": d["delta"],
-            "Estado": d["estado"],
+            "Sede": (
+                sede_nombre_por_id.get(aula.sede_id, "—")
+                if aula else "—"
+            ),
+            "Manual": "🔒" if h.aula_asignada_manualmente else "",
+            "Cap": cap,
+            "Esperados": insc,
+            "Δ": delta,
+            "Estado": estado,
         })
     df = pd.DataFrame(rows)
     return df
@@ -2415,11 +2484,17 @@ def render_resultado(
         "📋 Ver detalle por horario",
         key=_det_key,
         help=(
-            "Estado de ocupación de cada horario asignado en la "
-            "última corrida."
+            "Estado de ocupación de cada horario del plan (asignación "
+            "vigente en la DB, no del snapshot del último LP). Incluye "
+            "los cambios manuales posteriores a la última corrida."
         ),
     )
     if mostrar_det:
+        st.caption(
+            "Los umbrales de sobre-/sub-ocupación son los de la última "
+            "corrida del asignador. La columna **Manual** marca con 🔒 "
+            "las aulas que están protegidas de futuras corridas."
+        )
         styled = df.style.map(_color_estado, subset=["Estado"]).format({
             "Esperados": "{:.0f}",
             "Cap": "{:.0f}",
