@@ -1693,10 +1693,14 @@ def _render_inspector_franja(
                 exceso_total_celdas += exc
     if exceso_max > 0:
         st.error(
-            f"⚠️ Faltan **{exceso_max} aula(s)** en la franja más "
-            f"saturada del rango. Habría que mover **al menos "
-            f"{exceso_max} horario(s)** fuera de esa franja para "
-            "descomprimir."
+            f"⚠️ Faltan **{exceso_max} aula(s) del catálogo** de "
+            f"{sede_nom} en la franja más saturada del rango. "
+            f"Habría que mover **al menos {exceso_max} horario(s)** "
+            f"fuera de esa franja para descomprimir. "
+            f"\n\n💡 Puede haber aulas libres puntualmente en el "
+            f"rango (ver expander de abajo), pero el total de aulas "
+            f"del tipo en la sede no alcanza para cubrir toda la "
+            f"demanda simultánea — hay que reducir la demanda."
         )
     else:
         st.success(
@@ -1712,6 +1716,14 @@ def _render_inspector_franja(
             "no están usadas por ningún horario del plan durante todo "
             "el rango elegido. Útil para saber cuáles quedan "
             "disponibles para reasignar manualmente."
+        )
+        st.caption(
+            "ℹ️ **Ojo**: si el mensaje de arriba dice 'faltan N', el "
+            "problema es de capacidad estructural (la sede no tiene "
+            "suficientes aulas del tipo para toda la demanda "
+            "simultánea). Que haya aulas libres acá no lo resuelve — "
+            "esas libres ya están contadas en la oferta total y aún "
+            "así falta capacidad."
         )
         # Categorías a chequear según el filtro.
         cats_libres: list[str]
