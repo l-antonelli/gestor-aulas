@@ -2342,56 +2342,38 @@ def render_resultado(
     diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
 
     # ======================================================
-    # Sección 1: Gestión de Asignaciones
+    # Este renderer se invoca dentro del expander "Gestión de
+    # asignaciones", que ya es nivel 1. Por eso las sub-secciones NO
+    # usan `st.expander` (llegaría a 3 niveles: Gestión → sub-sección
+    # → expander por sede, que Streamlit no soporta). En su lugar
+    # usamos títulos con `st.markdown` y toggles.
     # ======================================================
-    st.markdown("## 🧭 Gestión de asignaciones")
-
     if heatmap_sede:
-        # ¿Hay alguna celda saturada en alguna sede? Por default expandido
-        # cuando hay déficit (incluye ratios > 1.0).
-        _hay_saturacion = False
-        for _sede in heatmap_sede.get("sedes", []):
-            if not _sede.get("tiene_demanda"):
-                continue
-            _data = heatmap_sede["data"][_sede["sede_id"]]
-            for _cat in ("teorica", "laboratorio"):
-                _ratio_m = _data[_cat]["ratio"]
-                if any(r > 1.0 for row in _ratio_m for r in row):
-                    _hay_saturacion = True
-                    break
-            if _hay_saturacion:
-                break
-        with st.expander(
-            "🔥 Mapa de Saturación",
-            expanded=(run.status != "optimal" or _hay_saturacion),
-        ):
-            _render_heatmap_por_sede(heatmap_sede, key_ns=key_ns)
+        st.markdown("#### 🔥 Mapa de Saturación")
+        _render_heatmap_por_sede(heatmap_sede, key_ns=key_ns)
 
-            # "Ver detalle" (equivale al inspector de franja) dentro
-            # del mapa. Streamlit no permite expanders anidados, así
-            # que se implementa como toggle.
-            st.divider()
-            _ver_detalle_key = f"{key_ns}_ver_detalle_toggle"
-            if _ver_detalle_key not in st.session_state:
-                st.session_state[_ver_detalle_key] = False
-            mostrar_detalle = st.toggle(
-                "🔍 Ver detalle de una franja",
-                key=_ver_detalle_key,
-                help=(
-                    "Muestra un cronograma coloreado por carrera y "
-                    "controles para editar día/hora de los horarios "
-                    "en el rango seleccionado."
-                ),
+        # "Ver detalle" como toggle (equivale al ex-Inspeccionar franja).
+        _ver_detalle_key = f"{key_ns}_ver_detalle_toggle"
+        if _ver_detalle_key not in st.session_state:
+            st.session_state[_ver_detalle_key] = False
+        mostrar_detalle = st.toggle(
+            "🔍 Ver detalle de una franja",
+            key=_ver_detalle_key,
+            help=(
+                "Muestra un cronograma coloreado por carrera y "
+                "controles para editar día/hora de los horarios "
+                "en el rango seleccionado."
+            ),
+        )
+        if mostrar_detalle:
+            _render_inspector_franja(
+                heatmap_sede,
+                plan_id=run.plan_cursada_id,
+                key_ns=key_ns,
             )
-            if mostrar_detalle:
-                _render_inspector_franja(
-                    heatmap_sede,
-                    plan_id=run.plan_cursada_id,
-                    key_ns=key_ns,
-                )
 
     if run.status != "optimal":
-        st.markdown("### 🔍 Diagnóstico")
+        st.markdown("#### 🔍 Diagnóstico")
         if diag:
             _render_diagnostico_infactibilidad(diag, iis=iis)
         else:
@@ -2399,39 +2381,45 @@ def render_resultado(
         return
 
     # Advertencias estructurales — filtramos entries vacías post-filtro
-    # de virtuales para no mostrar el mensaje engañoso de "no logró
-    # ubicar todas las aulas" cuando en realidad el snapshot quedó
-    # obsoleto.
+    # de virtuales para no mostrar el mensaje engañoso cuando el
+    # snapshot quedó obsoleto.
     _sin_aula = diag.get("horarios_sin_aula_compatible") if diag else None
     _franjas = diag.get("franjas_saturadas") if diag else None
     _saturacion = diag.get("saturacion_por_tipo") if diag else None
     _hall = diag.get("hall_violators") if diag else None
     if diag and (_sin_aula or _franjas or _saturacion or _hall):
-        with st.expander("⚠️ Advertencias estructurales detectadas", expanded=False):
+        _adv_key = f"{key_ns}_show_advertencias"
+        if _adv_key not in st.session_state:
+            st.session_state[_adv_key] = False
+        mostrar_adv = st.toggle(
+            "⚠️ Ver advertencias estructurales detectadas",
+            key=_adv_key,
+        )
+        if mostrar_adv:
             _render_diagnostico_infactibilidad(diag, iis=iis)
 
-    # ======================================================
-    # Sección 2: Ajustes avanzados (α) — solo si aplica
-    # ======================================================
+    # Ajustes avanzados (α) — sólo si aplica.
     alpha_diff = details.get("alpha_propuestos", [])
     if run.activar_alpha and alpha_diff:
-        st.divider()
         _render_alpha_propuesto(session, run, alpha_diff, key_ns)
 
-    # ======================================================
-    # Sección 3: Detalles adicionales
-    # ======================================================
     df = _build_dataframe(session, run)
     if df.empty:
-        st.info("No hay detalle por horario para mostrar.")
         return
 
-    st.markdown("## 📎 Detalles adicionales")
-    with st.expander("📋 Detalle por horario", expanded=False):
-        st.caption(
+    # Detalle por horario (toggle).
+    _det_key = f"{key_ns}_show_detalle_horario"
+    if _det_key not in st.session_state:
+        st.session_state[_det_key] = False
+    mostrar_det = st.toggle(
+        "📋 Ver detalle por horario",
+        key=_det_key,
+        help=(
             "Estado de ocupación de cada horario asignado en la "
             "última corrida."
-        )
+        ),
+    )
+    if mostrar_det:
         styled = df.style.map(_color_estado, subset=["Estado"]).format({
             "Esperados": "{:.0f}",
             "Cap": "{:.0f}",
@@ -2439,15 +2427,20 @@ def render_resultado(
         })
         st.dataframe(styled, width='stretch', hide_index=True)
 
-    # Candidatas a partir comisión.
+    # Candidatas a partir comisión (toggle).
     cand = _candidatas_partir_comision(df)
     if not cand.empty:
-        with st.expander(
-            "🪓 Candidatas a partir comisión", expanded=False,
-        ):
-            st.caption(
+        _cand_key = f"{key_ns}_show_candidatas"
+        if _cand_key not in st.session_state:
+            st.session_state[_cand_key] = False
+        mostrar_cand = st.toggle(
+            "🪓 Ver candidatas a partir comisión",
+            key=_cand_key,
+            help=(
                 "Materias con horarios sobre-ocupados, ordenadas por "
                 "exceso total de alumnos. Subir `n_comisiones` "
                 "distribuye los esperados en más aulas."
-            )
+            ),
+        )
+        if mostrar_cand:
             st.dataframe(cand, width='stretch', hide_index=True)

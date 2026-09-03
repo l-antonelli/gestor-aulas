@@ -176,7 +176,11 @@ def _render_config_form(
 # =============================================================================
 
 def _render_summary(run: LPRunDB) -> None:
-    """Renderiza un resumen del LPRunDB en métricas + nota de status."""
+    """Renderiza el resumen del LPRunDB en métricas + nota de status.
+
+    Se asume que el caller lo envuelve dentro del expander principal
+    del "Asignador de aulas".
+    """
     status_emoji = {
         "optimal": "✅",
         "infeasible": "❌",
@@ -190,30 +194,88 @@ def _render_summary(run: LPRunDB) -> None:
         "error": "hubo un error",
     }.get(run.status, run.status)
     st.markdown(
-        f"### {status_emoji} Última corrida — {_status_humano}"
-        f" · {run.run_at.strftime('%Y-%m-%d %H:%M')}"
+        f"**{status_emoji} Estado:** {_status_humano}  \n"
+        f"**🕒 Corrida:** {run.run_at.strftime('%Y-%m-%d %H:%M')}"
     )
 
     if run.error_message:
         st.error(run.error_message)
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Horarios totales", run.n_horarios_total)
-    c2.metric("Asignados", run.n_horarios_asignados)
-    c3.metric("Clases actualizadas", run.n_clases_actualizadas)
-    c4.metric("Sobre-ocupados", run.n_clases_sobreocupadas)
-    c5.metric("Sub-utilizados", run.n_clases_subutilizadas)
+    c1.metric(
+        "Horarios totales", run.n_horarios_total,
+        help=(
+            "Cantidad total de horarios del plan que la asignación "
+            "consideró. Excluye horarios virtuales (que no requieren "
+            "aula por definición)."
+        ),
+    )
+    c2.metric(
+        "Asignados", run.n_horarios_asignados,
+        help=(
+            "Horarios a los que la asignación les encontró aula. "
+            "Idealmente coincide con Horarios totales; si es menor, "
+            "hay horarios sin aula (revisar el diagnóstico)."
+        ),
+    )
+    c3.metric(
+        "Clases actualizadas", run.n_clases_actualizadas,
+        help=(
+            "Instancias de clase concretas (día + fecha) cuyo aula se "
+            "actualizó a raíz de esta corrida. Sólo cuenta clases con "
+            "fecha ≥ 'Aplicar desde' y no ejecutadas."
+        ),
+    )
+    c4.metric(
+        "Sobre-ocupados", run.n_clases_sobreocupadas,
+        help=(
+            "Horarios en aulas más chicas que los inscriptos esperados "
+            "(cap. < esperados, superando la tolerancia configurada). "
+            "Idealmente cero."
+        ),
+    )
+    c5.metric(
+        "Sub-utilizados", run.n_clases_subutilizadas,
+        help=(
+            "Horarios en aulas mucho más grandes que los inscriptos "
+            "esperados. No es un problema grave, pero indica margen "
+            "de mejora de ajuste (aulas grandes que podrían usarse "
+            "para grupos más grandes)."
+        ),
+    )
 
     c6, c7, c8 = st.columns(3)
     if run.objective_value is not None:
-        c6.metric("Costo total", f"{run.objective_value:.2f}",
-                  help="Suma ponderada de sobre-ocupación y sub-utilización. "
-                       "Cuanto más bajo, mejor el ajuste global.")
+        c6.metric(
+            "Costo total", f"{run.objective_value:.2f}",
+            help=(
+                "Puntaje del ajuste global calculado por la asignación: "
+                "suma ponderada de la sobre-ocupación (penalizada con "
+                "el peso de sobre-ocupación) y de la sub-utilización "
+                "(penalizada con el peso de sub-utilización). Cuanto "
+                "más bajo, mejor. Sirve para comparar corridas entre "
+                "sí; el número absoluto por sí solo no dice mucho."
+            ),
+        )
     if run.solver_seconds is not None:
-        c7.metric("Tiempo de resolución (s)", f"{run.solver_seconds:.2f}")
-    c8.metric("Manuales respetadas", run.n_ediciones_manuales_respetadas)
+        c7.metric(
+            "Tiempo de resolución (s)", f"{run.solver_seconds:.2f}",
+            help=(
+                "Cuánto tardó la asignación en encontrar la solución. "
+                "Si se acerca al tiempo máximo configurado, la solución "
+                "puede no ser óptima."
+            ),
+        )
+    c8.metric(
+        "Manuales respetadas", run.n_ediciones_manuales_respetadas,
+        help=(
+            "Aulas asignadas manualmente que la corrida decidió NO "
+            "modificar (respetadas por el toggle 'Respetar ediciones "
+            "manuales'). Si el toggle está desactivado, siempre es 0."
+        ),
+    )
 
-    with st.expander("Configuración aplicada", expanded=False):
+    with st.expander("⚙️ Configuración aplicada", expanded=False):
         st.write({
             "Aplicar desde la fecha": run.fecha_desde.isoformat(),
             "Peso sobre-ocupación": run.lambda_over,
@@ -232,8 +294,6 @@ def _render_summary(run: LPRunDB) -> None:
 
 def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     """Punto de entrada del tab 'Aulas' en la página de Planes."""
-    st.subheader("🏛️ Asignación de aulas")
-
     ok, problemas = _precheck(session, plan_id)
     if not ok:
         for p in problemas:
@@ -259,60 +319,40 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             "correr, así que no bloquea esta corrida."
         )
 
-    # ======================================================
-    # Sección: Última corrida (summary)
-    # ======================================================
     latest = get_latest_run(session, plan_id)
-    if latest is not None:
-        st.markdown("### 📊 Última corrida")
-        _render_summary(latest)
-    else:
-        st.info(
-            "Todavía no se ejecutó ninguna asignación para este plan. "
-            "Configurá los parámetros abajo y apretá **🚀 Asignar aulas**."
-        )
 
     # ======================================================
-    # Sección: Correr la asignación
+    # Expander: Asignador de Aulas (última corrida + correr nueva)
     # ======================================================
-    st.divider()
-    _run_key = f"{key_ns}_show_run_form"
-    if _run_key not in st.session_state:
-        st.session_state[_run_key] = latest is None  # abre si nunca corrió
-    with st.expander(
-        "🚀 Correr la asignación (config + botón)",
-        expanded=st.session_state[_run_key],
-    ):
-        st.markdown(
-            "Configurá los parámetros y apretá **🚀 Asignar aulas** para "
-            "correr una nueva corrida. Los resultados aparecen abajo."
-        )
-        with st.expander(
-            "ℹ️ Qué horarios entran a la asignación", expanded=False,
-        ):
-            st.markdown(
-                "La asignación intenta encontrarle un aula a cada horario "
-                "presencial del plan. **No** entran los siguientes horarios "
-                "(se ignoran sin generar error):\n\n"
-                "- Horarios de materias **virtuales** del catálogo (la "
-                "materia está marcada como virtual).\n"
-                "- Horarios cuyo **dictado del ciclo** está marcado como "
-                "**virtual**. Útil para recursados que se dictan por Zoom "
-                "este cuatrimestre — el dictado existe y la cobertura del "
-                "cronograma lo cuenta como cubierto, pero no consume aula. "
-                "Configurable desde **Ciclos → 📚 Dictados**, columna "
-                "**Virtual**.\n"
-                "- Horarios individuales marcados como **virtuales**. "
-                "Permite mezclar modalidades dentro de un mismo dictado "
-                "(por ejemplo, teoría virtual + laboratorio presencial).\n\n"
-                "Si la asignación no encuentra solución, lo más común es "
-                "que haya horarios del 2C en el cronograma del plan que "
-                "en realidad deberían estar marcados como virtuales "
-                "(recursados). Revisalos en Dictados antes de tocar las "
-                "tolerancias."
+    with st.expander("🏛️ Asignador de aulas", expanded=True):
+        if latest is not None:
+            _render_summary(latest)
+        else:
+            st.info(
+                "Todavía no se ejecutó ninguna asignación para este "
+                "plan. Configurá los parámetros abajo y apretá "
+                "**🚀 Asignar aulas**."
             )
 
-        cfg = _render_config_form(session, plan_id, key_ns)
+        with st.expander(
+            "🚀 Correr la asignación (config + botón)",
+            expanded=latest is None,
+        ):
+            st.markdown(
+                "Configurá los parámetros y apretá **🚀 Asignar "
+                "aulas** para correr una nueva corrida."
+            )
+            st.caption(
+                "ℹ️ La asignación intenta encontrar un aula a cada "
+                "horario presencial del plan. NO entran los horarios "
+                "de materias virtuales del catálogo, dictados marcados "
+                "como virtuales para el ciclo, ni horarios individuales "
+                "marcados como virtuales. Si la asignación no resuelve, "
+                "revisá primero en **Ciclos → 📚 Dictados** que las "
+                "materias recursadas estén marcadas como virtuales."
+            )
+
+            cfg = _render_config_form(session, plan_id, key_ns)
 
     if cfg is not None:
         with st.spinner("Asignando aulas…"):
@@ -336,17 +376,16 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
         st.rerun()
 
     # ======================================================
-    # Sección: Resultado detallado (con Gestión + Detalles adicionales)
+    # Expander: Gestión de Asignaciones (mapa + advertencias + detalle)
     # ======================================================
     if latest is not None:
-        st.divider()
-        from src.ui.asignacion_resultado_ui import render_resultado
-        render_resultado(session, latest, key_ns=f"{key_ns}_res")
+        with st.expander("🧭 Gestión de asignaciones", expanded=False):
+            from src.ui.asignacion_resultado_ui import render_resultado
+            render_resultado(session, latest, key_ns=f"{key_ns}_res")
 
     # ======================================================
-    # Sección: Cronograma por aula (independiente del run)
+    # Expander: Cronograma por aula (independiente del run)
     # ======================================================
-    st.divider()
     with st.expander("📅 Cronograma por aula", expanded=False):
         from src.ui.aula_cronograma_view import render_aula_cronograma
         render_aula_cronograma(session, plan_id, key_ns=f"{key_ns}_aula")
