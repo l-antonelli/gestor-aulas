@@ -955,6 +955,18 @@ def _podar_hijos_no_afectados(
     }
 
 
+def _buscar_nodo_en_estado(root: dict, horario_id: str) -> Optional[dict]:
+    """DFS por el árbol de decisiones (dicts) buscando el nodo con
+    ``horario_id``. Devuelve el dict del nodo o None si no está."""
+    if root.get("horario_id") == horario_id:
+        return root
+    for hijo in root.get("hijos", {}).values():
+        r = _buscar_nodo_en_estado(hijo, horario_id)
+        if r is not None:
+            return r
+    return None
+
+
 def _dict_a_nodo_cascada(nodo_dict: dict):
     """Convierte el dict del session_state en un NodoCascada real
     (para pasar al servicio de validación/aplicación)."""
@@ -967,6 +979,7 @@ def _dict_a_nodo_cascada(nodo_dict: dict):
             _dict_a_nodo_cascada(h)
             for h in nodo_dict["hijos"].values()
         ],
+        marcar_manual=nodo_dict.get("marcar_manual"),
     )
 
 
@@ -1418,8 +1431,18 @@ def _confirmar_cascada(
         for err in plan.errores_globales:
             st.error(err)
 
-    # Tabla plana con todos los efectos.
+    # Tabla plana con todos los efectos + checkbox "Marcar como
+    # manual" por cada horario que va a recibir aula. La decisión se
+    # persiste al dict del estado (`marcar_manual`) para que
+    # `_dict_a_nodo_cascada` la propague al servicio.
     if plan.efectos:
+        st.caption(
+            "Cada asignación tiene una casilla **'Marcar como manual'**: "
+            "si queda tildada, el asignador la va a **respetar** en "
+            "corridas futuras (mientras el toggle 'Respetar ediciones "
+            "manuales' esté activado). Destildala si querés que el "
+            "asignador pueda volver a decidir esa aula."
+        )
         for ef in plan.efectos:
             h = session.get(HorarioDB, ef.horario_id)
             com = session.get(ComisionDB, h.comision_id) if h else None
@@ -1439,14 +1462,43 @@ def _confirmar_cascada(
                 "⚠️" if ef.ok else "❌"
             )
             indent = "&nbsp;" * (4 * ef.nivel)
-            st.markdown(
-                f"{indent}{icono} **{mat_nombre}** — {com_nombre} → "
-                f"{aula_txt}"
-            )
-            for err in ef.errores:
-                st.error(f"{indent}&nbsp;&nbsp;{err}")
-            for w in ef.warnings:
-                st.warning(f"{indent}&nbsp;&nbsp;{w}")
+
+            # Buscar el nodo correspondiente en el estado para leer/
+            # setear `marcar_manual`.
+            nodo_est = _buscar_nodo_en_estado(estado, ef.horario_id)
+
+            col_txt, col_chk = st.columns([5, 2])
+            with col_txt:
+                st.markdown(
+                    f"{indent}{icono} **{mat_nombre}** — {com_nombre} → "
+                    f"{aula_txt}"
+                )
+                for err in ef.errores:
+                    st.error(f"{indent}&nbsp;&nbsp;{err}")
+                for w in ef.warnings:
+                    st.warning(f"{indent}&nbsp;&nbsp;{w}")
+            with col_chk:
+                # Checkbox sólo tiene sentido si la asignación va a
+                # tener aula. Si el efecto es "sin aula", ocultamos.
+                if ef.aula_futura is not None and nodo_est is not None:
+                    default_manual = nodo_est.get("marcar_manual")
+                    if default_manual is None:
+                        # Default: tildado (asignación manual explícita).
+                        default_manual = True
+                    chk_key = (
+                        f"dlg_casc_{root_horario_id}_manual_"
+                        f"{ef.horario_id}"
+                    )
+                    val = st.checkbox(
+                        "🔒 Marcar como manual",
+                        value=default_manual,
+                        key=chk_key,
+                        help=(
+                            "Si queda tildada, el asignador va a "
+                            "respetar esta aula en corridas futuras."
+                        ),
+                    )
+                    nodo_est["marcar_manual"] = val
 
     # Vista de calendarios: uno por cada aula afectada.
     st.divider()
