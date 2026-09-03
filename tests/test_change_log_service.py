@@ -26,10 +26,15 @@ from src.services.change_log_service import (
 from src.database.models import (
     CarreraDB,
     ChangeLogDB,
+    ComisionDB,
     DictadoCicloDB,
     DictadoDB,
     CicloDB,
+    HorarioDB,
     MateriaDB,
+    PlanificacionCursadaDB,
+    ScheduleDB,
+    ScheduleEntryDB,
     SedeDB,
 )
 
@@ -269,3 +274,195 @@ class TestQueryHelpers:
 
         log = get_log_for_entity(session, "MateriaDB", "M1", limit=3)
         assert len(log) == 3
+
+
+class TestNuevasEntidadesDelPlan:
+    """Fase 1 del tracker de plan: HorarioDB, ComisionDB,
+    PlanificacionCursadaDB, ScheduleDB, ScheduleEntryDB. Estas
+    entidades pertenecen a la superficie 'nivel plan' (o pre-plan,
+    en el caso de los schedules) y son el foco de la auditoría
+    manual iterada. Los cambios masivos del LP quedan fuera del
+    scope de esta fase (se atienden por rollup vía LPRunDB).
+    """
+
+    def _seed_plan_completo(self, session):
+        """Setup mínimo para tests: ciclo + materia + plan + comisión
+        + horario + schedule + entry. Devuelve refs para tocar en
+        los tests. Después de este setup, cada entidad ya emitió su
+        evento 'created', así que los tests filtran por 'updated' o
+        cuentan >=2 filas cuando corresponde."""
+        from datetime import date, time
+        ciclo = CicloDB(
+            id="ciclo-1", anio=2026, numero=1,
+            fecha_inicio=date(2026, 3, 1), fecha_fin=date(2026, 7, 1),
+        )
+        materia = MateriaDB(codigo="M1", nombre="Mat 1")
+        session.add_all([ciclo, materia])
+        session.commit()
+
+        plan = PlanificacionCursadaDB(
+            id="plan-1", nombre="Plan Test", ciclo_id="ciclo-1",
+        )
+        session.add(plan)
+        session.commit()
+
+        comision = ComisionDB(
+            id="com-1", materia_codigo="M1", plan_cursada_id="plan-1",
+            nombre="Com 1", numero=1, cupo=30, coef_asignacion=1.0,
+        )
+        session.add(comision)
+        session.commit()
+
+        horario = HorarioDB(
+            id="hor-1", comision_id="com-1", codigo_materia="M1",
+            dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        session.add(horario)
+        session.commit()
+
+        schedule = ScheduleDB(
+            id="sch-1", nombre="Cronograma Test",
+            fecha_upload=date(2026, 2, 1),
+        )
+        session.add(schedule)
+        session.commit()
+
+        entry = ScheduleEntryDB(
+            id="ent-1", schedule_id="sch-1", codigo_materia="M1",
+            dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(10, 0),
+        )
+        session.add(entry)
+        session.commit()
+
+        return {
+            "plan": plan, "comision": comision, "horario": horario,
+            "schedule": schedule, "entry": entry,
+        }
+
+    def test_horario_cambio_aula_genera_updated(self, session):
+        ctx = self._seed_plan_completo(session)
+        h = ctx["horario"]
+
+        # Preparar aula (referenced FK) — no hace falta que exista para
+        # el trigger, sólo seteamos el string.
+        h.aula_id = "aula-x"
+        session.add(h)
+        session.commit()
+
+        log = get_log_for_entity(session, "HorarioDB", "hor-1")
+        # created + updated(aula_id)
+        assert len(log) == 2
+        upd = log[0]
+        assert upd.action == "updated"
+        assert upd.field == "aula_id"
+        assert json.loads(upd.new_value) == "aula-x"
+
+    def test_horario_flag_manual_se_trackea(self, session):
+        ctx = self._seed_plan_completo(session)
+        h = ctx["horario"]
+        h.aula_asignada_manualmente = True
+        session.add(h)
+        session.commit()
+
+        log = get_log_for_entity(session, "HorarioDB", "hor-1")
+        assert any(
+            e.action == "updated" and e.field == "aula_asignada_manualmente"
+            for e in log
+        )
+
+    def test_horario_cambio_dia_hora_se_trackea(self, session):
+        from datetime import time
+        ctx = self._seed_plan_completo(session)
+        h = ctx["horario"]
+        h.dia = "Martes"
+        h.hora_inicio = time(14, 0)
+        session.add(h)
+        session.commit()
+
+        log = get_log_for_entity(session, "HorarioDB", "hor-1")
+        campos = {e.field for e in log if e.action == "updated"}
+        assert "dia" in campos
+        assert "hora_inicio" in campos
+
+    def test_comision_cambio_cupo_coef_se_trackea(self, session):
+        ctx = self._seed_plan_completo(session)
+        c = ctx["comision"]
+        c.cupo = 50
+        c.coef_asignacion = 0.5
+        session.add(c)
+        session.commit()
+
+        log = get_log_for_entity(session, "ComisionDB", "com-1")
+        campos = {e.field for e in log if e.action == "updated"}
+        assert "cupo" in campos
+        assert "coef_asignacion" in campos
+
+    def test_plan_cambio_forecast_metodo_se_trackea(self, session):
+        ctx = self._seed_plan_completo(session)
+        p = ctx["plan"]
+        p.forecast_metodo_default = "drift"
+        session.add(p)
+        session.commit()
+
+        log = get_log_for_entity(session, "PlanificacionCursadaDB", "plan-1")
+        assert any(
+            e.action == "updated" and e.field == "forecast_metodo_default"
+            for e in log
+        )
+
+    def test_schedule_cambio_nombre_se_trackea(self, session):
+        ctx = self._seed_plan_completo(session)
+        s = ctx["schedule"]
+        s.nombre = "Cronograma Renombrado"
+        session.add(s)
+        session.commit()
+
+        log = get_log_for_entity(session, "ScheduleDB", "sch-1")
+        assert any(
+            e.action == "updated" and e.field == "nombre" for e in log
+        )
+
+    def test_schedule_entry_cambio_dia_se_trackea(self, session):
+        ctx = self._seed_plan_completo(session)
+        e = ctx["entry"]
+        e.dia = "Martes"
+        session.add(e)
+        session.commit()
+
+        log = get_log_for_entity(session, "ScheduleEntryDB", "ent-1")
+        assert any(
+            evt.action == "updated" and evt.field == "dia" for evt in log
+        )
+
+    def test_alta_baja_de_las_5_entidades_genera_logs(self, session):
+        """Sanity: alta y baja de cada entidad genera created/deleted."""
+        ctx = self._seed_plan_completo(session)
+        for tipo, key in [
+            ("PlanificacionCursadaDB", "plan-1"),
+            ("ComisionDB", "com-1"),
+            ("HorarioDB", "hor-1"),
+            ("ScheduleDB", "sch-1"),
+            ("ScheduleEntryDB", "ent-1"),
+        ]:
+            log = get_log_for_entity(session, tipo, key)
+            assert any(e.action == "created" for e in log), tipo
+
+        # Baja en orden inverso a las FKs.
+        session.delete(ctx["entry"])
+        session.delete(ctx["schedule"])
+        session.delete(ctx["horario"])
+        session.delete(ctx["comision"])
+        session.delete(ctx["plan"])
+        session.commit()
+
+        for tipo, key in [
+            ("PlanificacionCursadaDB", "plan-1"),
+            ("ComisionDB", "com-1"),
+            ("HorarioDB", "hor-1"),
+            ("ScheduleDB", "sch-1"),
+            ("ScheduleEntryDB", "ent-1"),
+        ]:
+            log = get_log_for_entity(session, tipo, key)
+            assert any(e.action == "deleted" for e in log), tipo

@@ -63,6 +63,8 @@ Pensalo así:
 
 El sistema registra automáticamente los cambios sobre estas entidades:
 
+**Catálogo maestro**
+
 - **Materias**: modificación de los flags `virtual` (modalidad de
   catálogo), `dicta_recursado`, `optativa`, activación, y de las horas
   de teoría / laboratorio. También alta y baja.
@@ -75,46 +77,51 @@ El sistema registra automáticamente los cambios sobre estas entidades:
 - **Sedes**: modificación del flag "es sede default para materias
   comunes". También alta y baja.
 
-Además, hay algunos eventos que se emiten **explícitamente** desde
-puntos concretos de la UI:
+**Cronogramas (pre-plan)**
 
-- Cambio de virtualidad de un **horario individual** desde la grilla del
-  plan.
-- Cambio de **carrera asignada** de una comisión desde la tabla de
-  comisiones del plan.
+- **Cronogramas**: modificación del nombre y del ciclo. También alta
+  y baja.
+- **Entradas del cronograma**: modificación del día, hora inicio,
+  hora fin, comisión asignada, tipo de clase, override de
+  virtualidad. También alta y baja.
+
+**Plan de cursada**
+
+- **Planes de cursada**: modificación del nombre, descripción, ciclo,
+  y método de forecast por defecto. También alta y baja.
+- **Comisiones**: modificación del nombre, número, cupo, coeficiente
+  de asignación, dictado y carrera asignada. También alta y baja.
+- **Horarios del plan**: modificación del aula asignada, tipo de
+  clase, día, hora inicio, hora fin, override de virtualidad y del
+  flag "aula asignada manualmente". También alta y baja.
 
 ### Qué NO se registra
 
-Esto es tan importante como lo anterior. **El historial guarda política
-y catálogo, no operación diaria**. Concretamente, los siguientes
-cambios **no dejan rastro**:
+Esto es tan importante como lo anterior. Los siguientes cambios **no
+dejan rastro individual** en el historial:
 
-- Ediciones sobre horarios individuales desde la vista de cronogramas
-  (mover, redimensionar, cambiar día u hora). Sólo el flag virtual de
-  un horario editado desde la grilla del plan queda registrado.
-- Ediciones sobre comisiones (nombre, cupo, coeficiente/peso, número).
-  Sólo el cambio de "carrera asignada" queda registrado.
-- Alta, baja o edición de planes de cursada.
-- Alta, baja o edición de ciclos.
-- Alta, baja o edición de cronogramas completos (subir Excel, borrar,
-  duplicar).
+- **Corridas del asignador**: hoy cada horario reasignado por el LP
+  emite un evento individual (`HorarioDB.aula_id` cambió). En una
+  próxima iteración esto va a pasar a **una sola fila agregada por
+  corrida** vinculada al LPRun, para evitar inundar el feed. La fila
+  de LPRun ya guarda hoy toda la solución, tolerancias y detalle por
+  horario — sigue siendo la fuente única de "qué hizo el asignador".
 - Ediciones sobre la serie histórica de inscriptos.
 - Ediciones sobre los overrides manuales del forecast (el "Total
   esperado (manual)" del plan).
-- Ediciones sobre aulas y sedes (excepto el flag "es sede default").
-- Corridas del asignador (quedan registradas en su propia tabla como
-  snapshot, no en el historial de cambios).
-- Cambios directos hechos por scripts o comandos de línea (por ejemplo,
-  reinicializar la base entera con `load_initial_data --reset` no queda
-  registrado).
+- Ediciones sobre aulas del catálogo y sedes (excepto el flag "es
+  sede default" de sedes).
+- Cambios directos hechos por scripts o comandos de línea (por
+  ejemplo, reinicializar la base entera con `load_initial_data
+  --reset` no queda registrado).
 - Cambios en el nombre, el código o el período de una materia (esos
   campos no están trackeados aunque otros de la misma materia sí lo
   estén).
 
-> **Regla mental**: el historial audita **catálogo y política**, no
-> **operación**. Toda la actividad diaria (cargar cronogramas, generar
-> planes, correr el asignador, editar horarios y comisiones) es
-> invisible al historial.
+> **Regla mental**: el historial audita **cambios individuales del
+> catálogo, del plan y del cronograma**. Las corridas del asignador
+> (bulk operations) se auditan aparte via LPRun (una fila por
+> corrida) para mantener el historial legible.
 
 ### Estructura de un evento
 

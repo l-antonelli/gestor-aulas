@@ -48,9 +48,14 @@ from sqlmodel import Session, select
 from src.database.models import (
     CarreraDB,
     ChangeLogDB,
+    ComisionDB,
     DictadoCicloDB,
     DictadoDB,
+    HorarioDB,
     MateriaDB,
+    PlanificacionCursadaDB,
+    ScheduleDB,
+    ScheduleEntryDB,
     SedeDB,
 )
 
@@ -88,6 +93,50 @@ TRACKED_ENTITIES: dict[type, dict] = {
     SedeDB: {
         "label_fn": lambda o: o.nombre,
         "fields": {"es_default_comunes"},
+    },
+    # Nivel plan (Fase 1 del tracker de plan).
+    PlanificacionCursadaDB: {
+        "label_fn": lambda o: o.nombre,
+        "fields": {
+            "nombre", "descripcion", "ciclo_id",
+            "forecast_metodo_default",
+        },
+    },
+    ComisionDB: {
+        "label_fn": lambda o: (
+            f"{o.materia_codigo} · {o.nombre}"
+            if o.nombre else o.materia_codigo
+        ),
+        "fields": {
+            "nombre", "numero", "cupo", "coef_asignacion",
+            "dictado_id", "carrera_asignada",
+        },
+    },
+    HorarioDB: {
+        "label_fn": lambda o: (
+            f"{o.codigo_materia} · {o.dia} "
+            f"{o.hora_inicio.strftime('%H:%M')}"
+        ),
+        "fields": {
+            "aula_id", "tipo_clase", "dia",
+            "hora_inicio", "hora_fin",
+            "virtual", "aula_asignada_manualmente",
+        },
+    },
+    # Pre-plan: cronogramas (templates que después generan un plan).
+    ScheduleDB: {
+        "label_fn": lambda o: o.nombre,
+        "fields": {"nombre", "ciclo_id"},
+    },
+    ScheduleEntryDB: {
+        "label_fn": lambda o: (
+            f"{o.codigo_materia} · {o.dia} "
+            f"{o.hora_inicio.strftime('%H:%M')}"
+        ),
+        "fields": {
+            "dia", "hora_inicio", "hora_fin",
+            "comision_id", "tipo_clase", "virtual",
+        },
     },
 }
 

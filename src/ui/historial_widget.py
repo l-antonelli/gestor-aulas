@@ -53,7 +53,11 @@ ENTITY_LABEL = {
     "DictadoDB": "Dictado",
     "DictadoCicloDB": "Dictado en ciclo",
     "SedeDB": "Sede",
-    "HorarioDB": "Horario (edición inline)",
+    "HorarioDB": "Horario",
+    "ComisionDB": "Comisión",
+    "PlanificacionCursadaDB": "Plan de cursada",
+    "ScheduleDB": "Cronograma",
+    "ScheduleEntryDB": "Entrada de cronograma",
 }
 
 
