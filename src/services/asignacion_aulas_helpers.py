@@ -1005,6 +1005,16 @@ def compute_heatmap_por_sede(
             "oferta": _zeros_i(),
         }
 
+    def _empty_peor() -> dict:
+        # Como categoría común más "cat_ganadora" por celda: "teorica",
+        # "laboratorio" o "" (sin demanda).
+        return {
+            "ratio": _zeros_f(),
+            "demanda": _zeros_i(),
+            "oferta": _zeros_i(),
+            "cat_ganadora": [["" for _ in range(n_dias)] for _ in range(n_slots)],
+        }
+
     # Inicializo data por sede.
     data: dict[str, dict[str, dict]] = {}
     sedes_con_aulas = list(aulas_por_sede.keys())
@@ -1012,7 +1022,7 @@ def compute_heatmap_por_sede(
         data[sede] = {
             "teorica": _empty_categoria(),
             "laboratorio": _empty_categoria(),
-            "peor": _empty_categoria(),
+            "peor": _empty_peor(),
         }
 
     # Para cada celda × sede, agrupar horarios por categoría.
@@ -1076,6 +1086,7 @@ def compute_heatmap_por_sede(
         peor_ratio_cell = 0.0
         peor_dem_cell = 0
         peor_of_cell = 0
+        peor_cat_cell = ""
         for cat, datos in grupos.items():
             d = len(datos["horarios"])
             o = oferta_estatica.get((sede, cat), 0)
@@ -1090,9 +1101,11 @@ def compute_heatmap_por_sede(
                 peor_ratio_cell = r_safe
                 peor_dem_cell = d
                 peor_of_cell = o
+                peor_cat_cell = cat
         data[sede]["peor"]["demanda"][si][di] = peor_dem_cell
         data[sede]["peor"]["oferta"][si][di] = peor_of_cell
         data[sede]["peor"]["ratio"][si][di] = peor_ratio_cell
+        data[sede]["peor"]["cat_ganadora"][si][di] = peor_cat_cell
 
     # Metadata de sedes.
     sedes_meta = []

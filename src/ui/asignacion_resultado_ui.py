@@ -522,7 +522,12 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
         "comunes, más la compatibilidad de laboratorio). La oferta "
         "son las aulas de la sede del tipo necesario. Verde ≤80% · "
         "amarillo 80–100% · rojo >100% (saturación segura: más "
-        "horarios que aulas)."
+        "horarios que aulas).  \n"
+        "En la vista **peor caso**, la etiqueta incluye "
+        "**T** (peor entre teóricas) o **L** (peor entre "
+        "laboratorios) para que se distinga en qué categoría satura "
+        "cada celda. En el tooltip se ve el desglose completo de las "
+        "dos categorías."
     )
 
     cat_label = {
@@ -646,6 +651,28 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                 txt += f", +{n - 6} más"
             return txt
 
+        # Para la vista "peor" traemos también las matrices de teorica
+        # y laboratorio para poder enriquecer el tooltip con datos por
+        # categoría. Cuando la vista es una categoría fija, no aplica.
+        _cat_gan_v = None
+        _teo_demanda_v = None
+        _teo_oferta_v = None
+        _lab_demanda_v = None
+        _lab_oferta_v = None
+        if cat_sel == "peor":
+            _cat_gan_raw = cat_data.get("cat_ganadora")
+            if _cat_gan_raw:
+                _cat_gan_v = _cat_gan_raw[i0:i1 + 1]
+            _teo = data_all[sede_id].get("teorica", {})
+            _lab = data_all[sede_id].get("laboratorio", {})
+            _teo_demanda_v = _teo.get("demanda", [])[i0:i1 + 1] or None
+            _teo_oferta_v = _teo.get("oferta", [])[i0:i1 + 1] or None
+            _lab_demanda_v = _lab.get("demanda", [])[i0:i1 + 1] or None
+            _lab_oferta_v = _lab.get("oferta", [])[i0:i1 + 1] or None
+
+        _CAT_ABREV = {"teorica": "T", "laboratorio": "L"}
+        _CAT_NOMBRE = {"teorica": "Teóricas", "laboratorio": "Laboratorios"}
+
         with st.expander(header, expanded=max_ratio > 1.0):
             long_rows = []
             for si, slot_label in enumerate(slots_v):
@@ -660,6 +687,40 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                     )
                     n_libres = len(libres_lst)
                     libres_str = _fmt_libres(libres_lst)
+                    # Categoría ganadora + etiqueta con abreviatura.
+                    cat_gan = ""
+                    if _cat_gan_v is not None:
+                        cat_gan = _cat_gan_v[si][di]
+                    if d > 0:
+                        abrev = _CAT_ABREV.get(cat_gan, "")
+                        etiqueta = (
+                            f"{d}/{o} {abrev}".strip()
+                            if abrev else f"{d}/{o}"
+                        )
+                        cat_nombre = _CAT_NOMBRE.get(cat_gan, "—")
+                    else:
+                        etiqueta = ""
+                        cat_nombre = "—"
+                    # Desglose demanda/oferta por categoría para tooltip.
+                    if (
+                        _teo_demanda_v is not None
+                        and _teo_oferta_v is not None
+                    ):
+                        t_d = int(_teo_demanda_v[si][di]) if _teo_demanda_v[si] else 0
+                        t_o = int(_teo_oferta_v[si][di]) if _teo_oferta_v[si] else 0
+                    else:
+                        t_d, t_o = 0, 0
+                    if (
+                        _lab_demanda_v is not None
+                        and _lab_oferta_v is not None
+                    ):
+                        l_d = int(_lab_demanda_v[si][di]) if _lab_demanda_v[si] else 0
+                        l_o = int(_lab_oferta_v[si][di]) if _lab_oferta_v[si] else 0
+                    else:
+                        l_d, l_o = 0, 0
+                    teo_txt = f"{t_d}/{t_o}" if t_o or t_d else "—"
+                    lab_txt = f"{l_d}/{l_o}" if l_o or l_d else "—"
+
                     long_rows.append({
                         "slot": slot_label,
                         "dia": dia,
@@ -667,9 +728,12 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                         "oferta": o,
                         "ratio": r_,
                         "bucket": _bucket(r_),
-                        "etiqueta": (f"{d}/{o}" if d > 0 else ""),
+                        "etiqueta": etiqueta,
                         "n_libres": n_libres,
                         "aulas_libres": libres_str,
+                        "cat_ganadora": cat_nombre,
+                        "teorica_txt": teo_txt,
+                        "laboratorio_txt": lab_txt,
                     })
             df_long = pd.DataFrame(long_rows)
 
@@ -694,9 +758,12 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                 tooltip=[
                     alt.Tooltip("dia:N", title="Día"),
                     alt.Tooltip("slot:N", title="Franja"),
-                    alt.Tooltip("demanda:Q", title="Horarios"),
-                    alt.Tooltip("oferta:Q", title="Aulas"),
+                    alt.Tooltip("cat_ganadora:N", title="Categoría peor"),
+                    alt.Tooltip("demanda:Q", title="Horarios (peor)"),
+                    alt.Tooltip("oferta:Q", title="Aulas (peor)"),
                     alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+                    alt.Tooltip("teorica_txt:N", title="Teóricas d/o"),
+                    alt.Tooltip("laboratorio_txt:N", title="Laboratorios d/o"),
                     alt.Tooltip("n_libres:Q", title="N° aulas libres"),
                     alt.Tooltip("aulas_libres:N", title="Aulas libres"),
                 ],
