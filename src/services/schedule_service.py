@@ -35,6 +35,14 @@ class ScheduleBlock:
     número display de esa comisión (o None si el entry no tiene
     comisión asignada) — se mantiene para las UIs legacy que muestran
     `C1`, `C2`, etc.
+
+    Campos opcionales para la Grilla Horaria del plan:
+    - ``aula_label``: etiqueta corta del aula del patrón ("Sede ·
+      Aula"). Sólo aplica cuando el block se arma sobre HorarioDB
+      (plan de cursada), no sobre entries de cronograma.
+    - ``virtual``: si el horario está resuelto como virtual, para
+      mostrar un indicador visual en vez de un aula.
+    - ``tipo_clase``: 'teorica' | 'laboratorio' | None.
     """
     entry_id: str
     materia_codigo: str
@@ -44,6 +52,9 @@ class ScheduleBlock:
     comision_id: str | None = None
     comision_numero: int | None = None
     comision_nombre: str | None = None
+    aula_label: str | None = None
+    virtual: bool = False
+    tipo_clase: str | None = None
 
     # Alias de compatibilidad hacia atrás: código viejo pedía `.comision`
     # como int. Devuelve el numero de la comisión referenciada.

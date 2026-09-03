@@ -362,10 +362,21 @@ def _build_plan_grid(
     """Construye la grilla del plan completo a partir de
     ComisionDB+HorarioDB. Devuelve (grid_data, materias_map) donde
     materias_map es {codigo: nombre}.
+
+    Los blocks incluyen ``aula_label``, ``virtual`` y ``tipo_clase``
+    del HorarioDB para que la Grilla Horaria pueda mostrar aula,
+    tipo y virtualidad dentro de cada bloque.
     """
+    from src.database.models import (
+        AulaDB, PlanificacionCursadaDB, DictadoCicloDB, DictadoDB,
+        SedeDB,
+    )
+    from src.services.resolucion_jerarquica import resolve_virtual
+
     grid: dict[str, list[ScheduleBlock]] = {}
     materias_map: dict[str, str] = {}
     with next(get_session()) as session:
+        plan = session.get(PlanificacionCursadaDB, plan_id)
         coms = list(session.exec(
             select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
         ).all())
@@ -381,12 +392,61 @@ def _build_plan_grid(
             select(MateriaDB).where(col(MateriaDB.codigo).in_(mat_codes))
         ).all())
         materias_map = {m.codigo: m.nombre for m in mats}
+        materia_virtual = {m.codigo: m.virtual for m in mats}
+
+        # Aulas del catálogo referenciadas por estos horarios, para
+        # armar el label "Sede · Aula".
+        aula_ids = {h.aula_id for h in hs if h.aula_id}
+        aulas_map: dict[str, AulaDB] = {}
+        sede_nombre_por_id: dict[str, str] = {}
+        if aula_ids:
+            aulas_map = {
+                a.id: a for a in session.exec(
+                    select(AulaDB).where(col(AulaDB.id).in_(aula_ids))
+                ).all()
+            }
+            sede_ids = {
+                a.sede_id for a in aulas_map.values() if a.sede_id
+            }
+            if sede_ids:
+                sede_nombre_por_id = {
+                    s.id: s.nombre for s in session.exec(
+                        select(SedeDB).where(col(SedeDB.id).in_(sede_ids))
+                    ).all()
+                }
+
+        # Virtualidad heredada del dictado del ciclo (para resolver
+        # `resolve_virtual` con la jerarquía completa).
+        materia_dictado_virtual: dict[str, bool | None] = {}
+        if plan is not None and plan.ciclo_id is not None:
+            for mc, v in session.exec(
+                select(DictadoDB.materia_codigo, DictadoDB.virtual)
+                .join(
+                    DictadoCicloDB,
+                    DictadoDB.id == DictadoCicloDB.dictado_id,  # type: ignore[arg-type]
+                )
+                .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
+            ).all():
+                materia_dictado_virtual[mc] = v
 
     for h in hs:
         c = com_by_id.get(h.comision_id)
         if c is None:
             continue
         mat_nombre = materias_map.get(c.materia_codigo, c.materia_codigo)
+        aula = aulas_map.get(h.aula_id) if h.aula_id else None
+        aula_label: str | None = None
+        if aula is not None:
+            sede_nombre = sede_nombre_por_id.get(aula.sede_id, "") if aula.sede_id else ""
+            aula_label = (
+                f"{sede_nombre} · {aula.nombre}"
+                if sede_nombre else aula.nombre
+            )
+        es_virtual = resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(c.materia_codigo),
+            materia_virtual=materia_virtual.get(c.materia_codigo, False),
+        )
         block = ScheduleBlock(
             entry_id=h.id,
             materia_codigo=c.materia_codigo,
@@ -396,6 +456,9 @@ def _build_plan_grid(
             comision_id=c.id,
             comision_numero=c.numero,
             comision_nombre=c.nombre,
+            aula_label=aula_label,
+            virtual=es_virtual,
+            tipo_clase=h.tipo_clase,
         )
         grid.setdefault(h.dia, []).append(block)
 

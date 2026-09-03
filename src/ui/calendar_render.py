@@ -516,9 +516,36 @@ def render_editable_schedule_calendar(
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
                 bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
+            # Modalidad / tipo (opcionales, blocks del plan pueden
+            # tener estos datos; blocks de cronograma no).
+            _virtual = getattr(b, "virtual", False)
+            _tipo = getattr(b, "tipo_clase", None)
+            _aula_label = getattr(b, "aula_label", None)
+            v_tag = " 💻" if _virtual else ""
+            tipo_tag = ""
+            if _tipo == "teorica":
+                tipo_tag = " · 📖 Teo"
+            elif _tipo == "laboratorio":
+                tipo_tag = " · 🧪 Lab"
+            if _virtual:
+                aula_line = "\n💻 Virtual"
+            elif _aula_label:
+                aula_line = f"\n🏛️ {_aula_label}"
+            elif hasattr(b, "aula_label"):
+                # Block del plan sin aula asignada (asignador no corrió
+                # o se editó el slot). Distinguir de blocks de
+                # cronograma que ni siquiera tienen el campo.
+                aula_line = "\n🏛️ Sin aula"
+            else:
+                aula_line = ""
+            title = (
+                f"{b.materia_codigo}{v_tag}{com_tag}{tipo_tag} - "
+                f"{b.materia_nombre}"
+                f"{aula_line}"
+            )
             events.append({
                 "id": b.entry_id,
-                "title": f"{b.materia_codigo}{com_tag} - {b.materia_nombre}",
+                "title": title,
                 "daysOfWeek": [dow],
                 "startTime": _fmt_time(b.hora_inicio),
                 "endTime": _fmt_time(b.hora_fin),
