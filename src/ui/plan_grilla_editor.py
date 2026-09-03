@@ -475,17 +475,20 @@ def render_plan_grilla_editor(
         }
 
     # --- Modo de edicion ---
-    edit_modo = st.radio(
-        "Modo de edición",
-        options=["Por grupo", "Por materia"],
-        horizontal=True,
-        key=f"{key_ns}_modo",
-        help=(
-            "'Por grupo' filtra por carrera/año/cuatrimestre. "
-            "'Por materia' permite enfocarse en una sola materia "
-            "(útil para materias compartidas entre carreras)."
-        ),
-    )
+    with st.container(border=True):
+        st.markdown("**🎛️ Modo de edición**")
+        edit_modo = st.radio(
+            "Modo",
+            options=["Por grupo", "Por materia"],
+            horizontal=True,
+            key=f"{key_ns}_modo",
+            label_visibility="collapsed",
+            help=(
+                "'Por grupo' filtra por carrera/año/cuatrimestre. "
+                "'Por materia' permite enfocarse en una sola materia "
+                "(útil para materias compartidas entre carreras)."
+            ),
+        )
 
     action = None
     sel_mat_add: Optional[str] = None
@@ -500,31 +503,38 @@ def render_plan_grilla_editor(
     # Mode: Por materia
     # =========================================================================
     if edit_modo == "Por materia":
-        sm_busqueda = st.text_input(
-            "🔍 Buscar materia por nombre o código",
-            key=f"{key_ns}_sm_buscar",
-            placeholder="Ej: fisica III, FB10, algebra...",
-        )
-        sm_all = sorted(materias_map.keys())
-        if sm_busqueda.strip():
-            t = sm_busqueda.strip().lower()
-            sm_opts = [
-                c for c in sm_all
-                if t in c.lower() or t in materias_map[c].lower()
-            ]
-        else:
-            sm_opts = sm_all
-        if not sm_opts:
-            sm_opts = sm_all
+        with st.container(border=True):
+            st.markdown("**🔎 Selección de materia**")
+            st.caption(
+                "Buscá una materia por código o nombre y "
+                "seleccionala para ver sólo sus horarios en la "
+                "grilla."
+            )
+            sm_busqueda = st.text_input(
+                "🔍 Buscar materia por nombre o código",
+                key=f"{key_ns}_sm_buscar",
+                placeholder="Ej: fisica III, FB10, algebra...",
+            )
+            sm_all = sorted(materias_map.keys())
+            if sm_busqueda.strip():
+                t = sm_busqueda.strip().lower()
+                sm_opts = [
+                    c for c in sm_all
+                    if t in c.lower() or t in materias_map[c].lower()
+                ]
+            else:
+                sm_opts = sm_all
+            if not sm_opts:
+                sm_opts = sm_all
 
-        sm_sel = st.selectbox(
-            "Materia",
-            options=sm_opts,
-            index=None,
-            format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-            placeholder="Seleccioná una materia...",
-            key=f"{key_ns}_sm_materia",
-        )
+            sm_sel = st.selectbox(
+                "Materia",
+                options=sm_opts,
+                index=None,
+                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
+                placeholder="Seleccioná una materia...",
+                key=f"{key_ns}_sm_materia",
+            )
 
         if sm_sel:
             sel_mat_add = sm_sel
@@ -574,45 +584,69 @@ def render_plan_grilla_editor(
     # Mode: Por grupo
     # =========================================================================
     else:
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            carrera_opts = [
-                f"{c.codigo} - {c.nombre}" for c in carreras_ciclo
-            ]
-            f_carrera = st.selectbox(
-                "Carrera", options=carrera_opts,
-                index=None, placeholder="Seleccionar carrera...",
-                key=f"{key_ns}_filtro_carrera",
+        # Container 1: Ubicación en el plan de estudio (los tres
+        # filtros combinados requeridos para ver la grilla).
+        with st.container(border=True):
+            st.markdown("**📚 Ubicación en el plan de estudio**")
+            st.caption(
+                "Los tres filtros operan como una tupla exacta: la "
+                "materia tiene que estar en el plan de estudio con "
+                "esa combinación de carrera/año/cuatrimestre."
             )
-        with col_f2:
-            f_anio = st.selectbox(
-                "Año de cursada",
-                options=[1, 2, 3, 4, 5, 6],
-                index=None, placeholder="Seleccionar año...",
-                key=f"{key_ns}_filtro_anio",
-            )
-        with col_f3:
-            f_cuatri = st.selectbox(
-                "Cuatrimestre",
-                options=["1C", "2C", "Anual"],
-                index=None, placeholder="Seleccionar cuatrimestre...",
-                key=f"{key_ns}_filtro_cuatri",
-            )
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                carrera_opts = [
+                    f"{c.codigo} - {c.nombre}" for c in carreras_ciclo
+                ]
+                f_carrera = st.selectbox(
+                    "Carrera", options=carrera_opts,
+                    index=None,
+                    placeholder="Seleccionar carrera...",
+                    key=f"{key_ns}_filtro_carrera",
+                )
+            with col_f2:
+                f_anio = st.selectbox(
+                    "Año de cursada",
+                    options=[1, 2, 3, 4, 5, 6],
+                    index=None, placeholder="Seleccionar año...",
+                    key=f"{key_ns}_filtro_anio",
+                )
+            with col_f3:
+                f_cuatri = st.selectbox(
+                    "Cuatrimestre",
+                    options=["1C", "2C", "Anual"],
+                    index=None,
+                    placeholder="Seleccionar cuatrimestre...",
+                    key=f"{key_ns}_filtro_cuatri",
+                )
 
-        col_f4, col_f5 = st.columns(2)
-        with col_f4:
-            f_tipo = st.selectbox(
-                "Tipo de materia",
-                options=[
-                    "Todas", "Ciclo Básico (F/FB)", "Específicas de carrera",
-                ],
-                key=f"{key_ns}_filtro_tipo",
-            )
-        with col_f5:
-            f_excluir_comunes = st.checkbox(
-                "Excluir materias comunes (multi-carrera)",
-                key=f"{key_ns}_excluir_comunes",
-            )
+        # Container 2: Filtros extra (refinan la lista, no la definen).
+        with st.container(border=True):
+            st.markdown("**🔎 Filtros extra**")
+            col_f4, col_f5 = st.columns(2)
+            with col_f4:
+                f_tipo = st.selectbox(
+                    "Tipo de materia",
+                    options=[
+                        "Todas", "Ciclo Básico (F/FB)",
+                        "Específicas de carrera",
+                    ],
+                    key=f"{key_ns}_filtro_tipo",
+                    help=(
+                        "Ciclo básico = materias con código F/FB "
+                        "(comunes a varias carreras). Específicas = "
+                        "materias exclusivas de la carrera filtrada."
+                    ),
+                )
+            with col_f5:
+                f_excluir_comunes = st.checkbox(
+                    "Excluir materias comunes (multi-carrera)",
+                    key=f"{key_ns}_excluir_comunes",
+                    help=(
+                        "Oculta las materias que aparecen en el "
+                        "plan de estudio de más de una carrera."
+                    ),
+                )
 
         all_filters_set = (
             f_carrera is not None and f_anio is not None
@@ -659,16 +693,27 @@ def render_plan_grilla_editor(
                 mats_disponibles,
                 key=lambda c: materias_map.get(c, c),
             )
-            mats_sel = st.multiselect(
-                "Materias a mostrar",
-                options=mat_list,
-                default=mat_list,
-                format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                key=f"{key_ns}_filtro_materias",
+            with st.container(border=True):
+                st.markdown("**📋 Materias visibles en la grilla**")
+                mats_sel = st.multiselect(
+                    "Materias a mostrar",
+                    options=mat_list,
+                    default=mat_list,
+                    format_func=lambda x: (
+                        f"{materias_map.get(x, x)} — {x}"
+                    ),
+                    key=f"{key_ns}_filtro_materias",
+                    label_visibility="collapsed",
+                    help=(
+                        "Por default se muestran todas las materias "
+                        "de la cursada filtrada. Sacá materias del "
+                        "multiselect para reducir el ruido visual "
+                        "en la grilla."
+                    ),
+                )
+            selected_set = (
+                set(mats_sel) if mats_sel else mats_disponibles
             )
-            selected_set = set(mats_sel) if mats_sel else mats_disponibles
-
-            st.divider()
 
             grid_data = grid_full
             if grid_data:
@@ -693,45 +738,53 @@ def render_plan_grilla_editor(
                 )
 
             # --- Selector de materia para agregar ---
-            st.divider()
-            mat_options_base = sorted(
-                c for c in materias_map
-                if filtered_mats is None or c in filtered_mats
-            )
-            busqueda_mat = st.text_input(
-                "🔍 Buscar materia por nombre o código",
-                key=f"{key_ns}_buscar_materia",
-                placeholder="Ej: algebra, F0301, programacion...",
-            )
-            if busqueda_mat.strip():
-                t = busqueda_mat.strip().lower()
-                mat_opts = [
-                    c for c in mat_options_base
-                    if t in c.lower() or t in materias_map[c].lower()
-                ]
-            else:
-                mat_opts = mat_options_base
-
-            if mat_opts:
-                sel_mat_add = st.selectbox(
-                    "Materia (para agregar al seleccionar un rango)",
-                    options=mat_opts,
-                    index=None,
-                    format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                    placeholder="Seleccioná una materia...",
-                    key=f"{key_ns}_add_materia",
+            with st.container(border=True):
+                st.markdown("**➕ Agregar horario a la grilla**")
+                st.caption(
+                    "Elegí una materia y después seleccioná un rango "
+                    "sobre la grilla (drag & drop en un espacio "
+                    "vacío) para crear un horario nuevo."
                 )
-            else:
+                mat_options_base = sorted(
+                    c for c in materias_map
+                    if filtered_mats is None or c in filtered_mats
+                )
+                busqueda_mat = st.text_input(
+                    "🔍 Buscar materia por nombre o código",
+                    key=f"{key_ns}_buscar_materia",
+                    placeholder="Ej: algebra, F0301, programacion...",
+                )
                 if busqueda_mat.strip():
-                    st.warning(
-                        f"No se encontraron materias para "
-                        f"'{busqueda_mat}'"
+                    t = busqueda_mat.strip().lower()
+                    mat_opts = [
+                        c for c in mat_options_base
+                        if t in c.lower() or t in materias_map[c].lower()
+                    ]
+                else:
+                    mat_opts = mat_options_base
+
+                if mat_opts:
+                    sel_mat_add = st.selectbox(
+                        "Materia (para agregar al seleccionar un rango)",
+                        options=mat_opts,
+                        index=None,
+                        format_func=lambda x: (
+                            f"{materias_map.get(x, x)} — {x}"
+                        ),
+                        placeholder="Seleccioná una materia...",
+                        key=f"{key_ns}_add_materia",
                     )
                 else:
-                    st.info(
-                        "No hay materias disponibles con los filtros "
-                        "actuales."
-                    )
+                    if busqueda_mat.strip():
+                        st.warning(
+                            f"No se encontraron materias para "
+                            f"'{busqueda_mat}'"
+                        )
+                    else:
+                        st.info(
+                            "No hay materias disponibles con los "
+                            "filtros actuales."
+                        )
 
     # =========================================================================
     # Procesar acciones del calendario
