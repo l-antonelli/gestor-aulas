@@ -289,6 +289,7 @@ def render_timetable_calendar(
     titulo_compacto: bool = False,
     resaltar_codigos: Optional[set[str]] = None,
     mostrar_leyenda: bool = True,
+    mat_color_override: Optional[dict[str, tuple[str, str]]] = None,
 ) -> Optional[dict]:
     """Renderiza un plan de cursada como calendario semanal FullCalendar (read-only).
 
@@ -303,12 +304,20 @@ def render_timetable_calendar(
             inspector de franja para detectar bloques que NO se pueden
             mover entre si por ser de la misma carrera/cohorte.
             Bloques con carrera_codigo=None caen al color por materia.
+        mat_color_override: mapping ``materia_codigo -> (bg, fg)``
+            precomputado. Cuando se pasa, las materias listadas usan
+            ese color exacto; el resto de las materias sigue la
+            asignación automática. Sirve para mantener consistencia
+            de color entre varios calendarios (ej. en el diálogo de
+            cascada donde la misma materia aparece en varias aulas).
     """
     if not grid_data:
         st.info("No hay horarios para mostrar.")
         return None
 
     mat_colors, mat_names = _assign_colors(grid_data)
+    if mat_color_override:
+        mat_colors.update(mat_color_override)
 
     # Coloreo por carrera (opcional): mapping carrera_codigo -> color.
     # Los bloques sin carrera (materias comunes a ≥2 carreras) se colorean

@@ -1309,6 +1309,20 @@ def _render_calendarios_impacto(
     sede_map = _sede_nombre_map(session)
     config = get_or_create_config(session)
 
+    # Paleta consistente: la misma materia tiene que tener el mismo
+    # color en TODOS los calendarios (antes/después de cada aula).
+    # Se prioriza a las materias tocadas por la cascada — quedan con
+    # los primeros colores de la paleta (más distintivos), y el orden
+    # es determinístico (sorted) para que sucesivas invocaciones no
+    # bailen los colores.
+    from src.ui.calendar_render import PALETTE, TEXT_COLOR
+    mat_color_override: dict[str, tuple[str, str]] = {}
+    materias_priorizadas = sorted(materias_tocadas)
+    for i, codigo in enumerate(materias_priorizadas):
+        mat_color_override[codigo] = (
+            PALETTE[i % len(PALETTE)], TEXT_COLOR,
+        )
+
     aulas_ordenadas = sorted(aulas_ids)
     for idx, aula_id in enumerate(aulas_ordenadas):
         aula = session.get(AulaDB, aula_id)
@@ -1391,6 +1405,7 @@ def _render_calendarios_impacto(
                         titulo_compacto=True,
                         resaltar_codigos=materias_tocadas,
                         mostrar_leyenda=False,
+                        mat_color_override=mat_color_override,
                     )
             with col_despues:
                 st.markdown("**Después**")
@@ -1406,6 +1421,7 @@ def _render_calendarios_impacto(
                         titulo_compacto=True,
                         resaltar_codigos=materias_tocadas,
                         mostrar_leyenda=False,
+                        mat_color_override=mat_color_override,
                     )
 
 
