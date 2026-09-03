@@ -506,11 +506,9 @@ with tab_generar:
         )
 
         sel_ciclo_w = sel_ciclo
-        _c_obj = ciclos_map[sel_ciclo]
         st.caption(
-            f"Ciclo activo: **{_c_obj.anio} · {_c_obj.numero}C** "
-            f"(cambialo desde el panel lateral si querés generar un "
-            f"plan de otro ciclo)."
+            f"Ciclo activo: **{sel_ciclo}** (cambialo desde el panel "
+            f"lateral si querés generar un plan de otro ciclo)."
         )
 
         from src.services.cronograma_validation_service import (
@@ -723,7 +721,7 @@ with tab_generar:
 with tab_general:
     st.subheader("Vista General de Planes")
     sel_ciclo_general = sel_ciclo
-    st.caption(f"Ciclo activo: **{ciclos_map[sel_ciclo].anio} · {ciclos_map[sel_ciclo].numero}C**")
+    st.caption(f"Ciclo activo: **{sel_ciclo}**")
 
     if sel_ciclo_general:
         with next(get_session()) as session:

@@ -27,7 +27,17 @@ PLAN_KEY = "planes_plan_activo"
 
 
 def _fmt_ciclo(ciclo: CicloDB) -> str:
-    return f"{ciclo.anio} · {ciclo.numero}C"
+    """Formatea un ciclo para mostrar en el selector. Incluye el id
+    literal como sufijo cuando difiere del label canónico, así los
+    ciclos clonados (ej. ``2026-1C-demo-saturacion``) no se confunden
+    con el original ``2026-1C``."""
+    canonico = f"{ciclo.anio}-{ciclo.numero}C"
+    base = f"{ciclo.anio} · {ciclo.numero}C"
+    if ciclo.id == canonico:
+        return base
+    # Sufijo con la parte extra del id (todo lo que sigue al canónico).
+    sufijo = ciclo.id[len(canonico):].lstrip("-_ ")
+    return f"{base} · {sufijo}" if sufijo else f"{base} · {ciclo.id}"
 
 
 def render_ciclo_plan_sidebar(
