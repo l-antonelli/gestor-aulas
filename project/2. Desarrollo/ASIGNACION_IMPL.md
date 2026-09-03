@@ -1,6 +1,6 @@
 # Implementación del LP de asignación de aulas
 
-> **Última actualización**: 2026-07-07
+> **Última actualización**: 2026-08-28
 > **Estado**: Fases 1 a 8 implementadas (incluye toggle α de
 > redistribución de pesos).
 >
@@ -9,12 +9,18 @@
 > `cambiar_tipo_clase_puntual`, `clases_del_rango`, etc.) y el tab
 > "📅 Clases" de la página Planes. El LP y la UI trabajan
 > exclusivamente sobre el patrón semanal (`HorarioDB.aula_id`).
-> `ClaseDB` sigue existiendo como cache técnico y el LP propaga a
-> ella la asignación del patrón, pero el usuario no la edita.
+>
+> **Actualización 2026-08-28 — `ClaseDB` marcado como deprecado**: el
+> modelo `ClaseDB` quedó como cache técnico latente. Ninguna vista de
+> la UI lo renderiza y no debe usarse para features nuevas. Ver
+> [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md) para el plan de
+> retiro y la superficie viva remanente. El flag
+> `aula_asignada_manualmente` vive ahora en `HorarioDB` (nivel patrón).
 >
 > **Ver también**:
 > - Planteo formal: [`asignacion-aulas-LP.md`](../1.%20Diseño/asignacion-aulas-LP.md)
 > - Workflow general: [`WORKFLOW.md`](WORKFLOW.md) § 9
+> - Plan de retiro de `ClaseDB`: [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md)
 
 ## 1. Visión general
 
@@ -28,16 +34,20 @@ Decisiones de diseño que rigen toda la implementación:
 
 1. **Storage del patrón**: la asignación del LP se guarda en
    `HorarioDB.aula_id` (el "patrón semanal"). `ClaseDB.aula_id`
-   existe como cache técnico y `apply_solution` propaga desde el
-   patrón — no se edita desde la UI.
+   existe como cache técnico **deprecado** y `apply_solution`
+   todavía propaga desde el patrón por compatibilidad, pero no se
+   edita desde la UI ni se lee para renderizar nada.
 2. **El LP corre sobre el patrón**: el conjunto `C` del LP son los
    `HorarioDB` del plan (docenas/cientos, no miles como serían las
    `ClaseDB`).
 3. **Re-run incremental**: cada corrida tiene un `fecha_desde` que
    restringe la propagación cache a `ClaseDB`. El toggle "respetar
-   ediciones manuales" queda como capacidad del solver por si en el
-   futuro se vuelve a habilitar edición puntual, pero hoy no hay UI
-   que setee `aula_asignada_manualmente=True`.
+   ediciones manuales" trabaja sobre
+   `HorarioDB.aula_asignada_manualmente`; se setea desde el diálogo
+   de reasignación en cascada (checkbox "Marcar como manual" por
+   asignación) y se puede bajar desde la tabla "Asignaciones
+   manuales protegidas" que aparece debajo del toggle en el panel
+   de configuración del LP.
 4. **Auditoría completa**: cada corrida genera un `LPRunDB` con su
    configuración, status, métricas top-line y un `details_json` con
    el detalle por horario y el diagnóstico estructural.

@@ -572,6 +572,12 @@ lista.
 > generan como cache del asignador de aulas y no hay tab de edición
 > por fecha. La única fuente de verdad editable es el patrón
 > semanal (`HorarioDB`).
+>
+> **Actualización 2026-08-28**: `ClaseDB` quedó formalmente marcado
+> como deprecado. El cache sigue vivo por compatibilidad
+> (`generate_clases_for_plan`, `apply_solution`, cascadas de borrado)
+> pero no se debe usar para features nuevas. Ver
+> [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md).
 
 ---
 

@@ -569,7 +569,19 @@ class PlanificacionCursadaDB(SQLModel, table=True):
 
 
 class ClaseDB(SQLModel, table=True):
-    """An individual class session on a specific date, generated from a horario."""
+    """Instancia puntual de una clase con fecha, expandida desde un ``HorarioDB``.
+
+    .. deprecated::
+        **DEPRECADO** (2026-08). El modelo de dominio activo trabaja
+        exclusivamente sobre el patrón semanal (``HorarioDB``). ``ClaseDB``
+        quedó como cache técnico unidireccional (``HorarioDB`` → ``ClaseDB``)
+        que ninguna vista de la UI renderiza. Se conserva sólo para no
+        romper cascadas de borrado ni la validación
+        ``validar_conflictos_aula_plan``. NO agregar features nuevas
+        que dependan de ``ClaseDB``; el retiro completo (drop table +
+        limpieza de servicios) está trackeado como tarea pendiente.
+        Ver ``project/2. Desarrollo/DEPRECACION_CLASEDB.md``.
+    """
     __tablename__ = "clases"
 
     id: str = Field(primary_key=True)  # UUID
@@ -583,9 +595,8 @@ class ClaseDB(SQLModel, table=True):
     executed: bool = Field(default=False)
     aula_id: Optional[str] = Field(default=None, foreign_key="aulas.id")
     tipo_clase: Optional[str] = Field(default=None)  # "teorica", "laboratorio" o None (sin determinar)
-    # True si la aula fue asignada por una edicion manual del usuario.
-    # El re-run del LP por default respeta estas asignaciones (no las pisa)
-    # salvo que el usuario active el toggle "sobreescribir todo".
+    # DEPRECADO: el flag equivalente vive en ``HorarioDB.aula_asignada_manualmente``.
+    # Acá siempre se persiste ``False``; ninguna parte del flujo activo lo lee.
     aula_asignada_manualmente: bool = Field(default=False)
 
     # Relationships
