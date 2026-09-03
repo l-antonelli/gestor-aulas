@@ -1075,6 +1075,13 @@ def _render_nodo_desplazado(
             f"{oc_horario.hora_inicio.strftime('%H:%M')}"
             f"–{oc_horario.hora_fin.strftime('%H:%M')}){rango_str}"
         )
+        if tipo_sol == "parcial":
+            st.caption(
+                "ℹ️ Este horario dura distinto que el que estás editando. "
+                "Cuidado si le asignás la misma aula: en el tramo que no "
+                "coinciden, esta aula quedaría con dos materias al mismo "
+                "tiempo."
+            )
 
         # Candidatas para este desplazado.
         cands_hijo = get_aulas_todas_para_horario(

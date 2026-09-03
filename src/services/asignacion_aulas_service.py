@@ -2339,7 +2339,11 @@ def validar_y_planificar_cascada(
                     session, horario, aula,
                 ))
 
-        # Solapamiento con padre.
+        # Solapamiento con padre — sólo se calcula para informar el
+        # rango de solapamiento en la UI. El caso problemático (aula
+        # con horarios superpuestos que se pisan) lo detecta la
+        # validación cruzada `_detectar_choques_residuales`, que
+        # produce mensajes más precisos.
         solape_str: Optional[str] = None
         tipo_sol: Optional[str] = None
         if padre is not None:
@@ -2360,12 +2364,6 @@ def validar_y_planificar_cascada(
                         solape_str = (
                             f"{rango[0].strftime('%H:%M')}"
                             f"–{rango[1].strftime('%H:%M')}"
-                        )
-                        warns.append(
-                            "Este horario solapa parcialmente con el "
-                            f"padre (rango en común: {solape_str}). Si el "
-                            "aula del padre no cubre toda la franja de "
-                            "este horario, parte queda descubierta."
                         )
                 elif tipo_sol == "identico":
                     solape_str = "franja completa"
@@ -2494,21 +2492,28 @@ def _detectar_choques_residuales(
                     if h is None:
                         return hid
                     com = session.get(ComisionDB, h.comision_id)
-                    mat = com.materia_codigo if com else "?"
+                    mat_cod = com.materia_codigo if com else "?"
                     com_nombre = com.nombre if com else "?"
+                    materia = session.get(MateriaDB, mat_cod) if mat_cod != "?" else None
+                    mat_nombre = (
+                        materia.nombre if materia else mat_cod
+                    )
                     return (
-                        f"{mat} — {com_nombre} "
-                        f"({h.dia} {h.hora_inicio.strftime('%H:%M')}"
+                        f"**{mat_nombre}** ({mat_cod} · {com_nombre}, "
+                        f"{h.dia} {h.hora_inicio.strftime('%H:%M')}"
                         f"–{h.hora_fin.strftime('%H:%M')})"
                     )
                 meta_i = _meta(hid_i)
                 meta_j = _meta(hid_j)
+                rango_txt = (
+                    f"{sol[0].strftime('%H:%M')}–{sol[1].strftime('%H:%M')}"
+                )
                 msg = (
-                    f"Choque con otro horario: '{aula_nombre}' quedaría "
-                    f"usada por {meta_i} y {meta_j} en franjas solapadas "
-                    f"({sol[0].strftime('%H:%M')}"
-                    f"–{sol[1].strftime('%H:%M')}). Elegí aulas distintas "
-                    "para uno de ellos."
+                    f"El aula **{aula_nombre}** quedaría usada al mismo "
+                    f"tiempo por {meta_i} y {meta_j}. Sus horarios se "
+                    f"pisan de {rango_txt} — en ese tramo habría dos "
+                    f"materias compartiendo el aula. "
+                    f"Elegí otra aula para al menos una de las dos."
                 )
                 if hid_i in tocados_por_cascada:
                     errores_por_horario.append((hid_i, msg))

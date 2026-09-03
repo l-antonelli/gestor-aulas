@@ -778,14 +778,18 @@ class TestValidarYPlanificarCascada:
         raiz = plan.efectos[0]
         assert raiz.horario_id == refs["hor_mat"]
         assert raiz.aula_futura == "X"
-        # Hijos: uno de los dos parcial genera warning
+        # Hijos: los dos tienen tipo_solapamiento "parcial" (metadato
+        # estructurado que la UI usa para informar el rango).
         hijos = plan.efectos[1:]
         assert all(h.nivel == 1 for h in hijos)
         assert all(h.aula_futura is None for h in hijos)
-        assert any(
-            "parcial" in w.lower()
+        assert all(
+            h.tipo_solapamiento_con_padre == "parcial"
             for h in hijos
-            for w in h.warnings
+        )
+        assert all(
+            h.solapamiento_con_padre is not None
+            for h in hijos
         )
 
     def test_cascada_reassign_a_aula_libre_no_dispara_hijos(self, session):
@@ -1115,13 +1119,16 @@ class TestChoquesEnCascada:
             "El plan debería fallar: MAT y FIS terminarían en la misma "
             "aula con franja idéntica."
         )
-        # Debe haber un error que hable del choque
+        # Debe haber un error que hable del choque (aula compartida
+        # entre dos horarios en franjas solapadas).
         todos_errores = plan.errores_globales + [
             err for e in plan.efectos for err in e.errores
         ]
         assert any(
-            "choque" in err.lower() or "misma aula" in err.lower()
-            or "ya está" in err.lower() or "conflicto" in err.lower()
+            "al mismo tiempo" in err.lower()
+            or "se pisan" in err.lower()
+            or "choque" in err.lower()
+            or "conflicto" in err.lower()
             for err in todos_errores
         ), f"Errores actuales: {todos_errores}"
 
