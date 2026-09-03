@@ -1500,11 +1500,11 @@ def _confirmar_cascada(
     # `_dict_a_nodo_cascada` la propague al servicio.
     if plan.efectos:
         st.caption(
-            "Cada asignación tiene una casilla **'Marcar como manual'**: "
-            "si queda tildada, el asignador la va a **respetar** en "
-            "corridas futuras (mientras el toggle 'Respetar ediciones "
-            "manuales' esté activado). Destildala si querés que el "
-            "asignador pueda volver a decidir esa aula."
+            "Cada asignación tiene una casilla **'Marcar como manual'** "
+            "del lado **Después**: si queda tildada, el asignador la va "
+            "a **respetar** en corridas futuras (mientras el toggle "
+            "'Respetar ediciones manuales' esté activado). Destildala "
+            "si querés que el asignador pueda volver a decidir esa aula."
         )
         for ef in plan.efectos:
             h = session.get(HorarioDB, ef.horario_id)
@@ -1515,11 +1515,25 @@ def _confirmar_cascada(
                 else (com.materia_codigo if com else "?")
             )
             com_nombre = com.nombre if com else "?"
-            aula = (
+            aula_previa = (
+                session.get(AulaDB, h.aula_id)
+                if h and h.aula_id else None
+            )
+            aula_previa_txt = (
+                aula_previa.nombre if aula_previa else "_sin aula_"
+            )
+            aula_futura = (
                 session.get(AulaDB, ef.aula_futura)
                 if ef.aula_futura else None
             )
-            aula_txt = aula.nombre if aula else "**sin aula**"
+            aula_futura_txt = (
+                aula_futura.nombre if aula_futura else "**sin aula**"
+            )
+            franja_txt = (
+                f"{h.dia} {h.hora_inicio.strftime('%H:%M')}–"
+                f"{h.hora_fin.strftime('%H:%M')}"
+                if h else ""
+            )
 
             icono = "✅" if ef.ok and not ef.warnings else (
                 "⚠️" if ef.ok else "❌"
@@ -1530,38 +1544,46 @@ def _confirmar_cascada(
             # setear `marcar_manual`.
             nodo_est = _buscar_nodo_en_estado(estado, ef.horario_id)
 
-            col_txt, col_chk = st.columns([5, 2])
-            with col_txt:
+            with st.container(border=True):
                 st.markdown(
-                    f"{indent}{icono} **{mat_nombre}** — {com_nombre} → "
-                    f"{aula_txt}"
+                    f"{indent}{icono} **{mat_nombre}** — {com_nombre}"
+                    + (f"  \n{indent}<small>{franja_txt}</small>"
+                       if franja_txt else ""),
+                    unsafe_allow_html=True,
                 )
+                col_antes, col_despues = st.columns(2)
+                with col_antes:
+                    st.markdown("**Antes**")
+                    st.markdown(f"🏛️ {aula_previa_txt}")
+                with col_despues:
+                    st.markdown("**Después**")
+                    st.markdown(f"🏛️ {aula_futura_txt}")
+                    # Checkbox sólo tiene sentido si la asignación va a
+                    # tener aula. Si el efecto es "sin aula", ocultamos.
+                    if ef.aula_futura is not None and nodo_est is not None:
+                        default_manual = nodo_est.get("marcar_manual")
+                        if default_manual is None:
+                            # Default: tildado (asignación manual explícita).
+                            default_manual = True
+                        chk_key = (
+                            f"dlg_casc_{root_horario_id}_manual_"
+                            f"{ef.horario_id}"
+                        )
+                        val = st.checkbox(
+                            "🔒 Marcar como manual",
+                            value=default_manual,
+                            key=chk_key,
+                            help=(
+                                "Si queda tildada, el asignador va a "
+                                "respetar esta aula en corridas futuras."
+                            ),
+                        )
+                        nodo_est["marcar_manual"] = val
+
                 for err in ef.errores:
-                    st.error(f"{indent}&nbsp;&nbsp;{err}")
+                    st.error(err)
                 for w in ef.warnings:
-                    st.warning(f"{indent}&nbsp;&nbsp;{w}")
-            with col_chk:
-                # Checkbox sólo tiene sentido si la asignación va a
-                # tener aula. Si el efecto es "sin aula", ocultamos.
-                if ef.aula_futura is not None and nodo_est is not None:
-                    default_manual = nodo_est.get("marcar_manual")
-                    if default_manual is None:
-                        # Default: tildado (asignación manual explícita).
-                        default_manual = True
-                    chk_key = (
-                        f"dlg_casc_{root_horario_id}_manual_"
-                        f"{ef.horario_id}"
-                    )
-                    val = st.checkbox(
-                        "🔒 Marcar como manual",
-                        value=default_manual,
-                        key=chk_key,
-                        help=(
-                            "Si queda tildada, el asignador va a "
-                            "respetar esta aula en corridas futuras."
-                        ),
-                    )
-                    nodo_est["marcar_manual"] = val
+                    st.warning(w)
 
     # Vista de calendarios: uno por cada aula afectada.
     st.divider()
