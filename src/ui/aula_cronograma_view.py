@@ -119,6 +119,7 @@ _DEFAULT_FILTROS: dict = {
     "dias": [],
     "comunes_mode": "Todas",
     "sin_aula": False,
+    "excluir_virtuales": False,
     "buscar": "",
     "mostrar_cronograma": False,
 }
@@ -305,7 +306,7 @@ def _build_filtros_panel(
                 placeholder="Ej: '5.3' o 'Práctica Profesional'",
             )
 
-            r4c1, r4c2, r4c3, r4c4 = st.columns([1, 1, 1, 1])
+            r4c1, r4c2, r4c3, r4c4, r4c5 = st.columns([1, 1, 1, 1, 1])
             with r4c1:
                 sel_sin_aula = st.checkbox(
                     "Sólo sin asignar",
@@ -313,10 +314,22 @@ def _build_filtros_panel(
                     key=f"{key_ns}_form_sin_aula",
                     help=(
                         "Mostrar sólo los horarios que no tienen aula "
-                        "del patrón asignada todavía."
+                        "asignada todavía."
                     ),
                 )
             with r4c2:
+                sel_excl_virt = st.checkbox(
+                    "Excluir virtuales",
+                    value=aplicados.get("excluir_virtuales", False),
+                    key=f"{key_ns}_form_excluir_virtuales",
+                    help=(
+                        "Ocultar los horarios virtuales (no requieren "
+                        "aula física). Útil combinado con 'Sólo sin "
+                        "asignar' para revisar sólo los que faltan "
+                        "asignar de verdad."
+                    ),
+                )
+            with r4c3:
                 sel_mostrar_crono = st.checkbox(
                     "Mostrar cronograma",
                     value=aplicados.get("mostrar_cronograma", False),
@@ -326,11 +339,11 @@ def _build_filtros_panel(
                         "esquema semanal con los horarios filtrados."
                     ),
                 )
-            with r4c3:
+            with r4c4:
                 aplicar = st.form_submit_button(
                     "✅ Aplicar filtros", type="primary",
                 )
-            with r4c4:
+            with r4c5:
                 limpiar = st.form_submit_button(
                     "🔄 Limpiar",
                 )
@@ -343,7 +356,8 @@ def _build_filtros_panel(
                 "_form_aula", "_form_sedes", "_form_carreras",
                 "_form_anios", "_form_cuatris", "_form_tipos",
                 "_form_dias", "_form_comunes", "_form_buscar",
-                "_form_sin_aula", "_form_mostrar_crono",
+                "_form_sin_aula", "_form_excluir_virtuales",
+                "_form_mostrar_crono",
             ):
                 st.session_state.pop(f"{key_ns}{suf}", None)
             st.rerun()
@@ -363,6 +377,7 @@ def _build_filtros_panel(
                 "dias": list(sel_dias),
                 "comunes_mode": sel_comunes,
                 "sin_aula": bool(sel_sin_aula),
+                "excluir_virtuales": bool(sel_excl_virt),
                 "buscar": sel_buscar or "",
                 "mostrar_cronograma": bool(sel_mostrar_crono),
             }
@@ -444,11 +459,14 @@ def _aplicar_filtros_horarios_v2(
     f_aula: str | None = filtros.get("aula_id")
     f_comunes_mode: str = filtros.get("comunes_mode") or "Todas"
     f_sin_aula: bool = bool(filtros.get("sin_aula"))
+    f_excl_virt: bool = bool(filtros.get("excluir_virtuales"))
 
     out: list[dict] = []
     for r in rows:
         carr_codes: set[str] = r.get("carreras_codigos", set())
         if f_aula and r.get("aula_id") != f_aula:
+            continue
+        if f_excl_virt and r.get("es_virtual"):
             continue
         if f_sin_aula and r.get("aula_id") is not None:
             continue
@@ -749,11 +767,16 @@ def _render_flujo_cascada_inline(
         )
         return
 
+    reservas = _recolectar_reservas_cascada(
+        session, estado, horario_id_actual=root_horario_id,
+    )
     aula_elegida = _render_selector_aula(
         session, sede_map, candidatas,
         estado_actual=estado["aula_elegida"],
         aula_original=horario_root.aula_id,
         widget_key=f"{key_ns}_expc_{root_horario_id}_root_sel",
+        horario_actual=horario_root,
+        reservas_en_cascada=reservas,
     )
 
     if aula_elegida != estado["aula_elegida"]:
@@ -971,14 +994,58 @@ def _accion_para_aula_raiz(candidatas, aula_id: Optional[str]) -> str:
     return "reassign"
 
 
+def _recolectar_reservas_cascada(
+    session,
+    root_estado: dict,
+    horario_id_actual: str,
+) -> dict[str, list[tuple[str, "object", "object", "object"]]]:
+    """Recorre el árbol de decisiones y devuelve las aulas ya elegidas
+    por otros nodos.
+
+    Devuelve un dict ``aula_id -> lista de (horario_id, dia, hi, hf)``
+    excluyendo la decisión del propio ``horario_id_actual`` (para no
+    marcarse a sí mismo).
+
+    Usado para marcar en el selector de aula del nodo actual cuáles
+    aulas ya están reservadas en este cambio.
+    """
+    from src.database.models import HorarioDB
+
+    reservas: dict[str, list[tuple]] = {}
+
+    def _dfs(nodo: dict):
+        aid = nodo.get("aula_elegida")
+        hid = nodo.get("horario_id")
+        if aid and hid and hid != horario_id_actual:
+            h = session.get(HorarioDB, hid)
+            if h is not None:
+                reservas.setdefault(aid, []).append(
+                    (hid, h.dia, h.hora_inicio, h.hora_fin)
+                )
+        for hijo in nodo.get("hijos", {}).values():
+            _dfs(hijo)
+
+    _dfs(root_estado)
+    return reservas
+
+
 def _render_selector_aula(
     session, sede_map: dict, candidatas: list,
     estado_actual: Optional[str], aula_original: Optional[str],
     widget_key: str,
+    horario_actual=None,
+    reservas_en_cascada: Optional[dict] = None,
 ) -> Optional[str]:
     """Renderiza el selectbox de aula para un horario. Devuelve el
-    aula elegida (o None si "sin asignar")."""
+    aula elegida (o None si "sin asignar").
+
+    Si se pasan ``horario_actual`` y ``reservas_en_cascada``, las
+    aulas que otro nodo de la cascada ya haya elegido y cuya franja
+    solape con la del ``horario_actual`` se filtran del listado —
+    no se pueden elegir porque generarían choque residual.
+    """
     from src.database.models import ComisionDB, MateriaDB
+    from src.services.asignacion_aulas_service import solapamiento_franjas
 
     def _label(c) -> str:
         base = (
@@ -999,9 +1066,29 @@ def _render_selector_aula(
             detalle += f", +{n_oc - 2}"
         return f"[{n_oc} horario{'s' if n_oc != 1 else ''} afectado{'s' if n_oc != 1 else ''}] {base} — {detalle}"
 
-    opciones = ["__NONE__"] + [c.aula.id for c in candidatas]
+    # Filtrar candidatas que ya fueron elegidas por otro nodo de la
+    # cascada con franja solapada al horario actual.
+    aulas_filtradas: set[str] = set()
+    if horario_actual is not None and reservas_en_cascada:
+        for aid, ocupaciones in reservas_en_cascada.items():
+            for _, dia, hi, hf in ocupaciones:
+                sol = solapamiento_franjas(
+                    dia, hi, hf,
+                    horario_actual.dia,
+                    horario_actual.hora_inicio,
+                    horario_actual.hora_fin,
+                )
+                if sol is not None:
+                    aulas_filtradas.add(aid)
+                    break
+
+    candidatas_disponibles = [
+        c for c in candidatas if c.aula.id not in aulas_filtradas
+    ]
+
+    opciones = ["__NONE__"] + [c.aula.id for c in candidatas_disponibles]
     labels = {"__NONE__": "— Sin asignar —"}
-    for c in candidatas:
+    for c in candidatas_disponibles:
         labels[c.aula.id] = _label(c)
 
     # Determinar índice default: preservar estado_actual, o sino usar
@@ -1019,6 +1106,14 @@ def _render_selector_aula(
         format_func=lambda x: labels[x],
         key=widget_key,
     )
+
+    if aulas_filtradas:
+        st.caption(
+            f"ℹ️ {len(aulas_filtradas)} aula(s) no aparecen en el listado "
+            f"porque ya están siendo reasignadas a otro horario en este "
+            f"cambio."
+        )
+
     return None if sel == "__NONE__" else sel
 
 
@@ -1088,6 +1183,11 @@ def _render_nodo_desplazado(
             session, plan_id, oc_horario.id,
         )
 
+        # Reservas: aulas ya elegidas por otros nodos de la cascada.
+        root_estado = _get_state(root_horario_id)
+        reservas = _recolectar_reservas_cascada(
+            session, root_estado, horario_id_actual=oc_horario.id,
+        )
         aula_elegida = _render_selector_aula(
             session, sede_map, cands_hijo,
             estado_actual=hijo["aula_elegida"],
@@ -1095,6 +1195,8 @@ def _render_nodo_desplazado(
             widget_key=(
                 f"dlg_casc_{root_horario_id}_lvl{nivel}_{oc_horario.id}"
             ),
+            horario_actual=oc_horario,
+            reservas_en_cascada=reservas,
         )
 
         # Actualizar estado del hijo si cambió.
