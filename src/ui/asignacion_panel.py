@@ -443,6 +443,187 @@ def _render_summary(run: LPRunDB) -> None:
 
 
 # =============================================================================
+# Métricas en vivo del estado de asignaciones
+# =============================================================================
+
+def _compute_estado_metricas(
+    session: Session, plan_id: str, latest: LPRunDB | None,
+) -> dict:
+    """Recorre el patrón en vivo y calcula métricas del estado actual:
+
+    - ``asignados`` / ``total``: horarios (no virtuales) con aula.
+    - ``sobre``: horarios con ``cap < esperados * (1 - tol_over)``.
+    - ``manuales``: horarios con ``aula_asignada_manualmente=True``.
+    - ``colisiones``: cantidad de pares de horarios que comparten
+      aula y se superponen en el mismo día.
+
+    Las tolerancias se toman del último ``LPRunDB`` (si existe) para
+    mantener consistencia con la corrida vigente. Si no hay run,
+    fallback a los defaults de ``LPConfig``.
+    """
+    from src.services.plan_generation_service import (
+        get_inscriptos_esperados_por_comision,
+    )
+    from src.services.resolucion_jerarquica import resolve_virtual
+    from src.database.models import (
+        AulaDB, DictadoCicloDB, DictadoDB, MateriaDB,
+    )
+
+    plan = session.get(PlanificacionCursadaDB, plan_id)
+    if plan is None:
+        return {
+            "asignados": 0, "total": 0, "sobre": 0,
+            "manuales": 0, "colisiones": 0,
+        }
+
+    com_ids = list(session.exec(
+        select(ComisionDB.id).where(
+            ComisionDB.plan_cursada_id == plan_id,
+        )
+    ).all())
+    if not com_ids:
+        return {
+            "asignados": 0, "total": 0, "sobre": 0,
+            "manuales": 0, "colisiones": 0,
+        }
+
+    horarios = list(session.exec(
+        select(HorarioDB).where(
+            HorarioDB.comision_id.in_(com_ids)  # type: ignore[attr-defined]
+        )
+    ).all())
+
+    # Filtrar virtuales usando la resolución jerárquica (misma lógica
+    # que el LP y el detalle en vivo).
+    materia_codigos = sorted({h.codigo_materia for h in horarios})
+    materias = list(session.exec(
+        select(MateriaDB).where(
+            MateriaDB.codigo.in_(materia_codigos)  # type: ignore[attr-defined]
+        )
+    ).all()) if materia_codigos else []
+    materia_virtual = {m.codigo: m.virtual for m in materias}
+    materia_dictado_virtual: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(DictadoDB.materia_codigo, DictadoDB.virtual)
+            .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)  # type: ignore[arg-type]
+            .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dictado_virtual[mc] = v
+
+    horarios_no_virt = [
+        h for h in horarios
+        if not resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        )
+    ]
+    total = len(horarios_no_virt)
+    asignados = sum(1 for h in horarios_no_virt if h.aula_id is not None)
+    manuales = sum(
+        1 for h in horarios_no_virt if h.aula_asignada_manualmente
+    )
+
+    # Sobre-ocupación en vivo (usando tolerancias del último run).
+    tol_over = latest.tol_over if latest is not None else 0.0
+    esperados_por_com = get_inscriptos_esperados_por_comision(
+        session, plan_id,
+    )
+    aula_ids = {h.aula_id for h in horarios_no_virt if h.aula_id}
+    aulas_db = list(session.exec(
+        select(AulaDB).where(
+            AulaDB.id.in_(aula_ids)  # type: ignore[attr-defined]
+        )
+    ).all()) if aula_ids else []
+    cap_por_aula = {a.id: a.capacidad for a in aulas_db}
+    sobre = 0
+    for h in horarios_no_virt:
+        if h.aula_id is None:
+            continue
+        insc = float(esperados_por_com.get(h.comision_id, 0.0) or 0.0)
+        cap = cap_por_aula.get(h.aula_id, 0)
+        if insc > 0 and cap < insc * (1 - tol_over):
+            sobre += 1
+
+    # Colisiones: dos horarios del plan comparten aula y se superponen
+    # en día/franja. Sólo miramos horarios con aula asignada.
+    colisiones = 0
+    por_aula: dict[str, list[HorarioDB]] = {}
+    for h in horarios_no_virt:
+        if h.aula_id is not None:
+            por_aula.setdefault(h.aula_id, []).append(h)
+    for lista in por_aula.values():
+        for i, h1 in enumerate(lista):
+            for h2 in lista[i + 1:]:
+                if h1.dia != h2.dia:
+                    continue
+                if not (
+                    h1.hora_fin <= h2.hora_inicio
+                    or h2.hora_fin <= h1.hora_inicio
+                ):
+                    colisiones += 1
+
+    return {
+        "asignados": asignados, "total": total,
+        "sobre": sobre, "manuales": manuales,
+        "colisiones": colisiones,
+    }
+
+
+def _render_estado_metricas(metricas: dict) -> None:
+    """Renderiza la fila de métricas top del expander Estado de
+    Asignaciones."""
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "Asignados",
+        f"{metricas['asignados']}/{metricas['total']}",
+        help=(
+            "Horarios presenciales del plan con aula asignada, sobre "
+            "el total de horarios no virtuales. Si es menor al total, "
+            "hay horarios sin aula todavía."
+        ),
+    )
+    c2.metric(
+        "Sobre-ocupados",
+        metricas["sobre"],
+        help=(
+            "Horarios cuyo aula asignada tiene capacidad menor a los "
+            "inscriptos esperados, superando la tolerancia configurada "
+            "en la última corrida. Idealmente cero."
+        ),
+    )
+    if metricas["colisiones"] > 0:
+        c3.metric(
+            "Colisiones ⚠️",
+            metricas["colisiones"],
+            help=(
+                "Pares de horarios que comparten aula y se superponen "
+                "en el mismo día/franja. NO debería haber ninguna — "
+                "significa que dos clases pretenden usar la misma aula "
+                "al mismo tiempo."
+            ),
+        )
+    else:
+        c3.metric(
+            "Colisiones",
+            0,
+            help=(
+                "Pares de horarios que comparten aula y se superponen "
+                "en el mismo día/franja. Cero es el valor esperado."
+            ),
+        )
+    c4.metric(
+        "Manuales protegidos 🔒",
+        metricas["manuales"],
+        help=(
+            "Horarios con aula fijada por el usuario que el asignador "
+            "va a respetar como restricción en la próxima corrida."
+        ),
+    )
+
+
+# =============================================================================
 # Public API
 # =============================================================================
 
@@ -476,16 +657,49 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     latest = get_latest_run(session, plan_id)
 
     # ======================================================
-    # Expander: Asignador de Aulas (última corrida + correr nueva)
+    # Expander: Estado de Asignaciones (métricas + mapa + tabla)
     # ======================================================
-    with st.expander("🏛️ Asignador de aulas", expanded=True):
+    metricas = _compute_estado_metricas(session, plan_id, latest)
+    with st.expander("📊 Estado de asignaciones", expanded=True):
+        _render_estado_metricas(metricas)
+        if latest is not None:
+            st.markdown("---")
+            from src.ui.asignacion_resultado_ui import render_resultado
+            render_resultado(session, latest, key_ns=f"{key_ns}_res")
+        else:
+            st.info(
+                "Todavía no se ejecutó ninguna asignación para este "
+                "plan. Corré la asignación desde el expander de abajo "
+                "para ver el detalle del mapa de saturación y la "
+                "tabla por horario."
+            )
+
+    # ======================================================
+    # Expander: Gestión de Asignaciones (edición manual + cronograma)
+    # ======================================================
+    with st.expander("🛠️ Gestión de asignaciones", expanded=False):
+        st.caption(
+            "Editá manualmente las asignaciones de aulas de cada "
+            "horario, marcá cambios como manuales para que la próxima "
+            "corrida del asignador los respete, y revisá el cronograma "
+            "de cada aula."
+        )
+        from src.ui.aula_cronograma_view import render_aula_cronograma
+        render_aula_cronograma(session, plan_id, key_ns=f"{key_ns}_aula")
+
+    # ======================================================
+    # Expander: Asignador de Aulas (correr nueva corrida + resumen)
+    # ======================================================
+    with st.expander(
+        "🏛️ Asignador de aulas",
+        expanded=(latest is None),
+    ):
         if latest is not None:
             _render_summary(latest)
         else:
             st.info(
-                "Todavía no se ejecutó ninguna asignación para este "
-                "plan. Configurá los parámetros abajo y apretá "
-                "**🚀 Asignar aulas**."
+                "Configurá los parámetros abajo y apretá "
+                "**🚀 Asignar aulas** para correr por primera vez."
             )
 
         with st.expander(
@@ -514,7 +728,7 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
         if run.status == "optimal":
             st.success(
                 f"Asignación resuelta en {run.solver_seconds:.2f}s. "
-                f"{run.n_clases_actualizadas} clases actualizadas."
+                f"{run.n_horarios_reasignados} horario(s) reasignado(s)."
             )
         else:
             _mensajes_status = {
@@ -528,18 +742,3 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
                 f"{run.error_message or 'Sin detalles.'}"
             )
         st.rerun()
-
-    # ======================================================
-    # Expander: Gestión de Asignaciones (mapa + advertencias + detalle)
-    # ======================================================
-    if latest is not None:
-        with st.expander("🧭 Gestión de asignaciones", expanded=False):
-            from src.ui.asignacion_resultado_ui import render_resultado
-            render_resultado(session, latest, key_ns=f"{key_ns}_res")
-
-    # ======================================================
-    # Expander: Cronograma por aula (independiente del run)
-    # ======================================================
-    with st.expander("📅 Cronograma por aula", expanded=False):
-        from src.ui.aula_cronograma_view import render_aula_cronograma
-        render_aula_cronograma(session, plan_id, key_ns=f"{key_ns}_aula")

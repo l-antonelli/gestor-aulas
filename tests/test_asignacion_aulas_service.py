@@ -1732,3 +1732,84 @@ class TestCarreraAsignadaOverride:
         # Solo a_b (sede de B); a_pe (default comunes) queda fuera.
         assert "a_b" in ids
         assert "a_pe" not in ids
+
+
+class TestComputeEstadoMetricas:
+    """Métricas 'Estado de asignaciones' del panel: asignados/total,
+    sobre-ocupados, colisiones y manuales protegidos. Se computan en
+    vivo sobre HorarioDB (no del snapshot del último LP)."""
+
+    def test_plan_sin_asignaciones(self, session):
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        _seed_plan_con_clases(session)
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["total"] == 1
+        assert m["asignados"] == 0
+        assert m["sobre"] == 0
+        assert m["colisiones"] == 0
+        assert m["manuales"] == 0
+
+    def test_plan_con_lp_corrido(self, session):
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        _seed_plan_con_clases(session)
+        run = run_lp(session, "plan-1")
+        m = _compute_estado_metricas(session, "plan-1", run)
+        assert m["total"] == 1
+        assert m["asignados"] == 1
+        assert m["manuales"] == 0
+        assert m["colisiones"] == 0
+
+    def test_manuales_se_cuentan(self, session):
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        c1, _ = _seed_plan_con_clases(session)
+        h = session.get(HorarioDB, c1.horario_id)
+        h.aula_id = "a1"
+        h.aula_asignada_manualmente = True
+        session.add(h)
+        session.commit()
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["manuales"] == 1
+        assert m["asignados"] == 1
+
+    def test_colision_detectada(self, session):
+        """Dos horarios en simultaneidad, misma aula → colisión."""
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        # Setup: 2 comisiones, mismo día/franja, misma aula manual.
+        ctx = _seed_basic(session)
+        ciclo = ctx["ciclo"]
+        _add_materia_con_serie(session, "M1", ciclo, esperados=20)
+        _add_materia_con_serie(session, "M2", ciclo, esperados=20)
+        h1 = _add_comision_horario(
+            session, "plan-1", "M1", "Lunes", 8, 10,
+        )
+        h2 = _add_comision_horario(
+            session, "plan-1", "M2", "Lunes", 8, 10,
+        )
+        session.add(AulaDB(
+            id="a1", sede_id="S1", codigo_aula="a1",
+            nombre="A1", capacidad=30,
+        ))
+        session.commit()
+        # Forzar la misma aula a los dos.
+        h1.aula_id = "a1"
+        h2.aula_id = "a1"
+        session.add(h1)
+        session.add(h2)
+        session.commit()
+
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["colisiones"] == 1
+
+    def test_horarios_virtuales_no_cuentan(self, session):
+        """Un horario marcado virtual no entra en el total ni en
+        asignados."""
+        from src.ui.asignacion_panel import _compute_estado_metricas
+        c1, _ = _seed_plan_con_clases(session)
+        h = session.get(HorarioDB, c1.horario_id)
+        h.virtual = True
+        session.add(h)
+        session.commit()
+
+        m = _compute_estado_metricas(session, "plan-1", None)
+        assert m["total"] == 0
+        assert m["asignados"] == 0
