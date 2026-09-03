@@ -83,11 +83,10 @@ ciclos_map = {c.id: c for c in ciclos}
 
 # Pestañas condicionales: Detalle/Grilla/Aulas sólo aparecen cuando
 # hay un plan activo. Sin plan, mostramos únicamente las que operan
-# a nivel ciclo (Generar/Vista General) y la Configuración horaria.
+# a nivel ciclo (Planes del ciclo, Configuración).
 if sel_plan is None:
-    tab_generar, tab_general, tab_config = st.tabs([
-        "📥 Generar Plan",
-        "📋 Vista General",
+    tab_planes, tab_config = st.tabs([
+        "📋 Planes del ciclo",
         "⚙️ Configuración",
     ])
     tab_detalle = None
@@ -95,11 +94,10 @@ if sel_plan is None:
     tab_aulas = None
 else:
     (
-        tab_generar, tab_general, tab_detalle, tab_grilla,
-        tab_aulas, tab_config,
+        tab_planes, tab_detalle, tab_grilla, tab_aulas, tab_config,
     ) = st.tabs([
-        "📥 Generar Plan",
-        "📋 Vista General", "🔍 Detalle del Plan",
+        "📋 Planes del ciclo",
+        "🔍 Detalle del Plan",
         "📋 Grilla Horaria", "🏛️ Aulas", "⚙️ Configuración",
     ])
 
@@ -232,50 +230,22 @@ def _render_plan_editor(
     """
     sel_plan = next(p for p in planes_detalle if p.id == sel_plan_id)
     sel_ciclo_detalle = sel_plan.ciclo_id
-    
-    # --- Editable metadata ---
-    st.markdown("#### Metadata")
-    with st.form(f"edit_plan_{key_ns}_{sel_plan_id}"):
-        nuevo_nombre = st.text_input("Nombre", value=sel_plan.nombre)
-        nueva_desc = st.text_area("Descripcion", value=sel_plan.descripcion or "")
-    
-        # Selector de método de forecast default del plan
-        from src.services.forecast_service import (
-            METODO_LABELS as _PM_LABELS,
-            METODOS_DISPONIBLES as _PM_AVAIL,
-        )
-        _curr_metodo = sel_plan.forecast_metodo_default or "media_movil"
-        _curr_idx = (
-            _PM_AVAIL.index(_curr_metodo)
-            if _curr_metodo in _PM_AVAIL else 0
-        )
-        nuevo_metodo = st.selectbox(
-            "Método de forecast (default del plan)",
-            options=list(_PM_AVAIL),
-            index=_curr_idx,
-            format_func=lambda m: _PM_LABELS.get(m, m),
-            help=(
-                "Método aplicado por defecto a todas las materias "
-                "del plan al calcular inscriptos esperados. "
-                "Editable por materia más abajo (override)."
-            ),
-        )
-        save_meta = st.form_submit_button("Guardar", type="primary")
-    
-        if save_meta:
-            with next(get_session()) as session:
-                db_plan = session.get(PlanificacionCursadaDB, sel_plan_id)
-                if db_plan:
-                    db_plan.nombre = nuevo_nombre
-                    db_plan.descripcion = nueva_desc
-                    db_plan.forecast_metodo_default = nuevo_metodo
-                    session.add(db_plan)
-                    session.commit()
-                    st.success("Metadata actualizada")
-                    st.rerun()
-    
+
+    # --- Cabecera identificatoria ---
+    # La metadata (nombre, descripción, método de forecast) se edita
+    # inline desde la lista de **📋 Planes del ciclo**. Acá sólo la
+    # mostramos como referencia.
+    st.markdown(f"#### {sel_plan.nombre}")
+    if sel_plan.descripcion:
+        st.caption(sel_plan.descripcion)
+    st.caption(
+        "Para renombrar, cambiar descripción o método de forecast "
+        "por defecto, andá a **📋 Planes del ciclo → ✏️ Editar "
+        "metadata**."
+    )
+
     st.divider()
-    
+
     # --- Statistics panel ---
     st.markdown("#### Estadisticas")
     with next(get_session()) as session:
@@ -502,317 +472,469 @@ def _wizard_reset() -> None:
             del st.session_state[k]
 
 
-with tab_generar:
-    st.subheader("Generar Plan de Cursada")
-
-    _wizard_plan_id = st.session_state.get("wizard_plan_id")
-
-    # ----- Paso 1: Seleccion + crear borrador -----
-    if _wizard_plan_id is None:
-        st.markdown("### Paso 1: Seleccionar cronograma y crear borrador")
-        st.caption(
-            "Solo se pueden usar cronogramas **validados y vigentes** "
-            "(sin cambios desde la última validación). Al continuar, se "
-            "crea un plan **borrador** (inactivo) con las comisiones y "
-            "horarios derivados. En el paso siguiente lo podés editar "
-            "libremente sin afectar al cronograma ni al catálogo."
-        )
-
-        sel_ciclo_w = sel_ciclo
-        st.caption(
-            f"Ciclo activo: **{sel_ciclo}** (cambialo desde el panel "
-            f"lateral si querés generar un plan de otro ciclo)."
-        )
-
-        from src.services.cronograma_validation_service import (
-            get_latest_validation,
-            is_validation_stale,
-        )
-        from src.services.schedule_service import get_schedules_for_ciclo
-
-        with next(get_session()) as _ws:
-            _w_scheds = get_schedules_for_ciclo(_ws, sel_ciclo_w)
-            _w_sched_status: dict[str, dict] = {}
-            for s in _w_scheds:
-                _val = get_latest_validation(_ws, s.id, sel_ciclo_w)
-                _stale = (
-                    is_validation_stale(_ws, _val) if _val is not None else False
-                )
-                if _val is None:
-                    _badge, _ok = "⚪ Sin validar", False
-                elif _stale:
-                    _badge, _ok = "🟡 Validado pero desactualizado", False
-                else:
-                    _badge, _ok = "🟢 Validado y vigente", True
-                _w_sched_status[s.id] = {
-                    "schedule": s, "badge": _badge, "ok": _ok,
-                }
-
-        if not _w_scheds:
-            st.info(
-                "No hay cronogramas cargados para este ciclo. "
-                "Cargá uno desde **📅 Cronogramas**."
-            )
-        else:
-            _w_valid_ids = [
-                sid for sid, s in _w_sched_status.items() if s["ok"]
-            ]
-            if not _w_valid_ids:
-                st.warning(
-                    "Ningún cronograma del ciclo está validado y vigente. "
-                    "Andá a **📅 Cronogramas → ✅ Validar** para habilitar uno."
-                )
-                for sid, s in _w_sched_status.items():
-                    st.markdown(
-                        f"- {s['badge']} — **{s['schedule'].nombre}**"
-                    )
-            else:
-                _sel_sched_w = st.selectbox(
-                    "Cronograma (solo validados y vigentes)",
-                    options=_w_valid_ids,
-                    format_func=lambda sid: (
-                        f"{_w_sched_status[sid]['badge']} — "
-                        f"{_w_sched_status[sid]['schedule'].nombre}"
-                    ),
-                    key="wizard_sel_sched",
-                )
-
-                _no_validos = [
-                    (sid, s) for sid, s in _w_sched_status.items()
-                    if not s["ok"]
-                ]
-                if _no_validos:
-                    with st.expander(
-                        f"Cronogramas no disponibles ({len(_no_validos)})",
-                        expanded=False,
-                    ):
-                        for sid, s in _no_validos:
-                            st.markdown(
-                                f"- {s['badge']} — **{s['schedule'].nombre}**"
-                            )
-
-                st.divider()
-                st.markdown("**Datos del plan**")
-                _w_nombre = st.text_input(
-                    "Nombre del plan",
-                    value=f"Plan {sel_ciclo_w} ({_w_sched_status[_sel_sched_w]['schedule'].nombre})",
-                    key="wizard_nombre_input",
-                )
-                _w_descripcion = st.text_area(
-                    "Descripción (opcional)",
-                    value="",
-                    key="wizard_descripcion_input",
-                    height=80,
-                )
-
-                from src.services.forecast_service import (
-                    METODOS_DISPONIBLES as _W_METODOS,
-                    METODO_LABELS as _W_M_LABELS,
-                )
-                _w_metodo = st.selectbox(
-                    "Método de forecast por defecto",
-                    options=list(_W_METODOS),
-                    index=0,
-                    format_func=lambda m: _W_M_LABELS.get(m, m),
-                    key="wizard_metodo_input",
-                    help=(
-                        "Se aplica a todas las materias del plan al calcular "
-                        "inscriptos esperados. Editable por materia después."
-                    ),
-                )
-
-                if st.button(
-                    "Crear borrador y continuar →",
-                    type="primary",
-                    key="wizard_create_draft",
-                    disabled=not _w_nombre.strip(),
-                ):
-                    from src.services.plan_generation_service import (
-                        preview_plan_from_schedule,
-                        generate_plan_from_preview,
-                    )
-                    with next(get_session()) as _gs:
-                        _gen_preview = preview_plan_from_schedule(_gs, _sel_sched_w)
-                        _result = generate_plan_from_preview(
-                            _gs,
-                            _sel_sched_w,
-                            _w_nombre.strip(),
-                            sel_ciclo_w,
-                            _gen_preview.materias,
-                            descripcion=_w_descripcion,
-                            forecast_metodo_default=_w_metodo,
-                        )
-                    if _result.errors:
-                        for err in _result.errors:
-                            st.error(err)
-                    else:
-                        _new_id = _result.plan.id if _result.plan else None
-                        if _new_id:
-                            st.session_state["wizard_plan_id"] = _new_id
-                            st.toast(
-                                f"Borrador creado: {_result.comisiones_created} "
-                                f"comision(es), {_result.horarios_created} horario(s)."
-                            )
-                            st.rerun()
-
-    # ----- Paso 2: Edicion del plan recien creado -----
-    else:
-        with next(get_session()) as _es:
-            _wizard_plan = _es.get(PlanificacionCursadaDB, _wizard_plan_id)
-        if _wizard_plan is None:
-            st.error(
-                "El plan borrador ya no existe. Empezá de nuevo."
-            )
-            _wizard_reset()
-            if st.button("Volver al inicio", key="wizard_back_to_step1"):
-                st.rerun()
-        else:
-            _bc1, _bc2, _bc3 = st.columns([2, 2, 4])
-            with _bc1:
-                if st.button(
-                    "🗑️ Cancelar (borra el plan)",
-                    key="wizard_cancel",
-                    help=(
-                        "Borra el plan borrador y todas sus comisiones, "
-                        "horarios y clases. No se puede deshacer."
-                    ),
-                ):
-                    from src.services.plan_generation_service import (
-                        delete_plan_cascade,
-                    )
-                    with next(get_session()) as _ds:
-                        delete_plan_cascade(_ds, _wizard_plan_id)
-                    _wizard_reset()
-                    st.toast("Plan borrador eliminado.")
-                    st.rerun()
-            with _bc2:
-                if st.button(
-                    "✅ Confirmar y salir del wizard",
-                    type="primary",
-                    key="wizard_confirm",
-                    help=(
-                        "Sale del modo wizard. El plan ya está creado como "
-                        "borrador. Activarlo desde Vista General cuando esté listo."
-                    ),
-                ):
-                    # Setear el ciclo y plan activos en el sidebar
-                    # para que el usuario pueda ir directo a Detalle.
-                    from src.ui.planes_sidebar import CICLO_KEY, PLAN_KEY
-                    st.session_state[CICLO_KEY] = _wizard_plan.ciclo_id
-                    st.session_state[PLAN_KEY] = _wizard_plan_id
-                    _wizard_reset()
-                    st.toast("Plan listo. Andá a 🔍 Detalle del Plan para seguir editándolo.")
-                    st.rerun()
-            with _bc3:
-                st.markdown(
-                    f"### Editando: **{_wizard_plan.nombre}** "
-                    f"<span style='color:#888;font-size:0.85em'>"
-                    f"(borrador inactivo)</span>",
-                    unsafe_allow_html=True,
-                )
-
-            st.caption(
-                "💡 Editá comisiones, horarios, tipo de clase, coeficientes "
-                "y método de forecast. Los cambios afectan solo a este plan, "
-                "no al cronograma ni al catálogo. Si cerrás esta pestaña sin "
-                "Confirmar ni Cancelar, el plan queda como borrador en "
-                "**Vista General**."
-            )
-            st.divider()
-
-            # Embeber el editor del plan in-place. La lista pasada como
-            # `planes_detalle` solo necesita contener este plan.
-            _render_plan_editor(
-                _wizard_plan_id, [_wizard_plan], key_ns="wizard",
-            )
-
-
-
-# =============================================================================
-# Tab 3: Vista General
-# =============================================================================
-with tab_general:
-    st.subheader("Vista General de Planes")
-    sel_ciclo_general = sel_ciclo
+with tab_planes:
+    st.subheader("Planes del ciclo")
     st.caption(f"Ciclo activo: **{sel_ciclo}**")
 
-    if sel_ciclo_general:
-        with next(get_session()) as session:
-            planes = session.exec(
-                select(PlanificacionCursadaDB)
-                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_general)
-            ).all()
+    # =========================================================
+    # Lista de planes existentes con métricas + edit inline
+    # =========================================================
+    with next(get_session()) as _lps:
+        _planes_lista = list(_lps.exec(
+            select(PlanificacionCursadaDB)
+            .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo)
+        ).all())
 
-        if not planes:
-            st.info("No hay planes para este ciclo. Carga un cronograma y genera uno desde la pestana Cronogramas.")
-        else:
-            for plan in planes:
-                with st.container(border=True):
-                    col_info, col_metrics, col_actions = st.columns([3, 4, 2])
+    if not _planes_lista:
+        st.info(
+            "No hay planes cargados en este ciclo. Generá uno desde "
+            "**➕ Generar plan nuevo** al final de la página."
+        )
+    else:
+        from src.database.models import ScheduleDB as _SchedDB
+        from src.services.forecast_service import (
+            METODO_LABELS as _PLAN_METODO_LABELS,
+            METODOS_DISPONIBLES as _PLAN_METODOS,
+        )
+        _sched_map: dict[str, str] = {}
+        _sched_ids = {p.schedule_id for p in _planes_lista if p.schedule_id}
+        if _sched_ids:
+            with next(get_session()) as _tmp:
+                for sid in _sched_ids:
+                    _sch = _tmp.get(_SchedDB, sid)
+                    if _sch:
+                        _sched_map[sid] = _sch.nombre
 
-                    with col_info:
-                        st.markdown(f"### {plan.nombre}")
-                        st.caption(plan.descripcion or "Sin descripción")
-                        # Resolver el nombre del cronograma origen si existe.
-                        _sched_nombre = "sin cronograma vinculado"
-                        if plan.schedule_id:
-                            from src.database.models import ScheduleDB as _SchedDB
-                            with next(get_session()) as _tmp_sess:
-                                _sch = _tmp_sess.get(_SchedDB, plan.schedule_id)
-                                if _sch:
-                                    _sched_nombre = _sch.nombre
-                        st.caption(f"Cronograma origen: {_sched_nombre}")
+        for _plan in _planes_lista:
+            _is_active = (_plan.id == sel_plan)
+            with st.container(border=True):
+                col_info, col_metrics, col_actions = st.columns([3, 4, 2])
 
-                    with col_metrics:
-                        with next(get_session()) as session:
-                            n_comisiones = session.exec(
-                                select(func.count(ComisionDB.id))
-                                .where(ComisionDB.plan_cursada_id == plan.id)
-                            ).one()
-                            n_materias = session.exec(
-                                select(func.count(func.distinct(ComisionDB.materia_codigo)))
-                                .where(ComisionDB.plan_cursada_id == plan.id)
-                            ).one()
-                            n_horarios = session.exec(
-                                select(func.count(HorarioDB.id))
-                                .join(ComisionDB, HorarioDB.comision_id == ComisionDB.id)
-                                .where(ComisionDB.plan_cursada_id == plan.id)
-                            ).one()
+                with col_info:
+                    _active_badge = " · ✅ Activo" if _is_active else ""
+                    st.markdown(f"### {_plan.nombre}{_active_badge}")
+                    st.caption(_plan.descripcion or "Sin descripción")
+                    _sched_nombre = (
+                        _sched_map.get(_plan.schedule_id, "?")
+                        if _plan.schedule_id else "sin cronograma vinculado"
+                    )
+                    st.caption(f"Cronograma origen: {_sched_nombre}")
 
-                        m1, m2, m3 = st.columns(3)
-                        m1.metric("Materias", n_materias)
-                        m2.metric("Comisiones", n_comisiones)
-                        m3.metric("Horarios", n_horarios)
+                with col_metrics:
+                    with next(get_session()) as _ms:
+                        _n_materias = _ms.exec(
+                            select(func.count(func.distinct(
+                                ComisionDB.materia_codigo
+                            )))
+                            .where(ComisionDB.plan_cursada_id == _plan.id)
+                        ).one()
+                        _n_comisiones = _ms.exec(
+                            select(func.count(ComisionDB.id))
+                            .where(ComisionDB.plan_cursada_id == _plan.id)
+                        ).one()
+                        _n_horarios = _ms.exec(
+                            select(func.count(HorarioDB.id))
+                            .join(
+                                ComisionDB,
+                                HorarioDB.comision_id == ComisionDB.id,  # type: ignore[arg-type]
+                            )
+                            .where(ComisionDB.plan_cursada_id == _plan.id)
+                        ).one()
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Materias", _n_materias)
+                    m2.metric("Comisiones", _n_comisiones)
+                    m3.metric("Horarios", _n_horarios)
 
-                    with col_actions:
-                        if st.button("Eliminar", key=f"gen_delete_{plan.id}", type="secondary"):
-                            with next(get_session()) as session:
-                                # Delete in FK order: clases → horarios → comisiones → plan
-                                clases = session.exec(
-                                    select(ClaseDB).where(ClaseDB.plan_cursada_id == plan.id)
-                                ).all()
-                                for c in clases:
-                                    session.delete(c)
-
-                                comisiones = session.exec(
-                                    select(ComisionDB).where(ComisionDB.plan_cursada_id == plan.id)
-                                ).all()
-                                for com in comisiones:
-                                    horarios = session.exec(
-                                        select(HorarioDB).where(HorarioDB.comision_id == com.id)
-                                    ).all()
-                                    for h in horarios:
-                                        session.delete(h)
-                                    session.delete(com)
-
-                                db_plan = session.get(PlanificacionCursadaDB, plan.id)
-                                if db_plan:
-                                    session.delete(db_plan)
-                                session.commit()
-                            st.success(f"Plan '{plan.nombre}' eliminado")
+                with col_actions:
+                    if not _is_active:
+                        if st.button(
+                            "Seleccionar",
+                            key=f"lp_select_{_plan.id}",
+                            type="primary",
+                            help=(
+                                "Marca este plan como activo (aparece "
+                                "también en el panel lateral)."
+                            ),
+                        ):
+                            from src.ui.planes_sidebar import (
+                                PLAN_KEY as _PK,
+                            )
+                            st.session_state[_PK] = _plan.id
                             st.rerun()
+                    else:
+                        st.caption(
+                            "Este es el plan activo. Editá su "
+                            "contenido desde **🔍 Detalle**, la "
+                            "**📋 Grilla Horaria** o **🏛️ Aulas**."
+                        )
+                    if st.button(
+                        "🗑️ Eliminar",
+                        key=f"lp_delete_{_plan.id}",
+                        help="Borra el plan y todo su contenido.",
+                    ):
+                        with next(get_session()) as _ds:
+                            _clases = list(_ds.exec(
+                                select(ClaseDB)
+                                .where(ClaseDB.plan_cursada_id == _plan.id)
+                            ).all())
+                            for _c in _clases:
+                                _ds.delete(_c)
+                            _coms = list(_ds.exec(
+                                select(ComisionDB)
+                                .where(ComisionDB.plan_cursada_id == _plan.id)
+                            ).all())
+                            for _com in _coms:
+                                _hors = list(_ds.exec(
+                                    select(HorarioDB)
+                                    .where(HorarioDB.comision_id == _com.id)
+                                ).all())
+                                for _h in _hors:
+                                    _ds.delete(_h)
+                                _ds.delete(_com)
+                            _db_plan = _ds.get(
+                                PlanificacionCursadaDB, _plan.id,
+                            )
+                            if _db_plan:
+                                _ds.delete(_db_plan)
+                            _ds.commit()
+                        # Si borré el activo, resetear session_state.
+                        if _is_active:
+                            from src.ui.planes_sidebar import (
+                                PLAN_KEY as _PK,
+                            )
+                            st.session_state[_PK] = None
+                        st.success(
+                            f"Plan '{_plan.nombre}' eliminado."
+                        )
+                        st.rerun()
 
-            st.caption(f"Total: {len(planes)} plan(es) para {sel_ciclo_general}")
+                # Edit inline de metadata (expander propio).
+                with st.expander(
+                    "✏️ Editar metadata (nombre / descripción / método "
+                    "de forecast)",
+                    expanded=False,
+                ):
+                    with st.form(f"edit_meta_{_plan.id}"):
+                        _nuevo_nombre = st.text_input(
+                            "Nombre",
+                            value=_plan.nombre,
+                            key=f"lp_nombre_{_plan.id}",
+                        )
+                        _nueva_desc = st.text_area(
+                            "Descripción",
+                            value=_plan.descripcion or "",
+                            key=f"lp_desc_{_plan.id}",
+                        )
+                        _curr_metodo = (
+                            _plan.forecast_metodo_default or "media_movil"
+                        )
+                        _curr_idx = (
+                            _PLAN_METODOS.index(_curr_metodo)
+                            if _curr_metodo in _PLAN_METODOS else 0
+                        )
+                        _nuevo_metodo = st.selectbox(
+                            "Método de forecast (default del plan)",
+                            options=list(_PLAN_METODOS),
+                            index=_curr_idx,
+                            format_func=lambda m: (
+                                _PLAN_METODO_LABELS.get(m, m)
+                            ),
+                            key=f"lp_metodo_{_plan.id}",
+                            help=(
+                                "Método aplicado por defecto a todas "
+                                "las materias del plan al calcular "
+                                "inscriptos esperados. Editable por "
+                                "materia desde el Detalle."
+                            ),
+                        )
+                        _save_meta = st.form_submit_button(
+                            "Guardar", type="primary",
+                        )
+                    if _save_meta:
+                        with next(get_session()) as _ms:
+                            _db_plan = _ms.get(
+                                PlanificacionCursadaDB, _plan.id,
+                            )
+                            if _db_plan:
+                                _db_plan.nombre = _nuevo_nombre
+                                _db_plan.descripcion = _nueva_desc
+                                _db_plan.forecast_metodo_default = (
+                                    _nuevo_metodo
+                                )
+                                _ms.add(_db_plan)
+                                _ms.commit()
+                        st.success("Metadata actualizada.")
+                        st.rerun()
+
+        st.caption(f"Total: {len(_planes_lista)} plan(es) en este ciclo.")
+
+    st.divider()
+
+    # =========================================================
+    # Bloque "Generar plan nuevo" (wizard)
+    # =========================================================
+    _wizard_plan_id = st.session_state.get("wizard_plan_id")
+    _wizard_expanded = _wizard_plan_id is not None or not _planes_lista
+
+    with st.expander(
+        "➕ Generar plan nuevo desde un cronograma",
+        expanded=_wizard_expanded,
+    ):
+
+        # ----- Paso 1: Seleccion + crear borrador -----
+        if _wizard_plan_id is None:
+            st.markdown(
+                "**Paso 1: Seleccionar cronograma y crear borrador**"
+            )
+            st.caption(
+                "Solo se pueden usar cronogramas **validados y "
+                "vigentes** (sin cambios desde la última validación). "
+                "Al continuar, se crea un plan **borrador** (inactivo) "
+                "con las comisiones y horarios derivados. En el paso "
+                "siguiente lo podés editar libremente sin afectar al "
+                "cronograma ni al catálogo."
+            )
+
+            sel_ciclo_w = sel_ciclo
+
+            from src.services.cronograma_validation_service import (
+                get_latest_validation,
+                is_validation_stale,
+            )
+            from src.services.schedule_service import (
+                get_schedules_for_ciclo,
+            )
+
+            with next(get_session()) as _ws:
+                _w_scheds = get_schedules_for_ciclo(_ws, sel_ciclo_w)
+                _w_sched_status: dict[str, dict] = {}
+                for s in _w_scheds:
+                    _val = get_latest_validation(
+                        _ws, s.id, sel_ciclo_w,
+                    )
+                    _stale = (
+                        is_validation_stale(_ws, _val)
+                        if _val is not None else False
+                    )
+                    if _val is None:
+                        _badge, _ok = "⚪ Sin validar", False
+                    elif _stale:
+                        _badge, _ok = (
+                            "🟡 Validado pero desactualizado", False,
+                        )
+                    else:
+                        _badge, _ok = "🟢 Validado y vigente", True
+                    _w_sched_status[s.id] = {
+                        "schedule": s, "badge": _badge, "ok": _ok,
+                    }
+
+            if not _w_scheds:
+                st.info(
+                    "No hay cronogramas cargados para este ciclo. "
+                    "Cargá uno desde **📅 Cronogramas**."
+                )
+            else:
+                _w_valid_ids = [
+                    sid for sid, s in _w_sched_status.items() if s["ok"]
+                ]
+                if not _w_valid_ids:
+                    st.warning(
+                        "Ningún cronograma del ciclo está validado y "
+                        "vigente. Andá a **📅 Cronogramas → ✅ "
+                        "Validar** para habilitar uno."
+                    )
+                    for sid, s in _w_sched_status.items():
+                        st.markdown(
+                            f"- {s['badge']} — "
+                            f"**{s['schedule'].nombre}**"
+                        )
+                else:
+                    _sel_sched_w = st.selectbox(
+                        "Cronograma (solo validados y vigentes)",
+                        options=_w_valid_ids,
+                        format_func=lambda sid: (
+                            f"{_w_sched_status[sid]['badge']} — "
+                            f"{_w_sched_status[sid]['schedule'].nombre}"
+                        ),
+                        key="wizard_sel_sched",
+                    )
+
+                    _no_validos = [
+                        (sid, s) for sid, s in _w_sched_status.items()
+                        if not s["ok"]
+                    ]
+                    if _no_validos:
+                        with st.expander(
+                            f"Cronogramas no disponibles "
+                            f"({len(_no_validos)})",
+                            expanded=False,
+                        ):
+                            for sid, s in _no_validos:
+                                st.markdown(
+                                    f"- {s['badge']} — "
+                                    f"**{s['schedule'].nombre}**"
+                                )
+
+                    st.divider()
+                    st.markdown("**Datos del plan**")
+                    _w_nombre = st.text_input(
+                        "Nombre del plan",
+                        value=(
+                            f"Plan {sel_ciclo_w} "
+                            f"({_w_sched_status[_sel_sched_w]['schedule'].nombre})"
+                        ),
+                        key="wizard_nombre_input",
+                    )
+                    _w_descripcion = st.text_area(
+                        "Descripción (opcional)",
+                        value="",
+                        key="wizard_descripcion_input",
+                        height=80,
+                    )
+
+                    from src.services.forecast_service import (
+                        METODOS_DISPONIBLES as _W_METODOS,
+                        METODO_LABELS as _W_M_LABELS,
+                    )
+                    _w_metodo = st.selectbox(
+                        "Método de forecast por defecto",
+                        options=list(_W_METODOS),
+                        index=0,
+                        format_func=lambda m: _W_M_LABELS.get(m, m),
+                        key="wizard_metodo_input",
+                        help=(
+                            "Se aplica a todas las materias del plan "
+                            "al calcular inscriptos esperados. "
+                            "Editable por materia después."
+                        ),
+                    )
+
+                    if st.button(
+                        "Crear borrador y continuar →",
+                        type="primary",
+                        key="wizard_create_draft",
+                        disabled=not _w_nombre.strip(),
+                    ):
+                        from src.services.plan_generation_service import (
+                            preview_plan_from_schedule,
+                            generate_plan_from_preview,
+                        )
+                        with next(get_session()) as _gs:
+                            _gen_preview = preview_plan_from_schedule(
+                                _gs, _sel_sched_w,
+                            )
+                            _result = generate_plan_from_preview(
+                                _gs,
+                                _sel_sched_w,
+                                _w_nombre.strip(),
+                                sel_ciclo_w,
+                                _gen_preview.materias,
+                                descripcion=_w_descripcion,
+                                forecast_metodo_default=_w_metodo,
+                            )
+                        if _result.errors:
+                            for err in _result.errors:
+                                st.error(err)
+                        else:
+                            _new_id = (
+                                _result.plan.id if _result.plan else None
+                            )
+                            if _new_id:
+                                st.session_state["wizard_plan_id"] = (
+                                    _new_id
+                                )
+                                st.toast(
+                                    f"Borrador creado: "
+                                    f"{_result.comisiones_created} "
+                                    f"comision(es), "
+                                    f"{_result.horarios_created} "
+                                    f"horario(s)."
+                                )
+                                st.rerun()
+
+        # ----- Paso 2: Edicion del plan recien creado -----
+        else:
+            with next(get_session()) as _es:
+                _wizard_plan = _es.get(
+                    PlanificacionCursadaDB, _wizard_plan_id,
+                )
+            if _wizard_plan is None:
+                st.error(
+                    "El plan borrador ya no existe. Empezá de nuevo."
+                )
+                _wizard_reset()
+                if st.button(
+                    "Volver al inicio", key="wizard_back_to_step1",
+                ):
+                    st.rerun()
+            else:
+                _bc1, _bc2, _bc3 = st.columns([2, 2, 4])
+                with _bc1:
+                    if st.button(
+                        "🗑️ Cancelar (borra el plan)",
+                        key="wizard_cancel",
+                        help=(
+                            "Borra el plan borrador y todas sus "
+                            "comisiones, horarios y clases. No se "
+                            "puede deshacer."
+                        ),
+                    ):
+                        from src.services.plan_generation_service import (
+                            delete_plan_cascade,
+                        )
+                        with next(get_session()) as _ds:
+                            delete_plan_cascade(_ds, _wizard_plan_id)
+                        _wizard_reset()
+                        st.toast("Plan borrador eliminado.")
+                        st.rerun()
+                with _bc2:
+                    if st.button(
+                        "✅ Confirmar y salir del wizard",
+                        type="primary",
+                        key="wizard_confirm",
+                        help=(
+                            "Sale del modo wizard. El plan ya está "
+                            "creado como borrador. Marcalo como "
+                            "activo desde la lista de arriba."
+                        ),
+                    ):
+                        # Setear el ciclo y plan activos en el sidebar
+                        # para que el usuario pueda ir directo a Detalle.
+                        from src.ui.planes_sidebar import (
+                            CICLO_KEY, PLAN_KEY,
+                        )
+                        st.session_state[CICLO_KEY] = (
+                            _wizard_plan.ciclo_id
+                        )
+                        st.session_state[PLAN_KEY] = _wizard_plan_id
+                        _wizard_reset()
+                        st.toast(
+                            "Plan listo. Andá a 🔍 Detalle del Plan "
+                            "para seguir editándolo."
+                        )
+                        st.rerun()
+                with _bc3:
+                    st.markdown(
+                        f"### Editando: **{_wizard_plan.nombre}** "
+                        f"<span style='color:#888;font-size:0.85em'>"
+                        f"(borrador inactivo)</span>",
+                        unsafe_allow_html=True,
+                    )
+
+                st.caption(
+                    "💡 Editá comisiones, horarios, tipo de clase, "
+                    "coeficientes y método de forecast. Los cambios "
+                    "afectan solo a este plan, no al cronograma ni al "
+                    "catálogo. Si cerrás esta pestaña sin Confirmar "
+                    "ni Cancelar, el plan queda como borrador en la "
+                    "lista de arriba."
+                )
+                st.divider()
+
+                # Embeber el editor del plan in-place.
+                _render_plan_editor(
+                    _wizard_plan_id, [_wizard_plan], key_ns="wizard",
+                )
 
 
 # =============================================================================
