@@ -58,17 +58,28 @@ st.set_page_config(page_title="Planes de Cursada", page_icon="📊", layout="wid
 st.title("📊 Planes de Cursada")
 
 # =============================================================================
-# Data loading
+# Selector global de ciclo + plan en sidebar. Ver `src/ui/planes_sidebar.py`.
+# Todas las pestañas leen del ``sel_ciclo`` y ``sel_plan`` de acá.
 # =============================================================================
+from src.ui.planes_sidebar import render_ciclo_plan_sidebar
+
+with next(get_session()) as session:
+    sel_ciclo, sel_plan = render_ciclo_plan_sidebar(session)
+
+if sel_ciclo is None:
+    st.info(
+        "Seleccioná un **ciclo activo** en el panel lateral para "
+        "empezar. Si no hay ciclos, creá uno desde la página de "
+        "Ciclos."
+    )
+    st.stop()
+
+# Cargamos la lista completa de ciclos para las pestañas que la usan
+# (por ejemplo, el wizard puede necesitar cambiar de ciclo).
 with next(get_session()) as session:
     ciclos = ciclo_crud.get_all(session, limit=100)
-
 ciclo_ids = [c.id for c in ciclos]
 ciclos_map = {c.id: c for c in ciclos}
-
-if not ciclo_ids:
-    st.info("No hay ciclos registrados. Crea uno en la pagina de Ciclos.")
-    st.stop()
 
 (
     tab_generar, tab_general, tab_detalle, tab_grilla,
@@ -494,10 +505,12 @@ with tab_generar:
             "libremente sin afectar al cronograma ni al catálogo."
         )
 
-        sel_ciclo_w = st.selectbox(
-            "Ciclo",
-            options=ciclo_ids,
-            key="wizard_sel_ciclo",
+        sel_ciclo_w = sel_ciclo
+        _c_obj = ciclos_map[sel_ciclo]
+        st.caption(
+            f"Ciclo activo: **{_c_obj.anio} · {_c_obj.numero}C** "
+            f"(cambialo desde el panel lateral si querés generar un "
+            f"plan de otro ciclo)."
         )
 
         from src.services.cronograma_validation_service import (
@@ -671,9 +684,11 @@ with tab_generar:
                         "borrador. Activarlo desde Vista General cuando esté listo."
                     ),
                 ):
-                    # Pre-seleccionar el plan en Detalle
-                    st.session_state["planes_sel_ciclo_detalle"] = _wizard_plan.ciclo_id
-                    st.session_state["planes_sel_plan"] = _wizard_plan_id
+                    # Setear el ciclo y plan activos en el sidebar
+                    # para que el usuario pueda ir directo a Detalle.
+                    from src.ui.planes_sidebar import CICLO_KEY, PLAN_KEY
+                    st.session_state[CICLO_KEY] = _wizard_plan.ciclo_id
+                    st.session_state[PLAN_KEY] = _wizard_plan_id
                     _wizard_reset()
                     st.toast("Plan listo. Andá a 🔍 Detalle del Plan para seguir editándolo.")
                     st.rerun()
@@ -707,10 +722,8 @@ with tab_generar:
 # =============================================================================
 with tab_general:
     st.subheader("Vista General de Planes")
-
-    sel_ciclo_general = st.selectbox(
-        "Seleccionar Ciclo", options=ciclo_ids, key="planes_sel_ciclo_general"
-    )
+    sel_ciclo_general = sel_ciclo
+    st.caption(f"Ciclo activo: **{ciclos_map[sel_ciclo].anio} · {ciclos_map[sel_ciclo].numero}C**")
 
     if sel_ciclo_general:
         with next(get_session()) as session:
@@ -797,30 +810,18 @@ with tab_general:
 with tab_detalle:
     st.subheader("Detalle del Plan")
 
-    sel_ciclo_detalle = st.selectbox(
-        "Seleccionar Ciclo", options=ciclo_ids, key="planes_sel_ciclo_detalle"
-    )
-
-    if sel_ciclo_detalle:
+    if sel_plan is None:
+        st.info(
+            "Seleccioná un **plan activo** en el panel lateral para "
+            "ver y editar su detalle."
+        )
+    else:
         with next(get_session()) as session:
             planes_detalle = session.exec(
                 select(PlanificacionCursadaDB)
-                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_detalle)
+                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo)
             ).all()
-
-        if not planes_detalle:
-            st.info("No hay planes para este ciclo.")
-        else:
-            plan_options = {p.id: p.nombre for p in planes_detalle}
-            sel_plan_id = st.selectbox(
-                "Seleccionar Plan",
-                options=list(plan_options.keys()),
-                format_func=lambda x: plan_options[x],
-                key="planes_sel_plan_detalle"
-            )
-
-            if sel_plan_id:
-                _render_plan_editor(sel_plan_id, planes_detalle)
+        _render_plan_editor(sel_plan, planes_detalle)
 
 
 
@@ -838,35 +839,14 @@ with tab_grilla:
         "carrera) editando directamente en la grilla."
     )
 
-    sel_ciclo_grilla = st.selectbox(
-        "Seleccionar Ciclo", options=ciclo_ids, key="planes_sel_ciclo_grilla"
-    )
-
-    if sel_ciclo_grilla:
-        with next(get_session()) as session:
-            planes_grilla = session.exec(
-                select(PlanificacionCursadaDB)
-                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_grilla)
-            ).all()
-
-        if not planes_grilla:
-            st.info("No hay planes para este ciclo.")
-        else:
-            plan_options_grilla = {p.id: p.nombre for p in planes_grilla}
-            sel_plan_grilla_id = st.selectbox(
-                "Seleccionar Plan",
-                options=list(plan_options_grilla.keys()),
-                format_func=lambda x: plan_options_grilla[x],
-                key="planes_sel_plan_grilla"
-            )
-
-            if sel_plan_grilla_id:
-                from src.ui.plan_grilla_editor import (
-                    render_plan_grilla_editor,
-                )
-                render_plan_grilla_editor(
-                    sel_plan_grilla_id, key_ns="plan_grilla",
-                )
+    if sel_plan is None:
+        st.info(
+            "Seleccioná un **plan activo** en el panel lateral para "
+            "ver la grilla horaria."
+        )
+    else:
+        from src.ui.plan_grilla_editor import render_plan_grilla_editor
+        render_plan_grilla_editor(sel_plan, key_ns="plan_grilla")
 
 
 # =============================================================================
@@ -874,33 +854,16 @@ with tab_grilla:
 # =============================================================================
 with tab_aulas:
     st.subheader("Asignación de aulas")
-    sel_ciclo_aulas = st.selectbox(
-        "Seleccionar Ciclo", options=ciclo_ids,
-        key="planes_sel_ciclo_aulas",
-    )
 
-    if sel_ciclo_aulas:
+    if sel_plan is None:
+        st.info(
+            "Seleccioná un **plan activo** en el panel lateral para "
+            "trabajar con la asignación de aulas."
+        )
+    else:
+        from src.ui.asignacion_panel import render_panel
         with next(get_session()) as session:
-            planes_aulas = session.exec(
-                select(PlanificacionCursadaDB)
-                .where(PlanificacionCursadaDB.ciclo_id == sel_ciclo_aulas)
-            ).all()
-
-        if not planes_aulas:
-            st.info("No hay planes para este ciclo.")
-        else:
-            plan_options_aulas = {p.id: p.nombre for p in planes_aulas}
-            sel_plan_aulas_id = st.selectbox(
-                "Seleccionar Plan",
-                options=list(plan_options_aulas.keys()),
-                format_func=lambda x: plan_options_aulas[x],
-                key="planes_sel_plan_aulas",
-            )
-
-            if sel_plan_aulas_id:
-                from src.ui.asignacion_panel import render_panel
-                with next(get_session()) as session:
-                    render_panel(session, sel_plan_aulas_id, key_ns="asig")
+            render_panel(session, sel_plan, key_ns="asig")
 
 
 # =============================================================================
