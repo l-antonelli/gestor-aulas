@@ -1174,19 +1174,46 @@ def _render_inspector_franja(
         sel_dias = [sel_dia] if sel_dia != "— elegir —" else []
     with c3:
         slots_all = heatmap_sede.get("slots", [])
-        sel_slots = st.multiselect(
-            "Franja(s) (15 min)",
-            options=slots_all,
-            default=[],
-            key=f"{key_ns}_inspect_slots",
-            help=(
-                "Podés seleccionar varias franjas adyacentes para "
-                "una saturación extendida, o una sola para puntual."
-            ),
-        )
+        c3a, c3b = st.columns(2)
+        with c3a:
+            sel_slot_desde = st.selectbox(
+                "Desde",
+                options=["— elegir —"] + slots_all,
+                index=0,
+                key=f"{key_ns}_inspect_slot_desde",
+                help=(
+                    "Franja inicial del rango a inspeccionar (15 min)."
+                ),
+            )
+        with c3b:
+            sel_slot_hasta = st.selectbox(
+                "Hasta",
+                options=["— elegir —"] + slots_all,
+                index=0,
+                key=f"{key_ns}_inspect_slot_hasta",
+                help=(
+                    "Franja final del rango (inclusive)."
+                ),
+            )
+    # Resolver el rango [desde, hasta].
+    if (
+        sel_slot_desde in ("— elegir —",)
+        or sel_slot_hasta in ("— elegir —",)
+    ):
+        sel_slots: list[str] = []
+    else:
+        i_desde = slots_all.index(sel_slot_desde)
+        i_hasta = slots_all.index(sel_slot_hasta)
+        if i_desde > i_hasta:
+            st.error(
+                "La franja **Desde** debe ser anterior o igual a **Hasta**."
+            )
+            return
+        sel_slots = slots_all[i_desde:i_hasta + 1]
     if not sel_dias or not sel_slots:
         st.info(
-            "Seleccioná al menos un día y una franja para inspeccionar."
+            "Seleccioná día y rango horario (desde/hasta) para "
+            "inspeccionar."
         )
         return
 
@@ -1488,16 +1515,17 @@ def _render_inspector_franja(
             _h_min = _time_for_range(_min_mins // 60, _min_mins % 60)
             _h_max = _time_for_range(_max_mins // 60, _max_mins % 60)
 
-    render_timetable_calendar(
-        grid_data=grid_data,
-        config=config,
-        key=f"{key_ns}_inspect_cal",
-        color_by_carrera=True,
-        dias_visibles=sel_dias,
-        hora_min_override=_h_min,
-        hora_max_override=_h_max,
-        titulo_compacto=True,
-    )
+    with st.expander("📅 Cronograma del rango", expanded=True):
+        render_timetable_calendar(
+            grid_data=grid_data,
+            config=config,
+            key=f"{key_ns}_inspect_cal",
+            color_by_carrera=True,
+            dias_visibles=sel_dias,
+            hora_min_override=_h_min,
+            hora_max_override=_h_max,
+            titulo_compacto=True,
+        )
 
     # Contador de exceso: cuántos horarios sobran en las franjas
     # seleccionadas (max sobre las celdas del rango). Esto da una
@@ -1539,6 +1567,68 @@ def _render_inspector_franja(
             "✅ No hay exceso de horarios sobre aulas disponibles "
             "en el rango seleccionado (para este tipo)."
         )
+
+    # Expander: aulas libres en todo el rango (intersección: un aula
+    # se considera libre si está libre en TODAS las celdas del rango).
+    with st.expander("🏛 Aulas libres en el rango", expanded=False):
+        st.caption(
+            "Aulas de **" + sede_nom + "** del tipo seleccionado que "
+            "no están usadas por ningún horario del plan durante todo "
+            "el rango elegido. Útil para saber cuáles quedan "
+            "disponibles para reasignar manualmente."
+        )
+        # Categorías a chequear según el filtro.
+        cats_libres: list[str]
+        if sel_tipo == "Sólo teóricas":
+            cats_libres = ["teorica"]
+        elif sel_tipo == "Sólo laboratorios":
+            cats_libres = ["laboratorio"]
+        else:
+            cats_libres = ["teorica", "laboratorio"]
+
+        slot_idx_map = {s: i for i, s in enumerate(slots_all)}
+        dias_idx_map = {d: i for i, d in enumerate(heatmap_sede["dias"])}
+        # Set de aulas libres para el rango (intersección por celda).
+        libres_por_cat: dict[str, list[tuple[str, int]]] = {}
+        for cat in cats_libres:
+            data_c = heatmap_sede["data"][sel_sede_id].get(cat, {})
+            libres_matrix = data_c.get("aulas_libres")
+            if not libres_matrix:
+                continue
+            interseccion: set[tuple[str, int]] | None = None
+            for slot in sel_slots:
+                si = slot_idx_map.get(slot)
+                if si is None:
+                    continue
+                for dia in sel_dias:
+                    di = dias_idx_map.get(dia)
+                    if di is None:
+                        continue
+                    celda_set = {tuple(x) for x in libres_matrix[si][di]}
+                    if interseccion is None:
+                        interseccion = celda_set
+                    else:
+                        interseccion &= celda_set
+            libres_por_cat[cat] = sorted(interseccion or set())
+
+        cat_label = {"teorica": "Teóricas", "laboratorio": "Laboratorios"}
+        algo_mostrado = False
+        for cat, items in libres_por_cat.items():
+            algo_mostrado = True
+            st.markdown(f"**{cat_label[cat]}** — {len(items)} libre(s)")
+            if not items:
+                st.caption("(ninguna aula libre en todo el rango)")
+            else:
+                st.markdown(
+                    ", ".join(
+                        f"{nombre} ({cap})" for nombre, cap in items
+                    )
+                )
+        if not algo_mostrado:
+            st.caption(
+                "No hay información de aulas libres disponible. Este "
+                "cálculo requiere una corrida reciente del asignador."
+            )
 
     # Tabla de detalle abajo del calendario.
     st.markdown("**Detalle de horarios**")
