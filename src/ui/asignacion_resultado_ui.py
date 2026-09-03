@@ -1630,12 +1630,8 @@ def _render_inspector_franja(
                 "cálculo requiere una corrida reciente del asignador."
             )
 
-    # Tabla de detalle abajo del calendario.
-    st.markdown("**Detalle de horarios**")
-    st.caption(
-        "Botón **Editar** en cada fila → modal con preview de "
-        "validaciones antes de persistir."
-    )
+    # Detalle de horarios: envuelto en expander principal + expanders
+    # por cada entrada, con paginación (similar al panel de aulas).
     DIAS_ORDER = {
         "Lunes": 0, "Martes": 1, "Miércoles": 2,
         "Jueves": 3, "Viernes": 4, "Sábado": 5,
@@ -1648,40 +1644,112 @@ def _render_inspector_franja(
         )
     )
 
-    # Header.
-    col_widths = [1, 1, 1, 3, 2, 1.5, 2, 1.2, 1]
-    h1, h2, h3, h4, h5, h6, h7, h8, h9 = st.columns(col_widths)
-    for col, txt in zip(
-        (h1, h2, h3, h4, h5, h6, h7, h8, h9),
-        ("Día", "Inicio", "Fin", "Materia", "Comisión",
-         "Tipo", "Carrera", "Ubicación", ""),
-    ):
-        col.markdown(f"**{txt}**")
-    st.divider()
+    total_rows = len(tabla_rows)
 
-    for row in tabla_rows:
-        c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(col_widths)
-        c1.write(row["Día"])
-        c2.write(row["Inicio"])
-        c3.write(row["Fin"])
-        c4.write(row["Materia"])
-        c5.write(row["Comisión"])
-        c6.write(row["Tipo"])
-        c7.write(row["Carrera"])
-        c8.write(row["Ubicación"])
-        if c9.button(
-            "✏️ Editar",
-            key=f"{key_ns}_edit_{row['horario_id']}",
-        ):
-            _dialog_editar_horario(
-                plan_id=plan_id,
-                horario_id=row["horario_id"],
-                materia_label=row["Materia"],
-                comision_label=row["Comisión"],
-                heatmap_sede=heatmap_sede,
-                sede_id_inspeccionada=sel_sede_id,
-                tipo_filtro=sel_tipo,
-            )
+    # Toggle "Mostrar detalle" para poder ocultar toda la sección
+    # (equivalente a un expander principal, sin caer en el problema
+    # de expanders anidados que Streamlit no soporta).
+    _show_detail_key = f"{key_ns}_inspect_show_detail"
+    if _show_detail_key not in st.session_state:
+        st.session_state[_show_detail_key] = False
+    mostrar_detalle = st.toggle(
+        f"📋 Detalle de horarios ({total_rows})",
+        key=_show_detail_key,
+        help=(
+            "Muestra la lista completa de horarios del rango con "
+            "controles de edición individuales."
+        ),
+    )
+    if not mostrar_detalle:
+        return
+
+    st.caption(
+        "Cada horario se puede desplegar para ver los detalles y "
+        "editar día/hora con un preview de validaciones antes de "
+        "persistir."
+    )
+
+    # Paginación.
+    _page_size_key = f"{key_ns}_inspect_detail_size"
+    _page_num_key = f"{key_ns}_inspect_detail_page"
+    if _page_size_key not in st.session_state:
+        st.session_state[_page_size_key] = 20
+    if _page_num_key not in st.session_state:
+        st.session_state[_page_num_key] = 1
+
+    _pag_c1, _pag_c2, _pag_c3 = st.columns([2, 2, 6])
+    with _pag_c1:
+        page_size = st.selectbox(
+            "Por página",
+            options=[10, 20, 30, 50, 100],
+            index=[10, 20, 30, 50, 100].index(
+                st.session_state[_page_size_key]
+            ),
+            key=f"{key_ns}_inspect_detail_size_sel",
+        )
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    if st.session_state[_page_num_key] > total_pages:
+        st.session_state[_page_num_key] = 1
+    st.session_state[_page_size_key] = page_size
+
+    with _pag_c2:
+        page_num = st.number_input(
+            f"Página (1–{total_pages})",
+            min_value=1,
+            max_value=total_pages,
+            value=st.session_state[_page_num_key],
+            step=1,
+            key=f"{key_ns}_inspect_detail_page_input",
+        )
+        st.session_state[_page_num_key] = page_num
+    with _pag_c3:
+        start = (page_num - 1) * page_size + 1
+        end = min(page_num * page_size, total_rows)
+        st.caption(
+            f"Mostrando {start}–{end} de {total_rows} horarios "
+            f"(página {page_num} de {total_pages})."
+        )
+
+    start_idx = (page_num - 1) * page_size
+    rows_pag = tabla_rows[start_idx:start_idx + page_size]
+
+    for row in rows_pag:
+        titulo = (
+            f"{row['Día']} {row['Inicio']}–{row['Fin']} · "
+            f"{row['Materia']} · {row['Comisión']}"
+        )
+        with st.expander(titulo, expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(
+                    f"**Materia:** {row['Materia']}  \n"
+                    f"**Comisión:** {row['Comisión']}  \n"
+                    f"**Día:** {row['Día']}  \n"
+                    f"**Franja:** {row['Inicio']} – {row['Fin']}"
+                )
+            with c2:
+                st.markdown(
+                    f"**Tipo:** {row['Tipo']}  \n"
+                    f"**Carrera:** {row['Carrera']}  \n"
+                    f"**Ubicación:** {row['Ubicación']}"
+                )
+            if st.button(
+                "✏️ Editar día/hora",
+                key=f"{key_ns}_edit_{row['horario_id']}",
+                help=(
+                    "Abre un diálogo con preview de validaciones "
+                    "antes de persistir."
+                ),
+            ):
+                _dialog_editar_horario(
+                    plan_id=plan_id,
+                    horario_id=row["horario_id"],
+                    materia_label=row["Materia"],
+                    comision_label=row["Comisión"],
+                    heatmap_sede=heatmap_sede,
+                    sede_id_inspeccionada=sel_sede_id,
+                    tipo_filtro=sel_tipo,
+                )
 
 
 def _render_inventario(inv: dict) -> None:
