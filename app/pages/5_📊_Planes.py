@@ -81,14 +81,27 @@ with next(get_session()) as session:
 ciclo_ids = [c.id for c in ciclos]
 ciclos_map = {c.id: c for c in ciclos}
 
-(
-    tab_generar, tab_general, tab_detalle, tab_grilla,
-    tab_aulas, tab_config,
-) = st.tabs([
-    "📥 Generar Plan",
-    "📋 Vista General", "🔍 Detalle del Plan",
-    "📋 Grilla Horaria", "🏛️ Aulas", "⚙️ Configuración",
-])
+# Pestañas condicionales: Detalle/Grilla/Aulas sólo aparecen cuando
+# hay un plan activo. Sin plan, mostramos únicamente las que operan
+# a nivel ciclo (Generar/Vista General) y la Configuración horaria.
+if sel_plan is None:
+    tab_generar, tab_general, tab_config = st.tabs([
+        "📥 Generar Plan",
+        "📋 Vista General",
+        "⚙️ Configuración",
+    ])
+    tab_detalle = None
+    tab_grilla = None
+    tab_aulas = None
+else:
+    (
+        tab_generar, tab_general, tab_detalle, tab_grilla,
+        tab_aulas, tab_config,
+    ) = st.tabs([
+        "📥 Generar Plan",
+        "📋 Vista General", "🔍 Detalle del Plan",
+        "📋 Grilla Horaria", "🏛️ Aulas", "⚙️ Configuración",
+    ])
 
 
 # =============================================================================
@@ -805,15 +818,10 @@ with tab_general:
 # =============================================================================
 # Tab 3: Detalle del Plan (editable)
 # =============================================================================
-with tab_detalle:
-    st.subheader("Detalle del Plan")
+if tab_detalle is not None:
+    with tab_detalle:
+        st.subheader("Detalle del Plan")
 
-    if sel_plan is None:
-        st.info(
-            "Seleccioná un **plan activo** en el panel lateral para "
-            "ver y editar su detalle."
-        )
-    else:
         with next(get_session()) as session:
             planes_detalle = session.exec(
                 select(PlanificacionCursadaDB)
@@ -827,22 +835,17 @@ with tab_detalle:
 # =============================================================================
 # Tab 4: Grilla Horaria (visual read-only timetable)
 # =============================================================================
-with tab_grilla:
-    st.subheader("Grilla Horaria")
-    st.caption(
-        "Editor del plan en formato cronograma semanal. Replica la "
-        "funcionalidad de **Cronogramas → Editar** pero opera sobre "
-        "los horarios y comisiones del plan. Útil para resolver "
-        "conflictos de cursada (superposiciones del mismo cuatri/"
-        "carrera) editando directamente en la grilla."
-    )
-
-    if sel_plan is None:
-        st.info(
-            "Seleccioná un **plan activo** en el panel lateral para "
-            "ver la grilla horaria."
+if tab_grilla is not None:
+    with tab_grilla:
+        st.subheader("Grilla Horaria")
+        st.caption(
+            "Editor del plan en formato cronograma semanal. Replica "
+            "la funcionalidad de **Cronogramas → Editar** pero opera "
+            "sobre los horarios y comisiones del plan. Útil para "
+            "resolver conflictos de cursada (superposiciones del "
+            "mismo cuatri/carrera) editando directamente en la "
+            "grilla."
         )
-    else:
         from src.ui.plan_grilla_editor import render_plan_grilla_editor
         render_plan_grilla_editor(sel_plan, key_ns="plan_grilla")
 
@@ -850,15 +853,9 @@ with tab_grilla:
 # =============================================================================
 # Tab Aulas: LP de asignacion de aulas
 # =============================================================================
-with tab_aulas:
-    st.subheader("Asignación de aulas")
-
-    if sel_plan is None:
-        st.info(
-            "Seleccioná un **plan activo** en el panel lateral para "
-            "trabajar con la asignación de aulas."
-        )
-    else:
+if tab_aulas is not None:
+    with tab_aulas:
+        st.subheader("Asignación de aulas")
         from src.ui.asignacion_panel import render_panel
         with next(get_session()) as session:
             render_panel(session, sel_plan, key_ns="asig")
