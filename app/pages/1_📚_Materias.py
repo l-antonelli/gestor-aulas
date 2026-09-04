@@ -113,15 +113,29 @@ def render_custom_materia_page():
         "optativa": "Optativa",
     }
     
-    st.title("📚 Gestión de Materias")
-    
-    # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Crear", "🔍 Buscar"])
-    
+    st.title("📚 Materias")
+    st.caption(
+        "Catálogo de materias del sistema. Cada materia tiene sus "
+        "datos generales (nombre, horas, tipo de período) y las "
+        "carreras en las que se cursa, con el año y cuatrimestre "
+        "que le corresponde en cada una."
+    )
+
+    tab1, tab2, tab3 = st.tabs([
+        "📋 Lista de materias",
+        "➕ Nueva materia",
+        "🔍 Buscar",
+    ])
+
     with next(get_session()) as session:
-        
-        # Show carrera completeness warnings at the top (before tabs)
-        with st.expander("📊 Estado de Completitud de Carreras", expanded=False):
+
+        # Estado de completitud de carreras: mostramos alertas si
+        # alguna carrera tiene materias faltantes o sin asignar
+        # año/cuatri en su plan de estudio.
+        with st.expander(
+            "📊 Estado de las carreras (materias faltantes)",
+            expanded=False,
+        ):
             CarreraStatusWidget.render_summary_metrics(session)
             st.divider()
             CarreraStatusWidget.render_warnings_panel(session)
@@ -268,7 +282,12 @@ def render_custom_materia_page():
                 elif "delete_materia" in st.session_state:
                     materia_codigo = st.session_state["delete_materia"]
                     st.subheader(f"Eliminar Materia: {materia_codigo}")
-                    st.warning("Esta accion no se puede deshacer.")
+                    st.warning(
+                        "⚠️ Esta acción no se puede deshacer. Se "
+                        "borrará la materia del catálogo. Si tiene "
+                        "comisiones, horarios o inscriptos "
+                        "asociados, revisá antes de continuar."
+                    )
 
                     col_confirm, col_cancel = st.columns(2)
                     with col_confirm:
@@ -398,23 +417,46 @@ def render_custom_materia_page():
                                 except Exception:
                                     pass
 
-                            col_edit, col_delete = st.columns(2)
+                            # Botones de acción alineados a la
+                            # derecha con ancho fijo, para que no
+                            # bailen entre materias con distinta
+                            # cantidad de datos arriba.
+                            st.markdown("")  # separador visual
+                            _spacer, col_edit, col_delete = st.columns(
+                                [3, 1, 1],
+                            )
                             with col_edit:
-                                if st.button("Editar", key=f"edit_{materia.codigo}"):
-                                    st.session_state["edit_materia"] = materia.codigo
+                                if st.button(
+                                    "✏️ Editar",
+                                    key=f"edit_{materia.codigo}",
+                                    width="stretch",
+                                ):
+                                    st.session_state["edit_materia"] = (
+                                        materia.codigo
+                                    )
                                     st.rerun()
                             with col_delete:
-                                if st.button("Eliminar", key=f"delete_{materia.codigo}"):
-                                    st.session_state["delete_materia"] = materia.codigo
+                                if st.button(
+                                    "🗑️ Eliminar",
+                                    key=f"delete_{materia.codigo}",
+                                    width="stretch",
+                                ):
+                                    st.session_state["delete_materia"] = (
+                                        materia.codigo
+                                    )
                                     st.rerun()
 
             except Exception as e:
                 st.error(f"Error al cargar materias: {e}")
         
         with tab2:
-            # Create new materia
-            st.subheader("Crear Nueva Materia")
-            
+            st.subheader("Nueva materia")
+            st.caption(
+                "Completá los datos generales de la materia y "
+                "asignala a las carreras en las que se cursa, "
+                "indicando año y cuatrimestre en cada una."
+            )
+
             form_data = MateriaFormRenderer.render_materia_create_form(
                 session=session,
                 custom_labels=custom_labels,
@@ -431,10 +473,16 @@ def render_custom_materia_page():
                     st.rerun()
         
         with tab3:
-            # Search functionality
-            st.subheader("Buscar Materias")
-            
-            search_term = st.text_input("Buscar por código o nombre:")
+            st.subheader("Buscar materia")
+            st.caption(
+                "Ingresá el código o parte del nombre. La búsqueda "
+                "no distingue mayúsculas."
+            )
+            search_term = st.text_input(
+                "Buscar",
+                placeholder="Ej: F14, algebra, programación…",
+                label_visibility="collapsed",
+            )
             
             if search_term:
                 try:

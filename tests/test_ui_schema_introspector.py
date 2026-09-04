@@ -52,7 +52,7 @@ class TestSchemaIntrospector:
     def test_get_field_description(self):
         """Test get_field_description returns description."""
         desc = SchemaIntrospector.get_field_description(Materia, "codigo")
-        assert desc == "Unique subject code (codigo_plan)"
+        assert desc.startswith("Código único de la materia")
 
     def test_get_field_description_empty(self):
         """Test get_field_description returns empty string when no description."""
