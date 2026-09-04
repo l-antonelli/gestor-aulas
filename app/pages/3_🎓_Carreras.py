@@ -32,22 +32,33 @@ def render_custom_carrera_page():
         "dicta_recursado": "Dicta recursado",
     }
     
-    st.title("🎓 Gestión de Carreras")
-    
-    # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Crear", "📚 Materias por Carrera"])
+    st.title("🎓 Carreras")
+    st.caption(
+        "Catálogo de carreras del sistema. Cada carrera tiene sus "
+        "datos generales, sedes habilitadas para dictar sus "
+        "materias exclusivas y el plan de estudio (qué materias se "
+        "cursan en qué año y cuatrimestre)."
+    )
+
+    tab1, tab2, tab3 = st.tabs([
+        "📋 Lista de carreras",
+        "➕ Nueva carrera",
+        "📚 Plan de estudio",
+    ])
     
     with next(get_session()) as session:
         
         with tab1:
-            # List all carreras
-            st.subheader("Lista de Carreras")
-            
+            st.subheader("Lista de carreras")
+
             try:
                 carreras = carrera_service.get_all(session)
-                
+
                 if not carreras:
-                    st.info("No hay carreras registradas. Cree una nueva carrera usando la pestaña 'Crear'.")
+                    st.info(
+                        "No hay carreras registradas. Creá una desde "
+                        "la pestaña **➕ Nueva carrera**."
+                    )
                 else:
                     # Display carreras
                     for carrera in carreras:
@@ -80,54 +91,90 @@ def render_custom_carrera_page():
                             )
                             from sqlmodel import select as _select, col as _col
                             st.divider()
-                            st.markdown("**🏛️ Sedes habilitadas**")
-                            st.caption(
-                                "Las materias exclusivas de esta carrera "
-                                "(no compartidas) sólo se asignan a aulas "
-                                "que estén en estas sedes. Si no "
-                                "seleccionás ninguna, se asumen 'todas "
-                                "las sedes' como comportamiento por "
-                                "defecto."
-                            )
-                            _sedes_db = list(session.exec(
-                                _select(_SedeDB).order_by(_col(_SedeDB.nombre))
-                            ).all())
-                            _opts_ids = [s.id for s in _sedes_db]
-                            _label_by_id = {s.id: s.nombre for s in _sedes_db}
-                            _actuales = _get_sedes_de_carrera(session, carrera.codigo)
-                            _default = [sid for sid in _opts_ids if sid in _actuales]
-                            _sel = st.multiselect(
-                                "Sedes",
-                                options=_opts_ids,
-                                default=_default,
-                                format_func=lambda sid: str(
-                                    _label_by_id.get(sid) or sid
-                                ),
-                                key=f"carrera_sedes_{carrera.codigo}",
-                            )
-                            if set(_sel) != _actuales:
-                                if st.button(
-                                    "💾 Guardar sedes",
-                                    key=f"carrera_sedes_save_{carrera.codigo}",
-                                    type="primary",
-                                ):
-                                    _set_sedes_de_carrera(
-                                        session, carrera.codigo, _sel,
+                            with st.container(border=True):
+                                st.markdown("**🏛️ Sedes habilitadas**")
+                                st.caption(
+                                    "Sedes donde se pueden dictar las "
+                                    "materias **exclusivas** de esta "
+                                    "carrera (las que no comparte con "
+                                    "otras). Al asignar aulas, el "
+                                    "sistema sólo va a considerar "
+                                    "aulas de estas sedes.\n\n"
+                                    "Si no seleccionás ninguna, se "
+                                    "asume que la carrera puede "
+                                    "dictarse en cualquier sede."
+                                )
+                                _sedes_db = list(session.exec(
+                                    _select(_SedeDB).order_by(
+                                        _col(_SedeDB.nombre),
                                     )
-                                    st.success("Sedes actualizadas.")
-                                    st.rerun()
+                                ).all())
+                                _opts_ids = [s.id for s in _sedes_db]
+                                _label_by_id = {
+                                    s.id: s.nombre for s in _sedes_db
+                                }
+                                _actuales = _get_sedes_de_carrera(
+                                    session, carrera.codigo,
+                                )
+                                _default = [
+                                    sid for sid in _opts_ids
+                                    if sid in _actuales
+                                ]
+                                _sel = st.multiselect(
+                                    "Sedes habilitadas",
+                                    options=_opts_ids,
+                                    default=_default,
+                                    format_func=lambda sid: str(
+                                        _label_by_id.get(sid) or sid
+                                    ),
+                                    key=(
+                                        f"carrera_sedes_{carrera.codigo}"
+                                    ),
+                                    label_visibility="collapsed",
+                                )
+                                if set(_sel) != _actuales:
+                                    if st.button(
+                                        "💾 Guardar cambios",
+                                        key=(
+                                            f"carrera_sedes_save_"
+                                            f"{carrera.codigo}"
+                                        ),
+                                        type="primary",
+                                    ):
+                                        _set_sedes_de_carrera(
+                                            session, carrera.codigo,
+                                            _sel,
+                                        )
+                                        st.success(
+                                            "Sedes actualizadas."
+                                        )
+                                        st.rerun()
 
-                            # Action buttons
-                            col_edit, col_delete = st.columns(2)
-
+                            # Botones de acción alineados a la
+                            # derecha con ancho fijo.
+                            st.markdown("")
+                            _spacer, col_edit, col_delete = st.columns(
+                                [3, 1, 1],
+                            )
                             with col_edit:
-                                if st.button("✏️ Editar", key=f"edit_{carrera.codigo}"):
-                                    st.session_state["edit_carrera"] = carrera.codigo
+                                if st.button(
+                                    "✏️ Editar",
+                                    key=f"edit_{carrera.codigo}",
+                                    width="stretch",
+                                ):
+                                    st.session_state["edit_carrera"] = (
+                                        carrera.codigo
+                                    )
                                     st.rerun()
-
                             with col_delete:
-                                if st.button("🗑️ Eliminar", key=f"delete_{carrera.codigo}"):
-                                    st.session_state["delete_carrera"] = carrera.codigo
+                                if st.button(
+                                    "🗑️ Eliminar",
+                                    key=f"delete_{carrera.codigo}",
+                                    width="stretch",
+                                ):
+                                    st.session_state[
+                                        "delete_carrera"
+                                    ] = carrera.codigo
                                     st.rerun()
                     
                     # Handle edit action
@@ -248,8 +295,12 @@ def render_custom_carrera_page():
                 st.error(f"Error al cargar carreras: {str(e)}")
         
         with tab2:
-            # Create new carrera
-            st.subheader("Crear Nueva Carrera")
+            st.subheader("Nueva carrera")
+            st.caption(
+                "Completá los datos generales de la carrera. Después "
+                "de crearla vas a poder cargar su plan de estudio "
+                "desde la pestaña **📚 Plan de estudio**."
+            )
             
             with st.form(key="create_carrera_form"):
                 form_data = FormInputRenderer.render_form_input(
@@ -281,20 +332,31 @@ def render_custom_carrera_page():
                             st.error(f"❌ Error al crear: {str(e)}")
         
         with tab3:
-            # Manage Carrera-Materia relationships with year-based curriculum view
-            st.subheader("Planes de Estudio")
+            st.subheader("Plan de estudio")
+            st.caption(
+                "Definí qué materias corresponden a cada carrera, "
+                "año y cuatrimestre. Podés tener varias versiones "
+                "del plan (para reflejar cambios curriculares con "
+                "el paso del tiempo) — la versión activa es la que "
+                "usan los cronogramas y la asignación de aulas."
+            )
 
             carreras = carrera_service.get_all(session)
 
             if not carreras:
-                st.info("No hay carreras registradas. Cree una carrera primero.")
+                st.info(
+                    "No hay carreras registradas. Creá una primero "
+                    "desde la pestaña **➕ Nueva carrera**."
+                )
             else:
                 carrera_options = [(c.codigo, c.nombre) for c in carreras]
 
                 selected_carrera = st.selectbox(
-                    "Seleccionar Carrera",
+                    "Carrera",
                     options=[opt[0] for opt in carrera_options],
-                    format_func=lambda x: f"{x} - {next((opt[1] for opt in carrera_options if opt[0] == x), '')}",
+                    format_func=lambda x: (
+                        f"{x} — {next((opt[1] for opt in carrera_options if opt[0] == x), '')}"
+                    ),
                     key="carrera_materias_view",
                 )
 
@@ -303,30 +365,73 @@ def render_custom_carrera_page():
                     plan_versions = carrera_service.get_plan_versions(session, selected_carrera)
 
                     if not plan_versions:
-                        st.warning("Esta carrera no tiene versiones de plan de estudio.")
+                        st.warning(
+                            "Esta carrera todavía no tiene ninguna "
+                            "versión de plan de estudio. Creá una "
+                            "para empezar a asociarle materias."
+                        )
                     else:
-                        version_options = {v.id: f"{v.nombre} ({v.fecha_creacion})" for v in plan_versions}
+                        version_options = {
+                            v.id: f"{v.nombre} ({v.fecha_creacion})"
+                            for v in plan_versions
+                        }
 
-                        col_ver, col_new = st.columns([3, 1])
-                        with col_ver:
-                            selected_version_id = st.selectbox(
-                                "Version del Plan",
-                                options=list(version_options.keys()),
-                                format_func=lambda x: version_options[x],
-                                key="plan_version_select",
-                            )
-                        with col_new:
-                            st.write("")
-                            st.write("")
-                            if st.button("Nueva Version", key="btn_new_version"):
-                                st.session_state["creating_version"] = True
+                        with st.container(border=True):
+                            st.markdown("**📄 Versión del plan**")
+                            col_ver, col_new = st.columns([3, 1])
+                            with col_ver:
+                                selected_version_id = st.selectbox(
+                                    "Versión activa",
+                                    options=list(version_options.keys()),
+                                    format_func=lambda x: (
+                                        version_options[x]
+                                    ),
+                                    key="plan_version_select",
+                                    help=(
+                                        "Elegí la versión sobre la "
+                                        "que querés trabajar. Cada "
+                                        "versión mantiene su propia "
+                                        "lista de materias por año."
+                                    ),
+                                )
+                            with col_new:
+                                st.write("")
+                                st.write("")
+                                if st.button(
+                                    "➕ Nueva versión",
+                                    key="btn_new_version",
+                                    width="stretch",
+                                ):
+                                    st.session_state[
+                                        "creating_version"
+                                    ] = True
 
                         # Create new version form
                         if st.session_state.get("creating_version"):
                             with st.form("create_version_form"):
-                                new_name = st.text_input("Nombre de la nueva version")
-                                new_desc = st.text_input("Descripcion (opcional)")
-                                copy_from = st.checkbox("Copiar materias de la version actual", value=True)
+                                st.markdown(
+                                    "**Crear nueva versión del plan**"
+                                )
+                                new_name = st.text_input(
+                                    "Nombre de la nueva versión",
+                                    placeholder="Ej: Plan 2026",
+                                )
+                                new_desc = st.text_input(
+                                    "Descripción (opcional)",
+                                )
+                                copy_from = st.checkbox(
+                                    "Copiar las materias de la "
+                                    "versión actual",
+                                    value=True,
+                                    help=(
+                                        "Si tildás, la nueva "
+                                        "versión arranca con las "
+                                        "mismas materias que la "
+                                        "actual — así podés "
+                                        "modificarlas sin perder "
+                                        "el trabajo hecho."
+                                    ),
+                                )
                                 if st.form_submit_button("Crear"):
                                     if new_name.strip():
                                         carrera_service.create_plan_version(
@@ -334,43 +439,81 @@ def render_custom_carrera_page():
                                             selected_carrera,
                                             new_name.strip(),
                                             descripcion=new_desc.strip(),
-                                            copy_from_version_id=selected_version_id if copy_from else None,
+                                            copy_from_version_id=(
+                                                selected_version_id
+                                                if copy_from else None
+                                            ),
                                         )
-                                        st.session_state.pop("creating_version", None)
-                                        st.success(f"Version '{new_name}' creada")
+                                        st.session_state.pop(
+                                            "creating_version", None,
+                                        )
+                                        st.success(
+                                            f"Versión '{new_name}' "
+                                            f"creada"
+                                        )
                                         st.rerun()
                                     else:
-                                        st.error("El nombre no puede estar vacio")
+                                        st.error(
+                                            "El nombre no puede "
+                                            "estar vacío."
+                                        )
 
                         # Edit version name/description
-                        selected_version = next((v for v in plan_versions if v.id == selected_version_id), None)
+                        selected_version = next(
+                            (v for v in plan_versions
+                             if v.id == selected_version_id),
+                            None,
+                        )
                         if selected_version:
-                            with st.expander("Editar version"):
-                                edit_name = st.text_input("Nombre", value=selected_version.nombre, key="edit_ver_name")
-                                edit_desc = st.text_input("Descripcion", value=selected_version.descripcion, key="edit_ver_desc")
-                                if st.button("Guardar", key="btn_save_version"):
+                            with st.expander(
+                                "✏️ Renombrar / editar versión",
+                            ):
+                                edit_name = st.text_input(
+                                    "Nombre",
+                                    value=selected_version.nombre,
+                                    key="edit_ver_name",
+                                )
+                                edit_desc = st.text_input(
+                                    "Descripción",
+                                    value=(
+                                        selected_version.descripcion
+                                    ),
+                                    key="edit_ver_desc",
+                                )
+                                if st.button(
+                                    "💾 Guardar",
+                                    key="btn_save_version",
+                                ):
                                     carrera_service.update_plan_version(
                                         session, selected_version_id,
-                                        nombre=edit_name.strip() or None,
+                                        nombre=(
+                                            edit_name.strip() or None
+                                        ),
                                         descripcion=edit_desc.strip(),
                                     )
-                                    st.success("Version actualizada")
+                                    st.success("Versión actualizada.")
                                     st.rerun()
 
                         st.divider()
 
-                        # Show status widget
-                        st.markdown("### Estado de Completitud")
-                        CarreraStatusWidget.render_inline_status(session, selected_carrera)
+                        # Widget de completitud del plan.
+                        st.markdown("### 📊 Estado del plan")
+                        CarreraStatusWidget.render_inline_status(
+                            session, selected_carrera,
+                        )
 
                         st.divider()
 
-                        # Year selector
-                        st.markdown("### Seleccionar Anio del Plan de Estudios")
+                        # Selector de año para asociar materias.
+                        st.markdown("### 📚 Materias por año")
+                        st.caption(
+                            "Elegí el año y agregá las materias que "
+                            "se cursan en cada cuatrimestre."
+                        )
                         selected_year = st.selectbox(
-                            "Anio",
+                            "Año",
                             options=[1, 2, 3, 4, 5, 6],
-                            format_func=lambda x: f"{x} Anio",
+                            format_func=lambda x: f"{x}º año",
                             key="selected_year",
                         )
 
