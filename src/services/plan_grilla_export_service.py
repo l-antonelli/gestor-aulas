@@ -94,13 +94,44 @@ _MATERIA_PALETTE = [
     ("6D4C41", "FFFFFF"),  # marrón
     ("546E7A", "FFFFFF"),  # gris azulado
 ]
-_EMPTY_FILL = "F5F5F5"      # fondo suave del cronograma vacío
-_EMPTY_BORDER = "E0E0E0"
+_EMPTY_FILL = "FAFAFA"        # fondo suave del cronograma vacío
+_EMPTY_BORDER = "E0E0E0"       # borde fino interior
+_HEADER_FILL = "455A64"        # gris azulado neutro (col y row headers)
+_HEADER_TEXT = "FFFFFF"
+_BLOCK_BORDER = "37474F"       # borde mediano de cada bloque
+_OUTER_BORDER = "212121"       # borde grueso exterior
 
 
-def _color_para_materia(codigo: str) -> tuple[str, str]:
-    """Asigna un color determinístico por código de materia."""
-    idx = sum(ord(c) for c in codigo) % len(_MATERIA_PALETTE)
+def _hash_indice(*partes: str | int | None) -> int:
+    """Índice determinístico dentro de la paleta desde una llave
+    compuesta (materia, comisión, etc.)."""
+    key = "|".join(str(p) for p in partes if p is not None)
+    if not key:
+        return 0
+    return sum(ord(c) for c in key) % len(_MATERIA_PALETTE)
+
+
+def _color_para_bloque(
+    blk: ScheduleBlock, modo: str,
+) -> tuple[str, str]:
+    """Asigna un color determinístico al bloque.
+
+    ``modo`` es una de:
+      - ``"materia"``: todos los bloques de la misma materia usan
+        el mismo color. Simple, útil cuando el plan tiene pocas
+        comisiones por materia.
+      - ``"materia_comision"``: color determinado por la tupla
+        ``(materia, comisión)``. Útil cuando hay muchas comisiones
+        de la misma materia y se necesita distinguirlas visualmente.
+        Comisiones distintas de la misma materia obtienen colores
+        distintos; distintas materias también.
+    """
+    if modo == "materia_comision":
+        idx = _hash_indice(
+            blk.materia_codigo, blk.comision_numero,
+        )
+    else:
+        idx = _hash_indice(blk.materia_codigo)
     return _MATERIA_PALETTE[idx]
 
 
@@ -159,6 +190,7 @@ def _resumen_bloque(blk: ScheduleBlock) -> str:
 def _write_cronograma_sheet(
     ws,
     grid_data: dict[str, list[ScheduleBlock]],
+    color_por: str = "materia",
 ) -> None:
     """Escribe la hoja Cronograma con una matriz día × franja tipo
     calendario visual, con:
@@ -206,35 +238,58 @@ def _write_cronograma_sheet(
         col += ancho_dia[dia]
     total_cols = col - 1
 
-    # Bordes finos para toda la grilla.
+    # Niveles de borde:
+    #   - thin: separadores interiores (celda a celda dentro del cuerpo).
+    #   - medium: alrededor de cada bloque de horario.
+    #   - thick: separadores estructurales (headers vs cuerpo,
+    #     columna A vs cuerpo) y perímetro exterior.
     thin = Side(style="thin", color=_EMPTY_BORDER)
+    medium = Side(style="medium", color=_BLOCK_BORDER)
+    thick = Side(style="thick", color=_OUTER_BORDER)
     grid_border = Border(
         left=thin, right=thin, top=thin, bottom=thin,
     )
+    header_fill = PatternFill("solid", fgColor=_HEADER_FILL)
+    header_font = Font(bold=True, color=_HEADER_TEXT, size=11)
 
     # Paso 3: header (fila 1 = día, con merge sobre sus lanes).
-    ws.cell(row=1, column=1, value="Franja")
-    _fill_header(ws.cell(row=1, column=1))
+    corner = ws.cell(row=1, column=1, value="Franja")
+    corner.font = header_font
+    corner.fill = header_fill
+    corner.alignment = Alignment(
+        horizontal="center", vertical="center",
+    )
     for dia in DIAS_ORDER:
         c0 = dia_col_start[dia]
         c1 = c0 + ancho_dia[dia] - 1
         cell = ws.cell(row=1, column=c0, value=dia)
-        _fill_header(cell)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center",
+        )
         if c1 > c0:
             ws.merge_cells(
                 start_row=1, start_column=c0,
                 end_row=1, end_column=c1,
             )
+            # Rellenar también las celdas ocultas por el merge así
+            # el fondo del header cubre todo el ancho.
+            for cc in range(c0 + 1, c1 + 1):
+                ws.cell(row=1, column=cc).fill = header_fill
 
     # Paso 4: llenar toda la grilla con fondo suave + label de franja
     # en la columna A. Los bloques se pintan encima en el paso 5.
     empty_fill = PatternFill("solid", fgColor=_EMPTY_FILL)
     for i, (a, b) in enumerate(slots, start=2):
         franja_cell = ws.cell(row=i, column=1, value=_fmt_slot(a, b))
-        franja_cell.font = Font(bold=True, size=9)
+        franja_cell.font = Font(
+            bold=True, color=_HEADER_TEXT, size=9,
+        )
         franja_cell.alignment = Alignment(
             horizontal="right", vertical="center",
         )
+        franja_cell.fill = header_fill
         franja_cell.border = grid_border
         for j in range(2, total_cols + 1):
             c = ws.cell(row=i, column=j)
@@ -242,8 +297,11 @@ def _write_cronograma_sheet(
             c.border = grid_border
 
     # Paso 5: pintar cada bloque como un rectángulo unido en su(s)
-    # columna(s) y rango de slots.
-    slot_start = {s[0]: i for i, s in enumerate(slots)}
+    # columna(s) y rango de slots. Cada bloque lleva un borde medium
+    # para destacarlo del fondo, sin importar el color asignado.
+    block_border = Border(
+        left=medium, right=medium, top=medium, bottom=medium,
+    )
     for dia in DIAS_ORDER:
         for blk, lane in lanes_por_dia[dia]:
             h_s, h_e = _minutos_bloque(blk)
@@ -261,9 +319,7 @@ def _write_cronograma_sheet(
             r0 = si_start + 2
             r1 = si_end + 2
             c0 = dia_col_start[dia] + lane
-            # (Los bloques siempre ocupan 1 sola columna, no
-            # atraviesan lanes.)
-            bg, fg = _color_para_materia(blk.materia_codigo)
+            bg, fg = _color_para_bloque(blk, color_por)
             fill = PatternFill("solid", fgColor=bg)
             texto = _resumen_bloque(blk)
             cell = ws.cell(row=r0, column=c0, value=texto)
@@ -274,18 +330,59 @@ def _write_cronograma_sheet(
                 vertical="center",
                 wrap_text=True,
             )
-            cell.border = grid_border
+            cell.border = block_border
             if r1 > r0:
                 ws.merge_cells(
                     start_row=r0, start_column=c0,
                     end_row=r1, end_column=c0,
                 )
-                # Rellenar y bordear también las celdas mergeadas
-                # para que el color/borde se aplique al rango entero.
                 for r in range(r0 + 1, r1 + 1):
                     _c = ws.cell(row=r, column=c0)
                     _c.fill = fill
-                    _c.border = grid_border
+                    _c.border = block_border
+
+    # Paso 6: bordes estructurales por encima de los ya asignados.
+    #   - Perímetro exterior grueso (fila 1 → última, col A → última).
+    #   - Separador grueso entre header (fila 1) y cuerpo (fila 2+).
+    #   - Separador grueso entre columna A (franjas) y cuerpo (col B+).
+    #
+    # openpyxl re-crea el Border al asignar. Para agregar sin perder
+    # los bordes finos/medium existentes, componemos con la Border
+    # actual de cada celda.
+    def _mix(existing: Border, **new_sides) -> Border:
+        return Border(
+            left=new_sides.get("left", existing.left),
+            right=new_sides.get("right", existing.right),
+            top=new_sides.get("top", existing.top),
+            bottom=new_sides.get("bottom", existing.bottom),
+        )
+
+    last_row = n_slots + 1
+    last_col = total_cols
+    # Perímetro superior (header) e inferior (última fila del cuerpo).
+    for j in range(1, last_col + 1):
+        top_c = ws.cell(row=1, column=j)
+        top_c.border = _mix(top_c.border, top=thick)
+        bot_c = ws.cell(row=last_row, column=j)
+        bot_c.border = _mix(bot_c.border, bottom=thick)
+    # Perímetro izquierdo (col A) y derecho (última col).
+    for i in range(1, last_row + 1):
+        left_c = ws.cell(row=i, column=1)
+        left_c.border = _mix(left_c.border, left=thick)
+        right_c = ws.cell(row=i, column=last_col)
+        right_c.border = _mix(right_c.border, right=thick)
+    # Separador grueso entre header (fila 1) y cuerpo (fila 2).
+    for j in range(1, last_col + 1):
+        header_c = ws.cell(row=1, column=j)
+        header_c.border = _mix(header_c.border, bottom=thick)
+        body_top_c = ws.cell(row=2, column=j)
+        body_top_c.border = _mix(body_top_c.border, top=thick)
+    # Separador grueso entre col A (franjas) y cuerpo (col B).
+    for i in range(1, last_row + 1):
+        franja_c = ws.cell(row=i, column=1)
+        franja_c.border = _mix(franja_c.border, right=thick)
+        body_left_c = ws.cell(row=i, column=2)
+        body_left_c.border = _mix(body_left_c.border, left=thick)
 
     # Anchos de columna: franja angosta, días anchos.
     ws.column_dimensions["A"].width = 12
@@ -397,6 +494,7 @@ def export_grilla_a_xlsx(
     plan_nombre: str,
     ciclo_label: str,
     filtros: dict,
+    color_por: str = "materia",
 ) -> bytes:
     """Genera el Excel completo y devuelve los bytes listos para
     ofrecer al usuario via ``st.download_button``.
@@ -409,6 +507,12 @@ def export_grilla_a_xlsx(
         ciclo_label: label del ciclo (ej. '2026-1C').
         filtros: dict ``{"Nombre filtro": "valor"}`` para la hoja
             Metadata. Ej.: ``{"Carrera": "A · Electrónica", ...}``.
+        color_por: modo de coloreo de los bloques en la hoja
+            Cronograma. ``"materia"`` (default) usa el mismo color
+            para todas las comisiones de una misma materia.
+            ``"materia_comision"`` asigna colores distintos a
+            comisiones distintas de la misma materia — útil cuando
+            hay muchas comisiones y se necesita distinguirlas.
 
     Returns:
         bytes del archivo .xlsx.
@@ -417,7 +521,7 @@ def export_grilla_a_xlsx(
     default = wb.active
     _write_metadata_sheet(default, plan_nombre, ciclo_label, filtros)
     cronograma_ws = wb.create_sheet("Cronograma")
-    _write_cronograma_sheet(cronograma_ws, grid_data)
+    _write_cronograma_sheet(cronograma_ws, grid_data, color_por=color_por)
     detalle_ws = wb.create_sheet("Detalle")
     _write_detalle_sheet(detalle_ws, grid_data)
 

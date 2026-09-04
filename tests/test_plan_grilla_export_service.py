@@ -298,6 +298,81 @@ class TestCronogramaSheetEstetica:
             f"MAT1 debería tener 1 color; got {colores}"
         )
 
+    def test_modo_color_materia_comision_distingue_comisiones(self):
+        """En modo 'materia_comision', dos comisiones distintas de
+        la misma materia deberían recibir colores distintos."""
+        grid = {
+            "Lunes": [
+                _mk_block(
+                    "h1", materia_codigo="MAT1",
+                    comision_numero=1, hi=8, hf=10,
+                ),
+            ],
+            "Martes": [
+                _mk_block(
+                    "h2", materia_codigo="MAT1",
+                    comision_numero=2, hi=8, hf=10,
+                ),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={}, color_por="materia_comision",
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+        # Recolectar por comisión.
+        celdas_c1: list = []
+        celdas_c2: list = []
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for c in row:
+                v = str(c.value or "")
+                if "MAT1 [C1]" in v:
+                    celdas_c1.append(c)
+                elif "MAT1 [C2]" in v:
+                    celdas_c2.append(c)
+        assert celdas_c1 and celdas_c2
+        color_c1 = celdas_c1[0].fill.fgColor.rgb
+        color_c2 = celdas_c2[0].fill.fgColor.rgb
+        assert color_c1 != color_c2, (
+            "Comisiones distintas de la misma materia deberían tener "
+            "colores distintos en modo 'materia_comision' "
+            f"(got {color_c1} vs {color_c2})"
+        )
+
+    def test_modo_color_materia_comparte_color_entre_comisiones(self):
+        """En modo 'materia' (default), dos comisiones distintas de
+        la misma materia comparten color."""
+        grid = {
+            "Lunes": [
+                _mk_block(
+                    "h1", materia_codigo="MAT1",
+                    comision_numero=1, hi=8, hf=10,
+                ),
+            ],
+            "Martes": [
+                _mk_block(
+                    "h2", materia_codigo="MAT1",
+                    comision_numero=2, hi=8, hf=10,
+                ),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={}, color_por="materia",
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+        celdas: list = []
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for c in row:
+                if c.value and "MAT1" in str(c.value):
+                    celdas.append(c)
+        colores = {
+            c.fill.fgColor.rgb for c in celdas if c.fill.fgColor
+        }
+        assert len(colores) == 1
+
 
 class TestBuildExportFilename:
 

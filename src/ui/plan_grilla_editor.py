@@ -345,6 +345,31 @@ def _render_export_button(
             "exactamente lo que se ve en la grilla — cambiá los "
             "filtros de arriba para achicar el alcance del archivo."
         )
+
+        # Opciones de coloreo del cronograma.
+        _color_key = f"{key_ns}_export_color_por"
+        _color_labels = {
+            "materia": "🎨 Por materia (todas las comisiones del mismo color)",
+            "materia_comision": (
+                "🎨 Por materia + comisión (colores distintos por comisión)"
+            ),
+        }
+        color_por = st.radio(
+            "Coloreo del cronograma",
+            options=["materia", "materia_comision"],
+            format_func=lambda m: _color_labels[m],
+            key=_color_key,
+            help=(
+                "**Por materia**: recomendado si el plan tiene "
+                "pocas comisiones por materia.\n\n"
+                "**Por materia + comisión**: recomendado para "
+                "planes con varias comisiones por materia (típico "
+                "en el ciclo básico) — cada comisión obtiene un "
+                "color distinto para poder identificarla en la "
+                "grilla."
+            ),
+        )
+
         n_bloques = sum(len(bs) for bs in grid_data.values())
         c_info, c_btn = st.columns([2, 1])
         with c_info:
@@ -366,6 +391,7 @@ def _render_export_button(
                     plan_nombre=plan_nombre,
                     ciclo_label=ciclo_label,
                     filtros=filtros_meta,
+                    color_por=color_por,
                 )
                 filename = build_export_filename(
                     plan_nombre=plan_nombre,
