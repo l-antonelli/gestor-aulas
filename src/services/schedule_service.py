@@ -55,6 +55,12 @@ class ScheduleBlock:
     aula_label: str | None = None
     virtual: bool = False
     tipo_clase: str | None = None
+    # Etiqueta compacta con la lista de carreras donde la materia
+    # figura en PlanEstudioDB. Para materias exclusivas viene el
+    # código de carrera solo; para comunes viene 'Común (A, E, M)'.
+    # Sólo se puebla desde blocks del plan; los blocks de cronograma
+    # (pre-plan) lo dejan en None.
+    carreras_label: str | None = None
 
     # Alias de compatibilidad hacia atrás: código viejo pedía `.comision`
     # como int. Devuelve el numero de la comisión referenciada.

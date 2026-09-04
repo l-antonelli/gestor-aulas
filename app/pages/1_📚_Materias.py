@@ -320,9 +320,70 @@ def render_custom_materia_page():
                                 st.write(f"**Virtual:** {'Si' if materia.virtual else 'No'}")
                                 st.write(f"**Optativa:** {'Si' if materia.optativa else 'No'}")
                                 try:
-                                    carreras = materia_service.get_carreras(session, materia.codigo)
-                                    if carreras:
-                                        st.write(f"**Carreras:** {', '.join(c.codigo for c in carreras)}")
+                                    from src.database.models import (
+                                        CarreraDB, PlanEstudioDB,
+                                    )
+                                    # Ubicaciones curriculares:
+                                    # tuplas (carrera, año, cuatri)
+                                    # donde la materia figura en
+                                    # PlanEstudioDB. Una materia
+                                    # común tiene ≥ 2 carreras
+                                    # distintas.
+                                    pe_rows = list(session.exec(
+                                        select(PlanEstudioDB).where(
+                                            PlanEstudioDB.materia_codigo == materia.codigo,
+                                        )
+                                    ).all())
+                                    if pe_rows:
+                                        car_codes = sorted({
+                                            pe.carrera_codigo for pe in pe_rows
+                                        })
+                                        car_map = {
+                                            c.codigo: c.nombre for c in session.exec(
+                                                select(CarreraDB).where(
+                                                    col(CarreraDB.codigo).in_(car_codes),
+                                                )
+                                            ).all()
+                                        }
+                                        es_comun = len(car_codes) >= 2
+                                        _badge = "🔗 Común" if es_comun else "🎯 Exclusiva"
+                                        _resumen = ", ".join(car_codes)
+                                        st.write(
+                                            f"**{_badge}** ({_resumen})"
+                                        )
+                                        # Dedup por (carrera, anio, cuatri)
+                                        _seen: set[tuple[str, int | None, str | None]] = set()
+                                        _ubis: list[tuple[str, int | None, str | None]] = []
+                                        for pe in pe_rows:
+                                            k = (
+                                                pe.carrera_codigo,
+                                                pe.anio_plan,
+                                                pe.cuatrimestre_plan,
+                                            )
+                                            if k in _seen:
+                                                continue
+                                            _seen.add(k)
+                                            _ubis.append(k)
+                                        # Orden legible: carrera, año, cuatri.
+                                        _ubis.sort(
+                                            key=lambda t: (
+                                                t[0], t[1] or 99, t[2] or "",
+                                            )
+                                        )
+                                        st.caption(
+                                            "**Ubicaciones curriculares:**"
+                                        )
+                                        for cc, anio, cuatri in _ubis:
+                                            _nom = car_map.get(cc, cc)
+                                            _anio_txt = (
+                                                f"{anio}º"
+                                                if anio is not None else "—"
+                                            )
+                                            _cuatri_txt = cuatri or "—"
+                                            st.caption(
+                                                f"· **{cc}** {_anio_txt} · "
+                                                f"{_cuatri_txt} — {_nom}"
+                                            )
                                     else:
                                         st.caption("Sin carreras asignadas")
                                 except Exception:

@@ -369,6 +369,7 @@ def _build_plan_grid(
     """
     from src.database.models import (
         AulaDB, PlanificacionCursadaDB, DictadoCicloDB, DictadoDB,
+        PlanEstudioDB as _PE,
         SedeDB,
     )
     from src.services.resolucion_jerarquica import resolve_virtual
@@ -393,6 +394,16 @@ def _build_plan_grid(
         ).all())
         materias_map = {m.codigo: m.nombre for m in mats}
         materia_virtual = {m.codigo: m.virtual for m in mats}
+
+        # Ubicaciones curriculares por materia (para el label
+        # 'Común (A, E, M)' o el código de carrera exclusiva).
+        materia_carreras: dict[str, set[str]] = {}
+        if mat_codes:
+            for mc, cc in session.exec(
+                select(_PE.materia_codigo, _PE.carrera_codigo)
+                .where(col(_PE.materia_codigo).in_(mat_codes))
+            ).all():
+                materia_carreras.setdefault(mc, set()).add(cc)
 
         # Aulas del catálogo referenciadas por estos horarios, para
         # armar el label "Sede · Aula".
@@ -447,6 +458,15 @@ def _build_plan_grid(
             dictado_virtual=materia_dictado_virtual.get(c.materia_codigo),
             materia_virtual=materia_virtual.get(c.materia_codigo, False),
         )
+        _carrs = sorted(
+            materia_carreras.get(c.materia_codigo, set())
+        )
+        if not _carrs:
+            carreras_label: str | None = None
+        elif len(_carrs) == 1:
+            carreras_label = _carrs[0]
+        else:
+            carreras_label = f"Común ({', '.join(_carrs)})"
         block = ScheduleBlock(
             entry_id=h.id,
             materia_codigo=c.materia_codigo,
@@ -459,6 +479,7 @@ def _build_plan_grid(
             aula_label=aula_label,
             virtual=es_virtual,
             tipo_clase=h.tipo_clase,
+            carreras_label=carreras_label,
         )
         grid.setdefault(h.dia, []).append(block)
 

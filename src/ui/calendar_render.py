@@ -544,10 +544,18 @@ def render_editable_schedule_calendar(
                     aula_txt = ""
 
             # Título en tres líneas:
-            #   1) código de materia [Cx]
+            #   1) código de materia [Cx]  · (badge de carreras si aplica)
             #   2) nombre de la materia
             #   3) emoji + aula (o "Virtual" / "Sin aula" cuando aplica)
-            linea1 = f"{b.materia_codigo}{com_tag}"
+            _carreras = getattr(b, "carreras_label", None)
+            # Para no saturar la línea 1, sólo agregamos el badge de
+            # carreras cuando es una materia COMÚN (>=2 carreras). Las
+            # exclusivas se identifican por el filtro que las trajo, no
+            # necesitan aclaración.
+            if _carreras and _carreras.startswith("Común"):
+                linea1 = f"{b.materia_codigo}{com_tag} · {_carreras}"
+            else:
+                linea1 = f"{b.materia_codigo}{com_tag}"
             linea2 = b.materia_nombre
             linea3 = f"{emoji} {aula_txt}".rstrip() if aula_txt else ""
             title = "\n".join(
