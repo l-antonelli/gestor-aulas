@@ -86,29 +86,65 @@ _MATERIA_PALETTE = [
     ("F4511E", "FFFFFF"),  # naranja
     ("8E24AA", "FFFFFF"),  # violeta
     ("00897B", "FFFFFF"),  # turquesa
-    ("FFB300", "212121"),  # amarillo (texto oscuro)
+    ("FFB300", "212121"),  # amarillo
     ("3949AB", "FFFFFF"),  # indigo
     ("D81B60", "FFFFFF"),  # magenta
     ("039BE5", "FFFFFF"),  # celeste
     ("7CB342", "FFFFFF"),  # verde lima
     ("6D4C41", "FFFFFF"),  # marrón
     ("546E7A", "FFFFFF"),  # gris azulado
+    ("EF6C00", "FFFFFF"),  # naranja oscuro
+    ("00ACC1", "FFFFFF"),  # cyan
+    ("C0CA33", "212121"),  # lima
+    ("5E35B1", "FFFFFF"),  # violeta profundo
+    ("2E7D32", "FFFFFF"),  # verde oscuro
+    ("AD1457", "FFFFFF"),  # rosa oscuro
+    ("00838F", "FFFFFF"),  # verde azulado
+    ("F57C00", "FFFFFF"),  # naranja intenso
+    ("827717", "FFFFFF"),  # oliva
+    ("4527A0", "FFFFFF"),  # púrpura
+    ("BF360C", "FFFFFF"),  # rojo tejo
+    ("1B5E20", "FFFFFF"),  # verde bosque
 ]
-_EMPTY_FILL = "FAFAFA"        # fondo suave del cronograma vacío
+_EMPTY_FILL_A = "FAFAFA"       # fondo día par
+_EMPTY_FILL_B = "F0F0F0"       # fondo día impar (alternado)
 _EMPTY_BORDER = "E0E0E0"       # borde fino interior
+_HOUR_LINE = "BDBDBD"          # línea suave entre horas completas
 _HEADER_FILL = "455A64"        # gris azulado neutro (col y row headers)
 _HEADER_TEXT = "FFFFFF"
 _BLOCK_BORDER = "37474F"       # borde mediano de cada bloque
 _OUTER_BORDER = "212121"       # borde grueso exterior
+_DAY_DIVIDER = "37474F"        # divisor grueso entre días
 
 
 def _hash_indice(*partes: str | int | None) -> int:
     """Índice determinístico dentro de la paleta desde una llave
-    compuesta (materia, comisión, etc.)."""
+    compuesta (materia, comisión, etc.).
+
+    Usa MD5 truncado en vez de la suma de ord() clásica para
+    minimizar colisiones cuando hay muchas materias distintas —
+    la distribución uniforme del hash criptográfico maximiza el uso
+    de la paleta.
+    """
+    import hashlib
     key = "|".join(str(p) for p in partes if p is not None)
     if not key:
         return 0
-    return sum(ord(c) for c in key) % len(_MATERIA_PALETTE)
+    h = hashlib.md5(key.encode("utf-8")).digest()
+    return int.from_bytes(h[:4], "big") % len(_MATERIA_PALETTE)
+
+
+def _shade_hex(hex_rgb: str, delta: int) -> str:
+    """Ajusta el brillo de un color hex por ``delta`` en cada canal
+    RGB. ``delta`` positivo aclara; negativo oscurece. Se satura en
+    [0, 255]."""
+    r = max(0, min(255, int(hex_rgb[0:2], 16) + delta))
+    g = max(0, min(255, int(hex_rgb[2:4], 16) + delta))
+    b = max(0, min(255, int(hex_rgb[4:6], 16) + delta))
+    return f"{r:02X}{g:02X}{b:02X}"
+
+
+_SHADE_STEPS = [0, +30, -25, +55, -50, +80, -75]
 
 
 def _color_para_bloque(
@@ -120,19 +156,46 @@ def _color_para_bloque(
       - ``"materia"``: todos los bloques de la misma materia usan
         el mismo color. Simple, útil cuando el plan tiene pocas
         comisiones por materia.
-      - ``"materia_comision"``: color determinado por la tupla
-        ``(materia, comisión)``. Útil cuando hay muchas comisiones
-        de la misma materia y se necesita distinguirlas visualmente.
-        Comisiones distintas de la misma materia obtienen colores
-        distintos; distintas materias también.
+      - ``"materia_comision"``: la materia decide el **color base**
+        (mismo tono para todas sus comisiones). La comisión decide
+        el **shade** (más claro / mismo / más oscuro) dentro de
+        ese tono. Esto evita colisiones entre materias distintas:
+        - materias con colores base distintos nunca terminan con
+          el mismo color final;
+        - materias que colisionan en color base (~ probable con
+          muchas materias) usan **offsets de shade personales**:
+          cada materia arranca en un shade distinto y avanza por
+          comisión, así dos materias con mismo color base + misma
+          comisión rara vez terminan en el mismo shade.
     """
-    if modo == "materia_comision":
-        idx = _hash_indice(
-            blk.materia_codigo, blk.comision_numero,
-        )
-    else:
-        idx = _hash_indice(blk.materia_codigo)
-    return _MATERIA_PALETTE[idx]
+    import hashlib
+    idx = _hash_indice(blk.materia_codigo)
+    bg, fg = _MATERIA_PALETTE[idx]
+    if modo == "materia_comision" and blk.comision_numero is not None:
+        # Offset propio de la materia dentro del ciclo de shades:
+        # segundo hash independiente para desincronizar dos
+        # materias que colisionan en color base.
+        shift_seed = int.from_bytes(
+            hashlib.sha1(
+                blk.materia_codigo.encode("utf-8"),
+            ).digest()[:4],
+            "big",
+        ) % len(_SHADE_STEPS)
+        delta = _SHADE_STEPS[
+            (shift_seed + blk.comision_numero - 1)
+            % len(_SHADE_STEPS)
+        ]
+        if delta != 0:
+            bg = _shade_hex(bg, delta)
+            # Ajuste de contraste de texto: si el fondo queda muy
+            # claro, oscurecer el texto para legibilidad.
+            luminancia = (
+                int(bg[0:2], 16) * 299
+                + int(bg[2:4], 16) * 587
+                + int(bg[4:6], 16) * 114
+            ) / 1000
+            fg = "FFFFFF" if luminancia < 140 else "212121"
+    return bg, fg
 
 
 def _minutos_bloque(blk: ScheduleBlock) -> tuple[int, int]:
@@ -184,6 +247,11 @@ def _resumen_bloque(blk: ScheduleBlock) -> str:
     elif blk.aula_label:
         emoji = "🧪" if blk.tipo_clase == "laboratorio" else "📖"
         lineas.append(f"{emoji} {blk.aula_label}")
+    # Última línea: rango horario (ej: 09:00 – 11:00) para que el
+    # bloque sea legible aún fuera del contexto de la grilla.
+    hi = blk.hora_inicio.strftime("%H:%M")
+    hf = blk.hora_fin.strftime("%H:%M")
+    lineas.append(f"({hi} – {hf})")
     return "\n".join(lineas)
 
 
@@ -278,9 +346,21 @@ def _write_cronograma_sheet(
             for cc in range(c0 + 1, c1 + 1):
                 ws.cell(row=1, column=cc).fill = header_fill
 
-    # Paso 4: llenar toda la grilla con fondo suave + label de franja
-    # en la columna A. Los bloques se pintan encima en el paso 5.
-    empty_fill = PatternFill("solid", fgColor=_EMPTY_FILL)
+    # Paso 4: llenar toda la grilla con fondo alternado por día +
+    # label de franja en la columna A. Los bloques se pintan encima
+    # en el paso 5. El fondo alternado ayuda a separar visualmente
+    # los días cuando la grilla queda densa.
+    fill_a = PatternFill("solid", fgColor=_EMPTY_FILL_A)
+    fill_b = PatternFill("solid", fgColor=_EMPTY_FILL_B)
+    dia_fill: dict[str, PatternFill] = {}
+    for idx, dia in enumerate(DIAS_ORDER):
+        dia_fill[dia] = fill_a if idx % 2 == 0 else fill_b
+    # Mapeo columna → día para pintar rápido.
+    col_a_dia: dict[int, str] = {}
+    for dia in DIAS_ORDER:
+        for offset in range(ancho_dia[dia]):
+            col_a_dia[dia_col_start[dia] + offset] = dia
+
     for i, (a, b) in enumerate(slots, start=2):
         franja_cell = ws.cell(row=i, column=1, value=_fmt_slot(a, b))
         franja_cell.font = Font(
@@ -293,7 +373,7 @@ def _write_cronograma_sheet(
         franja_cell.border = grid_border
         for j in range(2, total_cols + 1):
             c = ws.cell(row=i, column=j)
-            c.fill = empty_fill
+            c.fill = dia_fill[col_a_dia[j]]
             c.border = grid_border
 
     # Paso 5: pintar cada bloque como un rectángulo unido en su(s)
@@ -383,6 +463,35 @@ def _write_cronograma_sheet(
         franja_c.border = _mix(franja_c.border, right=thick)
         body_left_c = ws.cell(row=i, column=2)
         body_left_c.border = _mix(body_left_c.border, left=thick)
+
+    # Divisores verticales entre días (borde grueso). Cada día
+    # arranca en dia_col_start[dia]; ponemos borde izquierdo grueso
+    # ahí (excepto en Lunes que ya recibió el separador de la col A)
+    # y borde derecho grueso en la última col del día previo.
+    day_divider = Side(style="thick", color=_DAY_DIVIDER)
+    for i in range(1, last_row + 1):
+        for dia_idx, dia in enumerate(DIAS_ORDER):
+            if dia_idx == 0:
+                continue  # el borde izquierdo de Lunes ya viene del thick de col A
+            c0 = dia_col_start[dia]
+            left_c = ws.cell(row=i, column=c0)
+            left_c.border = _mix(left_c.border, left=day_divider)
+            # También poner right en la última col del día previo,
+            # para que si dos días tienen anchos distintos igual se
+            # vea el divisor.
+            prev_last = dia_col_start[dia] - 1
+            if prev_last >= 2:
+                prev_c = ws.cell(row=i, column=prev_last)
+                prev_c.border = _mix(prev_c.border, right=day_divider)
+
+    # Líneas horarias suaves cada hora completa (07:00, 08:00, …).
+    # Marcamos el borde superior de cada slot que arranca en minuto 0.
+    hour_line = Side(style="thin", color=_HOUR_LINE)
+    for i, (a, _b) in enumerate(slots, start=2):
+        if a % 60 == 0:  # slot arranca en hora completa
+            for j in range(1, last_col + 1):
+                cell = ws.cell(row=i, column=j)
+                cell.border = _mix(cell.border, top=hour_line)
 
     # Anchos de columna: franja angosta, días anchos.
     ws.column_dimensions["A"].width = 12

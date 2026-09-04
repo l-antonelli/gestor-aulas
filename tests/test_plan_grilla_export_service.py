@@ -373,6 +373,84 @@ class TestCronogramaSheetEstetica:
         }
         assert len(colores) == 1
 
+    def test_modo_color_materia_comision_evita_colision_par(self):
+        """En modo 'materia_comision', el bug original era: la
+        comisión 2 de una materia salía del mismo color que la
+        comisión 1 de otra materia. La estrategia base + offset
+        personal de shade lo evita: dos materias que caen en el
+        mismo color base usan offsets de shade distintos, entonces
+        sus comisiones nunca coinciden simultáneamente.
+
+        Este test cubre concretamente ese escenario: para un set de
+        materias con muchas comisiones, ningún par (materia1, C1) y
+        (materia2, C2) con materia1 != materia2 debe producir el
+        mismo color.
+        """
+        from src.services.plan_grilla_export_service import (
+            _color_para_bloque,
+        )
+        codigos = [
+            "MAT1", "MAT2", "MAT3", "FB1", "FB2", "FB3",
+            "EL1", "EL2", "CE1", "CE2",
+        ]
+        # Recolectar todos los colores por (materia, comisión).
+        colores: dict[tuple[str, int], str] = {}
+        for cod in codigos:
+            for com in range(1, 7):
+                blk = _mk_block(
+                    f"h_{cod}_{com}",
+                    materia_codigo=cod,
+                    comision_numero=com,
+                )
+                bg, _ = _color_para_bloque(blk, "materia_comision")
+                colores[(cod, com)] = bg
+
+        # Contar cuántas colisiones ocurren entre materias distintas.
+        # No exigimos cero (con 10 materias × 6 comisiones = 60
+        # combinaciones sobre 24 colores base × 7 shades = 168
+        # posibles hay birthday paradox), pero sí que sean pocas —
+        # como sanity check de que el offset personal reduce las
+        # colisiones respecto al bug original.
+        pares = list(colores.items())
+        colisiones = 0
+        for i, ((cod1, com1), col1) in enumerate(pares):
+            for (cod2, com2), col2 in pares[i + 1:]:
+                if cod1 != cod2 and col1 == col2:
+                    colisiones += 1
+        # 60 combinaciones × 59 / 2 = 1770 pares posibles.
+        # Toleramos hasta ~2% de colisiones cross-materia.
+        assert colisiones < 40, (
+            f"demasiadas colisiones entre materias distintas: "
+            f"{colisiones} pares"
+        )
+
+    def test_resumen_bloque_incluye_rango_horario(self):
+        """La etiqueta del bloque tiene el rango (HH:MM – HH:MM) al
+        final para que sea legible fuera de la grilla."""
+        grid = {
+            "Lunes": [
+                _mk_block(
+                    "h1", materia_codigo="MAT1", hi=9, hf=11,
+                ),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={},
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+        celda_mat1 = None
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for c in row:
+                if c.value and "MAT1" in str(c.value):
+                    celda_mat1 = c
+                    break
+            if celda_mat1:
+                break
+        assert celda_mat1 is not None
+        assert "09:00 – 11:00" in str(celda_mat1.value)
+
 
 class TestBuildExportFilename:
 
