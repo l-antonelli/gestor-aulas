@@ -98,7 +98,7 @@ else:
     ) = st.tabs([
         "📋 Planes del ciclo",
         "🔍 Detalle del Plan",
-        "📋 Grilla Horaria", "🏛️ Aulas", "⚙️ Configuración",
+        "📋 Horarios", "🏛️ Aulas", "⚙️ Configuración",
     ])
 
 
@@ -565,7 +565,7 @@ with tab_planes:
                         st.caption(
                             "Este es el plan activo. Editá su "
                             "contenido desde **🔍 Detalle**, la "
-                            "**📋 Grilla Horaria** o **🏛️ Aulas**."
+                            "**📋 Horarios** o **🏛️ Aulas**."
                         )
                     if st.button(
                         "🗑️ Eliminar",
@@ -959,15 +959,6 @@ if tab_detalle is not None:
 # =============================================================================
 if tab_grilla is not None:
     with tab_grilla:
-        st.subheader("Grilla Horaria")
-        st.caption(
-            "Editor del plan en formato cronograma semanal. Replica "
-            "la funcionalidad de **Cronogramas → Editar** pero opera "
-            "sobre los horarios y comisiones del plan. Útil para "
-            "resolver conflictos de cursada (superposiciones del "
-            "mismo cuatri/carrera) editando directamente en la "
-            "grilla."
-        )
         from src.ui.plan_grilla_editor import render_plan_grilla_editor
         render_plan_grilla_editor(sel_plan, key_ns="plan_grilla")
 

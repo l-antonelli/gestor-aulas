@@ -595,13 +595,6 @@ def render_plan_grilla_editor(
     if "_pge_toast" in st.session_state:
         st.toast(st.session_state.pop("_pge_toast"))
 
-    st.subheader("Editar grilla horaria del plan")
-    st.caption(
-        "Arrastrá bloques para cambiar día/hora. Redimensioná para "
-        "ajustar duración. Click sobre un bloque para editar/eliminar. "
-        "Drag sobre celdas vacías para agregar (requiere materia activa)."
-    )
-
     with next(get_session()) as session:
         plan = session.get(PlanificacionCursadaDB, plan_id)
         if plan is None or not plan.ciclo_id:
@@ -948,38 +941,30 @@ def render_plan_grilla_editor(
             )
 
             if not dialog_active:
+                # Caption inmediatamente arriba del cronograma para
+                # que el usuario tenga la referencia de gestos al
+                # alcance de la vista, en castellano rioplatense.
+                st.caption(
+                    "🖱️ **Arrastrá** un bloque para cambiar el día o "
+                    "la hora. Redimensionalo tirando del borde para "
+                    "ajustar la duración. **Clickeá** un bloque para "
+                    "editarlo o borrarlo. Para agregar un horario, "
+                    "elegí una materia abajo y después arrastrá "
+                    "sobre un espacio vacío del cronograma."
+                )
+                st.divider()
                 action = render_editable_schedule_calendar(
                     grid_data, config, key=f"{key_ns}_cal_pg",
                     color_by_comision=False,
                 )
 
-            # --- Export a Excel ---
-            _render_export_button(
-                grid_data=grid_data,
-                plan_id=plan_id,
-                key_ns=key_ns,
-                filtros_meta={
-                    "Carrera": f_carrera or "(sin filtro)",
-                    "Año": (
-                        f"{f_anio}º"
-                        if f_anio is not None else "(sin filtro)"
-                    ),
-                    "Cuatrimestre": f_cuatri or "(sin filtro)",
-                    "Alcance": f_alcance,
-                    "Materias visibles": (
-                        f"{len(mats_sel)} de {len(mat_list)}"
-                        if mats_sel else f"todas ({len(mat_list)})"
-                    ),
-                },
-            )
-
             # --- Selector de materia para agregar ---
             with st.container(border=True):
                 st.markdown("**➕ Agregar horario a la grilla**")
                 st.caption(
-                    "Elegí una materia y después seleccioná un rango "
-                    "sobre la grilla (drag & drop en un espacio "
-                    "vacío) para crear un horario nuevo."
+                    "Elegí una materia acá y después arrastrá "
+                    "sobre un espacio vacío del cronograma para "
+                    "sumar un horario nuevo."
                 )
                 mat_options_base = sorted(
                     c for c in materias_map
@@ -1021,6 +1006,33 @@ def render_plan_grilla_editor(
                             "No hay materias disponibles con los "
                             "filtros actuales."
                         )
+
+            # --- Export a Excel (expander al final) ---
+            with st.expander(
+                "📥 Exportar a Excel", expanded=False,
+            ):
+                _render_export_button(
+                    grid_data=grid_data,
+                    plan_id=plan_id,
+                    key_ns=key_ns,
+                    filtros_meta={
+                        "Carrera": f_carrera or "(sin filtro)",
+                        "Año": (
+                            f"{f_anio}º"
+                            if f_anio is not None
+                            else "(sin filtro)"
+                        ),
+                        "Cuatrimestre": (
+                            f_cuatri or "(sin filtro)"
+                        ),
+                        "Alcance": f_alcance,
+                        "Materias visibles": (
+                            f"{len(mats_sel)} de {len(mat_list)}"
+                            if mats_sel
+                            else f"todas ({len(mat_list)})"
+                        ),
+                    },
+                )
 
     # =========================================================================
     # Procesar acciones del calendario
