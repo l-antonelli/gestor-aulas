@@ -290,6 +290,259 @@ def _recompute_heatmap_por_sede_live(
     return heatmap
 
 
+def _compute_heatmap_ocupacion_live(
+    session: Session, plan_id: str,
+) -> Optional[dict]:
+    """Computa el heatmap de **ocupación** por sede: para cada celda
+    (día × franja × categoría) mide ``usadas / total`` sobre el
+    estado ACTUAL de la DB (``HorarioDB.aula_id``).
+
+    - **usadas** = número de aulas distintas de esa sede+categoría
+      con al menos un HorarioDB activo del plan solapando la franja.
+    - **total** = número de aulas de la sede+categoría en el catálogo.
+    - **ratio** = usadas / total.
+
+    A diferencia de ``compute_heatmap_por_sede`` (que mide demanda
+    proyectada según reglas vigentes), esta métrica es una lectura
+    pura del estado actual: cuenta lo que efectivamente está ocupado
+    en la DB, sin importar si el LP lo dejaría hacer hoy. Ambos
+    heatmaps conviven en la UI para que el usuario pueda comparar.
+
+    La estructura del retorno replica la de ``compute_heatmap_por_sede``
+    (mismas keys: sedes/dias/slots/data por sede/categoría) para que
+    el render pueda reutilizar la misma función. Además incluye
+    ``aulas_libres`` por celda (matriz de tuplas ``(nombre, cap)``)
+    para el toggle de "aulas libres en la franja".
+    """
+    from src.database.models import (
+        AulaDB as _Aula,
+        ComisionDB as _Com,
+        DictadoCicloDB as _DictCic,
+        DictadoDB as _Dict,
+        HorarioDB as _Hor,
+        MateriaDB as _Mat,
+        PlanificacionCursadaDB as _Plan,
+        SedeDB as _Sede,
+    )
+    from src.database.crud import get_or_create_config
+    from src.services.resolucion_jerarquica import resolve_virtual
+
+    plan = session.get(_Plan, plan_id)
+    if plan is None:
+        return None
+
+    # Slots iguales a los del mapa de saturación (misma
+    # ConfiguracionHoraria).
+    config = get_or_create_config(session)
+    DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+    granularidad = config.granularidad_minutos
+    hora_ini_min = (
+        config.hora_inicio_operativo.hour * 60
+        + config.hora_inicio_operativo.minute
+    )
+    hora_fin_min = (
+        config.hora_fin_operativo.hour * 60
+        + config.hora_fin_operativo.minute
+    ) + granularidad
+
+    com_ids = list(session.exec(
+        select(_Com.id).where(_Com.plan_cursada_id == plan_id)
+    ).all())
+    if not com_ids:
+        return None
+    horarios_db = list(session.exec(
+        select(_Hor).where(_Hor.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+    if not horarios_db:
+        return None
+
+    # Filtrar horarios virtuales (misma lógica que el mapa de saturación).
+    mat_codes = sorted({h.codigo_materia for h in horarios_db})
+    materias_db = list(session.exec(
+        select(_Mat).where(_Mat.codigo.in_(mat_codes))  # type: ignore[attr-defined]
+    ).all()) if mat_codes else []
+    materia_virtual = {m.codigo: m.virtual for m in materias_db}
+    materia_dictado_virtual: dict[str, bool | None] = {}
+    if plan.ciclo_id is not None:
+        for mc, v in session.exec(
+            select(_Dict.materia_codigo, _Dict.virtual)
+            .join(_DictCic, _Dict.id == _DictCic.dictado_id)  # type: ignore[arg-type]
+            .where(_DictCic.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dictado_virtual[mc] = v
+
+    horarios_activos = [
+        h for h in horarios_db
+        if not resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dictado_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        )
+    ]
+
+    # Catálogo de aulas por sede + categoría (teorica agrupa
+    # 'teorica' + 'anfiteatro', igual que el mapa de saturación).
+    aulas_db = list(session.exec(select(_Aula)).all())
+    aula_meta = {a.id: a for a in aulas_db}
+    aulas_por_sede_cat: dict[str, dict[str, list[str]]] = {}
+    for a in aulas_db:
+        if not a.sede_id:
+            continue
+        cat = None
+        if a.tipo in ("teorica", "anfiteatro"):
+            cat = "teorica"
+        elif a.tipo == "laboratorio":
+            cat = "laboratorio"
+        if cat is None:
+            continue
+        aulas_por_sede_cat.setdefault(a.sede_id, {}).setdefault(
+            cat, [],
+        ).append(a.id)
+
+    sedes_db = list(session.exec(select(_Sede)).all())
+    sede_nombre = {s.id: s.nombre for s in sedes_db}
+
+    # Slots y días (misma parametrización que el helper compartido).
+    slots_bounds: list[tuple[int, int]] = []
+    _s = hora_ini_min
+    while _s + granularidad <= hora_fin_min:
+        slots_bounds.append((_s, _s + granularidad))
+        _s += granularidad
+    slots_label = [
+        f"{a // 60:02d}:{a % 60:02d}-{b // 60:02d}:{b % 60:02d}"
+        for a, b in slots_bounds
+    ]
+    dias = list(DIAS)
+    n_slots = len(slots_label)
+    n_dias = len(dias)
+    dia_idx = {d: i for i, d in enumerate(dias)}
+
+    def _empty_int():
+        return [[0] * n_dias for _ in range(n_slots)]
+
+    def _empty_float():
+        return [[0.0] * n_dias for _ in range(n_slots)]
+
+    # Marcar aulas ocupadas por (aula, si, di).
+    ocupada: dict[tuple[str, int, int], bool] = {}
+    for h in horarios_activos:
+        if not h.aula_id:
+            continue
+        di = dia_idx.get(h.dia)
+        if di is None:
+            continue
+        h_s = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_e = h.hora_fin.hour * 60 + h.hora_fin.minute
+        for si, (a, b) in enumerate(slots_bounds):
+            if h_s < b and h_e > a:
+                ocupada[(h.aula_id, si, di)] = True
+
+    # Armar data[sede][cat] con demanda=usadas, oferta=total.
+    data: dict[str, dict[str, dict]] = {}
+    for sede_id in aulas_por_sede_cat:
+        data[sede_id] = {}
+        for cat in ("teorica", "laboratorio"):
+            aulas_cat = aulas_por_sede_cat.get(sede_id, {}).get(cat, [])
+            total = len(aulas_cat)
+            demanda = _empty_int()   # "usadas"
+            oferta = _empty_int()    # "total"
+            ratio = _empty_float()
+            libres_matrix: list[list[list[tuple]]] = [
+                [[] for _ in range(n_dias)] for _ in range(n_slots)
+            ]
+            for si in range(n_slots):
+                for di in range(n_dias):
+                    usadas_ids = [
+                        aid for aid in aulas_cat
+                        if ocupada.get((aid, si, di))
+                    ]
+                    libres_ids = [
+                        aid for aid in aulas_cat
+                        if not ocupada.get((aid, si, di))
+                    ]
+                    demanda[si][di] = len(usadas_ids)
+                    oferta[si][di] = total
+                    ratio[si][di] = (
+                        (len(usadas_ids) / total) if total > 0 else 0.0
+                    )
+                    for aid in libres_ids:
+                        a = aula_meta.get(aid)
+                        if a is not None:
+                            libres_matrix[si][di].append(
+                                (a.nombre, a.capacidad)
+                            )
+            data[sede_id][cat] = {
+                "demanda": demanda,
+                "oferta": oferta,
+                "ratio": ratio,
+                "aulas_libres": libres_matrix,
+            }
+
+        # "peor": el máximo ratio entre teórica y laboratorio por celda.
+        peor_dem = _empty_int()
+        peor_of = _empty_int()
+        peor_ratio = _empty_float()
+        cat_gan = [["" for _ in range(n_dias)] for _ in range(n_slots)]
+        libres_peor: list[list[list[tuple]]] = [
+            [[] for _ in range(n_dias)] for _ in range(n_slots)
+        ]
+        for si in range(n_slots):
+            for di in range(n_dias):
+                r_teo = data[sede_id]["teorica"]["ratio"][si][di]
+                r_lab = data[sede_id]["laboratorio"]["ratio"][si][di]
+                if r_teo >= r_lab:
+                    peor_ratio[si][di] = r_teo
+                    peor_dem[si][di] = data[sede_id]["teorica"]["demanda"][si][di]
+                    peor_of[si][di] = data[sede_id]["teorica"]["oferta"][si][di]
+                    if peor_dem[si][di] > 0:
+                        cat_gan[si][di] = "teorica"
+                else:
+                    peor_ratio[si][di] = r_lab
+                    peor_dem[si][di] = data[sede_id]["laboratorio"]["demanda"][si][di]
+                    peor_of[si][di] = data[sede_id]["laboratorio"]["oferta"][si][di]
+                    if peor_dem[si][di] > 0:
+                        cat_gan[si][di] = "laboratorio"
+                # Aulas libres del peor caso: sólo las de la categoría
+                # ganadora (la que efectivamente está saturada).
+                if cat_gan[si][di]:
+                    libres_peor[si][di] = (
+                        data[sede_id][cat_gan[si][di]]["aulas_libres"][si][di]
+                    )
+        data[sede_id]["peor"] = {
+            "demanda": peor_dem,
+            "oferta": peor_of,
+            "ratio": peor_ratio,
+            "cat_ganadora": cat_gan,
+            "aulas_libres": libres_peor,
+        }
+
+    # Metadata de sedes.
+    sedes_meta = []
+    for sede_id, cats in aulas_por_sede_cat.items():
+        n_teo = len(cats.get("teorica", []))
+        n_lab = len(cats.get("laboratorio", []))
+        tiene_uso = any(
+            data[sede_id]["peor"]["demanda"][si][di] > 0
+            for si in range(n_slots)
+            for di in range(n_dias)
+        )
+        sedes_meta.append({
+            "sede_id": sede_id,
+            "sede_nombre": sede_nombre.get(sede_id, sede_id),
+            "n_aulas_teoricas": n_teo,
+            "n_aulas_laboratorio": n_lab,
+            "tiene_demanda": tiene_uso,  # reusa key para compatibilidad
+        })
+    sedes_meta.sort(key=lambda s: s["sede_nombre"])
+
+    return {
+        "sedes": sedes_meta,
+        "dias": dias,
+        "slots": slots_label,
+        "data": data,
+    }
+
+
 def _agregar_aulas_libres_al_heatmap(
     heatmap: dict, horarios_db: list, aulas_db: list,
 ) -> None:
@@ -560,19 +813,143 @@ def _candidatas_partir_comision(df: pd.DataFrame) -> pd.DataFrame:
 # Public API
 # =============================================================================
 
-def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
-    """Mapa de saturación PARTICIONADO POR SEDE.
+def _render_aulas_libres_por_franja(
+    heatmap_ocupacion: dict, key_ns: str,
+) -> None:
+    """Toggle complementario al modo Ocupación: dado un rango de
+    día × franja, muestra qué aulas de la sede seleccionada están
+    libres (sin ningún horario asignado) durante TODO el rango.
 
-    Para cada sede del sistema, renderiza un mini-heatmap (día × franja)
-    con la saturación de aulas: cantidad de horarios que la sede admite
-    sobre cantidad de aulas disponibles del tipo necesario. Permite ver
-    EXACTAMENTE en qué sede × franja × tipo de aula falta capacidad
-    (la herramienta principal cuando R10 está apretada).
+    Reutiliza ``aulas_libres`` que ``_compute_heatmap_ocupacion_live``
+    ya calcula por celda. Un aula se considera libre en el rango si
+    lo está en cada celda (día × slot) individualmente.
+    """
+    sedes_meta = heatmap_ocupacion.get("sedes", [])
+    if not sedes_meta:
+        st.caption("No hay sedes con aulas en el catálogo.")
+        return
 
-    El usuario puede filtrar por categoría: 'peor caso' (default,
-    máximo entre teóricas y labs), 'teórica' (sólo aulas teóricas/
-    anfiteatros), 'laboratorio' (sólo aulas tipo lab). Las sedes sin
-    demanda se listan en un expander al final, colapsado.
+    DIAS_LIST = list(heatmap_ocupacion.get("dias", []))
+    slots_all = list(heatmap_ocupacion.get("slots", []))
+
+    st.caption(
+        "Seleccioná una sede, un tipo de aula, uno o más días y "
+        "una o más franjas para ver qué aulas están **libres** "
+        "(sin horario asignado) durante todo ese rango. Útil para "
+        "elegir un aula al reasignar manualmente."
+    )
+
+    c1, c_tipo, c2, c3 = st.columns([2, 1.5, 2, 3])
+    with c1:
+        sel_sede_id = st.selectbox(
+            "Sede",
+            options=[s["sede_id"] for s in sedes_meta],
+            format_func=lambda sid: next(
+                s["sede_nombre"] for s in sedes_meta
+                if s["sede_id"] == sid
+            ),
+            key=f"{key_ns}_libres_sede",
+        )
+    with c_tipo:
+        sel_tipo = st.selectbox(
+            "Tipo de aula",
+            options=["Todas", "Sólo teóricas", "Sólo laboratorios"],
+            index=0,
+            key=f"{key_ns}_libres_tipo",
+        )
+    with c2:
+        sel_dias = st.multiselect(
+            "Días",
+            options=DIAS_LIST,
+            default=[],
+            key=f"{key_ns}_libres_dias",
+        )
+    with c3:
+        sel_slots = st.multiselect(
+            "Franjas (15 min)",
+            options=slots_all,
+            default=[],
+            key=f"{key_ns}_libres_slots",
+        )
+
+    if not sel_dias or not sel_slots:
+        st.caption(
+            "Elegí al menos un día y una franja para ver las aulas "
+            "libres."
+        )
+        return
+
+    cats_libres: list[str]
+    if sel_tipo == "Sólo teóricas":
+        cats_libres = ["teorica"]
+    elif sel_tipo == "Sólo laboratorios":
+        cats_libres = ["laboratorio"]
+    else:
+        cats_libres = ["teorica", "laboratorio"]
+
+    slot_idx_map = {s: i for i, s in enumerate(slots_all)}
+    dias_idx_map = {d: i for i, d in enumerate(DIAS_LIST)}
+
+    libres_por_cat: dict[str, list[tuple]] = {}
+    for cat in cats_libres:
+        data_c = heatmap_ocupacion["data"].get(sel_sede_id, {}).get(cat, {})
+        libres_matrix = data_c.get("aulas_libres")
+        if not libres_matrix:
+            continue
+        interseccion: set[tuple] | None = None
+        for slot in sel_slots:
+            si = slot_idx_map.get(slot)
+            if si is None:
+                continue
+            for dia in sel_dias:
+                di = dias_idx_map.get(dia)
+                if di is None:
+                    continue
+                celda_set = {tuple(x) for x in libres_matrix[si][di]}
+                if interseccion is None:
+                    interseccion = celda_set
+                else:
+                    interseccion &= celda_set
+        libres_por_cat[cat] = sorted(interseccion or set())
+
+    cat_label = {"teorica": "Teóricas", "laboratorio": "Laboratorios"}
+    algo_mostrado = False
+    for cat, items in libres_por_cat.items():
+        algo_mostrado = True
+        st.markdown(f"**{cat_label[cat]}** — {len(items)} libre(s)")
+        if not items:
+            st.caption("(ninguna aula libre en todo el rango)")
+        else:
+            st.markdown(
+                ", ".join(f"{nombre} ({cap})" for nombre, cap in items)
+            )
+    if not algo_mostrado:
+        st.caption(
+            "No hay información de aulas libres para este tipo en la "
+            "sede seleccionada."
+        )
+
+
+def _render_heatmap_por_sede(
+    heatmap_sede: dict,
+    key_ns: str,
+    modo: str = "saturacion",
+) -> None:
+    """Renderiza el mapa térmico por sede. ``modo`` controla la
+    semántica del heatmap:
+
+    - ``"saturacion"``: **demanda vs oferta** según reglas vigentes
+      (R10 sede admisible, R3 tipo, R6 lab). Sirve para planificar
+      la asignación automática. Verde ≤80%, rojo >100% = "faltan
+      aulas del catálogo".
+    - ``"ocupacion"``: **usadas vs total** sobre el estado actual
+      de la DB. Verde ≤80% (holgura), rojo >100% no puede ocurrir
+      (usadas nunca supera total). Sirve para ver "cómo está de
+      ocupado el plan hoy".
+
+    Aunque los dos modos comparten estructura (data[sede][cat] con
+    demanda/oferta/ratio), la semántica del tooltip y el mensaje
+    cambian.
     """
     if not heatmap_sede or not heatmap_sede.get("sedes"):
         return
@@ -580,24 +957,36 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
     import altair as alt
     import pandas as pd
 
-    st.markdown(
-        "**🔥 Mapa de saturación por sede: dónde faltan aulas**"
-    )
-    st.caption(
-        "Cada celda muestra **demanda/oferta** en esa sede para esa "
-        "franja. La demanda son los horarios que la sede admite "
-        "(según la regla de sedes admisibles: sedes habilitadas para "
-        "la carrera de la materia o sede por defecto para materias "
-        "comunes, más la compatibilidad de laboratorio). La oferta "
-        "son las aulas de la sede del tipo necesario. Verde ≤80% · "
-        "amarillo 80–100% · rojo >100% (saturación segura: más "
-        "horarios que aulas).  \n"
-        "En la vista **peor caso**, la etiqueta incluye "
-        "**T** (peor entre teóricas) o **L** (peor entre "
-        "laboratorios) para que se distinga en qué categoría satura "
-        "cada celda. En el tooltip se ve el desglose completo de las "
-        "dos categorías."
-    )
+    es_saturacion = modo == "saturacion"
+
+    if es_saturacion:
+        st.caption(
+            "Cada celda muestra **demanda/oferta** en esa sede para "
+            "esa franja. La demanda son los horarios que la sede "
+            "admite (según la regla de sedes admisibles: sedes "
+            "habilitadas para la carrera de la materia o sede por "
+            "defecto para materias comunes, más la compatibilidad "
+            "de laboratorio). La oferta son las aulas de la sede "
+            "del tipo necesario. Verde ≤80% · amarillo 80–100% · "
+            "rojo >100% (saturación segura: más horarios que "
+            "aulas).  \nEn la vista **peor caso**, la etiqueta "
+            "incluye **T** (peor entre teóricas) o **L** (peor "
+            "entre laboratorios) para que se distinga en qué "
+            "categoría satura cada celda. En el tooltip se ve el "
+            "desglose completo de las dos categorías."
+        )
+    else:
+        st.caption(
+            "Cada celda muestra **usadas/total** en esa sede para "
+            "esa franja. **Usadas** son las aulas que efectivamente "
+            "tienen algún horario asignado en la DB (estado real "
+            "del plan). **Total** son las aulas de la sede del "
+            "tipo. Verde ≤80% (holgura) · amarillo 80–100% · rojo "
+            ">100% no puede ocurrir en este modo (nunca hay más "
+            "usadas que existentes).  \nEn la vista **peor caso**, "
+            "la etiqueta incluye **T** o **L** según qué categoría "
+            "concentra la ocupación en cada celda."
+        )
 
     cat_label = {
         "peor": "Peor caso (entre teóricas y laboratorios)",
@@ -818,24 +1207,45 @@ def _render_heatmap_por_sede(heatmap_sede: dict, key_ns: str) -> None:
                     axis=alt.Axis(labelFontSize=10),
                 ),
             )
+            if es_saturacion:
+                _demanda_lbl = "Horarios (demanda)"
+                _oferta_lbl = "Aulas del tipo (oferta)"
+                _cat_desglose_teo = "Teóricas d/o"
+                _cat_desglose_lab = "Laboratorios d/o"
+                _libres_lbl = "Aulas libres (estado actual)"
+                _leg = "Saturación"
+            else:
+                _demanda_lbl = "Aulas usadas"
+                _oferta_lbl = "Aulas totales del tipo"
+                _cat_desglose_teo = "Teóricas u/t"
+                _cat_desglose_lab = "Laboratorios u/t"
+                _libres_lbl = "Aulas libres en la celda"
+                _leg = "Ocupación"
+
+            tooltips = [
+                alt.Tooltip("dia:N", title="Día"),
+                alt.Tooltip("slot:N", title="Franja"),
+                alt.Tooltip(
+                    "cat_ganadora:N",
+                    title="Categoría (peor)" if es_saturacion else "Categoría",
+                ),
+                alt.Tooltip("demanda:Q", title=_demanda_lbl),
+                alt.Tooltip("oferta:Q", title=_oferta_lbl),
+                alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+                alt.Tooltip("teorica_txt:N", title=_cat_desglose_teo),
+                alt.Tooltip(
+                    "laboratorio_txt:N", title=_cat_desglose_lab,
+                ),
+                alt.Tooltip("n_libres:Q", title="N° aulas libres"),
+                alt.Tooltip("aulas_libres:N", title=_libres_lbl),
+            ]
             rect = base.mark_rect(stroke="#444", strokeWidth=0.5).encode(
                 color=alt.Color(
                     "bucket:N",
                     scale=color_scale,
-                    legend=alt.Legend(title="Saturación"),
+                    legend=alt.Legend(title=_leg),
                 ),
-                tooltip=[
-                    alt.Tooltip("dia:N", title="Día"),
-                    alt.Tooltip("slot:N", title="Franja"),
-                    alt.Tooltip("cat_ganadora:N", title="Categoría peor"),
-                    alt.Tooltip("demanda:Q", title="Horarios (peor)"),
-                    alt.Tooltip("oferta:Q", title="Aulas (peor)"),
-                    alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
-                    alt.Tooltip("teorica_txt:N", title="Teóricas d/o"),
-                    alt.Tooltip("laboratorio_txt:N", title="Laboratorios d/o"),
-                    alt.Tooltip("n_libres:Q", title="N° aulas libres"),
-                    alt.Tooltip("aulas_libres:N", title="Aulas libres"),
-                ],
+                tooltip=tooltips,
             )
             text = base.mark_text(fontSize=9, fontWeight="bold").encode(
                 text=alt.Text("etiqueta:N"),
@@ -1705,90 +2115,15 @@ def _render_inspector_franja(
             f"encontrarían aula en esta sede. Es una **guía para "
             f"planificar la asignación automática**, no una "
             f"medición del estado actual de la DB.\n\n"
-            f"💡 Puede haber aulas libres puntualmente en el rango "
-            f"(ver expander de abajo) pero el total de aulas del "
-            f"tipo en la sede no alcanza para cubrir toda la "
-            f"demanda simultánea — hay que reducir la demanda."
+            f"💡 Para ver qué aulas están **efectivamente libres** "
+            f"hoy en la franja (según el estado del plan), cambiá al "
+            f"modo **Ocupación** en el mapa térmico."
         )
     else:
         st.success(
             "✅ No hay exceso de horarios sobre aulas disponibles "
             "en el rango seleccionado (para este tipo)."
         )
-
-    # Expander: aulas libres en todo el rango (intersección: un aula
-    # se considera libre si está libre en TODAS las celdas del rango).
-    with st.expander("🏛 Aulas libres en el rango", expanded=False):
-        st.caption(
-            "📊 **Este listado surge del estado actual de los datos "
-            "del plan** (asignaciones vigentes en la DB): aulas de "
-            f"**{sede_nom}** del tipo seleccionado que no están "
-            "ocupadas por ningún horario **hoy** durante todo el "
-            "rango elegido. Útil para saber cuáles quedan "
-            "disponibles para reasignar manualmente."
-        )
-        st.caption(
-            "ℹ️ **Ojo**: si el mensaje de arriba dice 'faltan N', "
-            "ese es un problema **prospectivo** (la sede no tiene "
-            "suficientes aulas del tipo para toda la demanda "
-            "simultánea proyectada bajo las reglas actuales). Que "
-            "haya aulas libres acá no lo resuelve — esas libres ya "
-            "están contadas en la oferta total, y si el LP re-"
-            "asigna con las reglas vigentes, se van a llenar y aún "
-            "así van a faltar N."
-        )
-        # Categorías a chequear según el filtro.
-        cats_libres: list[str]
-        if sel_tipo == "Sólo teóricas":
-            cats_libres = ["teorica"]
-        elif sel_tipo == "Sólo laboratorios":
-            cats_libres = ["laboratorio"]
-        else:
-            cats_libres = ["teorica", "laboratorio"]
-
-        slot_idx_map = {s: i for i, s in enumerate(slots_all)}
-        dias_idx_map = {d: i for i, d in enumerate(heatmap_sede["dias"])}
-        # Set de aulas libres para el rango (intersección por celda).
-        libres_por_cat: dict[str, list[tuple[str, int]]] = {}
-        for cat in cats_libres:
-            data_c = heatmap_sede["data"][sel_sede_id].get(cat, {})
-            libres_matrix = data_c.get("aulas_libres")
-            if not libres_matrix:
-                continue
-            interseccion: set[tuple[str, int]] | None = None
-            for slot in sel_slots:
-                si = slot_idx_map.get(slot)
-                if si is None:
-                    continue
-                for dia in sel_dias:
-                    di = dias_idx_map.get(dia)
-                    if di is None:
-                        continue
-                    celda_set = {tuple(x) for x in libres_matrix[si][di]}
-                    if interseccion is None:
-                        interseccion = celda_set
-                    else:
-                        interseccion &= celda_set
-            libres_por_cat[cat] = sorted(interseccion or set())
-
-        cat_label = {"teorica": "Teóricas", "laboratorio": "Laboratorios"}
-        algo_mostrado = False
-        for cat, items in libres_por_cat.items():
-            algo_mostrado = True
-            st.markdown(f"**{cat_label[cat]}** — {len(items)} libre(s)")
-            if not items:
-                st.caption("(ninguna aula libre en todo el rango)")
-            else:
-                st.markdown(
-                    ", ".join(
-                        f"{nombre} ({cap})" for nombre, cap in items
-                    )
-                )
-        if not algo_mostrado:
-            st.caption(
-                "No hay información de aulas libres disponible. Este "
-                "cálculo requiere una corrida reciente del asignador."
-            )
 
     # Detalle de horarios: envuelto en expander principal + expanders
     # por cada entrada, con paginación (similar al panel de aulas).
@@ -2442,29 +2777,97 @@ def render_resultado(
     # usamos títulos con `st.markdown` y toggles.
     # ======================================================
     if heatmap_sede:
-        st.markdown("#### 🔥 Mapa de Saturación")
-        _render_heatmap_por_sede(heatmap_sede, key_ns=key_ns)
+        with st.container(border=True):
+            st.markdown("#### 🔥 Mapa térmico por sede")
 
-        # "Ver detalle" como toggle (equivale al ex-Inspeccionar franja).
-        _ver_detalle_key = f"{key_ns}_ver_detalle_toggle"
-        if _ver_detalle_key not in st.session_state:
-            st.session_state[_ver_detalle_key] = False
-        mostrar_detalle = st.toggle(
-            "🔍 Ver detalle de una franja",
-            key=_ver_detalle_key,
-            help=(
-                "Muestra un cronograma coloreado por carrera y "
-                "controles para editar día/hora de los horarios "
-                "en el rango seleccionado."
-            ),
-        )
-        if mostrar_detalle:
-            with st.container(border=True):
-                _render_inspector_franja(
-                    heatmap_sede,
-                    plan_id=run.plan_cursada_id,
-                    key_ns=key_ns,
+            # Selector de modo: Saturación vs Ocupación. Ambos usan la
+            # misma estructura de heatmap, pero cambian de fuente y
+            # significado. Ver `_compute_heatmap_ocupacion_live`.
+            _modo_key = f"{key_ns}_heatmap_modo"
+            _modo_lbl = {
+                "saturacion": (
+                    "🎯 Saturación (demanda proyectada por reglas)"
+                ),
+                "ocupacion": "📊 Ocupación (estado actual del plan)",
+            }
+            modo = st.radio(
+                "Modo",
+                options=["saturacion", "ocupacion"],
+                format_func=lambda m: _modo_lbl[m],
+                horizontal=True,
+                key=_modo_key,
+                help=(
+                    "**Saturación**: demanda vs oferta según las "
+                    "reglas vigentes del asignador (R10 sede "
+                    "admisible, R3 tipo, R6 lab). Sirve para "
+                    "planificar la corrida del LP.\n\n"
+                    "**Ocupación**: aulas usadas vs total según el "
+                    "estado actual del plan. Sirve para ver "
+                    "concretamente cómo está ocupado el plan hoy."
+                ),
+            )
+
+            if modo == "saturacion":
+                _render_heatmap_por_sede(
+                    heatmap_sede, key_ns=key_ns, modo="saturacion",
                 )
+
+                # Toggle sólo válido en modo saturación (dice "faltan N
+                # aulas del catálogo" y depende de demanda).
+                _ver_detalle_key = f"{key_ns}_ver_detalle_toggle"
+                if _ver_detalle_key not in st.session_state:
+                    st.session_state[_ver_detalle_key] = False
+                mostrar_detalle = st.toggle(
+                    "🔍 Ver detalle de una franja",
+                    key=_ver_detalle_key,
+                    help=(
+                        "Cronograma coloreado por carrera y "
+                        "controles para editar día/hora de los "
+                        "horarios en el rango seleccionado."
+                    ),
+                )
+                if mostrar_detalle:
+                    with st.container(border=True):
+                        _render_inspector_franja(
+                            heatmap_sede,
+                            plan_id=run.plan_cursada_id,
+                            key_ns=key_ns,
+                        )
+            else:
+                heatmap_ocup = _compute_heatmap_ocupacion_live(
+                    session, run.plan_cursada_id,
+                )
+                if heatmap_ocup is None:
+                    st.caption(
+                        "El plan no tiene horarios cargados; nada "
+                        "para mostrar."
+                    )
+                else:
+                    _render_heatmap_por_sede(
+                        heatmap_ocup, key_ns=key_ns, modo="ocupacion",
+                    )
+
+                    # Toggle análogo al de saturación, pero para
+                    # mostrar aulas efectivamente libres en una
+                    # franja según el estado actual de la DB.
+                    _libres_key = f"{key_ns}_ver_aulas_libres_toggle"
+                    if _libres_key not in st.session_state:
+                        st.session_state[_libres_key] = False
+                    mostrar_libres = st.toggle(
+                        "🏛 Ver aulas libres en una franja",
+                        key=_libres_key,
+                        help=(
+                            "Lista qué aulas de la sede no tienen "
+                            "ningún horario asignado durante el "
+                            "rango que elijas. Útil para reasignar "
+                            "manualmente."
+                        ),
+                    )
+                    if mostrar_libres:
+                        with st.container(border=True):
+                            _render_aulas_libres_por_franja(
+                                heatmap_ocup, key_ns=key_ns,
+                            )
 
     if run.status != "optimal":
         with st.expander("🔍 Diagnóstico", expanded=True):
