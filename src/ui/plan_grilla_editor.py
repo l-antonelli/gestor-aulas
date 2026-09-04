@@ -494,12 +494,15 @@ def render_plan_grilla_editor(
             return
         config = get_or_create_config(session)
 
-        # Carreras del ciclo
+        # Carreras del ciclo. Si el ciclo tiene versiones asociadas
+        # (``CicloPlanVersionDB``), usamos sólo las carreras de esas
+        # versiones. Si no (típico en ciclos clonados / demos), caemos
+        # a todas las carreras del catálogo para que el filtro siga
+        # siendo usable.
         pv_ids = list(session.exec(
             select(CicloPlanVersionDB.plan_version_id)
             .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
         ).all())
-        carreras_ciclo = []
         if pv_ids:
             carreras_ciclo = list(session.exec(
                 select(CarreraDB)
@@ -509,6 +512,10 @@ def render_plan_grilla_editor(
                 )
                 .where(col(PlanCarreraVersionDB.id).in_(pv_ids))
                 .distinct()
+            ).all())
+        else:
+            carreras_ciclo = list(session.exec(
+                select(CarreraDB).order_by(CarreraDB.codigo)  # type: ignore[arg-type]
             ).all())
 
         # Mapa de materias del plan (para format_func + búsqueda)
@@ -524,12 +531,24 @@ def render_plan_grilla_editor(
             m.codigo: m.nombre for m in all_mats_db
         }
 
-        # Conteo de carreras por materia (para 'excluir comunes')
-        pe_rows = list(session.exec(
-            select(PlanEstudioDB.materia_codigo, PlanEstudioDB.carrera_codigo)
-            .where(col(PlanEstudioDB.plan_version_id).in_(pv_ids))
-            .where(col(PlanEstudioDB.materia_codigo).in_(all_mat_codes))
-        ).all()) if all_mat_codes and pv_ids else []
+        # Conteo de carreras por materia (para 'excluir comunes').
+        # Si el ciclo no tiene CicloPlanVersionDB seteado (típico en
+        # ciclos clonados / demos), caemos a todas las versiones.
+        if all_mat_codes:
+            _pe_q = (
+                select(
+                    PlanEstudioDB.materia_codigo,
+                    PlanEstudioDB.carrera_codigo,
+                )
+                .where(col(PlanEstudioDB.materia_codigo).in_(all_mat_codes))
+            )
+            if pv_ids:
+                _pe_q = _pe_q.where(
+                    col(PlanEstudioDB.plan_version_id).in_(pv_ids),
+                )
+            pe_rows = list(session.exec(_pe_q).all())
+        else:
+            pe_rows = []
         materias_carreras: dict[str, set[str]] = {}
         for mc, cc in pe_rows:
             materias_carreras.setdefault(mc, set()).add(cc)
@@ -724,10 +743,15 @@ def render_plan_grilla_editor(
         filtered_mats: Optional[set[str]] = None
         if min_filters_set:
             with next(get_session()) as session:
-                eq = (
-                    select(PlanEstudioDB.materia_codigo)
-                    .where(col(PlanEstudioDB.plan_version_id).in_(pv_ids))
-                )
+                eq = select(PlanEstudioDB.materia_codigo)
+                # Restringir por versiones del ciclo sólo si existen
+                # (los ciclos clonados como demos pueden no tener
+                # CicloPlanVersionDB seteado — en ese caso caemos a
+                # todas las versiones del catálogo).
+                if pv_ids:
+                    eq = eq.where(
+                        col(PlanEstudioDB.plan_version_id).in_(pv_ids),
+                    )
                 if f_carrera is not None:
                     e_carrera_cod = f_carrera.split(" - ")[0]
                     eq = eq.where(
