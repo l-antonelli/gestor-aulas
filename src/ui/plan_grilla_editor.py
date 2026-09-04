@@ -32,6 +32,7 @@ from sqlmodel import col, select
 from src.database.connection import get_session
 from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
+    AulaDB,
     CarreraDB,
     CicloPlanVersionDB,
     ComisionDB,
@@ -40,6 +41,7 @@ from src.database.models import (
     PlanCarreraVersionDB,
     PlanEstudioDB,
     PlanificacionCursadaDB,
+    SedeDB,
 )
 from src.services.schedule_service import ScheduleBlock
 from src.ui.calendar_render import render_editable_schedule_calendar
@@ -842,18 +844,104 @@ def render_plan_grilla_editor(
                 ),
             )
 
+        # Container: filtrar por Sede y Aula (útil para ver o exportar
+        # el cronograma de un aula puntual).
+        with next(get_session()) as _sess_aa:
+            aulas_db = list(_sess_aa.exec(
+                select(AulaDB).order_by(
+                    AulaDB.sede_id, AulaDB.nombre,  # type: ignore[arg-type]
+                )
+            ).all())
+            sedes_db = list(_sess_aa.exec(
+                select(SedeDB).order_by(SedeDB.nombre)  # type: ignore[arg-type]
+            ).all())
+        sede_map = {s.id: s.nombre for s in sedes_db}
+
+        with st.container(border=True):
+            st.markdown("**🏛️ Aula**")
+            st.caption(
+                "Filtrá por sede o aula concreta. Es útil para ver "
+                "o exportar el cronograma de un aula puntual "
+                "(clases que se dictan ahí durante la semana)."
+            )
+            col_sd, col_au = st.columns(2)
+            with col_sd:
+                _sede_opts = ["— Todas —"] + [
+                    s.id for s in sedes_db
+                ]
+                f_sede = st.selectbox(
+                    "Sede",
+                    options=_sede_opts,
+                    format_func=lambda sid: (
+                        "— Todas —" if sid == "— Todas —"
+                        else sede_map.get(sid, sid)
+                    ),
+                    key=f"{key_ns}_filtro_sede",
+                    help=(
+                        "Filtra las clases que están asignadas a "
+                        "un aula de esta sede."
+                    ),
+                )
+            with col_au:
+                # Aulas restringidas por sede si hay filtro.
+                if f_sede == "— Todas —":
+                    _aulas_visibles = aulas_db
+                else:
+                    _aulas_visibles = [
+                        a for a in aulas_db if a.sede_id == f_sede
+                    ]
+                _aula_opts = ["— Todas —"] + [
+                    a.id for a in _aulas_visibles
+                ]
+                _aula_labels = {
+                    a.id: (
+                        f"{sede_map.get(a.sede_id, '?')} · "
+                        f"{a.nombre}"
+                    )
+                    for a in _aulas_visibles
+                }
+                f_aula = st.selectbox(
+                    "Aula",
+                    options=_aula_opts,
+                    format_func=lambda aid: (
+                        "— Todas —" if aid == "— Todas —"
+                        else _aula_labels.get(aid, aid)
+                    ),
+                    key=f"{key_ns}_filtro_aula",
+                    help=(
+                        "Filtrá por un aula puntual — útil para "
+                        "ver todas las clases de la semana en esa "
+                        "aula y exportar su cronograma."
+                    ),
+                )
+
         # Con que al menos Año y Cuatri estén elegidos ya podemos
         # filtrar. Carrera es opcional: si queda vacía, mostramos
         # todas las materias que estén en (año, cuatri) para cualquier
         # carrera — permite ver materias comunes al filtrar por año/
         # cuatri sin comprometerse a una carrera. El "Tipo de materia"
         # + "Excluir comunes" de abajo refina más si hace falta.
+        #
+        # También aceptamos "sólo filtro de aula" como entrada
+        # válida — sirve para ver todas las clases que se dictan en
+        # un aula durante la semana, sin importar la carrera.
+        aula_solo_filtro = (
+            f_aula != "— Todas —" or f_sede != "— Todas —"
+        )
         min_filters_set = (
-            f_anio is not None and f_cuatri is not None
+            (f_anio is not None and f_cuatri is not None)
+            or aula_solo_filtro
         )
 
         filtered_mats: Optional[set[str]] = None
-        if min_filters_set:
+        # Sólo restringimos materias por ubicación cuando el usuario
+        # eligió año + cuatri. Si sólo filtró por aula/sede, mostramos
+        # todas las materias del plan y dejamos que el filtro de aula
+        # haga su trabajo por bloque.
+        ubicacion_activa = (
+            f_anio is not None and f_cuatri is not None
+        )
+        if ubicacion_activa:
             with next(get_session()) as session:
                 eq = select(PlanEstudioDB.materia_codigo)
                 # Restringir por versiones del ciclo sólo si existen
@@ -882,11 +970,11 @@ def render_plan_grilla_editor(
 
         if not min_filters_set:
             st.caption(
-                "Seleccioná al menos **Año** y **Cuatrimestre** para "
-                "ver y editar las materias del plan. La carrera es "
-                "opcional: si la dejás vacía se muestran las materias "
-                "de todas las carreras para ese año/cuatri (útil para "
-                "ver materias comunes)."
+                "Empezá eligiendo algún filtro: podés filtrar por "
+                "**Año + Cuatrimestre** (opcionalmente sumando "
+                "carrera) para ver las materias de esa cursada, o "
+                "sólo por **Aula / Sede** para ver el cronograma de "
+                "un aula puntual."
             )
         else:
             grid_full, _ = _build_plan_grid(plan_id)
@@ -939,6 +1027,45 @@ def render_plan_grilla_editor(
             grid_data = _aplicar_filtro_alcance(
                 grid_data, f_alcance, materias_carreras_count,
             )
+
+            # Filtro por Sede / Aula. Cada block del plan tiene
+            # ``aula_label`` = "Sede · Aula" cuando hay aula
+            # asignada. Para filtrar necesitamos el aula_id crudo
+            # del HorarioDB — para no romper ScheduleBlock,
+            # resolvemos por session.
+            if f_aula != "— Todas —" or f_sede != "— Todas —":
+                # Traer HorarioDB → aula_id/sede en un dict.
+                with next(get_session()) as _sess_fa:
+                    _hor_aula = {
+                        hid: aid
+                        for hid, aid in _sess_fa.exec(
+                            select(HorarioDB.id, HorarioDB.aula_id)
+                            .where(
+                                col(HorarioDB.aula_id).is_not(None),
+                            )
+                        ).all()
+                    }
+                aula_sede: dict[str, str | None] = {
+                    a.id: a.sede_id for a in aulas_db
+                }
+
+                def _block_pasa_aula(b: ScheduleBlock) -> bool:
+                    aid = _hor_aula.get(b.entry_id)
+                    if aid is None:
+                        return False
+                    if f_aula != "— Todas —":
+                        return aid == f_aula
+                    if f_sede != "— Todas —":
+                        return aula_sede.get(aid) == f_sede
+                    return True
+
+                grid_data = {
+                    dia: [b for b in bs if _block_pasa_aula(b)]
+                    for dia, bs in grid_data.items()
+                }
+                grid_data = {
+                    d: bs for d, bs in grid_data.items() if bs
+                }
 
             if not dialog_active:
                 # Caption inmediatamente arriba del cronograma para
@@ -1026,6 +1153,16 @@ def render_plan_grilla_editor(
                             f_cuatri or "(sin filtro)"
                         ),
                         "Alcance": f_alcance,
+                        "Sede": (
+                            sede_map.get(f_sede, f_sede)
+                            if f_sede != "— Todas —"
+                            else "(sin filtro)"
+                        ),
+                        "Aula": (
+                            _aula_labels.get(f_aula, f_aula)
+                            if f_aula != "— Todas —"
+                            else "(sin filtro)"
+                        ),
                         "Materias visibles": (
                             f"{len(mats_sel)} de {len(mat_list)}"
                             if mats_sel
