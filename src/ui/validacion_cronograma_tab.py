@@ -25,12 +25,12 @@ def render_tab(ciclo_ids: list[str], ciclos_map: dict) -> None:
         ciclo_ids: List of ciclo IDs to choose from in the selectbox.
         ciclos_map: Map ciclo_id → CicloDB for any extra info.
     """
-    st.subheader("Prevalidación de cronograma contra ciclo")
+    st.subheader("Validar un cronograma contra un ciclo")
     st.caption(
-        "Seleccioná un ciclo y un cronograma para prevalidar los datos. "
-        "Podés ajustar comisiones, horarios y horas de teoría/laboratorio "
-        "antes de generar un plan. Cada validación queda registrada en "
-        "el historial."
+        "Elegí un ciclo y un cronograma para chequear que estén "
+        "consistentes antes de generar el plan. Vas a poder ajustar "
+        "comisiones, horarios y horas de teoría/laboratorio, y cada "
+        "validación queda registrada en el historial."
     )
 
     with st.expander("ℹ️ ¿Qué significa validar?", expanded=False):

@@ -78,12 +78,12 @@ def _aplicar_filtro_tipo(grid_data: dict, filtro_tipo: str, excluir_comunes: boo
     if not grid_data:
         return grid_data
 
-    if filtro_tipo == "Ciclo Básico (F/FB)":
+    if filtro_tipo == "Sólo del ciclo básico (F/FB)":
         grid_data = {
             dia: [b for b in blocks if _es_ciclo_basico(b.materia_codigo)]
             for dia, blocks in grid_data.items()
         }
-    elif filtro_tipo == "Específicas de carrera":
+    elif filtro_tipo == "Sólo específicas de la carrera":
         grid_data = {
             dia: [b for b in blocks if not _es_ciclo_basico(b.materia_codigo)]
             for dia, blocks in grid_data.items()
@@ -265,57 +265,74 @@ def _dialog_edit_entry():
         )
         _car_opts = ["—"] + sorted([c.codigo for c in all_carreras])
         _dlg_new_carrera = st.selectbox(
-            "Carrera asignada (opcional)",
+            "Restringir a una carrera (opcional)",
             options=_car_opts,
             key="dlg_edit_new_com_carrera",
             help=(
-                "Sobrescribe la sede sugerida automáticamente: si tiene "
-                "valor, la comisión se dicta en las sedes de esa "
-                "carrera aunque la materia sea común. — = sin "
-                "restricción especial."
+                "Sólo aplica cuando la materia es común a varias "
+                "carreras. Si elegís una carrera, la comisión se "
+                "dicta únicamente en las sedes de esa carrera. "
+                "Dejá **—** para no aplicar ninguna restricción."
             ),
         )
 
     # --- Tipo de clase y Virtualidad del horario ---
-    _tipo_opts = ["sin determinar", "teorica", "laboratorio"]
+    # Etiquetas visibles al usuario (rioplatense) vs. valores DB.
+    _TIPO_LABEL_TO_DB = {
+        "Automático": None,
+        "Teórica": "teorica",
+        "Laboratorio": "laboratorio",
+    }
+    _TIPO_DB_TO_LABEL = {v: k for k, v in _TIPO_LABEL_TO_DB.items()}
+    _tipo_opts_lbl = list(_TIPO_LABEL_TO_DB.keys())
     _entry_tipo = _entry_db.tipo_clase if _entry_db else None
-    _tipo_current = _entry_tipo or "sin determinar"
+    _tipo_current_lbl = _TIPO_DB_TO_LABEL.get(_entry_tipo, "Automático")
+
     _entry_virtual = _entry_db.virtual if _entry_db else None
-    _virtual_label_map = {None: "Heredar", True: "Sí", False: "No"}
-    _virtual_labels = ["Heredar", "Sí", "No"]
-    _virtual_current_label = _virtual_label_map.get(_entry_virtual, "Heredar")
+    _VIRT_LABEL_TO_DB = {
+        "Según la materia": None,
+        "Sí (virtual)": True,
+        "No (presencial)": False,
+    }
+    _VIRT_DB_TO_LABEL = {
+        None: "Según la materia",
+        True: "Sí (virtual)",
+        False: "No (presencial)",
+    }
+    _virtual_labels = list(_VIRT_LABEL_TO_DB.keys())
+    _virtual_current_label = _VIRT_DB_TO_LABEL.get(
+        _entry_virtual, "Según la materia",
+    )
 
     col_tipo_dlg, col_virt_dlg = st.columns(2)
     with col_tipo_dlg:
         new_tipo = st.selectbox(
             "Tipo de clase",
-            options=_tipo_opts,
-            index=(
-                _tipo_opts.index(_tipo_current)
-                if _tipo_current in _tipo_opts else 0
-            ),
+            options=_tipo_opts_lbl,
+            index=_tipo_opts_lbl.index(_tipo_current_lbl),
             key="dlg_edit_tipo",
             help=(
-                "sin determinar: la asignación automática decide "
-                "teoría o laboratorio según las horas requeridas de "
-                "la materia. teoría/laboratorio: fuerza el tipo."
+                "**Automático**: dejá que la asignación decida "
+                "según las horas de teoría/laboratorio "
+                "declaradas por la materia.\n"
+                "**Teórica** / **Laboratorio**: forzá el tipo de "
+                "este horario puntual."
             ),
         )
     with col_virt_dlg:
         new_virtual_label = st.selectbox(
-            "Virtual",
+            "Modalidad",
             options=_virtual_labels,
-            index=(
-                _virtual_labels.index(_virtual_current_label)
-                if _virtual_current_label in _virtual_labels else 0
-            ),
+            index=_virtual_labels.index(_virtual_current_label),
             key="dlg_edit_virtual",
             help=(
-                "Modalidad de este horario específico. "
-                "Heredar = usa lo que dice el dictado o la materia. "
-                "Sí = fuerza virtual (no se asigna aula). "
-                "No = fuerza presencial (aunque el dictado sea "
-                "virtual)."
+                "**Según la materia**: usa la modalidad "
+                "configurada en la materia (o en el dictado del "
+                "ciclo si tiene una configuración específica).\n"
+                "**Sí (virtual)**: forzá virtual — no se le "
+                "asigna aula.\n"
+                "**No (presencial)**: forzá presencial (aunque la "
+                "materia esté marcada virtual)."
             ),
         )
 
@@ -356,11 +373,10 @@ def _dialog_edit_entry():
             if _selected_com_id != _current_com_id:
                 cambios["comision_id"] = _selected_com_id
             # Tipo y virtual
-            _new_tipo_val = None if new_tipo == "sin determinar" else new_tipo
+            _new_tipo_val = _TIPO_LABEL_TO_DB.get(new_tipo)
             if _new_tipo_val != _entry_tipo:
                 cambios["tipo_clase"] = _new_tipo_val
-            _label_to_virtual_map = {"Heredar": None, "Sí": True, "No": False}
-            _new_virtual_val = _label_to_virtual_map.get(new_virtual_label)
+            _new_virtual_val = _VIRT_LABEL_TO_DB.get(new_virtual_label)
             if _new_virtual_val != _entry_virtual:
                 cambios["virtual"] = _new_virtual_val
             mat_label = materias_map.get(new_mat, new_mat)
@@ -410,13 +426,13 @@ tab_lista, tab_cargar, tab_visualizar, tab_editar, tab_validar = st.tabs([
 with tab_lista:
     st.subheader("Cronogramas existentes")
     st.caption(
-        "Cada fila muestra el estado de validacion contra el ultimo "
-        "ciclo evaluado. Para validar un cronograma o ver el detalle, "
-        "abrilo en la pestana **Validar**."
+        "Cada fila muestra el estado de validación contra el "
+        "último ciclo evaluado. Para validar un cronograma o "
+        "revisar el detalle, abrilo en la pestaña **Validar**."
     )
 
     if not all_schedules:
-        st.info("No hay cronogramas cargados. Usa la pestana 'Cargar' para subir uno.")
+        st.info("No hay cronogramas cargados. Usá la pestaña 'Cargar' para subir uno.")
     else:
         for s in all_schedules:
             with next(get_session()) as session:
@@ -437,13 +453,14 @@ with tab_lista:
                 _val_badge = "⚪ sin validar"
             elif _val_stale:
                 _val_badge = (
-                    f"🟡 validado vs {_latest_val.ciclo_id} pero modificado"
+                    f"🟡 validado vs {_latest_val.ciclo_id}, "
+                    f"con cambios posteriores"
                 )
             elif not _latest_val.particion_valid or _latest_val.n_faltantes > 0:
                 _val_badge = (
-                    f"🔴 con issues vs {_latest_val.ciclo_id} "
-                    f"({_latest_val.n_faltantes} faltantes, "
-                    f"{_latest_val.particion_n_infactibles} part. infactibles)"
+                    f"🔴 con problemas vs {_latest_val.ciclo_id} "
+                    f"({_latest_val.n_faltantes} materias faltantes, "
+                    f"{_latest_val.particion_n_infactibles} particiones sin cupo)"
                 )
             else:
                 _val_badge = f"🟢 validado vs {_latest_val.ciclo_id}"
@@ -475,47 +492,62 @@ with tab_lista:
                 # Mini-resumen de la ultima validacion (si existe)
                 if _latest_val is not None:
                     _val_caption = (
-                        f"Ultima validacion: **{_latest_val.validated_at:%Y-%m-%d %H:%M}** "
+                        f"\u00daltima validaci\u00f3n: **{_latest_val.validated_at:%Y-%m-%d %H:%M}** "
                         f"vs ciclo **{_latest_val.ciclo_id}** \u00b7 "
                         f"cubiertas {_latest_val.n_cubiertas}/{_latest_val.n_esperadas} \u00b7 "
-                        f"con lab: {_latest_val.n_con_lab_asignado} "
+                        f"con laboratorio: {_latest_val.n_con_lab_asignado} "
                         f"({_latest_val.n_lab_fijo} fijo, "
-                        f"{_latest_val.n_lab_reserva} reserva, "
+                        f"{_latest_val.n_lab_reserva} en reserva, "
                         f"{_latest_val.n_lab_pendiente} pendiente) \u00b7 "
-                        f"particion: "
-                        f"{'OK' if _latest_val.particion_valid else f'{_latest_val.particion_n_infactibles} infactibles'}"
+                        f"partici\u00f3n: "
+                        f"{'OK' if _latest_val.particion_valid else f'{_latest_val.particion_n_infactibles} sin cupo'}"
                     )
                     if _val_stale:
                         st.warning(
                             _val_caption
-                            + "\n\n\u26a0\ufe0f El cronograma fue modificado "
-                            "desde esta validacion. Re-validar en la pestana "
-                            "**Validar** para refrescar."
+                            + "\n\n\u26a0\ufe0f El cronograma se modific\u00f3 "
+                            "despu\u00e9s de esta validaci\u00f3n. Volv\u00e9 a validar "
+                            "desde la pesta\u00f1a **Validar** para refrescar el estado."
                         )
                     else:
                         st.info(_val_caption)
                 else:
                     st.caption(
-                        "Este cronograma todavia no fue validado contra "
-                        "ningun ciclo. Abrir la pestana **Validar** para hacerlo."
+                        "Este cronograma todav\u00eda no fue validado contra "
+                        "ning\u00fan ciclo. Abr\u00ed la pesta\u00f1a **Validar** para hacerlo."
                     )
 
                 # Acciones (duplicar, eliminar)
-                col_dup, col_del = st.columns([1, 1])
-                with col_dup:
+                with st.container(border=True):
+                    st.markdown("**📄 Duplicar cronograma**")
+                    st.caption(
+                        "Crea una copia idéntica de este cronograma con "
+                        "un nombre nuevo. Se copian todas las entradas."
+                    )
                     new_name = st.text_input(
                         "Nombre de la copia",
                         value=f"{s.nombre} (copia)",
                         key=f"dup_name_{s.id}",
                     )
-                    if st.button("Duplicar", key=f"dup_{s.id}"):
+                    if st.button(
+                        "Duplicar", key=f"dup_{s.id}",
+                        width="stretch",
+                    ):
                         with next(get_session()) as session:
                             duplicate_schedule(session, s.id, new_name)
                         st.success(f"Cronograma duplicado como '{new_name}'")
                         st.rerun()
-                with col_del:
-                    st.warning("Esta accion es irreversible.")
-                    if st.button("Eliminar", key=f"del_{s.id}", type="primary"):
+
+                with st.container(border=True):
+                    st.markdown("**🗑️ Eliminar cronograma**")
+                    st.warning(
+                        "Esta acción es irreversible. Se borran también "
+                        "todas las entradas y validaciones asociadas."
+                    )
+                    if st.button(
+                        "Eliminar", key=f"del_{s.id}", type="primary",
+                        width="stretch",
+                    ):
                         with next(get_session()) as session:
                             delete_schedule(session, s.id)
                         st.success("Cronograma eliminado")
@@ -527,56 +559,100 @@ with tab_lista:
 # =============================================================================
 with tab_cargar:
     st.subheader("Crear nuevo cronograma")
-
-    modo_carga = st.radio(
-        "Modo de creación",
-        options=["Crear vacío", "Cargar desde archivo"],
-        horizontal=True,
-        key="crono_modo",
+    st.caption(
+        "Un cronograma es un conjunto de horarios (día + rango + "
+        "materia + comisión) que después se valida contra un ciclo. "
+        "Podés armarlo desde cero o importarlo desde un archivo."
     )
 
-    nombre = st.text_input("Nombre del cronograma", key="crono_nombre")
+    with st.container(border=True):
+        st.markdown("**⚙️ Configuración básica**")
+        modo_carga = st.radio(
+            "¿Cómo lo querés crear?",
+            options=["Crear vacío", "Cargar desde archivo"],
+            horizontal=True,
+            key="crono_modo",
+            help=(
+                "**Crear vacío**: arranca sin entradas, las cargás a "
+                "mano desde la pestaña Editar.\n"
+                "**Cargar desde archivo**: importa un CSV/Excel con "
+                "los horarios ya armados."
+            ),
+        )
 
-    ciclo_sel = st.selectbox(
-        "Ciclo (opcional)",
-        options=["(ninguno)"] + ciclo_ids,
-        key="crono_ciclo",
-    )
+        nombre = st.text_input(
+            "Nombre del cronograma",
+            key="crono_nombre",
+            placeholder="Ej: Cronograma 2026 - 1C",
+        )
+
+        ciclo_sel = st.selectbox(
+            "Ciclo asociado (opcional)",
+            options=["(ninguno)"] + ciclo_ids,
+            key="crono_ciclo",
+            help=(
+                "Ciclo académico con el que se cargó originalmente "
+                "este cronograma. Es solo una referencia — la "
+                "validación se hace después contra el ciclo que elijas."
+            ),
+        )
     ciclo_id_val = ciclo_sel if ciclo_sel != "(ninguno)" else None
 
     if modo_carga == "Cargar desde archivo":
-        uploaded = st.file_uploader(
-            "Archivo CSV o Excel con horarios",
-            type=["csv", "xlsx", "xls"],
-            key="crono_upload",
-        )
+        with st.container(border=True):
+            st.markdown("**📤 Archivo de importación**")
+            st.caption(
+                "El archivo debe tener las columnas mínimas: materia, "
+                "día, hora inicio, hora fin. Comisión y tipo son opcionales."
+            )
+            uploaded = st.file_uploader(
+                "Archivo CSV o Excel con horarios",
+                type=["csv", "xlsx", "xls"],
+                key="crono_upload",
+            )
 
-        if st.button("Crear cronograma", disabled=not nombre or not uploaded):
-            with next(get_session()) as session:
-                result = create_schedule_standalone(
-                    session, nombre, uploaded, ciclo_id=ciclo_id_val
-                )
-            if result.errors:
-                for e in result.errors:
-                    st.error(e)
-            if result.warnings:
-                for w in result.warnings:
-                    st.warning(w)
-            if result.schedule:
-                st.success(
-                    f"Cronograma '{result.schedule.nombre}' creado con "
-                    f"{result.entries_created} entradas."
-                )
-                st.rerun()
+            if st.button(
+                "Crear cronograma",
+                disabled=not nombre or not uploaded,
+                type="primary",
+                width="stretch",
+            ):
+                with next(get_session()) as session:
+                    result = create_schedule_standalone(
+                        session, nombre, uploaded, ciclo_id=ciclo_id_val
+                    )
+                if result.errors:
+                    for e in result.errors:
+                        st.error(e)
+                if result.warnings:
+                    for w in result.warnings:
+                        st.warning(w)
+                if result.schedule:
+                    st.success(
+                        f"Cronograma '{result.schedule.nombre}' creado con "
+                        f"{result.entries_created} entradas."
+                    )
+                    st.rerun()
     else:
-        st.info("Se creará un cronograma sin entradas. Podés agregar horarios desde la pestaña Editar.")
-        if st.button("Crear cronograma vacío", disabled=not nombre):
+        st.info(
+            "Se va a crear un cronograma sin entradas. Después "
+            "podés cargar los horarios desde la pestaña **Editar**."
+        )
+        if st.button(
+            "Crear cronograma vacío",
+            disabled=not nombre,
+            type="primary",
+            width="stretch",
+        ):
             with next(get_session()) as session:
                 try:
                     schedule = create_empty_schedule(
                         session, nombre, ciclo_id=ciclo_id_val
                     )
-                    st.success(f"Cronograma '{schedule.nombre}' creado. Usá la pestaña Editar para agregar entradas.")
+                    st.success(
+                        f"Cronograma '{schedule.nombre}' creado. "
+                        f"Andá a la pestaña **Editar** para agregar entradas."
+                    )
                     st.rerun()
                 except ValueError as e:
                     st.error(str(e))
@@ -587,13 +663,17 @@ with tab_cargar:
 # =============================================================================
 with tab_visualizar:
     st.subheader("Visualizar cronograma")
+    st.caption(
+        "Mirá los horarios cargados sin editarlos. Podés filtrar "
+        "por carrera/año/cuatri, o enfocarte en una sola materia."
+    )
 
     if not all_schedules:
         st.info("No hay cronogramas para visualizar.")
     else:
         schedule_options = {s.id: f"{s.nombre} ({s.fecha_upload})" for s in all_schedules}
         sel_id = st.selectbox(
-            "Seleccionar cronograma",
+            "Cronograma",
             options=list(schedule_options.keys()),
             format_func=lambda x: schedule_options[x],
             key="viz_schedule",
@@ -606,9 +686,11 @@ with tab_visualizar:
                 horizontal=True,
                 key="viz_modo",
                 help=(
-                    "'Por grupo' filtra por carrera/año/cuatrimestre. "
-                    "'Por materia' permite enfocarse en una sola materia "
-                    "(útil para materias compartidas entre carreras)."
+                    "**Por grupo**: filtra por carrera + año + "
+                    "cuatrimestre. Ideal para armar la vista de "
+                    "un grupo puntual (por ejemplo, Electrónica 3er año 1C).\n"
+                    "**Por materia**: te enfoca en una sola materia. "
+                    "Útil para materias que se dictan en varias carreras."
                 ),
             )
 
@@ -684,45 +766,70 @@ with tab_visualizar:
             # Mode: Por grupo (carrera/año/cuatri)
             # =================================================================
             else:
-                # --- Filtros fila 1: carrera, año, cuatrimestre ---
-                col_f1, col_f2, col_f3 = st.columns(3)
-                with col_f1:
-                    carrera_opts = [
-                        f"{c.codigo} - {c.nombre}" for c in all_carreras
-                    ]
-                    viz_filtro_carrera = st.selectbox(
-                        "Carrera", options=carrera_opts,
-                        index=None, placeholder="Seleccionar carrera...",
-                        key="viz_filtro_carrera",
+                with st.container(border=True):
+                    st.markdown("**🔎 Filtros del grupo**")
+                    st.caption(
+                        "Elegí la carrera, el año y el cuatrimestre "
+                        "para acotar las materias que se muestran."
                     )
-                with col_f2:
-                    viz_filtro_anio = st.selectbox(
-                        "Año de cursada",
-                        options=[1, 2, 3, 4, 5, 6],
-                        index=None, placeholder="Seleccionar año...",
-                        key="viz_filtro_anio",
-                    )
-                with col_f3:
-                    viz_filtro_cuatri = st.selectbox(
-                        "Cuatrimestre",
-                        options=["1C", "2C", "Anual"],
-                        index=None, placeholder="Seleccionar cuatrimestre...",
-                        key="viz_filtro_cuatri",
-                    )
+                    # --- Filtros fila 1: carrera, año, cuatrimestre ---
+                    col_f1, col_f2, col_f3 = st.columns(3)
+                    with col_f1:
+                        carrera_opts = [
+                            f"{c.codigo} - {c.nombre}" for c in all_carreras
+                        ]
+                        viz_filtro_carrera = st.selectbox(
+                            "Carrera", options=carrera_opts,
+                            index=None, placeholder="Elegí una carrera...",
+                            key="viz_filtro_carrera",
+                        )
+                    with col_f2:
+                        viz_filtro_anio = st.selectbox(
+                            "Año de cursada",
+                            options=[1, 2, 3, 4, 5, 6],
+                            index=None, placeholder="Elegí un año...",
+                            key="viz_filtro_anio",
+                        )
+                    with col_f3:
+                        viz_filtro_cuatri = st.selectbox(
+                            "Cuatrimestre",
+                            options=["1C", "2C", "Anual"],
+                            index=None, placeholder="Elegí un cuatri...",
+                            key="viz_filtro_cuatri",
+                        )
 
-                # --- Filtros fila 2: tipo de materia, excluir comunes ---
-                col_f4, col_f5 = st.columns(2)
-                with col_f4:
-                    viz_filtro_tipo = st.selectbox(
-                        "Tipo de materia",
-                        options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
-                        key="viz_filtro_tipo",
-                    )
-                with col_f5:
-                    viz_excluir_comunes = st.checkbox(
-                        "Excluir materias comunes (multi-carrera)",
-                        key="viz_excluir_comunes",
-                    )
+                    # --- Filtros fila 2: alcance ---
+                    col_f4, col_f5 = st.columns(2)
+                    with col_f4:
+                        viz_filtro_tipo = st.selectbox(
+                            "Alcance de las materias",
+                            options=[
+                                "Todas",
+                                "Sólo del ciclo básico (F/FB)",
+                                "Sólo específicas de la carrera",
+                            ],
+                            key="viz_filtro_tipo",
+                            help=(
+                                "Filtra por el segmento del plan de "
+                                "estudio.\n"
+                                "**Todas**: no filtra por segmento.\n"
+                                "**Ciclo básico**: sólo materias cuyo "
+                                "código empieza con F o FB.\n"
+                                "**Específicas**: excluye el ciclo básico."
+                            ),
+                        )
+                    with col_f5:
+                        viz_excluir_comunes = st.checkbox(
+                            "Ocultar materias compartidas con otras carreras",
+                            key="viz_excluir_comunes",
+                            help=(
+                                "Si tildás, se ocultan las materias "
+                                "que aparecen en el plan de estudio "
+                                "de más de una carrera (útil para "
+                                "ver sólo las propias de la carrera "
+                                "elegida)."
+                            ),
+                        )
 
                 _viz_all_filters_set = (
                     viz_filtro_carrera is not None
@@ -799,12 +906,13 @@ with tab_editar:
     if "_edit_toast" in st.session_state:
         st.toast(st.session_state.pop("_edit_toast"))
 
-    st.subheader("Editar entradas de cronograma")
+    st.subheader("Editar entradas del cronograma")
     st.caption(
-        "Arrastra bloques para cambiar dia/hora. "
-        "Redimensiona para ajustar duracion. "
-        "Hace click en un bloque para eliminarlo. "
-        "Selecciona un rango vacio para agregar una entrada."
+        "🖱️ **Arrastrá** un bloque para cambiar el día o la hora. "
+        "Redimensionalo tirando del borde para ajustar la "
+        "duración. **Presioná** un bloque para editarlo o "
+        "eliminarlo. Para sumar una entrada nueva, arrastrá "
+        "sobre un espacio vacío del cronograma."
     )
 
     if not all_schedules:
@@ -1131,9 +1239,12 @@ with tab_editar:
                                 options=["sin determinar", "teorica", "laboratorio"],
                                 default="sin determinar",
                                 help=(
-                                    "Tipo de clase: sin determinar "
-                                    "(lo decide la asignación "
-                                    "automática), teórica o laboratorio"
+                                    "Tipo de clase. "
+                                    "**sin determinar**: lo decide la "
+                                    "asignación automática según las "
+                                    "horas de la materia. "
+                                    "**teoria** o **laboratorio**: "
+                                    "forzá el tipo para este horario."
                                 ),
                                 width="small",
                             ),
@@ -1141,11 +1252,12 @@ with tab_editar:
                                 options=["Heredar", "Sí", "No"],
                                 default="Heredar",
                                 help=(
-                                    "Modalidad de este horario específico. "
-                                    "Heredar = usa lo que dice el "
-                                    "dictado o la materia. Sí = fuerza "
-                                    "virtual (no se asigna aula). "
-                                    "No = fuerza presencial."
+                                    "Modalidad de este horario. "
+                                    "**Heredar**: usa lo configurado "
+                                    "en la materia o el dictado. "
+                                    "**Sí**: forzá virtual (no se "
+                                    "asigna aula). **No**: forzá "
+                                    "presencial."
                                 ),
                                 width="small",
                             ),
@@ -1173,16 +1285,16 @@ with tab_editar:
                             )
                             _car_opts = ["—"] + sorted([c.codigo for c in all_carreras])
                             _new_carrera = st.selectbox(
-                                "Carrera asignada (opcional — sobrescribe la sede sugerida automáticamente)",
+                                "Restringir a una carrera (opcional)",
                                 options=_car_opts,
                                 key="_sm_new_com_carrera",
                                 help=(
-                                    "Solo si la comisión está orientada "
-                                    "a una carrera en particular "
-                                    "(comisión de una materia común "
-                                    "organizada para alumnos de una "
-                                    "carrera de otra sede). "
-                                    "— = sin restricción especial."
+                                    "Sólo aplica si la materia es "
+                                    "común a varias carreras y esta "
+                                    "comisión se organiza para "
+                                    "alumnos de una carrera en "
+                                    "particular. Dejá **—** para no "
+                                    "aplicar ninguna restricción."
                                 ),
                             )
                             _new_desc = st.text_area(
@@ -1386,43 +1498,65 @@ with tab_editar:
             # Mode: Por grupo (carrera/año/cuatri)
             # =================================================================
             else:
-                col_ef1, col_ef2, col_ef3 = st.columns(3)
-                with col_ef1:
-                    edit_carrera_opts = [
-                        f"{c.codigo} - {c.nombre}" for c in all_carreras
-                    ]
-                    edit_filtro_carrera = st.selectbox(
-                        "Carrera", options=edit_carrera_opts,
-                        index=None, placeholder="Seleccionar carrera...",
-                        key="edit_filtro_carrera",
+                with st.container(border=True):
+                    st.markdown("**🔎 Filtros del grupo a editar**")
+                    st.caption(
+                        "Elegí Carrera + Año + Cuatrimestre para "
+                        "acotar las materias que se muestran en el "
+                        "cronograma editable."
                     )
-                with col_ef2:
-                    edit_filtro_anio = st.selectbox(
-                        "Año de cursada",
-                        options=[1, 2, 3, 4, 5, 6],
-                        index=None, placeholder="Seleccionar año...",
-                        key="edit_filtro_anio",
-                    )
-                with col_ef3:
-                    edit_filtro_cuatri = st.selectbox(
-                        "Cuatrimestre",
-                        options=["1C", "2C", "Anual"],
-                        index=None, placeholder="Seleccionar cuatrimestre...",
-                        key="edit_filtro_cuatri",
-                    )
+                    col_ef1, col_ef2, col_ef3 = st.columns(3)
+                    with col_ef1:
+                        edit_carrera_opts = [
+                            f"{c.codigo} - {c.nombre}" for c in all_carreras
+                        ]
+                        edit_filtro_carrera = st.selectbox(
+                            "Carrera", options=edit_carrera_opts,
+                            index=None, placeholder="Elegí una carrera...",
+                            key="edit_filtro_carrera",
+                        )
+                    with col_ef2:
+                        edit_filtro_anio = st.selectbox(
+                            "Año de cursada",
+                            options=[1, 2, 3, 4, 5, 6],
+                            index=None, placeholder="Elegí un año...",
+                            key="edit_filtro_anio",
+                        )
+                    with col_ef3:
+                        edit_filtro_cuatri = st.selectbox(
+                            "Cuatrimestre",
+                            options=["1C", "2C", "Anual"],
+                            index=None, placeholder="Elegí un cuatri...",
+                            key="edit_filtro_cuatri",
+                        )
 
-                col_ef4, col_ef5 = st.columns(2)
-                with col_ef4:
-                    edit_filtro_tipo = st.selectbox(
-                        "Tipo de materia",
-                        options=["Todas", "Ciclo Básico (F/FB)", "Específicas de carrera"],
-                        key="edit_filtro_tipo",
-                    )
-                with col_ef5:
-                    edit_excluir_comunes = st.checkbox(
-                        "Excluir materias comunes (multi-carrera)",
-                        key="edit_excluir_comunes",
-                    )
+                    col_ef4, col_ef5 = st.columns(2)
+                    with col_ef4:
+                        edit_filtro_tipo = st.selectbox(
+                            "Alcance de las materias",
+                            options=[
+                                "Todas",
+                                "Sólo del ciclo básico (F/FB)",
+                                "Sólo específicas de la carrera",
+                            ],
+                            key="edit_filtro_tipo",
+                            help=(
+                                "**Todas**: no filtra por segmento.\n"
+                                "**Ciclo básico**: sólo materias cuyo "
+                                "código empieza con F o FB.\n"
+                                "**Específicas**: excluye el ciclo básico."
+                            ),
+                        )
+                    with col_ef5:
+                        edit_excluir_comunes = st.checkbox(
+                            "Ocultar materias compartidas con otras carreras",
+                            key="edit_excluir_comunes",
+                            help=(
+                                "Si tildás, se ocultan las materias que "
+                                "aparecen en el plan de estudio de más "
+                                "de una carrera."
+                            ),
+                        )
 
                 _edit_all_filters_set = (
                     edit_filtro_carrera is not None
@@ -1610,7 +1744,7 @@ with tab_validar:
 
     if not _v_ciclo_ids:
         st.info(
-            "No hay ciclos registrados. Crear uno en la pagina de Ciclos "
+            "No hay ciclos registrados. Creá uno en la página **📆 Ciclos** "
             "antes de validar cronogramas."
         )
     else:
