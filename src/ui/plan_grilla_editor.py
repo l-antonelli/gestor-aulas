@@ -318,31 +318,32 @@ def _dialog_add_horario():
 # Filtros auxiliares
 # =============================================================================
 
-def _aplicar_filtro_tipo_materia(
+def _aplicar_filtro_alcance(
     grid_data: dict[str, list[ScheduleBlock]],
-    filtro_tipo: str,
-    excluir_comunes: bool,
+    alcance: str,
     materias_carreras_count: dict[str, int],
 ) -> dict[str, list[ScheduleBlock]]:
-    """Aplica los filtros 'Tipo de materia' (Ciclo Básico / Específicas)
-    y 'Excluir materias comunes (multi-carrera)' al grid_data."""
-    if not grid_data:
+    """Aplica el filtro 'Alcance' al grid_data.
+
+    ``alcance`` es una de:
+      - ``"Todas"``: no filtra (todos los bloques pasan).
+      - ``"Sólo exclusivas"``: sólo materias que aparecen en 1 carrera.
+      - ``"Sólo comunes"``: sólo materias que aparecen en ≥ 2 carreras.
+
+    La condición se lee de ``materias_carreras_count``, poblado desde
+    ``PlanEstudioDB`` — misma fuente que la etiqueta 'Común (…)' del
+    bloque y el badge del catálogo de Materias. Sin dependencia del
+    prefijo de código.
+    """
+    if not grid_data or alcance == "Todas":
         return grid_data
 
-    def _is_ciclo_basico(codigo: str) -> bool:
-        return codigo.upper().startswith(("F", "FB"))
-
     def _passes(b: ScheduleBlock) -> bool:
-        if filtro_tipo == "Ciclo Básico (F/FB)":
-            if not _is_ciclo_basico(b.materia_codigo):
-                return False
-        elif filtro_tipo == "Específicas de carrera":
-            if _is_ciclo_basico(b.materia_codigo):
-                return False
-        if excluir_comunes:
-            n_carr = materias_carreras_count.get(b.materia_codigo, 0)
-            if n_carr > 1:
-                return False
+        n_carr = materias_carreras_count.get(b.materia_codigo, 0)
+        if alcance == "Sólo exclusivas":
+            return n_carr <= 1
+        if alcance == "Sólo comunes":
+            return n_carr >= 2
         return True
 
     out = {
@@ -723,33 +724,37 @@ def render_plan_grilla_editor(
                     key=f"{key_ns}_filtro_cuatri",
                 )
 
-        # Container 2: Filtros extra (refinan la lista, no la definen).
+        # Container 2: Alcance — cómo se comparte la materia entre
+        # carreras. Basado en cantidad de carreras que la incluyen en
+        # PlanEstudioDB (misma fuente que el badge del bloque y el
+        # catálogo de Materias).
         with st.container(border=True):
-            st.markdown("**🔎 Filtros extra**")
-            col_f4, col_f5 = st.columns(2)
-            with col_f4:
-                f_tipo = st.selectbox(
-                    "Tipo de materia",
-                    options=[
-                        "Todas", "Ciclo Básico (F/FB)",
-                        "Específicas de carrera",
-                    ],
-                    key=f"{key_ns}_filtro_tipo",
-                    help=(
-                        "Ciclo básico = materias con código F/FB "
-                        "(comunes a varias carreras). Específicas = "
-                        "materias exclusivas de la carrera filtrada."
-                    ),
-                )
-            with col_f5:
-                f_excluir_comunes = st.checkbox(
-                    "Excluir materias comunes (multi-carrera)",
-                    key=f"{key_ns}_excluir_comunes",
-                    help=(
-                        "Oculta las materias que aparecen en el "
-                        "plan de estudio de más de una carrera."
-                    ),
-                )
+            st.markdown("**🔎 Alcance de la materia**")
+            st.caption(
+                "Filtra por cómo la materia figura en los planes de "
+                "estudio: **exclusivas** = una sola carrera; "
+                "**comunes** = dos o más carreras (típico: materias "
+                "del ciclo básico, algunas específicas compartidas)."
+            )
+            f_alcance = st.selectbox(
+                "Alcance",
+                options=[
+                    "Todas",
+                    "Sólo exclusivas",
+                    "Sólo comunes",
+                ],
+                key=f"{key_ns}_filtro_alcance",
+                label_visibility="collapsed",
+                help=(
+                    "**Todas**: sin filtrar por alcance.  \n"
+                    "**Sólo exclusivas**: materias que aparecen en "
+                    "una única carrera del plan de estudio.  \n"
+                    "**Sólo comunes**: materias que aparecen en dos "
+                    "o más carreras. Útil para exportar las "
+                    "materias del ciclo básico o materias "
+                    "compartidas entre planes."
+                ),
+            )
 
         # Con que al menos Año y Cuatri estén elegidos ya podemos
         # filtrar. Carrera es opcional: si queda vacía, mostramos
@@ -845,9 +850,8 @@ def render_plan_grilla_editor(
                 }
                 grid_data = {d: bs for d, bs in grid_data.items() if bs}
 
-            grid_data = _aplicar_filtro_tipo_materia(
-                grid_data, f_tipo, f_excluir_comunes,
-                materias_carreras_count,
+            grid_data = _aplicar_filtro_alcance(
+                grid_data, f_alcance, materias_carreras_count,
             )
 
             if not dialog_active:
