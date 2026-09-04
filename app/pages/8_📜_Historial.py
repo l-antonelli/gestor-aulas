@@ -28,31 +28,47 @@ st.set_page_config(page_title="📜 Historial", layout="wide")
 st.title("📜 Historial de cambios")
 
 st.caption(
-    "Registro automático de cambios en las entidades del catálogo y "
-    "configuración: Materias, Carreras, Dictados, Sedes. Los cambios "
-    "editoriales, promociones a regla, borrados manuales y aceptaciones "
-    "de extras del cronograma quedan trazados con su origen."
+    "Registro automático de los cambios hechos sobre el catálogo "
+    "y la configuración (Materias, Carreras, Dictados, Sedes). "
+    "Quedan trazados los cambios editoriales, las promociones a "
+    "regla, los borrados manuales y las aceptaciones de extras "
+    "del cronograma, junto con su origen."
 )
 
 _tabs = st.tabs(["🌐 Feed global", "🔎 Por entidad"])
 
 with _tabs[0]:
-    _c1, _c2, _c3 = st.columns([1, 1, 3])
-    with _c1:
-        _days = st.number_input(
-            "Últimos N días",
-            min_value=1, max_value=365, value=30, step=1,
-            key="feed_days",
-        )
-    with _c2:
-        _limit = st.number_input(
-            "Máx. eventos",
-            min_value=10, max_value=500, value=100, step=10,
-            key="feed_limit",
-        )
+    with st.container(border=True):
+        st.markdown("**🔎 Filtros del feed**")
+        _c1, _c2, _c3 = st.columns([1, 1, 3])
+        with _c1:
+            _days = st.number_input(
+                "Días hacia atrás",
+                min_value=1, max_value=365, value=30, step=1,
+                key="feed_days",
+                help=(
+                    "Ventana temporal a mostrar: sólo se listan "
+                    "los cambios de los últimos N días."
+                ),
+            )
+        with _c2:
+            _limit = st.number_input(
+                "Máximo de eventos a mostrar",
+                min_value=10, max_value=500, value=100, step=10,
+                key="feed_limit",
+                help=(
+                    "Tope de eventos que se traen en la consulta. "
+                    "Subilo si esperás ver muchos cambios en el "
+                    "período."
+                ),
+            )
     render_feed_global(limit=int(_limit), days=int(_days), key_ns="feed")
 
 with _tabs[1]:
+    st.caption(
+        "Elegí el tipo de entidad y la entidad concreta para ver "
+        "toda su historia de cambios."
+    )
     _tipo_labels = {
         "MateriaDB": "Materia",
         "CarreraDB": "Carrera",

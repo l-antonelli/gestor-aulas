@@ -247,7 +247,7 @@ def _render_plan_editor(
     st.divider()
 
     # --- Statistics panel ---
-    st.markdown("#### Estadisticas")
+    st.markdown("#### Estadísticas")
     with next(get_session()) as session:
         n_materias = session.exec(
             select(func.count(func.distinct(ComisionDB.materia_codigo)))
@@ -943,6 +943,12 @@ with tab_planes:
 if tab_detalle is not None:
     with tab_detalle:
         st.subheader("Detalle del Plan")
+        st.caption(
+            "Editá el contenido del plan activo: comisiones, "
+            "horarios, tipo de clase, coeficientes y forecast. "
+            "También podés correr las acciones automáticas y "
+            "revisar el panel de validaciones."
+        )
 
         with next(get_session()) as session:
             planes_detalle = session.exec(
@@ -964,11 +970,16 @@ if tab_grilla is not None:
 
 
 # =============================================================================
-# Tab Aulas: LP de asignacion de aulas
+# Tab Aulas: panel de asignacion de aulas al plan activo
 # =============================================================================
 if tab_aulas is not None:
     with tab_aulas:
         st.subheader("Asignación de aulas")
+        st.caption(
+            "Corré la asignación automática de aulas al plan "
+            "activo, revisá el resultado por comisión y ajustá "
+            "manualmente las asignaciones si hace falta."
+        )
         from src.ui.asignacion_panel import render_panel
         with next(get_session()) as session:
             render_panel(session, sel_plan, key_ns="asig")
@@ -978,80 +989,125 @@ if tab_aulas is not None:
 # Tab 5: Configuración Horaria
 # =============================================================================
 with tab_config:
-    st.subheader("Configuración Horaria")
-    st.caption("Parametros globales que afectan la generacion de franjas horarias.")
+    st.subheader("Configuración horaria global")
+    st.caption(
+        "Definí la grilla base de horarios de la institución: qué "
+        "días se dicta, entre qué horas y con qué granularidad. "
+        "Estos parámetros son compartidos por todos los planes y "
+        "afectan la asignación automática de aulas."
+    )
 
     with next(get_session()) as session:
         config = get_or_create_config(session)
 
-    with st.form("config_horaria_form"):
-        col1, col2 = st.columns(2)
+    with st.container(border=True):
+        st.markdown("**⚙️ Parámetros de la grilla horaria**")
+        with st.form("config_horaria_form"):
+            col1, col2 = st.columns(2)
 
-        with col1:
-            granularidad = st.number_input(
-                "Granularidad (minutos)",
-                min_value=5, max_value=60, value=config.granularidad_minutos,
-                step=5,
-                help="Duración de cada franja horaria en minutos",
-            )
-            step_td = timedelta(minutes=config.granularidad_minutos)
-            hora_inicio = st.time_input(
-                "Hora inicio operativo",
-                value=config.hora_inicio_operativo,
-                step=step_td,
+            with col1:
+                granularidad = st.number_input(
+                    "Granularidad (en minutos)",
+                    min_value=5, max_value=60,
+                    value=config.granularidad_minutos,
+                    step=5,
+                    help=(
+                        "Cada cuántos minutos se divide la grilla "
+                        "operativa. Por ejemplo, 30 min genera "
+                        "franjas de 30 minutos (8:00-8:30, 8:30-9:00, "
+                        "etc.). Achicá la granularidad si necesitás "
+                        "modelar horarios que no son múltiplos de 30."
+                    ),
+                )
+                step_td = timedelta(minutes=config.granularidad_minutos)
+                hora_inicio = st.time_input(
+                    "Hora de inicio del día operativo",
+                    value=config.hora_inicio_operativo,
+                    step=step_td,
+                    help=(
+                        "Primera hora del día en la que puede haber "
+                        "una clase (por ejemplo, 8:00)."
+                    ),
+                )
+
+            with col2:
+                hora_fin = st.time_input(
+                    "Hora de inicio de la última franja",
+                    value=config.hora_fin_operativo,
+                    step=step_td,
+                    help=(
+                        "Hora a la que arranca la última franja del "
+                        "día. Por ejemplo, 23:00 cubre hasta las "
+                        "00:00. Todo lo que empiece después no se "
+                        "considera parte del día operativo."
+                    ),
+                )
+                dias_actuales = [d.strip() for d in config.dias_operativos.split(",") if d.strip()]
+                all_dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+                dias_seleccionados = st.multiselect(
+                    "Días operativos de la semana",
+                    options=all_dias,
+                    default=[d for d in dias_actuales if d in all_dias],
+                    help=(
+                        "Días en los que la institución dicta clases. "
+                        "Los días que no seleccionés quedan vacíos "
+                        "en la grilla."
+                    ),
+                )
+
+            save_config = st.form_submit_button(
+                "Guardar configuración",
+                type="primary",
+                width="stretch",
             )
 
-        with col2:
-            hora_fin = st.time_input(
-                "Inicio última franja",
-                value=config.hora_fin_operativo,
-                step=step_td,
-                help="Hora de inicio de la última franja horaria (ej: 23:00 para cubrir 23:00-00:00)",
-            )
-            # Parse dias_operativos
-            dias_actuales = [d.strip() for d in config.dias_operativos.split(",") if d.strip()]
-            all_dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-            dias_seleccionados = st.multiselect(
-                "Dias operativos",
-                options=all_dias,
-                default=[d for d in dias_actuales if d in all_dias],
-            )
-
-        save_config = st.form_submit_button("Guardar configuración", type="primary")
-
-        if save_config:
-            if hora_fin < hora_inicio:
-                st.error("La última franja no puede ser anterior a la hora de inicio")
-            elif not dias_seleccionados:
-                st.error("Debe seleccionar al menos un dia operativo")
-            else:
-                with next(get_session()) as session:
-                    new_config = ConfiguracionHoraria(
-                        id=1,
-                        granularidad_minutos=granularidad,
-                        hora_inicio_operativo=hora_inicio,
-                        hora_fin_operativo=hora_fin,
-                        dias_operativos=",".join(dias_seleccionados),
+            if save_config:
+                if hora_fin < hora_inicio:
+                    st.error(
+                        "La última franja no puede empezar antes que "
+                        "la hora de inicio del día."
                     )
-                    update_config(session, new_config)
-                st.success("Configuración guardada")
-                st.rerun()
+                elif not dias_seleccionados:
+                    st.error("Elegí al menos un día operativo.")
+                else:
+                    with next(get_session()) as session:
+                        new_config = ConfiguracionHoraria(
+                            id=1,
+                            granularidad_minutos=granularidad,
+                            hora_inicio_operativo=hora_inicio,
+                            hora_fin_operativo=hora_fin,
+                            dias_operativos=",".join(dias_seleccionados),
+                        )
+                        update_config(session, new_config)
+                    st.success("Configuración guardada.")
+                    st.rerun()
 
-    # --- Preview of generated time slots ---
     st.divider()
-    st.markdown("#### Vista previa de franjas horarias")
 
-    with next(get_session()) as session:
-        config = get_or_create_config(session)
-    slots = generate_time_slots(config)
+    with st.container(border=True):
+        st.markdown("**👁 Vista previa de las franjas generadas**")
+        st.caption(
+            "Franjas que quedan disponibles para cada día operativo "
+            "con la configuración actual."
+        )
+        with next(get_session()) as session:
+            config = get_or_create_config(session)
+        slots = generate_time_slots(config)
 
-    if slots:
-        slot_data = [{
-            "Franja": i + 1,
-            "Inicio": s.strftime("%H:%M"),
-            "Fin": e.strftime("%H:%M"),
-        } for i, (s, e) in enumerate(slots)]
-        st.dataframe(slot_data, use_container_width=True, hide_index=True)
-        st.caption(f"{len(slots)} franjas de {config.granularidad_minutos} minutos")
-    else:
-        st.warning("No se generaron franjas. Verifique la configuración.")
+        if slots:
+            slot_data = [{
+                "Franja": i + 1,
+                "Inicio": s.strftime("%H:%M"),
+                "Fin": e.strftime("%H:%M"),
+            } for i, (s, e) in enumerate(slots)]
+            st.dataframe(slot_data, width="stretch", hide_index=True)
+            st.caption(
+                f"{len(slots)} franjas de "
+                f"{config.granularidad_minutos} minutos por día."
+            )
+        else:
+            st.warning(
+                "No se generaron franjas. Revisá que la hora de "
+                "inicio sea menor que la de fin y que haya al "
+                "menos un día operativo."
+            )

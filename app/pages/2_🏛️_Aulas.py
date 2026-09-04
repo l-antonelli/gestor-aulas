@@ -66,9 +66,18 @@ def _render_tab_listado(session) -> None:
 
     _, sede_nombres = _sede_options(session)
 
-    # Filtro por sede (incluye opción "Todas").
-    filtro_options = ["Todas"] + sorted(set(sede_nombres.values()))
-    sel_filtro = st.selectbox("Filtrar por sede", filtro_options, index=0)
+    with st.container(border=True):
+        st.markdown("**🔎 Filtro**")
+        filtro_options = ["Todas"] + sorted(set(sede_nombres.values()))
+        sel_filtro = st.selectbox(
+            "Sede",
+            filtro_options,
+            index=0,
+            help=(
+                "Mostrá sólo las aulas de una sede en particular, "
+                "o dejá **Todas** para ver el catálogo completo."
+            ),
+        )
     if sel_filtro != "Todas":
         aulas = [
             a for a in aulas
@@ -85,7 +94,7 @@ def _render_tab_listado(session) -> None:
         }
         for a in aulas
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
     st.caption(f"Total: {len(aulas)} aula(s).")
 
 
@@ -99,75 +108,113 @@ def _render_tab_crear(session) -> None:
     if not sede_ids:
         st.warning(
             "No hay sedes cargadas. Creá al menos una sede en la pestaña "
-            "'📍 Sedes' antes de crear un aula."
+            "**📍 Sedes** antes de crear un aula."
         )
         return
 
-    nombre = st.text_input(
-        "Nombre del aula", key="aula_create_nombre",
-        help="Por ejemplo: 'AULA 01', 'LAB 1'.",
-    )
-    sede_id = st.selectbox(
-        "Sede",
-        options=sede_ids,
-        format_func=lambda x: sede_nombres[x],
-        key="aula_create_sede",
-    )
-    sede_nombre = sede_nombres.get(sede_id, "?") if sede_id else ""
+    with st.container(border=True):
+        st.markdown("**📝 Datos del aula nueva**")
+        nombre = st.text_input(
+            "Nombre del aula",
+            key="aula_create_nombre",
+            placeholder="Ej: AULA 01, LAB 1",
+            help=(
+                "Nombre corto que usan los docentes y alumnos para "
+                "referirse al aula (por ejemplo, 'AULA 01' o 'LAB 1')."
+            ),
+        )
+        sede_id = st.selectbox(
+            "Sede",
+            options=sede_ids,
+            format_func=lambda x: sede_nombres[x],
+            key="aula_create_sede",
+            help="Sede física en la que está ubicada el aula.",
+        )
+        sede_nombre = sede_nombres.get(sede_id, "?") if sede_id else ""
 
-    auto_codigo = (
-        _slugify_codigo(sede_nombre, nombre) if nombre and sede_nombre else ""
-    )
-    codigo_aula = st.text_input(
-        "Código (display)",
-        value="",
-        key="aula_create_codigo",
-        placeholder=auto_codigo or "Se autogenera al guardar",
-        help=(
-            "Si lo dejás vacío, se autocompleta como "
-            f"`{auto_codigo}` (sede + nombre, con guiones)."
-        ),
-    )
-    capacidad = st.number_input(
-        "Capacidad", min_value=1, value=30, step=1,
-        key="aula_create_capacidad",
-    )
-    tipos = ["teorica", "practica", "laboratorio", "anfiteatro"]
-    tipo = st.selectbox("Tipo", options=tipos, index=0, key="aula_create_tipo")
-    descripcion = st.text_area(
-        "Descripción", value="", key="aula_create_desc", height=80,
-    )
+        auto_codigo = (
+            _slugify_codigo(sede_nombre, nombre) if nombre and sede_nombre else ""
+        )
+        codigo_aula = st.text_input(
+            "Código para mostrar",
+            value="",
+            key="aula_create_codigo",
+            placeholder=auto_codigo or "Se autogenera al guardar",
+            help=(
+                "Es el código único con el que se identifica el aula "
+                "en toda la app (listados, cronogramas, etc.). Si lo "
+                "dejás vacío, se arma automáticamente como "
+                f"`{auto_codigo or '{sede}-{nombre}'}` (sede + nombre "
+                "unidos con guión)."
+            ),
+        )
+        capacidad = st.number_input(
+            "Capacidad (cantidad de alumnos)",
+            min_value=1, value=30, step=1,
+            key="aula_create_capacidad",
+            help=(
+                "Cuántos alumnos entran en el aula. La asignación "
+                "automática usa este valor para respetar el cupo de "
+                "las comisiones."
+            ),
+        )
+        tipos = ["teorica", "practica", "laboratorio", "anfiteatro"]
+        tipo = st.selectbox(
+            "Tipo de aula",
+            options=tipos,
+            index=0,
+            key="aula_create_tipo",
+            help=(
+                "**teorica**: apta para clases teóricas comunes.\n"
+                "**practica**: apta para prácticas sin instrumental "
+                "especial.\n"
+                "**laboratorio**: sólo compatible con laboratorios "
+                "de materias específicas (se configura después).\n"
+                "**anfiteatro**: aula grande para clases masivas."
+            ),
+        )
+        descripcion = st.text_area(
+            "Descripción (opcional)",
+            value="",
+            key="aula_create_desc",
+            height=80,
+            placeholder="Notas adicionales, equipamiento especial, etc.",
+        )
 
-    can_create = bool(nombre.strip() and sede_id)
-    if not can_create:
-        st.caption("Completá nombre y sede para habilitar la creación.")
-        return
-
-    if st.button("Crear aula", type="primary", key="aula_create_btn"):
-        codigo_final = (codigo_aula or "").strip() or auto_codigo
-        # Verificar unicidad de codigo_aula.
-        existing = session.exec(
-            select(AulaDB).where(AulaDB.codigo_aula == codigo_final)
-        ).first()
-        if existing is not None:
-            st.error(
-                f"Ya existe un aula con código '{codigo_final}'. "
-                "Editalo manualmente para usar otro."
-            )
+        can_create = bool(nombre.strip() and sede_id)
+        if not can_create:
+            st.caption("Completá nombre y sede para poder crear el aula.")
             return
 
-        aula = AulaDB(
-            sede_id=sede_id,
-            codigo_aula=codigo_final,
-            nombre=nombre.strip(),
-            capacidad=int(capacidad),
-            tipo=tipo,
-            descripcion=descripcion or "",
-        )
-        session.add(aula)
-        session.commit()
-        st.success(f"Aula '{codigo_final}' creada.")
-        st.rerun()
+        if st.button(
+            "Crear aula",
+            type="primary",
+            key="aula_create_btn",
+            width="stretch",
+        ):
+            codigo_final = (codigo_aula or "").strip() or auto_codigo
+            existing = session.exec(
+                select(AulaDB).where(AulaDB.codigo_aula == codigo_final)
+            ).first()
+            if existing is not None:
+                st.error(
+                    f"Ya existe un aula con código '{codigo_final}'. "
+                    "Editalo a mano para usar otro."
+                )
+                return
+
+            aula = AulaDB(
+                sede_id=sede_id,
+                codigo_aula=codigo_final,
+                nombre=nombre.strip(),
+                capacidad=int(capacidad),
+                tipo=tipo,
+                descripcion=descripcion or "",
+            )
+            session.add(aula)
+            session.commit()
+            st.success(f"Aula '{codigo_final}' creada.")
+            st.rerun()
 
 
 # =============================================================================
@@ -182,7 +229,6 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
         return
 
     st.markdown("### ✏️ Editar aula")
-    st.caption(f"ID interno: `{aula.id}`")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -198,13 +244,13 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
             key=f"{key_prefix}_sede",
         )
         new_codigo = st.text_input(
-            "Código (display)",
+            "Código para mostrar",
             value=aula.codigo_aula,
             key=f"{key_prefix}_codigo",
-            help="Único globalmente. Editable a mano.",
+            help="Único en toda la app. Podés editarlo a mano.",
         )
         new_capacidad = st.number_input(
-            "Capacidad",
+            "Capacidad (cantidad de alumnos)",
             min_value=1, value=int(aula.capacidad),
             step=1, key=f"{key_prefix}_capacidad",
         )
@@ -212,15 +258,17 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
         tipos = ["teorica", "practica", "laboratorio", "anfiteatro"]
         tipo_idx = tipos.index(aula.tipo) if aula.tipo in tipos else 0
         new_tipo = st.selectbox(
-            "Tipo", options=tipos, index=tipo_idx, key=f"{key_prefix}_tipo",
+            "Tipo de aula",
+            options=tipos, index=tipo_idx, key=f"{key_prefix}_tipo",
             help=(
-                "Si cambias a/desde 'laboratorio', recordá que la "
-                "relación M:N con materias se mantiene; revisarla "
-                "abajo si es necesario."
+                "Si cambiás el tipo a **laboratorio** o dejás de "
+                "serlo, tené en cuenta que la lista de materias "
+                "que usan este laboratorio se conserva. Revisala "
+                "más abajo si hace falta."
             ),
         )
         new_descripcion = st.text_area(
-            "Descripción",
+            "Descripción (opcional)",
             value=aula.descripcion or "",
             key=f"{key_prefix}_desc",
             height=100,
@@ -238,7 +286,10 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
         st.caption("Sin cambios.")
         return
 
-    if st.button("Guardar cambios", type="primary", key=f"{key_prefix}_save"):
+    if st.button(
+        "Guardar cambios", type="primary", key=f"{key_prefix}_save",
+        width="stretch",
+    ):
         # Verificar unicidad de codigo_aula si cambió.
         codigo_final = new_codigo.strip()
         if codigo_final != aula.codigo_aula:
@@ -280,10 +331,11 @@ def _render_materias_compatibles_editor(session, aula_id: str, key_prefix: str):
     ).all())
     current_set = set(current)
 
-    st.markdown("### Materias que usan este laboratorio")
+    st.markdown("### 🧪 Materias que usan este laboratorio")
     st.caption(
-        "Seleccioná las materias que pueden dictar clases de tipo "
-        "'laboratorio' en este lab."
+        "Marcá qué materias pueden dictar sus clases de "
+        "laboratorio en esta aula. La asignación automática usa "
+        "esta lista para restringir dónde puede caer cada lab."
     )
 
     mat_options = [f"{m.codigo} — {m.nombre}" for m in materias]
@@ -306,10 +358,15 @@ def _render_materias_compatibles_editor(session, aula_id: str, key_prefix: str):
 
     if to_add or to_remove:
         st.info(
-            f"{len(to_add)} para agregar, {len(to_remove)} para quitar. "
-            "Presioná 'Guardar' para aplicar."
+            f"Se agregan {len(to_add)} y se quitan {len(to_remove)}. "
+            "Apretá **Guardar** para aplicar los cambios."
         )
-        if st.button("Guardar", type="primary", key=f"{key_prefix}_save"):
+        if st.button(
+            "Guardar",
+            type="primary",
+            key=f"{key_prefix}_save",
+            width="stretch",
+        ):
             for mat_codigo in to_add:
                 session.add(MateriaLaboratorioDB(
                     materia_codigo=mat_codigo,
@@ -362,9 +419,15 @@ def _render_tab_detalle(session) -> None:
 
     # Borrar aula (solo si no tiene clases ni labs asociados).
     with st.expander("🗑️ Borrar aula"):
+        st.warning(
+            "Esta acción es irreversible. Sólo se puede borrar si "
+            "el aula no tiene clases asignadas en ningún plan."
+        )
         if st.button(
             "Borrar definitivamente",
-            type="secondary", key=f"aula_del_{aula.id}",
+            type="secondary",
+            key=f"aula_del_{aula.id}",
+            width="stretch",
         ):
             from src.database.models import ClaseDB
             tiene_clases = session.exec(
@@ -372,8 +435,8 @@ def _render_tab_detalle(session) -> None:
             ).first()
             if tiene_clases is not None:
                 st.error(
-                    "No se puede borrar: el aula tiene clases asignadas. "
-                    "Reasignalas primero."
+                    "No se puede borrar: el aula tiene clases "
+                    "asignadas en algún plan. Reasignalas primero."
                 )
             else:
                 session.delete(aula)
@@ -600,6 +663,11 @@ def _render_tab_sedes(session) -> None:
 # =============================================================================
 
 st.title("🏛️ Aulas y Sedes")
+st.caption(
+    "Administrá el catálogo de aulas y las sedes en las que se "
+    "ubican. Las aulas son el recurso físico que se asigna a las "
+    "clases al armar un plan; las sedes agrupan aulas por edificio."
+)
 
 tab_list, tab_create, tab_view, tab_sedes = st.tabs([
     "📋 Listado", "➕ Crear", "👁️ Ver detalle", "📍 Sedes",

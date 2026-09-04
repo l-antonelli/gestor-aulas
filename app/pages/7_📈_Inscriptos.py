@@ -27,8 +27,13 @@ from scripts.load_inscriptos import _normalize_code, _build_name_map
 
 init_db()
 
-st.set_page_config(page_title="Inscriptos Historicos", page_icon="📈", layout="wide")
-st.title("📈 Inscriptos Historicos")
+st.set_page_config(page_title="Inscriptos", page_icon="📈", layout="wide")
+st.title("📈 Inscriptos históricos")
+st.caption(
+    "Cargá y visualizá la cantidad de inscriptos por materia y "
+    "cuatrimestre a lo largo del tiempo. Sobre estos datos se "
+    "calcula la proyección de inscriptos para el ciclo siguiente."
+)
 
 
 # =============================================================================
@@ -284,98 +289,123 @@ def _render_materia_expander(
                         )
 
         st.caption(
-            "💡 El método de proyección aplicado a la asignación se "
-            "configura en **Planes → Detalle → Método de proyección** "
-            "(predeterminado por plan y excepción por materia). Acá "
-            "se muestran los 3 métodos como referencia."
+            "💡 El método de proyección que se aplica al armar la "
+            "asignación se configura en **📊 Planes → Detalle → "
+            "Método de forecast** (por defecto del plan y con "
+            "excepciones por materia). Acá se muestran los 3 "
+            "métodos superpuestos como referencia."
         )
 
 
 # =============================================================================
 # Filtros + visibility toggles
 # =============================================================================
-st.markdown("### Filtros")
-fc1, fc2, fc3 = st.columns([3, 2, 2])
-with fc1:
-    _search = st.text_input("🔎 Buscar (código o nombre)", key="insc_search")
-with fc2:
-    _cuatri_filter = st.selectbox(
-        "Cuatrimestre", ["Todos", "1C", "2C"], key="insc_cuatri_filter",
+with st.container(border=True):
+    st.markdown("**🔎 Filtros de la lista de materias**")
+    st.caption(
+        "Acotá la lista según lo que quieras revisar. Los filtros "
+        "se combinan (AND); las materias tienen que cumplir todos."
     )
-with fc3:
-    _anio_target_global = st.number_input(
-        "Año target del forecast",
-        min_value=2020, max_value=2040, value=2026, step=1,
-        key="insc_anio_target",
-        help="Año al que se proyecta el forecast en los gráficos.",
-    )
+    fc1, fc2, fc3 = st.columns([3, 2, 2])
+    with fc1:
+        _search = st.text_input(
+            "🔎 Buscar por código o nombre",
+            key="insc_search",
+            placeholder="Ej: algebra, F0301...",
+        )
+    with fc2:
+        _cuatri_filter = st.selectbox(
+            "Cuatrimestre a mostrar",
+            ["Todos", "1C", "2C"],
+            key="insc_cuatri_filter",
+        )
+    with fc3:
+        _anio_target_global = st.number_input(
+            "Año a proyectar",
+            min_value=2020, max_value=2040, value=2026, step=1,
+            key="insc_anio_target",
+            help=(
+                "Año hacia el que se extienden las líneas de "
+                "forecast en los gráficos."
+            ),
+        )
 
-# Filtros adicionales por carrera, año del plan, optativas, periodo, modalidad
-fc4, fc5, fc6, fc7 = st.columns(4)
-with fc4:
-    _carrera_options = [c.codigo for c in _all_carreras]
-    _carrera_sel = st.multiselect(
-        "Carrera",
-        options=_carrera_options,
-        default=_carrera_options,
-        format_func=lambda c: f"{c} — {next((cc.nombre for cc in _all_carreras if cc.codigo == c), c)}",
-        key="insc_carrera",
-    )
-with fc5:
-    _all_anios_plan = sorted({
-        a for s in _anios_por_materia.values() for a in s
-    })
-    _anio_plan_sel = st.multiselect(
-        "Año del plan",
-        options=_all_anios_plan,
-        default=_all_anios_plan,
-        format_func=lambda a: f"{a}°",
-        key="insc_anio_plan",
-    )
-with fc6:
-    _opt_filt = st.selectbox(
-        "Optativas",
-        options=["Incluir", "Solo", "Excluir"],
-        index=0,
-        key="insc_opt_filt",
-    )
-with fc7:
-    _periodo_sel = st.multiselect(
-        "Período",
-        options=["cuatrimestral", "anual"],
-        default=["cuatrimestral", "anual"],
-        key="insc_periodo",
-    )
+    fc4, fc5, fc6, fc7 = st.columns(4)
+    with fc4:
+        _carrera_options = [c.codigo for c in _all_carreras]
+        _carrera_sel = st.multiselect(
+            "Carrera",
+            options=_carrera_options,
+            default=_carrera_options,
+            format_func=lambda c: f"{c} — {next((cc.nombre for cc in _all_carreras if cc.codigo == c), c)}",
+            key="insc_carrera",
+        )
+    with fc5:
+        _all_anios_plan = sorted({
+            a for s in _anios_por_materia.values() for a in s
+        })
+        _anio_plan_sel = st.multiselect(
+            "Año dentro del plan",
+            options=_all_anios_plan,
+            default=_all_anios_plan,
+            format_func=lambda a: f"{a}°",
+            key="insc_anio_plan",
+        )
+    with fc6:
+        _opt_filt = st.selectbox(
+            "Optativas",
+            options=["Incluir", "Solo", "Excluir"],
+            index=0,
+            key="insc_opt_filt",
+            help=(
+                "**Incluir**: no filtra por optativas.\n"
+                "**Solo**: sólo optativas.\n"
+                "**Excluir**: sólo obligatorias."
+            ),
+        )
+    with fc7:
+        _periodo_sel = st.multiselect(
+            "Período de la materia",
+            options=["cuatrimestral", "anual"],
+            default=["cuatrimestral", "anual"],
+            key="insc_periodo",
+        )
 
-fc8, _ = st.columns([2, 6])
-with fc8:
-    _modal_sel = st.multiselect(
-        "Modalidad",
-        options=["Presencial", "Virtual"],
-        default=["Presencial", "Virtual"],
-        key="insc_modal",
-    )
+    fc8, _ = st.columns([2, 6])
+    with fc8:
+        _modal_sel = st.multiselect(
+            "Modalidad",
+            options=["Presencial", "Virtual"],
+            default=["Presencial", "Virtual"],
+            key="insc_modal",
+        )
 
-# Visibility toggles
-tc1, tc2, tc3 = st.columns(3)
-with tc1:
-    _show_with_data = st.checkbox(
-        f"Con datos ({len(_mat_codes_with_data)})",
-        value=True,
-        key="insc_show_with",
+with st.container(border=True):
+    st.markdown("**👁 Secciones a mostrar**")
+    st.caption(
+        "Elegí qué grupos de materias querés ver debajo. Las "
+        "**sin matchear** son códigos del Excel de inscriptos "
+        "que no encontraron materia en la base."
     )
-with tc2:
-    _show_without_data = st.checkbox(
-        f"Sin datos ({len(_mat_codes_without_data)})",
-        value=False,
-        key="insc_show_without",
-    )
-with tc3:
-    _show_unmatched = st.checkbox(
-        f"Sin matchear ({len(_unmatched_codes)})",
-        value=False,
-        key="insc_show_unmatched",
-    )
+    tc1, tc2, tc3 = st.columns(3)
+    with tc1:
+        _show_with_data = st.checkbox(
+            f"Con datos ({len(_mat_codes_with_data)})",
+            value=True,
+            key="insc_show_with",
+        )
+    with tc2:
+        _show_without_data = st.checkbox(
+            f"Sin datos ({len(_mat_codes_without_data)})",
+            value=False,
+            key="insc_show_without",
+        )
+    with tc3:
+        _show_unmatched = st.checkbox(
+            f"Sin matchear ({len(_unmatched_codes)})",
+            value=False,
+            key="insc_show_unmatched",
+        )
 
 
 def _materia_pasa_filtros(code: str) -> bool:
@@ -474,7 +504,12 @@ if _show_with_data:
     ]
 
     st.divider()
-    st.markdown(f"### Materias con datos ({len(_display_with)})")
+    st.markdown(f"### 📊 Materias con datos ({len(_display_with)})")
+    st.caption(
+        "Materias que ya tienen registros de inscriptos históricos "
+        "cargados. Podés editar la serie de valores en cualquier "
+        "momento."
+    )
 
     if not _display_with:
         st.caption("No hay materias que coincidan con los filtros.")
@@ -500,10 +535,11 @@ if _show_without_data:
     ]
 
     st.divider()
-    st.markdown(f"### Materias sin datos de inscriptos ({len(_display_without)})")
+    st.markdown(f"### 📭 Materias sin datos de inscriptos ({len(_display_without)})")
     st.caption(
-        "Materias en la DB que no tienen ningun registro de inscriptos. "
-        "Podes agregar datos manualmente desde aca."
+        "Materias registradas en el sistema que todavía no tienen "
+        "ningún inscripto histórico cargado. Podés agregar los "
+        "datos a mano acá."
     )
 
     if not _display_without:
@@ -558,14 +594,15 @@ if _show_without_data:
 # =============================================================================
 if _show_unmatched:
     st.divider()
-    st.markdown(f"### Sin matchear ({len(_unmatched_codes)})")
+    st.markdown(f"### ⚠️ Sin matchear ({len(_unmatched_codes)})")
     st.caption(
-        "Codigos del Excel de inscriptos que no pudieron asociarse a ninguna materia "
-        "de la DB. Para asociar, selecciona la materia destino y confirma."
+        "Códigos que vienen en el Excel de inscriptos pero no "
+        "pudieron matchearse con ninguna materia del sistema. "
+        "Para asociarlos, elegí la materia destino y confirmá."
     )
 
     if not _unmatched_codes:
-        st.success("Todos los codigos del Excel tienen match en la DB.")
+        st.success("Todos los códigos del Excel tienen match en el sistema.")
     else:
         # Aca el filtro busca por codigo o nombre del codigo unmatch
         _display_unmatched = [
@@ -644,4 +681,4 @@ if _show_unmatched:
 
 
 if not _show_with_data and not _show_without_data and not _show_unmatched:
-    st.info("Selecciona al menos una categoria para mostrar.")
+    st.info("Elegí al menos una sección para mostrar.")
