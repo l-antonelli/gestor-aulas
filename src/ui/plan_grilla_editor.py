@@ -318,6 +318,73 @@ def _dialog_add_horario():
 # Filtros auxiliares
 # =============================================================================
 
+def _render_export_button(
+    grid_data: dict[str, list[ScheduleBlock]],
+    plan_id: str,
+    key_ns: str,
+    filtros_meta: dict,
+) -> None:
+    """Botón 'Exportar a Excel' que genera un .xlsx con la vista
+    actual del cronograma (respeta lo filtrado en la UI)."""
+    from src.services.plan_grilla_export_service import (
+        build_export_filename,
+        export_grilla_a_xlsx,
+    )
+    with next(get_session()) as _sess:
+        plan = _sess.get(PlanificacionCursadaDB, plan_id)
+        plan_nombre = plan.nombre if plan else plan_id
+        ciclo_label = plan.ciclo_id if plan else ""
+
+    with st.container(border=True):
+        st.markdown("**📥 Exportar cronograma a Excel**")
+        st.caption(
+            "Genera un archivo `.xlsx` con **3 hojas**: "
+            "*Metadata* (plan, ciclo, filtros aplicados) · "
+            "*Cronograma* (matriz día × franja al estilo calendario) · "
+            "*Detalle* (tabla plana filtrable). Se exporta "
+            "exactamente lo que se ve en la grilla — cambiá los "
+            "filtros de arriba para achicar el alcance del archivo."
+        )
+        n_bloques = sum(len(bs) for bs in grid_data.values())
+        c_info, c_btn = st.columns([2, 1])
+        with c_info:
+            st.caption(
+                f"Actualmente hay **{n_bloques} bloque(s)** para "
+                f"exportar."
+            )
+        with c_btn:
+            if n_bloques == 0:
+                st.button(
+                    "📥 Exportar",
+                    disabled=True,
+                    key=f"{key_ns}_export_disabled",
+                    help="No hay bloques que exportar con los filtros actuales.",
+                )
+            else:
+                xlsx_bytes = export_grilla_a_xlsx(
+                    grid_data=grid_data,
+                    plan_nombre=plan_nombre,
+                    ciclo_label=ciclo_label,
+                    filtros=filtros_meta,
+                )
+                filename = build_export_filename(
+                    plan_nombre=plan_nombre,
+                    ciclo_label=ciclo_label,
+                    filtros=filtros_meta,
+                )
+                st.download_button(
+                    "📥 Exportar",
+                    data=xlsx_bytes,
+                    file_name=filename,
+                    mime=(
+                        "application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet"
+                    ),
+                    key=f"{key_ns}_export_button",
+                    type="primary",
+                )
+
+
 def _aplicar_filtro_alcance(
     grid_data: dict[str, list[ScheduleBlock]],
     alcance: str,
@@ -859,6 +926,26 @@ def render_plan_grilla_editor(
                     grid_data, config, key=f"{key_ns}_cal_pg",
                     color_by_comision=False,
                 )
+
+            # --- Export a Excel ---
+            _render_export_button(
+                grid_data=grid_data,
+                plan_id=plan_id,
+                key_ns=key_ns,
+                filtros_meta={
+                    "Carrera": f_carrera or "(sin filtro)",
+                    "Año": (
+                        f"{f_anio}º"
+                        if f_anio is not None else "(sin filtro)"
+                    ),
+                    "Cuatrimestre": f_cuatri or "(sin filtro)",
+                    "Alcance": f_alcance,
+                    "Materias visibles": (
+                        f"{len(mats_sel)} de {len(mat_list)}"
+                        if mats_sel else f"todas ({len(mat_list)})"
+                    ),
+                },
+            )
 
             # --- Selector de materia para agregar ---
             with st.container(border=True):
