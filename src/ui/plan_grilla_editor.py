@@ -711,20 +711,28 @@ def render_plan_grilla_editor(
                     ),
                 )
 
-        all_filters_set = (
-            f_carrera is not None and f_anio is not None
-            and f_cuatri is not None
+        # Con que al menos Año y Cuatri estén elegidos ya podemos
+        # filtrar. Carrera es opcional: si queda vacía, mostramos
+        # todas las materias que estén en (año, cuatri) para cualquier
+        # carrera — permite ver materias comunes al filtrar por año/
+        # cuatri sin comprometerse a una carrera. El "Tipo de materia"
+        # + "Excluir comunes" de abajo refina más si hace falta.
+        min_filters_set = (
+            f_anio is not None and f_cuatri is not None
         )
 
         filtered_mats: Optional[set[str]] = None
-        if all_filters_set:
+        if min_filters_set:
             with next(get_session()) as session:
                 eq = (
                     select(PlanEstudioDB.materia_codigo)
                     .where(col(PlanEstudioDB.plan_version_id).in_(pv_ids))
                 )
-                e_carrera_cod = f_carrera.split(" - ")[0]
-                eq = eq.where(PlanEstudioDB.carrera_codigo == e_carrera_cod)
+                if f_carrera is not None:
+                    e_carrera_cod = f_carrera.split(" - ")[0]
+                    eq = eq.where(
+                        PlanEstudioDB.carrera_codigo == e_carrera_cod,
+                    )
                 eq = eq.where(PlanEstudioDB.anio_plan == int(f_anio))
                 if f_cuatri == "Anual":
                     eq = eq.where(
@@ -736,10 +744,13 @@ def render_plan_grilla_editor(
                     eq = eq.where(PlanEstudioDB.cuatrimestre_plan == f_cuatri)
                 filtered_mats = set(session.exec(eq.distinct()).all())
 
-        if not all_filters_set:
+        if not min_filters_set:
             st.caption(
-                "Seleccioná Carrera, Año y Cuatrimestre para ver y "
-                "editar las materias del plan."
+                "Seleccioná al menos **Año** y **Cuatrimestre** para "
+                "ver y editar las materias del plan. La carrera es "
+                "opcional: si la dejás vacía se muestran las materias "
+                "de todas las carreras para ese año/cuatri (útil para "
+                "ver materias comunes)."
             )
         else:
             grid_full, _ = _build_plan_grid(plan_id)
