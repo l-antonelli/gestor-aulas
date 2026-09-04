@@ -592,6 +592,11 @@ def render_editable_schedule_calendar(
         .fc-event { cursor: grab; }
         .fc-event:active { cursor: grabbing; }
         .fc-highlight { background: rgba(30, 136, 229, 0.15); }
+        /* Preservar los saltos de línea del título (3 filas:
+           código+comisión, nombre, aula+modalidad). Sin esto el
+           `\\n` se colapsa como espacio y todo queda en una fila. */
+        .fc-event-title,
+        .fc-event-title-container { white-space: pre-line !important; }
     """
 
     # Leyenda arriba del calendario (referencia visual para edicion)
