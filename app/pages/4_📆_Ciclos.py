@@ -298,41 +298,54 @@ with tab_dictados:
             _cfg2.metric("Planes", _cfg_n_planes)
             _cfg3.metric("Materias", _cfg_n_mats)
             _cfg4.metric("Optativas", _cfg_n_optativas)
-            _cfg5.metric("Recursado fijado a mano", _cfg_n_override)
+            _cfg5.metric(
+                "Recursado configurado a mano",
+                _cfg_n_override,
+                help=(
+                    "Cantidad de materias que tienen su regla de "
+                    "recursado personalizada (distinta a la de la "
+                    "carrera). Se configura desde la lista de abajo."
+                ),
+            )
             if _cfg_n_no_recursado:
                 st.caption(
-                    f"⚠️ {_cfg_n_no_recursado} carrera(s) marcadas como "
-                    "'no dicta recursado': las materias exclusivas y "
-                    "del cuatri opuesto **no se crean** al usar `Crear "
-                    "Dictados` (quedan omitidas, con la razón "
-                    "registrada). Se pueden crear manualmente desde "
-                    "el panel de divergencias."
+                    f"⚠️ {_cfg_n_no_recursado} carrera(s) tienen "
+                    "'permite recursado' desactivado: las materias "
+                    "exclusivas del cuatrimestre opuesto **no se "
+                    "van a crear** cuando toques 'Crear dictados' "
+                    "(la razón queda anotada). Podés forzar la "
+                    "creación desde el panel de divergencias más "
+                    "abajo."
                 )
             if _cfg_n_inactive:
                 st.caption(
                     f"ℹ️ {_cfg_n_inactive} materia(s) archivadas — "
-                    "siguen apareciendo en planes y se crean dictados "
-                    "igual."
+                    "siguen apareciendo en planes y se crean "
+                    "dictados igual."
                 )
             st.caption(
-                "Editá la marca 'dicta recursado' (a nivel carrera y "
-                "a nivel materia) y la versión del plan asignada al "
-                "ciclo desde **dentro de cada sección de carrera** "
-                "abajo. Después tocá **🔄 Sincronizar según reglas** "
-                "para alinear los dictados con las reglas "
-                "actualizadas."
+                "Modificá la configuración de recursado (a nivel "
+                "carrera y a nivel materia) y la versión del plan "
+                "de estudio dentro de cada sección de carrera "
+                "abajo. Después tocá **🔄 Sincronizar según "
+                "reglas** para alinear los dictados con la "
+                "configuración actualizada."
             )
 
             st.divider()
 
             # --- Create + Sync buttons ---
             st.caption(
-                "**Crear Dictados** genera todas las materias del plan que "
-                "la regla de `dicta_recursado` autoriza. Es idempotente. "
-                "**Sincronizar según reglas** propone crear los que faltan "
-                "y borrar los huérfanos (útil después de tocar "
-                "`dicta_recursado` en una carrera o cambiar la versión del "
-                "plan). Divergencias con acciones fila-a-fila más abajo."
+                "**Crear dictados** genera automáticamente los "
+                "dictados del ciclo a partir del plan de estudio y "
+                "las reglas de recursado. Podés apretarlo las "
+                "veces que quieras: si ya existen, no los duplica.\n\n"
+                "**Sincronizar según reglas** revisa los dictados "
+                "existentes contra la configuración actual y "
+                "propone crear los que faltan o borrar los que "
+                "quedaron sueltos (útil después de modificar el "
+                "recursado de una carrera o de cambiar la versión "
+                "del plan)."
             )
             # Drift summary: detecta divergencias (to_create, to_delete,
             # rule_says_skip_but_exists). Se muestra como un warning al
@@ -734,20 +747,22 @@ with tab_dictados:
             _ms1, _ms2, _ms3 = st.columns(3)
             _ms1.metric("Dictados existentes", _n_dictados)
             _ms2.metric(
-                "Virtuales (override)",
+                "Marcados como virtuales",
                 _n_virtuales_override,
                 help=(
-                    "Dictados con `DictadoDB.virtual=True` explícito. "
-                    "Los que heredan de la materia no cuentan acá."
+                    "Dictados a los que se les marcó "
+                    "'virtual = Sí' explícitamente para este "
+                    "ciclo. Los que dicen 'Por defecto' heredan "
+                    "de la materia y no cuentan acá."
                 ),
             )
             _ms3.metric("Optativas", len(_opt_codigos))
             st.caption(
-                "**Semántica nueva**: la existencia del dictado en el "
-                "ciclo es la afirmación *\"esta materia se dicta este "
-                "ciclo\"*. No hay flag `activo`. Las materias del plan "
-                "sin dictado son las que la regla de recursado no "
-                "autoriza a crear."
+                "Un **dictado** representa 'esta materia se dicta "
+                "en este ciclo'. Si una materia del plan de la "
+                "carrera no aparece como dictado, es porque la "
+                "regla de recursado de la carrera (o de la "
+                "materia) no lo permite en este cuatrimestre."
             )
 
             with st.expander(
@@ -796,65 +811,85 @@ with tab_dictados:
                 for it in items
             })
 
-            _fc1, _fc2 = st.columns([3, 2])
-            with _fc1:
-                _q = st.text_input(
-                    "🔎 Buscar (código o nombre de materia)",
-                    key="dict_search",
-                    placeholder="Ej: MAT, Cálculo, FB1",
+            with st.container(border=True):
+                st.markdown("**🔎 Filtros de la lista**")
+                st.caption(
+                    "Ajustá qué materias querés ver en la lista de "
+                    "abajo. Los filtros se combinan (materia tiene "
+                    "que cumplir todos)."
                 )
-            with _fc2:
-                _estado = st.multiselect(
-                    "Estado",
-                    options=["Con dictado", "Sin dictado"],
-                    default=["Con dictado", "Sin dictado"],
-                    key="dict_estado",
-                    help=(
-                        "Con dictado = existe fila DictadoDB en el ciclo. "
-                        "Sin dictado = materia del plan que no tiene "
-                        "dictado (aparece como divergencia arriba)."
-                    ),
-                )
+                _fc1, _fc2 = st.columns([3, 2])
+                with _fc1:
+                    _q = st.text_input(
+                        "Buscar por código o nombre",
+                        key="dict_search",
+                        placeholder="Ej: MAT, Cálculo, FB1",
+                    )
+                with _fc2:
+                    _estado = st.multiselect(
+                        "Estado",
+                        options=["Con dictado", "Sin dictado"],
+                        default=["Con dictado", "Sin dictado"],
+                        key="dict_estado",
+                        help=(
+                            "**Con dictado**: la materia ya está "
+                            "creada como dictado en este ciclo.\n"
+                            "**Sin dictado**: la materia está en el "
+                            "plan de la carrera pero todavía no se "
+                            "creó su dictado — aparece como "
+                            "divergencia arriba."
+                        ),
+                    )
 
-            _fc3, _fc4, _fc5, _fc6 = st.columns([2, 2, 2, 2])
-            with _fc3:
-                _modal = st.multiselect(
-                    "Modalidad",
-                    options=["Presencial", "Virtual"],
-                    default=["Presencial", "Virtual"],
-                    key="dict_modal",
-                )
-            with _fc4:
-                _anios_sel = st.multiselect(
-                    "Año del plan",
-                    options=_all_anios,
-                    default=_all_anios,
-                    format_func=lambda a: f"{a}°",
-                    key="dict_anio",
-                )
-            with _fc5:
-                _cuatris_sel = st.multiselect(
-                    "Cuatri del plan",
-                    options=_all_cuatris,
-                    default=_all_cuatris,
-                    key="dict_cuatri",
-                )
-            with _fc6:
-                _opt_filt = st.selectbox(
-                    "Optativas",
-                    options=["Incluir", "Solo", "Excluir"],
-                    index=0,
-                    key="dict_opt",
-                )
+                _fc3, _fc4, _fc5, _fc6 = st.columns([2, 2, 2, 2])
+                with _fc3:
+                    _modal = st.multiselect(
+                        "Modalidad",
+                        options=["Presencial", "Virtual"],
+                        default=["Presencial", "Virtual"],
+                        key="dict_modal",
+                    )
+                with _fc4:
+                    _anios_sel = st.multiselect(
+                        "Año del plan",
+                        options=_all_anios,
+                        default=_all_anios,
+                        format_func=lambda a: f"{a}°",
+                        key="dict_anio",
+                    )
+                with _fc5:
+                    _cuatris_sel = st.multiselect(
+                        "Cuatrimestre del plan",
+                        options=_all_cuatris,
+                        default=_all_cuatris,
+                        key="dict_cuatri",
+                    )
+                with _fc6:
+                    _opt_filt = st.selectbox(
+                        "Optativas",
+                        options=["Incluir", "Solo", "Excluir"],
+                        index=0,
+                        key="dict_opt",
+                        help=(
+                            "**Incluir**: se muestran obligatorias "
+                            "y optativas juntas.\n"
+                            "**Solo**: sólo las optativas.\n"
+                            "**Excluir**: sólo las obligatorias."
+                        ),
+                    )
 
-            # Open/close all
+            # Botones para abrir / cerrar todas las secciones.
             _bc1, _bc2, _bc3 = st.columns([1, 1, 4])
             with _bc1:
-                if st.button("Abrir todos", key="dict_open_all"):
+                if st.button(
+                    "📖 Abrir todas", key="dict_open_all",
+                ):
                     st.session_state["dict_force_open"] = True
                     st.rerun()
             with _bc2:
-                if st.button("Cerrar todos", key="dict_close_all"):
+                if st.button(
+                    "📕 Cerrar todas", key="dict_close_all",
+                ):
                     st.session_state["dict_force_open"] = False
                     st.rerun()
             _force_state = st.session_state.get("dict_force_open")
@@ -1472,29 +1507,37 @@ with tab_dictados:
                     ]
                     optativas = [it for it in items_filt if it["pe"].optativa]
 
+                    # Agrupamos obligatorias y optativas en
+                    # expanders separados para reducir el largo de
+                    # la pantalla y que el usuario pueda enfocarse
+                    # en un grupo por vez. Ambos abiertos por
+                    # default si hay contenido; sólo se colapsan
+                    # cuando el otro está vacío para no dejar
+                    # espacio muerto.
                     if obligatorias:
-                        if optativas:
-                            st.markdown(f"**Obligatorias ({len(obligatorias)})**")
-                        # Sort: por anio, cuatri, codigo
                         obligatorias.sort(key=lambda it: (
                             it["pe"].anio_plan or 99,
                             it["pe"].cuatrimestre_plan or "",
                             it["materia"].codigo,
                         ))
-                        for it in obligatorias:
-                            _render_item(it, carrera_cod)
+                        with st.expander(
+                            f"📘 Obligatorias ({len(obligatorias)})",
+                            expanded=True,
+                        ):
+                            for it in obligatorias:
+                                _render_item(it, carrera_cod)
 
                     if optativas:
-                        if obligatorias:
-                            st.markdown(f"**Optativas ({len(optativas)})**")
-                        else:
-                            st.caption(f"{len(optativas)} optativa(s).")
                         optativas.sort(key=lambda it: (
                             it["pe"].anio_plan or 99,
                             it["materia"].codigo,
                         ))
-                        for it in optativas:
-                            _render_item(it, carrera_cod)
+                        with st.expander(
+                            f"📗 Optativas ({len(optativas)})",
+                            expanded=not obligatorias,
+                        ):
+                            for it in optativas:
+                                _render_item(it, carrera_cod)
 
             # =========================================================
             # Expander de Comunes (materias compartidas entre 2+ carreras)
@@ -1595,43 +1638,43 @@ with tab_dictados:
                         ]
 
                         if _obl:
-                            if _opt:
-                                st.markdown(
-                                    f"**Obligatorias ({len(_obl)})**"
-                                )
                             _obl.sort(key=lambda it: (
                                 it["pe"].anio_plan or 99,
                                 it["pe"].cuatrimestre_plan or "",
                                 it["materia"].codigo,
                             ))
-                            for it in _obl:
-                                _render_item(
-                                    it,
-                                    carrera_cod=it["carreras"][0],
-                                    key_ns="com",
-                                    carreras_label=", ".join(it["carreras"]),
-                                )
+                            with st.expander(
+                                f"📘 Obligatorias ({len(_obl)})",
+                                expanded=True,
+                            ):
+                                for it in _obl:
+                                    _render_item(
+                                        it,
+                                        carrera_cod=it["carreras"][0],
+                                        key_ns="com",
+                                        carreras_label=(
+                                            ", ".join(it["carreras"])
+                                        ),
+                                    )
 
                         if _opt:
-                            if _obl:
-                                st.markdown(
-                                    f"**Optativas ({len(_opt)})**"
-                                )
-                            else:
-                                st.caption(
-                                    f"{len(_opt)} optativa(s)."
-                                )
                             _opt.sort(key=lambda it: (
                                 it["pe"].anio_plan or 99,
                                 it["materia"].codigo,
                             ))
-                            for it in _opt:
-                                _render_item(
-                                    it,
-                                    carrera_cod=it["carreras"][0],
-                                    key_ns="com",
-                                    carreras_label=", ".join(it["carreras"]),
-                                )
+                            with st.expander(
+                                f"📗 Optativas ({len(_opt)})",
+                                expanded=not _obl,
+                            ):
+                                for it in _opt:
+                                    _render_item(
+                                        it,
+                                        carrera_cod=it["carreras"][0],
+                                        key_ns="com",
+                                        carreras_label=(
+                                            ", ".join(it["carreras"])
+                                        ),
+                                    )
 
             # Nota: ya no hay batch save. Los toggles Activo/Virtual
             # se persisten on-change. El toggle Activo además registra
