@@ -521,27 +521,37 @@ def render_editable_schedule_calendar(
             _virtual = getattr(b, "virtual", False)
             _tipo = getattr(b, "tipo_clase", None)
             _aula_label = getattr(b, "aula_label", None)
-            v_tag = " 💻" if _virtual else ""
-            tipo_tag = ""
-            if _tipo == "teorica":
-                tipo_tag = " · 📖 Teo"
-            elif _tipo == "laboratorio":
-                tipo_tag = " · 🧪 Lab"
+            # Emoji de la 3ra fila: prioridad virtual → tipo. El
+            # tipo se representa sólo con emoji (📖 teo · 🧪 lab)
+            # sin texto adicional, ya que el aula al lado desambigua.
             if _virtual:
-                aula_line = "\n💻 Virtual"
-            elif _aula_label:
-                aula_line = f"\n🏛️ {_aula_label}"
-            elif hasattr(b, "aula_label"):
-                # Block del plan sin aula asignada (asignador no corrió
-                # o se editó el slot). Distinguir de blocks de
-                # cronograma que ni siquiera tienen el campo.
-                aula_line = "\n🏛️ Sin aula"
+                emoji = "💻"
+                aula_txt = "Virtual"
             else:
-                aula_line = ""
-            title = (
-                f"{b.materia_codigo}{v_tag}{com_tag}{tipo_tag} - "
-                f"{b.materia_nombre}"
-                f"{aula_line}"
+                if _tipo == "teorica":
+                    emoji = "📖"
+                elif _tipo == "laboratorio":
+                    emoji = "🧪"
+                else:
+                    emoji = "🏛️"
+                if _aula_label:
+                    aula_txt = _aula_label
+                elif hasattr(b, "aula_label"):
+                    # Block del plan sin aula asignada — distinguir
+                    # de blocks de cronograma que no tienen el campo.
+                    aula_txt = "Sin aula"
+                else:
+                    aula_txt = ""
+
+            # Título en tres líneas:
+            #   1) código de materia [Cx]
+            #   2) nombre de la materia
+            #   3) emoji + aula (o "Virtual" / "Sin aula" cuando aplica)
+            linea1 = f"{b.materia_codigo}{com_tag}"
+            linea2 = b.materia_nombre
+            linea3 = f"{emoji} {aula_txt}".rstrip() if aula_txt else ""
+            title = "\n".join(
+                part for part in (linea1, linea2, linea3) if part
             )
             events.append({
                 "id": b.entry_id,
