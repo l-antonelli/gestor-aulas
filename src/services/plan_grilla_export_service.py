@@ -18,7 +18,9 @@ from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import (
+    Alignment, Border, Font, PatternFill, Side,
+)
 from openpyxl.utils import get_column_letter
 
 from src.services.schedule_service import ScheduleBlock
@@ -78,27 +80,107 @@ def _write_metadata_sheet(
         row += 1
 
 
+_MATERIA_PALETTE = [
+    ("1E88E5", "FFFFFF"),  # azul
+    ("43A047", "FFFFFF"),  # verde
+    ("F4511E", "FFFFFF"),  # naranja
+    ("8E24AA", "FFFFFF"),  # violeta
+    ("00897B", "FFFFFF"),  # turquesa
+    ("FFB300", "212121"),  # amarillo (texto oscuro)
+    ("3949AB", "FFFFFF"),  # indigo
+    ("D81B60", "FFFFFF"),  # magenta
+    ("039BE5", "FFFFFF"),  # celeste
+    ("7CB342", "FFFFFF"),  # verde lima
+    ("6D4C41", "FFFFFF"),  # marrón
+    ("546E7A", "FFFFFF"),  # gris azulado
+]
+_EMPTY_FILL = "F5F5F5"      # fondo suave del cronograma vacío
+_EMPTY_BORDER = "E0E0E0"
+
+
+def _color_para_materia(codigo: str) -> tuple[str, str]:
+    """Asigna un color determinístico por código de materia."""
+    idx = sum(ord(c) for c in codigo) % len(_MATERIA_PALETTE)
+    return _MATERIA_PALETTE[idx]
+
+
+def _minutos_bloque(blk: ScheduleBlock) -> tuple[int, int]:
+    return (
+        blk.hora_inicio.hour * 60 + blk.hora_inicio.minute,
+        blk.hora_fin.hour * 60 + blk.hora_fin.minute,
+    )
+
+
+def _asignar_lanes(blocks: list[ScheduleBlock]) -> tuple[
+    list[tuple[ScheduleBlock, int]], int
+]:
+    """Asigna a cada bloque un "lane" (sub-columna) sin solapes.
+
+    Es el algoritmo clásico de coloreo greedy para intervalos:
+    ordenamos por hora de inicio y asignamos el lane libre más bajo.
+    Dos bloques en el mismo lane nunca se solapan.
+
+    Devuelve (lista de (block, lane_idx), cantidad total de lanes).
+    """
+    if not blocks:
+        return [], 1
+    ordenados = sorted(blocks, key=lambda b: _minutos_bloque(b))
+    lanes_end: list[int] = []  # fin del último bloque en cada lane
+    asignaciones: list[tuple[ScheduleBlock, int]] = []
+    for blk in ordenados:
+        h_s, h_e = _minutos_bloque(blk)
+        lane_asignado = None
+        for idx, end in enumerate(lanes_end):
+            if end <= h_s:
+                lane_asignado = idx
+                lanes_end[idx] = h_e
+                break
+        if lane_asignado is None:
+            lane_asignado = len(lanes_end)
+            lanes_end.append(h_e)
+        asignaciones.append((blk, lane_asignado))
+    return asignaciones, max(1, len(lanes_end))
+
+
+def _resumen_bloque(blk: ScheduleBlock) -> str:
+    """Texto del contenido de un bloque en la hoja Cronograma."""
+    com_tag = f" [C{blk.comision_numero}]" if blk.comision_numero else ""
+    lineas = [f"{blk.materia_codigo}{com_tag}"]
+    if blk.materia_nombre:
+        lineas.append(blk.materia_nombre)
+    if blk.virtual:
+        lineas.append("💻 Virtual")
+    elif blk.aula_label:
+        emoji = "🧪" if blk.tipo_clase == "laboratorio" else "📖"
+        lineas.append(f"{emoji} {blk.aula_label}")
+    return "\n".join(lineas)
+
+
 def _write_cronograma_sheet(
     ws,
     grid_data: dict[str, list[ScheduleBlock]],
 ) -> None:
-    """Escribe la hoja Cronograma con una matriz día × franja al
-    estilo calendario visual.
+    """Escribe la hoja Cronograma con una matriz día × franja tipo
+    calendario visual, con:
 
-    Cada bloque ocupa una celda con el resumen: código de materia [Cx].
-    Cuando varios bloques ocupan la misma celda (mismo día + franja
-    de 15 min), se unen con salto de línea.
+    - **Sub-columnas por día** cuando hay clases paralelas: si un día
+      tiene N bloques simultáneos como máximo, se dedica N columnas
+      a ese día. Los días sin paralelismo ocupan 1 sola columna.
+    - **Merge de celdas** verticalmente para cada bloque a lo largo
+      de todas las franjas de 15 min que ocupa (por eso una clase
+      de 2h se ve como un rectángulo unido, no como 8 celdas).
+    - **Fondo suave** en toda la grilla (celdas vacías) y **color
+      por materia** (determinístico por hash del código) en cada
+      bloque, con texto blanco/oscuro según luminosidad del fondo.
     """
     ws.title = "Cronograma"
 
     # Slots de 15 min entre 7:00 y 23:00 (rango operativo típico).
-    # No dependemos de ConfiguracionHoraria acá para mantener el
-    # export estable — la vista de UI usa la config, pero el Excel
-    # necesita una grilla predecible.
     slots: list[tuple[int, int]] = []
     for h in range(7, 23):
         for m in (0, 15, 30, 45):
             slots.append((h * 60 + m, h * 60 + m + 15))
+    n_slots = len(slots)
 
     def _fmt_slot(a: int, b: int) -> str:
         return (
@@ -106,46 +188,114 @@ def _write_cronograma_sheet(
             f"{b // 60:02d}:{b % 60:02d}"
         )
 
-    # Header.
+    # Paso 1: lanes por día. Cada día tiene N lanes (sub-columnas)
+    # según cuántos bloques paralelos tenga como máximo.
+    lanes_por_dia: dict[str, list[tuple[ScheduleBlock, int]]] = {}
+    ancho_dia: dict[str, int] = {}
+    for dia in DIAS_ORDER:
+        blocks = grid_data.get(dia, [])
+        asign, n_lanes = _asignar_lanes(blocks)
+        lanes_por_dia[dia] = asign
+        ancho_dia[dia] = n_lanes
+
+    # Paso 2: mapear día → rango de columnas.
+    dia_col_start: dict[str, int] = {}
+    col = 2  # A es franja
+    for dia in DIAS_ORDER:
+        dia_col_start[dia] = col
+        col += ancho_dia[dia]
+    total_cols = col - 1
+
+    # Bordes finos para toda la grilla.
+    thin = Side(style="thin", color=_EMPTY_BORDER)
+    grid_border = Border(
+        left=thin, right=thin, top=thin, bottom=thin,
+    )
+
+    # Paso 3: header (fila 1 = día, con merge sobre sus lanes).
     ws.cell(row=1, column=1, value="Franja")
     _fill_header(ws.cell(row=1, column=1))
-    for j, dia in enumerate(DIAS_ORDER, start=2):
-        c = ws.cell(row=1, column=j, value=dia)
-        _fill_header(c)
-    ws.column_dimensions["A"].width = 14
-    for j in range(2, 2 + len(DIAS_ORDER)):
-        ws.column_dimensions[get_column_letter(j)].width = 20
+    for dia in DIAS_ORDER:
+        c0 = dia_col_start[dia]
+        c1 = c0 + ancho_dia[dia] - 1
+        cell = ws.cell(row=1, column=c0, value=dia)
+        _fill_header(cell)
+        if c1 > c0:
+            ws.merge_cells(
+                start_row=1, start_column=c0,
+                end_row=1, end_column=c1,
+            )
 
-    # Filas por slot.
+    # Paso 4: llenar toda la grilla con fondo suave + label de franja
+    # en la columna A. Los bloques se pintan encima en el paso 5.
+    empty_fill = PatternFill("solid", fgColor=_EMPTY_FILL)
     for i, (a, b) in enumerate(slots, start=2):
-        ws.cell(row=i, column=1, value=_fmt_slot(a, b))
-        for j, dia in enumerate(DIAS_ORDER, start=2):
-            blocks_dia = grid_data.get(dia, [])
-            bloques_en_celda = []
-            for blk in blocks_dia:
-                h_s = (
-                    blk.hora_inicio.hour * 60 + blk.hora_inicio.minute
-                )
-                h_e = blk.hora_fin.hour * 60 + blk.hora_fin.minute
+        franja_cell = ws.cell(row=i, column=1, value=_fmt_slot(a, b))
+        franja_cell.font = Font(bold=True, size=9)
+        franja_cell.alignment = Alignment(
+            horizontal="right", vertical="center",
+        )
+        franja_cell.border = grid_border
+        for j in range(2, total_cols + 1):
+            c = ws.cell(row=i, column=j)
+            c.fill = empty_fill
+            c.border = grid_border
+
+    # Paso 5: pintar cada bloque como un rectángulo unido en su(s)
+    # columna(s) y rango de slots.
+    slot_start = {s[0]: i for i, s in enumerate(slots)}
+    for dia in DIAS_ORDER:
+        for blk, lane in lanes_por_dia[dia]:
+            h_s, h_e = _minutos_bloque(blk)
+            # Índices de slot [start, end) que cubre el bloque.
+            si_start = None
+            si_end = None
+            for si, (a, b) in enumerate(slots):
                 if h_s < b and h_e > a:
-                    com_tag = (
-                        f" [C{blk.comision_numero}]"
-                        if blk.comision_numero else ""
-                    )
-                    resumen = f"{blk.materia_codigo}{com_tag}"
-                    if blk.aula_label:
-                        resumen += f" · {blk.aula_label}"
-                    elif blk.virtual:
-                        resumen += " · Virtual"
-                    bloques_en_celda.append(resumen)
-            if bloques_en_celda:
-                cell = ws.cell(
-                    row=i, column=j,
-                    value="\n".join(bloques_en_celda),
+                    if si_start is None:
+                        si_start = si
+                    si_end = si
+            if si_start is None:
+                continue
+
+            r0 = si_start + 2
+            r1 = si_end + 2
+            c0 = dia_col_start[dia] + lane
+            # (Los bloques siempre ocupan 1 sola columna, no
+            # atraviesan lanes.)
+            bg, fg = _color_para_materia(blk.materia_codigo)
+            fill = PatternFill("solid", fgColor=bg)
+            texto = _resumen_bloque(blk)
+            cell = ws.cell(row=r0, column=c0, value=texto)
+            cell.fill = fill
+            cell.font = Font(bold=True, color=fg, size=9)
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True,
+            )
+            cell.border = grid_border
+            if r1 > r0:
+                ws.merge_cells(
+                    start_row=r0, start_column=c0,
+                    end_row=r1, end_column=c0,
                 )
-                cell.alignment = Alignment(
-                    wrap_text=True, vertical="top",
-                )
+                # Rellenar y bordear también las celdas mergeadas
+                # para que el color/borde se aplique al rango entero.
+                for r in range(r0 + 1, r1 + 1):
+                    _c = ws.cell(row=r, column=c0)
+                    _c.fill = fill
+                    _c.border = grid_border
+
+    # Anchos de columna: franja angosta, días anchos.
+    ws.column_dimensions["A"].width = 12
+    for j in range(2, total_cols + 1):
+        # Anchura por lane: 22 si el día tiene 1 lane, 18 si tiene
+        # más (para que quepan todos sin scroll horizontal).
+        ws.column_dimensions[get_column_letter(j)].width = 20
+    # Altura mínima de fila para que 3 líneas quepan bien.
+    for i in range(2, n_slots + 2):
+        ws.row_dimensions[i].height = 18
 
     ws.freeze_panes = "B2"
 

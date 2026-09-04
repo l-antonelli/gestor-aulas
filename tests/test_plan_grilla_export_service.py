@@ -169,6 +169,136 @@ class TestExportGrillaAXlsx:
         assert wb["Detalle"].max_row == 1  # sólo header
 
 
+class TestCronogramaSheetEstetica:
+    """Verifica los cambios estéticos de la hoja Cronograma:
+    - bloques merged verticalmente cuando duran múltiples slots,
+    - color por materia,
+    - sub-columnas por día cuando hay clases paralelas.
+    """
+
+    def test_bloque_de_dos_horas_merged_verticalmente(self):
+        # Bloque 10:00 → 12:00 = 8 slots de 15 min. Debería quedar
+        # merged en una única celda que abarque 8 filas.
+        grid = {
+            "Lunes": [
+                _mk_block("h1", materia_codigo="MAT1", hi=10, hf=12),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={},
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+
+        # Encontrar un merge que abarque 8 filas en la columna B.
+        merges_en_col_b = [
+            m for m in ws.merged_cells.ranges
+            if m.min_col == 2 and m.max_col == 2
+        ]
+        # Al menos un merge de 8 filas verticales.
+        alturas = [
+            m.max_row - m.min_row + 1 for m in merges_en_col_b
+        ]
+        assert 8 in alturas, (
+            f"esperaba un merge de 8 filas en col B; got {alturas}"
+        )
+
+    def test_dia_con_clases_paralelas_usa_subcolumnas(self):
+        # Dos bloques simultáneos en Lunes → dos lanes = 2 columnas
+        # para Lunes.
+        grid = {
+            "Lunes": [
+                _mk_block("h1", materia_codigo="MAT1", hi=10, hf=12),
+                _mk_block("h2", materia_codigo="MAT2", hi=10, hf=12),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={},
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+
+        # Header (fila 1): la celda "Lunes" debe estar mergeada
+        # sobre 2 columnas (B y C).
+        merges_lunes_header = [
+            m for m in ws.merged_cells.ranges
+            if m.min_row == 1 and m.max_row == 1 and m.min_col == 2
+        ]
+        assert merges_lunes_header, (
+            "Header de Lunes debería estar mergeado sobre >1 col"
+        )
+        m = merges_lunes_header[0]
+        assert m.max_col - m.min_col + 1 == 2, (
+            f"esperaba 2 columnas bajo Lunes; got "
+            f"{m.max_col - m.min_col + 1}"
+        )
+        # El valor del header viene en la primera celda del merge.
+        assert ws.cell(row=1, column=m.min_col).value == "Lunes"
+
+    def test_dia_sin_paralelismo_usa_una_columna(self):
+        # Tres bloques SECUENCIALES (no simultáneos) en Lunes →
+        # entran en un solo lane.
+        grid = {
+            "Lunes": [
+                _mk_block("h1", materia_codigo="MAT1", hi=8, hf=10),
+                _mk_block("h2", materia_codigo="MAT2", hi=10, hf=12),
+                _mk_block("h3", materia_codigo="MAT3", hi=13, hf=15),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={},
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+        # Header de Lunes NO debería estar merged (1 sola col).
+        merges_header = [
+            m for m in ws.merged_cells.ranges
+            if m.min_row == 1 and m.max_row == 1
+            and m.min_col >= 2
+        ]
+        # Si algún merge existe en fila 1 col B, no debería
+        # cubrir más de 1 columna.
+        for m in merges_header:
+            if m.min_col == 2:
+                assert m.max_col == m.min_col
+
+    def test_colores_por_materia_deterministicos(self):
+        # Misma materia con dos bloques → mismo color.
+        grid = {
+            "Lunes": [
+                _mk_block("h1", materia_codigo="MAT1", hi=8, hf=10),
+            ],
+            "Martes": [
+                _mk_block("h2", materia_codigo="MAT1", hi=8, hf=10),
+            ],
+        }
+        raw = export_grilla_a_xlsx(
+            grid_data=grid, plan_nombre="P", ciclo_label="C",
+            filtros={},
+        )
+        wb = load_workbook(BytesIO(raw))
+        ws = wb["Cronograma"]
+        # Los bloques ocupan (row 26, col 2) para Lunes y (col 3)
+        # para Martes con este layout de slots. Buscamos por
+        # contenido en vez de por índice fijo.
+        # Recorremos y comparamos fills de celdas con "MAT1".
+        celdas_mat1: list = []
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for c in row:
+                if c.value and "MAT1" in str(c.value):
+                    celdas_mat1.append(c)
+        assert len(celdas_mat1) >= 2
+        colores = {
+            c.fill.fgColor.rgb for c in celdas_mat1 if c.fill.fgColor
+        }
+        assert len(colores) == 1, (
+            f"MAT1 debería tener 1 color; got {colores}"
+        )
+
+
 class TestBuildExportFilename:
 
     def test_incluye_plan_ciclo_y_fecha(self):
