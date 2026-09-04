@@ -1696,10 +1696,18 @@ def _render_inspector_franja(
             f"⚠️ Faltan **{exceso_max} aula(s) del catálogo** de "
             f"{sede_nom} en la franja más saturada del rango. "
             f"Habría que mover **al menos {exceso_max} horario(s)** "
-            f"fuera de esa franja para descomprimir. "
-            f"\n\n💡 Puede haber aulas libres puntualmente en el "
-            f"rango (ver expander de abajo), pero el total de aulas "
-            f"del tipo en la sede no alcanza para cubrir toda la "
+            f"fuera de esa franja para descomprimir.\n\n"
+            f"📐 **Este número surge de la demanda proyectada** "
+            f"según las **reglas y restricciones vigentes** del "
+            f"asignador (R10 sede admisible por carrera, R3 tipo de "
+            f"aula, R6 lab compatible, etc.) — asume que si el LP "
+            f"tuviera que resolver el plan hoy, N horarios no "
+            f"encontrarían aula en esta sede. Es una **guía para "
+            f"planificar la asignación automática**, no una "
+            f"medición del estado actual de la DB.\n\n"
+            f"💡 Puede haber aulas libres puntualmente en el rango "
+            f"(ver expander de abajo) pero el total de aulas del "
+            f"tipo en la sede no alcanza para cubrir toda la "
             f"demanda simultánea — hay que reducir la demanda."
         )
     else:
@@ -1712,18 +1720,22 @@ def _render_inspector_franja(
     # se considera libre si está libre en TODAS las celdas del rango).
     with st.expander("🏛 Aulas libres en el rango", expanded=False):
         st.caption(
-            "Aulas de **" + sede_nom + "** del tipo seleccionado que "
-            "no están usadas por ningún horario del plan durante todo "
-            "el rango elegido. Útil para saber cuáles quedan "
+            "📊 **Este listado surge del estado actual de los datos "
+            "del plan** (asignaciones vigentes en la DB): aulas de "
+            f"**{sede_nom}** del tipo seleccionado que no están "
+            "ocupadas por ningún horario **hoy** durante todo el "
+            "rango elegido. Útil para saber cuáles quedan "
             "disponibles para reasignar manualmente."
         )
         st.caption(
-            "ℹ️ **Ojo**: si el mensaje de arriba dice 'faltan N', el "
-            "problema es de capacidad estructural (la sede no tiene "
+            "ℹ️ **Ojo**: si el mensaje de arriba dice 'faltan N', "
+            "ese es un problema **prospectivo** (la sede no tiene "
             "suficientes aulas del tipo para toda la demanda "
-            "simultánea). Que haya aulas libres acá no lo resuelve — "
-            "esas libres ya están contadas en la oferta total y aún "
-            "así falta capacidad."
+            "simultánea proyectada bajo las reglas actuales). Que "
+            "haya aulas libres acá no lo resuelve — esas libres ya "
+            "están contadas en la oferta total, y si el LP re-"
+            "asigna con las reglas vigentes, se van a llenar y aún "
+            "así van a faltar N."
         )
         # Categorías a chequear según el filtro.
         cats_libres: list[str]
@@ -2447,18 +2459,21 @@ def render_resultado(
             ),
         )
         if mostrar_detalle:
-            _render_inspector_franja(
-                heatmap_sede,
-                plan_id=run.plan_cursada_id,
-                key_ns=key_ns,
-            )
+            with st.container(border=True):
+                _render_inspector_franja(
+                    heatmap_sede,
+                    plan_id=run.plan_cursada_id,
+                    key_ns=key_ns,
+                )
 
     if run.status != "optimal":
-        st.markdown("#### 🔍 Diagnóstico")
-        if diag:
-            _render_diagnostico_infactibilidad(diag, iis=iis)
-        else:
-            st.info("No se generó diagnóstico para esta corrida.")
+        with st.expander("🔍 Diagnóstico", expanded=True):
+            if diag:
+                _render_diagnostico_infactibilidad(diag, iis=iis)
+            else:
+                st.info(
+                    "No se generó diagnóstico para esta corrida."
+                )
         return
 
     # Advertencias estructurales — filtramos entries vacías post-filtro
@@ -2469,14 +2484,10 @@ def render_resultado(
     _saturacion = diag.get("saturacion_por_tipo") if diag else None
     _hall = diag.get("hall_violators") if diag else None
     if diag and (_sin_aula or _franjas or _saturacion or _hall):
-        _adv_key = f"{key_ns}_show_advertencias"
-        if _adv_key not in st.session_state:
-            st.session_state[_adv_key] = False
-        mostrar_adv = st.toggle(
-            "⚠️ Ver advertencias estructurales detectadas",
-            key=_adv_key,
-        )
-        if mostrar_adv:
+        with st.expander(
+            "⚠️ Diagnóstico: advertencias estructurales detectadas",
+            expanded=False,
+        ):
             _render_diagnostico_infactibilidad(diag, iis=iis)
 
     # Ajustes avanzados (α) — sólo si aplica.
@@ -2502,17 +2513,21 @@ def render_resultado(
         ),
     )
     if mostrar_det:
-        st.caption(
-            "Los umbrales de sobre-/sub-ocupación son los de la última "
-            "corrida del asignador. La columna **Manual** marca con 🔒 "
-            "las aulas que están protegidas de futuras corridas."
-        )
-        styled = df.style.map(_color_estado, subset=["Estado"]).format({
-            "Esperados": "{:.0f}",
-            "Cap": "{:.0f}",
-            "Δ": "{:+.0f}",
-        })
-        st.dataframe(styled, width='stretch', hide_index=True)
+        with st.container(border=True):
+            st.caption(
+                "Los umbrales de sobre-/sub-ocupación son los de la "
+                "última corrida del asignador. La columna **Manual** "
+                "marca con 🔒 las aulas que están protegidas de "
+                "futuras corridas."
+            )
+            styled = df.style.map(
+                _color_estado, subset=["Estado"],
+            ).format({
+                "Esperados": "{:.0f}",
+                "Cap": "{:.0f}",
+                "Δ": "{:+.0f}",
+            })
+            st.dataframe(styled, width='stretch', hide_index=True)
 
     # Candidatas a partir comisión (toggle).
     cand = _candidatas_partir_comision(df)
@@ -2530,4 +2545,13 @@ def render_resultado(
             ),
         )
         if mostrar_cand:
-            st.dataframe(cand, width='stretch', hide_index=True)
+            with st.container(border=True):
+                st.caption(
+                    "Estas materias tienen al menos un horario con "
+                    "capacidad por debajo de los inscriptos esperados. "
+                    "Subir `n_comisiones` en la materia distribuye "
+                    "los esperados en más aulas y descomprime."
+                )
+                st.dataframe(
+                    cand, width='stretch', hide_index=True,
+                )
