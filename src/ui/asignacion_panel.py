@@ -233,78 +233,172 @@ def _render_config_form(
         _render_tabla_manuales(session, plan_id, key_ns)
 
     with st.form(f"{key_ns}_lp_form"):
-        st.markdown("**Configuración de la asignación de aulas**")
-        c1, c2 = st.columns(2)
-        with c1:
-            fecha_desde = st.date_input(
-                "Aplicar desde la fecha",
-                value=default_fecha,
-                help="Las clases anteriores a esta fecha quedan intactas. "
-                     "Sólo se reasignan clases con fecha ≥ la elegida y "
-                     "no ejecutadas.",
-                key=f"{key_ns}_fecha_desde",
-            )
-            lambda_over = st.number_input(
-                "Peso de sobre-ocupación",
-                min_value=0.0, value=10.0, step=1.0,
-                help="Cuánto se castiga que el aula tenga menos capacidad "
-                     "que los inscriptos esperados. Cuanto más alto, más "
-                     "prioriza evitar que una comisión no entre.",
-                key=f"{key_ns}_lover",
-            )
-            tol_over = st.slider(
-                "Tolerancia de sobre-ocupación",
-                min_value=0.0, max_value=0.5, value=0.0, step=0.05,
-                help="Margen relativo donde la sobre-ocupación no penaliza. "
-                     "0 = cualquier exceso penaliza.",
-                key=f"{key_ns}_tover",
-            )
-        with c2:
-            respetar = st.toggle(
-                "Respetar ediciones manuales",
-                value=True,
-                help="Si está activo, la asignación no pisa clases con "
-                     "aula elegida manualmente. Desactivalo sólo si "
-                     "querés re-asignar todo desde cero.",
-                key=f"{key_ns}_respetar",
-            )
-            lambda_under = st.number_input(
-                "Peso de sub-utilización",
-                min_value=0.0, value=1.0, step=0.5,
-                help="Cuánto se castiga que el aula tenga capacidad muy "
-                     "superior a los inscriptos (aula grande con pocos "
-                     "alumnos).",
-                key=f"{key_ns}_lunder",
-            )
-            tol_under = st.slider(
-                "Tolerancia de sub-utilización",
-                min_value=0.0, max_value=1.0, value=0.20, step=0.05,
-                help="Margen relativo donde la sub-utilización no "
-                     "penaliza. 0.20 = hasta 20% de espacio vacío sin "
-                     "penalidad.",
-                key=f"{key_ns}_tunder",
-            )
-
-        timeout = st.number_input(
-            "Tiempo máximo de resolución (segundos)",
-            min_value=10, max_value=1800, value=300, step=30,
-            help="Si la asignación tarda más que esto, se corta y "
-                 "devuelve la mejor solución parcial encontrada.",
-            key=f"{key_ns}_timeout",
+        st.markdown("### ⚙️ Configuración del asignador")
+        st.caption(
+            "Estos parámetros controlan cómo el asignador decide qué "
+            "aula darle a cada horario. Los valores por default son "
+            "una calibración razonable; podés ajustarlos si algún "
+            "resultado no te convence. Pasá el mouse por el ⓘ de "
+            "cada campo para ver el detalle."
         )
 
-        activar_alpha = st.toggle(
-            "Redistribuir pesos entre comisiones (avanzado)",
-            value=False,
-            help=(
-                "Permite que la asignación redistribuya el peso relativo "
-                "de las comisiones del mismo dictado para mejorar el "
-                "ajuste a la capacidad disponible. Los pesos propuestos "
-                "se muestran como diferencia y se aplican sólo si los "
-                "confirmás."
-            ),
-            key=f"{key_ns}_activar_alpha",
-        )
+        # -----------------------------------------------------------------
+        # Fecha de aplicación + toggle de manuales.
+        # -----------------------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**📅 Alcance temporal y ediciones manuales**")
+            c_alcance1, c_alcance2 = st.columns(2)
+            with c_alcance1:
+                fecha_desde = st.date_input(
+                    "Aplicar desde la fecha",
+                    value=default_fecha,
+                    help=(
+                        "Las clases anteriores a esta fecha quedan "
+                        "intactas. Sólo se reasignan clases con "
+                        "fecha ≥ la elegida y no ejecutadas."
+                    ),
+                    key=f"{key_ns}_fecha_desde",
+                )
+            with c_alcance2:
+                respetar = st.toggle(
+                    "Respetar ediciones manuales",
+                    value=True,
+                    help=(
+                        "Si está activo, la asignación no pisa "
+                        "clases con aula elegida manualmente. "
+                        "Desactivalo sólo si querés re-asignar todo "
+                        "desde cero."
+                    ),
+                    key=f"{key_ns}_respetar",
+                )
+
+        # -----------------------------------------------------------------
+        # Pesos y tolerancias de capacidad.
+        # -----------------------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**⚖️ Ajuste de capacidad al forecast**")
+            st.caption(
+                "Cómo se decide entre aulas del tipo correcto según la "
+                "cantidad esperada de inscriptos. Los pesos definen la "
+                "importancia relativa; las tolerancias marcan un "
+                "margen aceptable sin penalidad."
+            )
+            c_cap1, c_cap2 = st.columns(2)
+            with c_cap1:
+                lambda_over = st.number_input(
+                    "Peso de sobre-ocupación (λ over)",
+                    min_value=0.0, value=10.0, step=1.0,
+                    help=(
+                        "Cuánto se castiga que el aula tenga menos "
+                        "capacidad que los inscriptos esperados. "
+                        "Cuanto más alto, más prioriza evitar que "
+                        "una comisión no entre. Default: 10."
+                    ),
+                    key=f"{key_ns}_lover",
+                )
+                tol_over = st.slider(
+                    "Tolerancia de sobre-ocupación",
+                    min_value=0.0, max_value=0.5, value=0.0, step=0.05,
+                    help=(
+                        "Margen relativo donde la sobre-ocupación "
+                        "no penaliza. 0 = cualquier exceso penaliza."
+                    ),
+                    key=f"{key_ns}_tover",
+                )
+            with c_cap2:
+                lambda_under = st.number_input(
+                    "Peso de sub-utilización (λ under)",
+                    min_value=0.0, value=1.0, step=0.5,
+                    help=(
+                        "Cuánto se castiga que el aula tenga "
+                        "capacidad muy superior a los inscriptos "
+                        "(aula grande con pocos alumnos). Default: 1."
+                    ),
+                    key=f"{key_ns}_lunder",
+                )
+                tol_under = st.slider(
+                    "Tolerancia de sub-utilización",
+                    min_value=0.0, max_value=1.0, value=0.20, step=0.05,
+                    help=(
+                        "Margen relativo donde la sub-utilización "
+                        "no penaliza. 0.20 = hasta 20% de espacio "
+                        "vacío sin penalidad."
+                    ),
+                    key=f"{key_ns}_tunder",
+                )
+
+        # -----------------------------------------------------------------
+        # Preferencias de sede (R12 blanda + R13 dura).
+        # -----------------------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**🏛️ Preferencias y restricciones de sede**")
+            st.caption(
+                "**Sede preferida**: se calcula automáticamente por "
+                "materia — primero se elige la sede del laboratorio "
+                "compatible si la materia tiene lab; si no, la sede "
+                "habilitada por la carrera. **Margen intersede**: "
+                "para que los alumnos puedan trasladarse entre "
+                "sedes distintas dentro del día."
+            )
+            c_sede1, c_sede2 = st.columns(2)
+            with c_sede1:
+                lambda_sede_pref = st.number_input(
+                    "Peso de preferencia de sede (λ sede)",
+                    min_value=0.0, value=5.0, step=1.0,
+                    help=(
+                        "Costo blando de asignar un horario a una "
+                        "sede que no es su preferida. Con λ alto el "
+                        "asignador respeta la sede preferida a costa "
+                        "de aceptar aulas más chicas o más grandes. "
+                        "Con λ = 0 la preferencia se ignora (el LP "
+                        "elige la sede admisible que mejor caiga "
+                        "por capacidad). Default: 5."
+                    ),
+                    key=f"{key_ns}_lsede",
+                )
+            with c_sede2:
+                margen_intersede = st.number_input(
+                    "Margen mínimo entre sedes (minutos)",
+                    min_value=0, max_value=180, value=30, step=5,
+                    help=(
+                        "Si dos horarios contiguos de una misma "
+                        "comisión tienen un gap menor a este margen, "
+                        "el asignador los deja en la misma sede. "
+                        "Setear en 0 desactiva la restricción; 30 "
+                        "minutos cubre traslados cortos. Sedes "
+                        "alejadas pueden requerir 60."
+                    ),
+                    key=f"{key_ns}_margen_intersede",
+                )
+
+        # -----------------------------------------------------------------
+        # Timeout + avanzado.
+        # -----------------------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**🛠 Configuración avanzada**")
+            timeout = st.number_input(
+                "Tiempo máximo de resolución (segundos)",
+                min_value=10, max_value=1800, value=300, step=30,
+                help=(
+                    "Si la asignación tarda más que esto, se corta "
+                    "y devuelve la mejor solución parcial encontrada."
+                ),
+                key=f"{key_ns}_timeout",
+            )
+
+            activar_alpha = st.toggle(
+                "Redistribuir pesos entre comisiones (experimental)",
+                value=False,
+                help=(
+                    "Permite que la asignación redistribuya el peso "
+                    "relativo de las comisiones del mismo dictado "
+                    "para mejorar el ajuste a la capacidad "
+                    "disponible. Los pesos propuestos se muestran "
+                    "como diferencia y se aplican sólo si los "
+                    "confirmás."
+                ),
+                key=f"{key_ns}_activar_alpha",
+            )
 
         submitted = st.form_submit_button("🚀 Asignar aulas", type="primary")
 
@@ -314,8 +408,10 @@ def _render_config_form(
     return LPConfig(
         lambda_over=float(lambda_over),
         lambda_under=float(lambda_under),
+        lambda_sede_pref=float(lambda_sede_pref),
         tol_over=float(tol_over),
         tol_under=float(tol_under),
+        margen_min_intersede_minutos=int(margen_intersede),
         timeout_seconds=int(timeout),
         respetar_ediciones_manuales=bool(respetar),
         activar_alpha=bool(activar_alpha),

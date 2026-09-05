@@ -127,11 +127,14 @@ En orden de prioridad:
   10× más que subutilización, pero si no hay aula grande
   disponible en la franja puede pasar. Ampliar aulas o partir la
   comisión en más grupos.
-- **¿Cómo veo si el resultado es bueno globalmente?** Más
-  adelante va a haber un panel de "Calidad del resultado" con
-  contadores de horarios sobre/subocupados, sobrecupo total en
-  asientos, aulas usadas vs ociosas, y el peor caso identificado.
-  Ver §8 para el detalle del catálogo.
+- **¿Cómo veo si el resultado es bueno globalmente?** El panel
+  **📊 Calidad del resultado** en Planes → Detalle muestra 4
+  familias de métricas: cobertura (asignados vs faltantes,
+  preferida vs alternativa), ajuste al forecast (sobre/sub
+  ocupación con totales en asientos y peor caso), uso del
+  catálogo (aulas usadas/ociosas, concentración por sede) y
+  estado del asignador (objetivo del LP, tiempo, traslados
+  intersede). Ver §8 para el detalle del catálogo.
 - **Cambié el forecast y no veo diferencia.** Los cambios de
   forecast recién impactan al correr de nuevo el asignador desde
   el panel de Aulas del plan.
@@ -537,17 +540,17 @@ Parámetros de `LPConfig` (`asignacion_aulas_service.py:66-84`):
 
 | Parámetro | Default | Semántica | Expuesto en UI |
 |---|---|---|---|
-| `lambda_over` | 10.0 | Peso del sobrecupo. | No |
-| `lambda_under` | 1.0 | Peso de la subutilización. | No |
-| `lambda_sede_pref` | 5.0 | Peso de la preferencia blanda de sede (R12). Setear a 0 para desactivar. | No (planeado en Fase 5) |
-| `margen_min_intersede_minutos` | 30 | Margen mínimo en minutos entre horarios contiguos de la misma comisión que caen en sedes distintas (R13). Setear a 0 para desactivar. | No (planeado en Fase 5) |
-| `lambda_intersede` | 0.0 | Peso reservado para variante blanda futura de R13. Hoy sin efecto (la restricción es dura). | No |
-| `tol_over` | 0.0 | Fracción de cap[a] permitida sobre insc antes de penalizar. | No |
-| `tol_under` | 0.20 | Fracción de cap[a] permitida bajo insc antes de penalizar (20 %). | No |
-| `activar_alpha` | False | Habilita R9 (redistribución de coeficientes). | No |
-| `timeout_seconds` | 300 | Timeout de CBC. | No |
-| `respetar_ediciones_manuales` | True | Habilita R11. | Sí (toggle en panel de asignación) |
-| `fecha_desde` | None | Fecha desde la que propagar la solución a ClaseDB. | Sí (implícito, por default = mín) |
+| `lambda_over` | 10.0 | Peso del sobrecupo. | ✅ Sí (Fase 5) |
+| `lambda_under` | 1.0 | Peso de la subutilización. | ✅ Sí (Fase 5) |
+| `lambda_sede_pref` | 5.0 | Peso de la preferencia blanda de sede (R12). Setear a 0 para desactivar. | ✅ Sí (Fase 5) |
+| `margen_min_intersede_minutos` | 30 | Margen mínimo en minutos entre horarios contiguos de la misma comisión que caen en sedes distintas (R13). Setear a 0 para desactivar. | ✅ Sí (Fase 5) |
+| `lambda_intersede` | 0.0 | Peso reservado para variante blanda futura de R13. Hoy sin efecto (la restricción es dura). | No (reservado) |
+| `tol_over` | 0.0 | Fracción de cap[a] permitida sobre insc antes de penalizar. | ✅ Sí (Fase 5) |
+| `tol_under` | 0.20 | Fracción de cap[a] permitida bajo insc antes de penalizar (20 %). | ✅ Sí (Fase 5) |
+| `activar_alpha` | False | Habilita R9 (redistribución de coeficientes). | ✅ Sí (toggle experimental) |
+| `timeout_seconds` | 300 | Timeout de CBC. | ✅ Sí (Fase 5) |
+| `respetar_ediciones_manuales` | True | Habilita R11. | ✅ Sí (toggle en panel de asignación) |
+| `fecha_desde` | None | Fecha desde la que propagar la solución a ClaseDB. | ✅ Sí (implícito, por default = mín) |
 
 ---
 
@@ -696,8 +699,8 @@ infactible".
 | 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
 | 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
 | 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
-| 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
-| 6 | Pendiente | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Panel "Calidad del resultado" al tope del Detalle del Plan con 4 familias de métricas: (A) cobertura global, (B) sobre/sub ocupación con totales y peor caso, (C) distribución de aulas (usadas/ociosas, carga por sede), (D) estabilidad del LP (objetivo, tiempo, ediciones manuales, sedes distintas por comisión). |
+| 5 | ✅ Hecho (2026-09-05) | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Rediseñado el form de configuración en `asignacion_panel.py` con **4 containers** (alcance temporal, ajuste de capacidad, preferencias de sede, avanzado). Cada parámetro nuevo de Fases 2–4 tiene su input y su help correspondiente. Los inputs se propagan a `LPConfig` en el submit. |
+| 6 | ✅ Hecho (2026-09-05) | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Nuevo `metricas_calidad_service.py` con `compute_metricas_calidad` que devuelve un `MetricasCalidad` con 4 familias: cobertura, sobre/sub ocupación, distribución de aulas, LP + traslados. Panel `_render_panel_calidad` en Planes → Detalle con 4 containers y métricas grandes + expanders de detalle. |
 
 La función pura `sede_preferida_para_horario` (Fase 2) queda
 disponible en `asignacion_aulas_helpers` y va a ser reutilizada

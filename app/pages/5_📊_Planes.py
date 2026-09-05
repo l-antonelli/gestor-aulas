@@ -274,7 +274,12 @@ def _render_plan_editor(
     s2.metric("Comisiones", n_comisiones)
     s3.metric("Horarios", n_horarios)
     s4.metric("Horarios con aula", n_horarios_con_aula)
-    
+
+    st.divider()
+
+    # --- Panel de calidad del resultado (Fase 6) ---
+    _render_panel_calidad(sel_plan_id, key_ns=f"calidad_{key_ns}_{sel_plan_id}")
+
     st.divider()
 
     # --- Acciones del plan ---
@@ -292,6 +297,304 @@ def _render_plan_editor(
         plan_id=sel_plan_id,
         key_ns=f"plan_val_{key_ns}_{sel_plan_id}",
     )
+
+
+def _render_panel_calidad(plan_id: str, key_ns: str) -> None:
+    """Panel 📊 Calidad del resultado (Fase 6).
+
+    Muestra en 4 tarjetas las métricas más importantes y expanders
+    con el detalle. Todo se computa contra el estado actual del plan
+    (`HorarioDB.aula_id` + forecast).
+    """
+    from src.services.metricas_calidad_service import (
+        compute_metricas_calidad,
+    )
+
+    st.markdown("#### 📊 Calidad del resultado")
+    st.caption(
+        "Panel para evaluar de un vistazo cómo está de bien resuelto "
+        "el plan: cuántos horarios recibieron aula, cuántos quedaron "
+        "apretados o con espacio de sobra, cuántas aulas del catálogo "
+        "quedaron ociosas, y qué pasó en la última corrida del "
+        "asignador."
+    )
+
+    with next(get_session()) as session:
+        m = compute_metricas_calidad(session, plan_id)
+
+    # --- Fila 1: cobertura ---
+    with st.container(border=True):
+        st.markdown("**🎯 Cobertura**")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Asignados",
+            f"{m.cobertura.n_horarios_asignados}/{m.cobertura.n_horarios_total}",
+            help=(
+                "Horarios activos del plan que tienen aula asignada. "
+                "Idealmente coincide con el total."
+            ),
+        )
+        c2.metric(
+            "Sin aula",
+            m.cobertura.n_horarios_sin_aula,
+            help=(
+                "Horarios que no tienen aula. Correr el asignador o "
+                "asignar a mano desde el panel de aulas."
+            ),
+        )
+        c3.metric(
+            "En sede preferida",
+            m.cobertura.n_horarios_en_sede_preferida,
+            help=(
+                "Horarios que cayeron en la sede natural de la "
+                "materia (lab o carrera). Cuanto más alto, mejor."
+            ),
+        )
+        c4.metric(
+            "En sede alternativa",
+            m.cobertura.n_horarios_en_sede_alternativa,
+            help=(
+                "Horarios que cayeron en una sede admisible pero no "
+                "preferida — típicamente porque la preferida se "
+                "saturó. Se pueden ver los detalles en el mapa de "
+                "saturación (vista Preferida vs. Máxima)."
+            ),
+        )
+        if m.cobertura.n_horarios_sin_sede_preferida > 0:
+            st.caption(
+                f"ℹ️ {m.cobertura.n_horarios_sin_sede_preferida} "
+                "horario(s) no tienen sede preferida configurada "
+                "(materias sin restricción de sede)."
+            )
+
+    # --- Fila 2: sobre/sub ocupación ---
+    with st.container(border=True):
+        st.markdown("**⚖️ Ajuste al forecast de inscriptos**")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Sobreocupados",
+            m.ocupacion.n_sobreocupados,
+            help=(
+                "Cantidad de horarios donde los inscriptos "
+                "esperados superan la capacidad del aula. Idealmente 0."
+            ),
+        )
+        c2.metric(
+            "Sobrecupo total",
+            f"{m.ocupacion.sobrecupo_total_asientos} asientos",
+            help=(
+                "Sumatoria de asientos faltantes a lo largo de todos "
+                "los horarios sobreocupados. Alumnos que no entran "
+                "si se cumple el forecast."
+            ),
+        )
+        c3.metric(
+            "Subutilizados",
+            m.ocupacion.n_subutilizados,
+            help=(
+                "Horarios donde el aula es notablemente más grande "
+                "que los inscriptos esperados (tol_under = 20%)."
+            ),
+        )
+        c4.metric(
+            "Subutilización total",
+            f"{m.ocupacion.subutilizacion_total_asientos} asientos",
+            help=(
+                "Sumatoria de asientos ociosos a lo largo de todos "
+                "los horarios subutilizados."
+            ),
+        )
+        c1b, c2b, c3b = st.columns(3)
+        c1b.metric(
+            "Ratio promedio",
+            f"{m.ocupacion.ratio_promedio:.0%}",
+            help=(
+                "Promedio de `inscriptos / capacidad` sobre todos "
+                "los horarios asignados. Un valor cerca de 90% "
+                "indica un buen aprovechamiento."
+            ),
+        )
+        c2b.metric(
+            "Mediana (P50)",
+            f"{m.ocupacion.ratio_p50:.0%}",
+            help=(
+                "La mitad de los horarios tiene un ratio de "
+                "ocupación menor a este valor."
+            ),
+        )
+        c3b.metric(
+            "P90",
+            f"{m.ocupacion.ratio_p90:.0%}",
+            help=(
+                "El 90% de los horarios tiene un ratio menor a "
+                "este valor. Sirve para detectar apretados."
+            ),
+        )
+        if m.ocupacion.peor_sobreocupado:
+            p = m.ocupacion.peor_sobreocupado
+            with st.expander(
+                f"🔴 Peor sobreocupación: {p['materia_nombre']} "
+                f"({p['faltantes']} alumnos afuera)"
+            ):
+                st.markdown(
+                    f"- **Materia**: {p['materia']} — {p['materia_nombre']}\n"
+                    f"- **Comisión**: {p['comision']}\n"
+                    f"- **Día/Hora**: {p['dia']} {p['hora_inicio']}–{p['hora_fin']}\n"
+                    f"- **Aula**: {p['aula']} (capacidad {p['capacidad']})\n"
+                    f"- **Inscriptos esperados**: {p['inscriptos_esperados']}\n"
+                    f"- **Alumnos sin lugar**: {p['faltantes']}"
+                )
+        if m.ocupacion.peor_subutilizado:
+            p = m.ocupacion.peor_subutilizado
+            with st.expander(
+                f"🔵 Peor subutilización: {p['materia_nombre']} "
+                f"({p['ociosos']} asientos ociosos)"
+            ):
+                st.markdown(
+                    f"- **Materia**: {p['materia']} — {p['materia_nombre']}\n"
+                    f"- **Comisión**: {p['comision']}\n"
+                    f"- **Día/Hora**: {p['dia']} {p['hora_inicio']}–{p['hora_fin']}\n"
+                    f"- **Aula**: {p['aula']} (capacidad {p['capacidad']})\n"
+                    f"- **Inscriptos esperados**: {p['inscriptos_esperados']}\n"
+                    f"- **Asientos ociosos**: {p['ociosos']}"
+                )
+
+    # --- Fila 3: distribución de aulas ---
+    with st.container(border=True):
+        st.markdown("**🏛️ Uso del catálogo de aulas**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Aulas usadas",
+            f"{m.aulas.n_aulas_usadas}/{m.aulas.n_aulas_catalogo}",
+            help=(
+                "Aulas del catálogo que tienen al menos un horario "
+                "asignado. Las restantes están ociosas."
+            ),
+        )
+        c2.metric(
+            "Aulas ociosas",
+            m.aulas.n_aulas_ociosas,
+            help=(
+                "Aulas del catálogo sin horarios asignados en este "
+                "plan. Podrías reasignar horarios sobreocupados "
+                "hacia estas aulas, o descartarlas del catálogo."
+            ),
+        )
+        c3.metric(
+            "Con carga alta",
+            m.aulas.n_aulas_carga_alta,
+            help=(
+                "Aulas cuyo uso es notablemente mayor al promedio. "
+                "Aporta para detectar aulas 'sobrecalentadas'."
+            ),
+        )
+        if m.aulas.concentracion_por_sede:
+            with st.expander(
+                f"Concentración por sede ({len(m.aulas.concentracion_por_sede)} sedes)"
+            ):
+                import pandas as pd
+                df = pd.DataFrame(m.aulas.concentracion_por_sede)
+                df["porcentaje"] = df["porcentaje"].apply(
+                    lambda x: f"{x:.1f}%"
+                )
+                st.dataframe(
+                    df[["sede_nombre", "n_horarios", "porcentaje"]].rename(
+                        columns={
+                            "sede_nombre": "Sede",
+                            "n_horarios": "Horarios asignados",
+                            "porcentaje": "% del total",
+                        }
+                    ),
+                    hide_index=True, use_container_width=True,
+                )
+        if m.aulas.aulas_ociosas:
+            with st.expander(
+                f"Aulas ociosas ({len(m.aulas.aulas_ociosas)})"
+            ):
+                import pandas as pd
+                st.dataframe(
+                    pd.DataFrame(m.aulas.aulas_ociosas).rename(
+                        columns={
+                            "aula_nombre": "Aula",
+                            "sede": "Sede",
+                            "tipo": "Tipo",
+                            "capacidad": "Cap.",
+                        }
+                    )[["Aula", "Sede", "Tipo", "Cap."]],
+                    hide_index=True, use_container_width=True,
+                )
+
+    # --- Fila 4: LP + traslados ---
+    with st.container(border=True):
+        st.markdown("**🧮 Estado del asignador y traslados intersede**")
+        c1, c2, c3, c4 = st.columns(4)
+        if m.lp.fecha_ultima_corrida:
+            c1.metric(
+                "Última corrida",
+                m.lp.fecha_ultima_corrida,
+                help=(
+                    f"Estado: {m.lp.status_ultima_corrida}. Refleja "
+                    "cuándo se corrió el asignador por última vez."
+                ),
+            )
+        else:
+            c1.metric("Última corrida", "—", help="Todavía no corriste el asignador.")
+        c2.metric(
+            "Valor del objetivo",
+            (
+                f"{m.lp.objetivo:.1f}"
+                if m.lp.objetivo is not None else "—"
+            ),
+            help=(
+                "Valor de la función objetivo (menor es mejor). "
+                "Sirve para comparar corridas con configuraciones "
+                "distintas: si bajás λ_sede_pref y el objetivo se "
+                "mantiene, la corrida fue más flexible."
+            ),
+        )
+        c3.metric(
+            "Tiempo del solve",
+            (
+                f"{m.lp.tiempo_solve_segundos:.1f}s"
+                if m.lp.tiempo_solve_segundos is not None else "—"
+            ),
+            help=(
+                "Segundos que tardó CBC en resolver la última "
+                "corrida. Útil para calibrar el timeout."
+            ),
+        )
+        c4.metric(
+            "Traslados intersede",
+            m.lp.n_comisiones_con_traslado_intersede,
+            help=(
+                "Cantidad de comisiones que tienen al menos un par "
+                "de horarios contiguos en sedes distintas con gap "
+                "menor al margen configurado. Idealmente 0 (o el "
+                "margen configurado es demasiado bajo)."
+            ),
+        )
+        if m.lp.detalle_traslados:
+            with st.expander(
+                f"Detalle de traslados intersede ({len(m.lp.detalle_traslados)})"
+            ):
+                import pandas as pd
+                st.dataframe(
+                    pd.DataFrame(m.lp.detalle_traslados).rename(
+                        columns={
+                            "comision": "Comisión",
+                            "materia": "Materia",
+                            "dia": "Día",
+                            "hora_fin_1": "Fin 1",
+                            "hora_inicio_2": "Inicio 2",
+                            "gap_minutos": "Gap (min)",
+                            "sede_1": "Sede 1",
+                            "sede_2": "Sede 2",
+                            "aula_1": "Aula 1",
+                            "aula_2": "Aula 2",
+                        }
+                    ),
+                    hide_index=True, use_container_width=True,
+                )
 
 
 def _render_acciones_del_plan(
