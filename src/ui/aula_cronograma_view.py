@@ -138,7 +138,7 @@ _DEFAULT_FILTROS: dict = {
     "mostrar_cronograma": False,
 }
 
-_COMUNES_OPTS = ["Todas", "Sólo comunes", "Sólo exclusivas"]
+_COMUNES_OPTS = ["Todas", "Sólo comunes", "Sólo específicas"]
 
 
 def _build_filtros_panel(
@@ -536,7 +536,7 @@ def _aplicar_filtros_horarios_v2(
         if f_comunes_mode == "Sólo comunes":
             if len(carr_codes) < 2:
                 continue
-        elif f_comunes_mode == "Sólo exclusivas":
+        elif f_comunes_mode == "Sólo específicas":
             if len(carr_codes) != 1:
                 continue
         if f_tipos:

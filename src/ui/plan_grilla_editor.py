@@ -422,7 +422,7 @@ def _aplicar_filtro_alcance(
 
     ``alcance`` es una de:
       - ``"Todas"``: no filtra (todos los bloques pasan).
-      - ``"Sólo exclusivas"``: sólo materias que aparecen en 1 carrera.
+      - ``"Sólo específicas"``: sólo materias que aparecen en 1 carrera.
       - ``"Sólo comunes"``: sólo materias que aparecen en ≥ 2 carreras.
 
     La condición se lee de ``materias_carreras_count``, poblado desde
@@ -435,7 +435,7 @@ def _aplicar_filtro_alcance(
 
     def _passes(b: ScheduleBlock) -> bool:
         n_carr = materias_carreras_count.get(b.materia_codigo, 0)
-        if alcance == "Sólo exclusivas":
+        if alcance == "Sólo específicas":
             return n_carr <= 1
         if alcance == "Sólo comunes":
             return n_carr >= 2
@@ -820,22 +820,22 @@ def render_plan_grilla_editor(
             st.markdown("**🔎 Alcance de la materia**")
             st.caption(
                 "Filtra por cómo la materia figura en los planes de "
-                "estudio: **exclusivas** = una sola carrera; "
+                "estudio: **específicas** = una sola carrera; "
                 "**comunes** = dos o más carreras (típico: materias "
-                "del ciclo básico, algunas específicas compartidas)."
+                "del ciclo básico o materias compartidas entre planes)."
             )
             f_alcance = st.selectbox(
                 "Alcance",
                 options=[
                     "Todas",
-                    "Sólo exclusivas",
+                    "Sólo específicas",
                     "Sólo comunes",
                 ],
                 key=f"{key_ns}_filtro_alcance",
                 label_visibility="collapsed",
                 help=(
                     "**Todas**: sin filtrar por alcance.  \n"
-                    "**Sólo exclusivas**: materias que aparecen en "
+                    "**Sólo específicas**: materias que aparecen en "
                     "una única carrera del plan de estudio.  \n"
                     "**Sólo comunes**: materias que aparecen en dos "
                     "o más carreras. Útil para exportar las "

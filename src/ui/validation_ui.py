@@ -1595,7 +1595,7 @@ def _render_detalle_por_materia(
     _anios_opts = sorted({r["anio"] for r in _rows if r["anio"] is not None})
     _cuatris_opts = sorted({r["cuatri"] for r in _rows if r["cuatri"] != "—"})
     _estados_opts = ["OK", "Faltante", "No esperada", "Conflictiva", "Sin datos"]
-    _tipo_opts = ["Todas", "Comunes", "Exclusivas"]
+    _tipo_opts = ["Todas", "Comunes", "Específicas"]
     # Atributos de materia: cada uno es un multi-state (sí/no/cualquiera)
     # representado como dos opciones por atributo.
     _attr_opts = [
@@ -1651,7 +1651,7 @@ def _render_detalle_por_materia(
             key=f"{key_ns}_dpm_tipo",
             help=(
                 "Comunes: materias compartidas entre 2+ carreras. "
-                "Exclusivas: materias de una sola carrera."
+                "Específicas: materias de una sola carrera."
             ),
         )
     with _g2:
@@ -1707,7 +1707,7 @@ def _render_detalle_por_materia(
             return False
         if _f_tipo == "Comunes" and r["n_carreras"] < 2:
             return False
-        if _f_tipo == "Exclusivas" and r["n_carreras"] != 1:
+        if _f_tipo == "Específicas" and r["n_carreras"] != 1:
             return False
         if _f_attrs:
             if "Optativa" in _f_attrs and not r["optativa"]:

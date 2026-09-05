@@ -365,7 +365,7 @@ def render_custom_materia_page():
                                             ).all()
                                         }
                                         es_comun = len(car_codes) >= 2
-                                        _badge = "🔗 Común" if es_comun else "🎯 Exclusiva"
+                                        _badge = "🔗 Común" if es_comun else "🎯 Específica"
                                         _resumen = ", ".join(car_codes)
                                         st.write(
                                             f"**{_badge}** ({_resumen})"

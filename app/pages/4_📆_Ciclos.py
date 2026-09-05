@@ -311,7 +311,7 @@ with tab_dictados:
                 st.caption(
                     f"⚠️ {_cfg_n_no_recursado} carrera(s) tienen "
                     "'permite recursado' desactivado: las materias "
-                    "exclusivas del cuatrimestre opuesto **no se "
+                    "específicas del cuatrimestre opuesto **no se "
                     "van a crear** cuando toques 'Crear dictados' "
                     "(la razón queda anotada). Podés forzar la "
                     "creación desde el panel de divergencias más "

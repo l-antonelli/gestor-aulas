@@ -36,7 +36,7 @@ def render_custom_carrera_page():
     st.caption(
         "Catálogo de carreras del sistema. Cada carrera tiene sus "
         "datos generales, sedes habilitadas para dictar sus "
-        "materias exclusivas y el plan de estudio (qué materias se "
+        "materias específicas y el plan de estudio (qué materias se "
         "cursan en qué año y cuatrimestre)."
     )
 
@@ -83,7 +83,7 @@ def render_custom_carrera_page():
                                 except Exception as e:
                                     st.error(f"Error al cargar estado: {str(e)}")
                             
-                            # Sedes habilitadas para materias exclusivas (R10).
+                            # Sedes habilitadas para materias específicas (R10).
                             from src.database.models import SedeDB as _SedeDB
                             from src.services.carrera_sede_service import (
                                 get_sedes_de_carrera as _get_sedes_de_carrera,
@@ -95,7 +95,7 @@ def render_custom_carrera_page():
                                 st.markdown("**🏛️ Sedes habilitadas**")
                                 st.caption(
                                     "Sedes donde se pueden dictar las "
-                                    "materias **exclusivas** de esta "
+                                    "materias **específicas** de esta "
                                     "carrera (las que no comparte con "
                                     "otras). Al asignar aulas, el "
                                     "sistema sólo va a considerar "
