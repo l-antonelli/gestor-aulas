@@ -70,7 +70,12 @@ En orden de prioridad:
    compatible si la materia tiene lab, o la sede habilitada para
    la carrera si no. No es una restricción dura: si la sede
    preferida se satura, el asignador acepta otra sede admisible.
-7. **Ajuste de capacidad al forecast de inscriptos.** Entre las
+7. **Margen mínimo entre sedes distintas de una misma comisión.**
+   Si dos horarios de una misma comisión son contiguos el mismo
+   día con un gap menor al margen configurado (30 min por
+   default), el asignador los deja en la misma sede para que los
+   alumnos puedan llegar del uno al otro sin correr.
+8. **Ajuste de capacidad al forecast de inscriptos.** Entre las
    aulas que cumplen todo lo anterior, prefiere las que entran
    con margen razonable a la cantidad esperada de inscriptos.
    Penaliza fuerte quedarse corto (aula chica que rebalsa) y
@@ -78,9 +83,6 @@ En orden de prioridad:
 
 ### Qué **no** mira todavía
 
-- **No** tiene en cuenta desplazamientos entre sedes a lo largo
-  del día de una misma comisión o carrera+año. Puede mandar dos
-  clases contiguas a sedes distintas sin darse cuenta.
 - **No** puede reservar o bloquear aulas puntualmente (por
   mantenimiento, evento externo, etc.).
 - **No** considera preferencias de docentes ni de estudiantes:
@@ -383,6 +385,52 @@ admisible.
   aulas compatibles (`horarios_sin_aula_compatible` con
   razón "R10").
 
+### R13 — Sedes consecutivas por comisión (Fase 4, 2026-09-05)
+**Fuente:** `asignacion_aulas_service.py:817-871` (restricciones en
+`build_model`) + `asignacion_aulas_helpers.py:compute_pares_intersede_riesgo`.
+
+Para cada par de horarios `(h1, h2)` de la misma **comisión** el
+mismo día, con `gap = hora_inicio(h2) - hora_fin(h1) <
+margen_min_intersede_minutos`, y para cada par de sedes distintas
+`(s1, s2)`:
+
+```
+Σ_{a ∈ aulas(s1)} x[h1, a] + Σ_{a ∈ aulas(s2)} x[h2, a] ≤ 1
+```
+
+Significa: "si `h1` va a `s1`, entonces `h2` no puede ir a `s2`".
+Como R1 fuerza que cada horario tenga exactamente un aula, la
+restricción se traduce en "los dos van a la misma sede o el segundo
+no va a `s2`".
+
+Los pares se detectan en `compute_pares_intersede_riesgo` con un
+algoritmo O(N²) por (comisión, día); en la práctica cada comisión
+tiene pocos horarios por día así que el costo es despreciable.
+
+- **Tipo:** dura por default. Setear
+  `margen_min_intersede_minutos = 0` desactiva completamente.
+- **Alcance:** por **comisión**, no por carrera+año. Justificación:
+  la comisión es el grupo real de alumnos que se mueve físicamente;
+  carrera+año es una vista curricular que agrupa comisiones que
+  típicamente no comparten aula.
+- **Parámetros de `LPConfig`:**
+  - `margen_min_intersede_minutos = 30`. Umbral por default. Cubre
+    traslados cortos; sedes muy alejadas pueden requerir 60.
+  - `lambda_intersede = 0.0`. Reservado para versión blanda futura
+    (hoy sólo se cablea la infraestructura del `intersede_pares`
+    en vars_dict).
+- **Infactible si:** para algún par de riesgo, la única sede
+  común donde ambos pueden dictarse está bloqueada por otras
+  restricciones (R3, R6, R10). El diagnóstico estructural puede
+  extenderse en el futuro (`pares_intersede_bloqueados`) para
+  detectarlo antes del solve.
+- **Verificación empírica** (Plan v0, ciclo 2026-1C, 2026-09-05):
+  - Con `margen=30`: 2 pares de riesgo detectados (C4 y A6, ambos
+    con gap=0). Solver factible; los 2 pares terminan en la misma
+    sede como se esperaba.
+  - Con `margen=60`: mismos 2 pares (no hay pares con gap 30-60).
+  - Con `margen=0`: 0 pares (restricción off).
+
 ### R12 — Preferencia blanda de sede (Fase 3, 2026-09-05)
 **Fuente:** `asignacion_aulas_service.py:565-585` (término en el
 objetivo) + `asignacion_aulas_helpers.py:sede_preferida_desde_sets`
@@ -492,6 +540,8 @@ Parámetros de `LPConfig` (`asignacion_aulas_service.py:66-84`):
 | `lambda_over` | 10.0 | Peso del sobrecupo. | No |
 | `lambda_under` | 1.0 | Peso de la subutilización. | No |
 | `lambda_sede_pref` | 5.0 | Peso de la preferencia blanda de sede (R12). Setear a 0 para desactivar. | No (planeado en Fase 5) |
+| `margen_min_intersede_minutos` | 30 | Margen mínimo en minutos entre horarios contiguos de la misma comisión que caen en sedes distintas (R13). Setear a 0 para desactivar. | No (planeado en Fase 5) |
+| `lambda_intersede` | 0.0 | Peso reservado para variante blanda futura de R13. Hoy sin efecto (la restricción es dura). | No |
 | `tol_over` | 0.0 | Fracción de cap[a] permitida sobre insc antes de penalizar. | No |
 | `tol_under` | 0.20 | Fracción de cap[a] permitida bajo insc antes de penalizar (20 %). | No |
 | `activar_alpha` | False | Habilita R9 (redistribución de coeficientes). | No |
@@ -645,7 +695,7 @@ infactible".
 | 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
 | 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
 | 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
-| 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
+| 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
 | 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
 | 6 | Pendiente | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Panel "Calidad del resultado" al tope del Detalle del Plan con 4 familias de métricas: (A) cobertura global, (B) sobre/sub ocupación con totales y peor caso, (C) distribución de aulas (usadas/ociosas, carga por sede), (D) estabilidad del LP (objetivo, tiempo, ediciones manuales, sedes distintas por comisión). |
 

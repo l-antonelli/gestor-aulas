@@ -1977,3 +1977,118 @@ class TestPreferenciaBlandaSede:
         h_id = inputs.horarios[0].id
         # Sin restricción ni lab: sede preferida = None.
         assert inputs.sede_preferida_por_horario[h_id] is None
+
+
+# =============================================================================
+# Fase 4: restricción de sedes consecutivas (R13)
+# =============================================================================
+
+
+class TestRestriccionSedesConsecutivas:
+    """Un par de horarios contiguos de la misma comisión no puede caer
+    en sedes distintas si el gap es menor que el margen configurado."""
+
+    def _seed_dos_horarios_una_comision(
+        self, session: Session, *,
+        dia_h1: str = "Lunes", h1_ini: int = 8, h1_fin: int = 10,
+        dia_h2: str = "Lunes", h2_ini: int = 10, h2_fin: int = 12,
+    ) -> dict:
+        """Crea una comisión con 2 horarios en la misma materia. Los
+        dos con capacidad amplia en 2 sedes distintas para que el LP
+        elija libremente."""
+        from src.services.carrera_sede_service import set_sedes_de_carrera
+        ctx = _seed_plan_con_carrera(session, "A")
+        # M1 ya tiene 1 horario Lunes 8-10. Agrego uno más contiguo.
+        # Necesito trabajar con la MISMA comisión, así que reuso su id.
+        com = session.exec(
+            select(ComisionDB).where(ComisionDB.materia_codigo == "M1")
+        ).first()
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()),
+            comision_id=com.id,
+            codigo_materia="M1",
+            dia=dia_h2,
+            hora_inicio=time(h2_ini, 0),
+            hora_fin=time(h2_fin, 0),
+            tipo_clase="teorica",
+        ))
+        session.add(SedeDB(id="S2", nombre="Sede 2"))
+        session.add(AulaDB(
+            id="a_S1", sede_id="S1", codigo_aula="a_S1",
+            nombre="A S1", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a_S2", sede_id="S2", codigo_aula="a_S2",
+            nombre="A S2", capacidad=30,
+        ))
+        session.commit()
+        set_sedes_de_carrera(session, "A", ["S1", "S2"])
+        return ctx
+
+    def test_pares_riesgo_gap_menor_al_margen(self, session):
+        """Dos horarios contiguos con gap 0 → aparece en pares de riesgo
+        con `margen=30`."""
+        # M1 Lunes 8-10 (ya existe) + Lunes 10-12 (contiguo, gap=0).
+        self._seed_dos_horarios_una_comision(session)
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        # Con margen default (30 min), gap=0 → 1 par de riesgo.
+        assert len(inputs.pares_intersede_riesgo) == 1
+        h1, h2, gap = inputs.pares_intersede_riesgo[0]
+        assert gap == 0
+
+    def test_pares_riesgo_gap_suficiente_no_aparece(self, session):
+        """Gap >= margen: no aparece como par de riesgo."""
+        # M1 Lunes 8-10 + Lunes 11-13 (gap=60 min > 30).
+        self._seed_dos_horarios_una_comision(
+            session, h2_ini=11, h2_fin=13,
+        )
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        assert inputs.pares_intersede_riesgo == []
+
+    def test_margen_cero_desactiva(self, session):
+        """`margen_min = 0` no genera pares de riesgo."""
+        self._seed_dos_horarios_una_comision(session)
+        inputs = build_inputs(
+            session, "plan-1",
+            LPConfig(margen_min_intersede_minutos=0),
+        )
+        assert inputs.pares_intersede_riesgo == []
+
+    def test_lp_fuerza_misma_sede_cuando_hay_par_riesgo(self, session):
+        """Dos horarios contiguos con gap=0 y margen=30 → el LP los
+        asigna a la misma sede."""
+        self._seed_dos_horarios_una_comision(session)
+        _inputs, sol = run_lp_dry(session, "plan-1", LPConfig())
+        assert sol.status == "optimal"
+        aulas = list(sol.x_assignments.values())
+        assert len(aulas) == 2
+        # Ambos horarios están en la misma sede.
+        aulas_db = list(session.exec(select(AulaDB)).all())
+        aula_sede = {a.id: a.sede_id for a in aulas_db}
+        sedes_asignadas = {aula_sede[a] for a in aulas}
+        assert len(sedes_asignadas) == 1, (
+            f"Los horarios contiguos deberían caer en la misma sede, "
+            f"cayeron en {sedes_asignadas}"
+        )
+
+    def test_lp_sin_restriccion_puede_dividir_sedes(self, session):
+        """Con `margen=0` (desactivada), el LP puede dividir los
+        horarios entre las dos sedes libremente."""
+        self._seed_dos_horarios_una_comision(session)
+        _inputs, sol = run_lp_dry(
+            session, "plan-1",
+            LPConfig(margen_min_intersede_minutos=0),
+        )
+        # Con margen=0 la restricción no aplica; el LP igual puede
+        # elegir misma sede por preferencia blanda de sede, pero la
+        # aserción importante es que el status siga siendo optimal
+        # (i.e., la restricción no está bloqueando).
+        assert sol.status == "optimal"
+
+    def test_horarios_distintos_dias_no_generan_pares(self, session):
+        """Pares sólo se detectan dentro del mismo día."""
+        self._seed_dos_horarios_una_comision(
+            session, dia_h2="Martes", h2_ini=8, h2_fin=10,
+        )
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        assert inputs.pares_intersede_riesgo == []

@@ -86,6 +86,19 @@ class LPConfig:
     # Fase 3). Cuando la sede preferida es None (materia sin restricción
     # de sede), el término no aplica para ese horario aunque λ sea > 0.
     lambda_sede_pref: float = 5.0
+    # Margen mínimo en minutos entre dos horarios contiguos de la
+    # misma comisión que caen en sedes distintas (R13, Fase 4). Si
+    # el gap entre fin(h1) y inicio(h2) es < margen, el par no puede
+    # asignarse a sedes distintas (dura). Setear a 0 desactiva la
+    # restricción. 30 min es el default: cubre traslados cortos sin
+    # ser demasiado agresivo. Sedes muy alejadas pueden requerir 60.
+    margen_min_intersede_minutos: int = 30
+    # Peso del término blando de intersede (R13 blanda). Con
+    # `lambda_intersede = 0` (default) la restricción es puramente
+    # dura. Con λ > 0 se agrega un costo por par contiguo en sedes
+    # distintas (además de la restricción dura). Reservado para
+    # futuras iteraciones — hoy solo se cablea la infraestructura.
+    lambda_intersede: float = 0.0
     activar_alpha: bool = False  # Fase 8 (no implementado todavía)
     timeout_seconds: int = 300
     # Política de re-run respecto a clases con aula_asignada_manualmente=True.
@@ -143,6 +156,14 @@ class LPInputs:
     # aula_id -> sede_id del aula. Se expone para que build_model pueda
     # armar los coeficientes del término blando de preferencia de sede.
     aula_sede_id: dict[str, str] = field(default_factory=dict)
+    # Pares de horarios contiguos de la misma comisión el mismo día
+    # con gap < `margen_min_intersede_minutos` (R13, Fase 4). Cada
+    # entrada es (h1_id, h2_id, gap_minutos). El LP usa estos pares
+    # para bloquear que caigan en sedes distintas cuando el gap no
+    # alcanza para un traslado. Vacío si `margen_min = 0` (desactivado).
+    pares_intersede_riesgo: list[tuple[str, str, int]] = field(
+        default_factory=list,
+    )
     # Errores no fatales detectados durante build_inputs (materias sin
     # forecast, virtuales filtradas, etc.). El caller decide si abortar.
     warnings: list[str] = field(default_factory=list)
@@ -426,6 +447,16 @@ def build_inputs(
 
     sim_groups = compute_simultaneidad_groups(horarios)
 
+    # R13 (Fase 4): pares de horarios contiguos en riesgo intersede.
+    from src.services.asignacion_aulas_helpers import (
+        compute_pares_intersede_riesgo,
+    )
+    pares_intersede_riesgo = compute_pares_intersede_riesgo(
+        horarios=horarios,
+        comision_de_horario=comision_de_horario,
+        margen_min_intersede_minutos=config.margen_min_intersede_minutos,
+    )
+
     return LPInputs(
         horarios=horarios,
         aulas=aulas,
@@ -444,6 +475,7 @@ def build_inputs(
         aulas_fijas=aulas_fijas,
         sede_preferida_por_horario=sede_preferida_por_horario,
         aula_sede_id=aula_sede_id,
+        pares_intersede_riesgo=pares_intersede_riesgo,
         warnings=warnings,
     )
 
@@ -782,9 +814,67 @@ def build_model(
             f"R7under_{h.id}",
         )
 
+    # R13 (Fase 4): pares de horarios contiguos de la misma comisión
+    # con gap < margen_min_intersede no pueden asignarse a sedes
+    # distintas. Para cada par (h1, h2) de riesgo y cada par de sedes
+    # distintas (s1, s2), se agrega:
+    #
+    #     Σ_{a ∈ aulas(s1)} x[h1, a] + Σ_{a ∈ aulas(s2)} x[h2, a] ≤ 1
+    #
+    # Es decir: no pueden estar ambos, cada uno en su sede. Sí puede
+    # h1 quedar en s1 sin h2 en s2 (o viceversa), pero no los dos.
+    # Como R1 fuerza `Σ_a x[h, a] = 1`, la restricción equivale a
+    # "si h1 va a s1, entonces h2 no puede ir a s2".
+    #
+    # Cuando `lambda_intersede > 0`, se agrega además un término
+    # blando `y[h1, h2]` binaria con `y ≥ (x1_s1 + x2_s2) - 1` para
+    # cada par (s1, s2). Hoy queda cableado por si se usa después.
+    intersede_pares: dict[tuple[str, str], pulp.LpVariable] = {}
+    if inputs.pares_intersede_riesgo:
+        # Aulas por sede.
+        aulas_de_sede: dict[str, list[str]] = {}
+        for a in inputs.aulas:
+            sede_a = inputs.aula_sede_id.get(a.id)
+            if sede_a is None:
+                continue
+            aulas_de_sede.setdefault(sede_a, []).append(a.id)
+        sedes_lista = sorted(aulas_de_sede.keys())
+
+        for h1_id, h2_id, _gap in inputs.pares_intersede_riesgo:
+            # Sedes candidatas: sólo aquellas con x[h*, a] activa para
+            # cada uno. Reduce el número de pares (s1, s2) a los que
+            # realmente pueden materializarse.
+            sedes_h1: set[str] = {
+                sd for _hid, a in x
+                if _hid == h1_id
+                and (sd := inputs.aula_sede_id.get(a)) is not None
+            }
+            sedes_h2: set[str] = {
+                sd for _hid, a in x
+                if _hid == h2_id
+                and (sd := inputs.aula_sede_id.get(a)) is not None
+            }
+            for s1 in sedes_h1:
+                sum_h1_s1 = pulp.lpSum(
+                    x[(h1_id, a)] for a in aulas_de_sede.get(s1, [])
+                    if (h1_id, a) in x
+                )
+                for s2 in sedes_h2:
+                    if s2 == s1:
+                        continue  # misma sede no viola R13
+                    sum_h2_s2 = pulp.lpSum(
+                        x[(h2_id, a)] for a in aulas_de_sede.get(s2, [])
+                        if (h2_id, a) in x
+                    )
+                    prob += (
+                        sum_h1_s1 + sum_h2_s2 <= 1,
+                        f"R13_{h1_id}_{h2_id}_{s1}_{s2}",
+                    )
+
     return prob, {
         "x": x, "t": t, "alpha": alpha,
         "over": over_vars, "under": under_vars,
+        "intersede_pares": intersede_pares,
     }
 
 

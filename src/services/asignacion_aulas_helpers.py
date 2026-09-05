@@ -1305,6 +1305,69 @@ def compute_heatmap_por_sede(
     }
 
 
+def compute_pares_intersede_riesgo(
+    horarios: list[HorarioSlot],
+    comision_de_horario: dict[str, str],
+    margen_min_intersede_minutos: int,
+) -> list[tuple[str, str, int]]:
+    """Detecta pares de horarios contiguos de la misma comisión el
+    mismo día donde el gap entre fin(h1) y inicio(h2) es menor que
+    ``margen_min_intersede_minutos``.
+
+    Estos pares son los "de riesgo": si caen en sedes distintas, no
+    alcanza el tiempo para trasladarse. La restricción R13 (Fase 4)
+    los bloquea a nivel LP.
+
+    Args:
+        horarios: lista de HorarioSlot activos.
+        comision_de_horario: horario_id → comision_id.
+        margen_min_intersede_minutos: umbral en minutos. Si es 0, la
+            función devuelve una lista vacía (restricción desactivada).
+
+    Returns:
+        Lista de tuplas ``(h1_id, h2_id, gap_minutos)`` con h1 anterior
+        a h2 (por hora_inicio). Sólo entradas con `0 <= gap < margen`.
+        Si dos horarios se solapan (gap < 0), NO se incluye acá porque
+        eso lo maneja R4 (grupos de simultaneidad).
+    """
+    if margen_min_intersede_minutos <= 0:
+        return []
+
+    # Agrupar horarios por (comision, dia) para chequear pares.
+    por_com_dia: dict[tuple[str, str], list[HorarioSlot]] = {}
+    for h in horarios:
+        cid = comision_de_horario.get(h.id)
+        if cid is None:
+            continue
+        por_com_dia.setdefault((cid, h.dia), []).append(h)
+
+    pares: list[tuple[str, str, int]] = []
+    for _key, hs in por_com_dia.items():
+        if len(hs) < 2:
+            continue
+        # Ordenar por hora_inicio para procesar contiguos.
+        hs_sorted = sorted(
+            hs, key=lambda x: (x.hora_inicio, x.hora_fin),
+        )
+        for i in range(len(hs_sorted)):
+            for j in range(i + 1, len(hs_sorted)):
+                h1 = hs_sorted[i]
+                h2 = hs_sorted[j]
+                fin1_min = h1.hora_fin.hour * 60 + h1.hora_fin.minute
+                ini2_min = h2.hora_inicio.hour * 60 + h2.hora_inicio.minute
+                gap = ini2_min - fin1_min
+                if gap < 0:
+                    # Se solapan: lo captura R4.
+                    continue
+                if gap >= margen_min_intersede_minutos:
+                    # Suficiente margen — y como hs_sorted está por
+                    # hora_inicio, cualquier h3 posterior también.
+                    break
+                pares.append((h1.id, h2.id, gap))
+
+    return pares
+
+
 def compute_heatmap_total_sin_sede(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],
