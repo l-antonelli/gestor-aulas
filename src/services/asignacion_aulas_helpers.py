@@ -895,6 +895,51 @@ def compute_heatmap_demanda_oferta(
 # Impacto de R10 (restriccion de sede por carrera)
 # =============================================================================
 
+def sede_preferida_desde_sets(
+    labs_de_materia: set[str],
+    sedes_admisibles: set[str] | None,
+    aula_sede_id: dict[str, str],
+) -> str | None:
+    """Núcleo puro de la regla de "sede preferida".
+
+    Recibe los sets ya resueltos (labs compatibles con la materia y
+    sedes admisibles). No mira dicts por materia ni conoce del override
+    de comisión — es la versión pura que llaman los otros wrappers.
+
+    Reglas (en orden):
+
+    1. **Si hay labs compatibles**: la sede del(los) lab(s). Coherente
+       con "las teóricas deberían darse donde está el lab" para
+       minimizar desplazamientos entre teórica y práctica.
+       - Todos en la misma sede → esa.
+       - En varias sedes con intersección con `sedes_admisibles`: la
+         intersección (determinístico por id).
+       - Sin intersección: la sede del lab de menor id.
+    2. **Sin labs pero con sedes admisibles restringidas**: la primera
+       sede admisible por id.
+    3. **Sin labs y sin restricción** (sedes_admisibles is None o {}):
+       retorna None. El caller decide.
+    """
+    sedes_de_labs: set[str] = set()
+    for a_id in labs_de_materia:
+        sede = aula_sede_id.get(a_id)
+        if sede is not None:
+            sedes_de_labs.add(sede)
+
+    if sedes_de_labs:
+        if len(sedes_de_labs) == 1:
+            return next(iter(sedes_de_labs))
+        if sedes_admisibles is not None:
+            interseccion = sedes_de_labs & sedes_admisibles
+            if interseccion:
+                return sorted(interseccion)[0]
+        return sorted(sedes_de_labs)[0]
+
+    if not sedes_admisibles:
+        return None
+    return sorted(sedes_admisibles)[0]
+
+
 def sede_preferida_para_horario(
     materia_codigo: str,
     materia_lab_map: dict[str, set[str]],
@@ -903,27 +948,8 @@ def sede_preferida_para_horario(
 ) -> str | None:
     """Sede "preferida" donde una teórica de esta materia debería dictarse.
 
-    Reglas (en orden):
-
-    1. **Si la materia tiene labs compatibles**: la sede donde vive el(los)
-       lab(s). Coherente con "las teóricas deberían darse donde está el
-       lab" para minimizar desplazamientos entre teórica y práctica.
-       - Si todos los labs están en la misma sede, esa es la preferida.
-       - Si hay labs en varias sedes y alguna de esas coincide con las
-         sedes admisibles por carrera de la materia, se prefiere la
-         intersección (compromiso lab + carrera).
-       - Si no hay intersección, se elige la sede del lab de menor id
-         (determinístico).
-    2. **Si no tiene labs pero sí sedes admisibles restringidas**: la
-       primera sede admisible (orden alfabético por id — determinístico).
-    3. **Si no tiene labs y no hay restricción de sede** (materia común
-       sin default para comunes, o cualquier configuración que devuelva
-       ``None``): retorna ``None``. El caller decide cómo contar (típico:
-       contar en todas las sedes).
-
-    Esta función se usa para el mapa de saturación (para no doblar-contar
-    la teórica en múltiples sedes) y potencialmente para la Fase 3
-    (preferencia blanda en el LP).
+    Wrapper de ``sede_preferida_desde_sets`` que resuelve los sets a
+    partir de dicts por materia. Ver esa función para las reglas.
 
     Args:
         materia_codigo: código de la materia del horario.
@@ -936,31 +962,11 @@ def sede_preferida_para_horario(
         sede_id preferido o ``None`` si la materia no tiene lab ni
         restricción de sede.
     """
-    labs = materia_lab_map.get(materia_codigo) or set()
-    sedes_de_labs: set[str] = set()
-    for a_id in labs:
-        sede = aula_sede_id.get(a_id)
-        if sede is not None:
-            sedes_de_labs.add(sede)
-
-    if sedes_de_labs:
-        if len(sedes_de_labs) == 1:
-            return next(iter(sedes_de_labs))
-        # Varios labs en sedes distintas: preferir la intersección con
-        # las sedes admisibles por carrera.
-        admis = sedes_admisibles_por_materia.get(materia_codigo)
-        if admis is not None:
-            interseccion = sedes_de_labs & admis
-            if interseccion:
-                return sorted(interseccion)[0]
-        # Sin intersección o materia sin restricción de sede: elegimos
-        # determinísticamente por orden de sede_id.
-        return sorted(sedes_de_labs)[0]
-
-    # Sin labs: caemos en el set de sedes admisibles por carrera.
-    admis = sedes_admisibles_por_materia.get(materia_codigo)
-    if admis is None or not admis:
-        return None
+    return sede_preferida_desde_sets(
+        labs_de_materia=materia_lab_map.get(materia_codigo) or set(),
+        sedes_admisibles=sedes_admisibles_por_materia.get(materia_codigo),
+        aula_sede_id=aula_sede_id,
+    )
     return sorted(admis)[0]
 
 

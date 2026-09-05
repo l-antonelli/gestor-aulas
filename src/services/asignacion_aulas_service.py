@@ -72,6 +72,20 @@ class LPConfig:
     lambda_under: float = 1.0
     tol_over: float = 0.0
     tol_under: float = 0.20
+    # Peso del término blando de preferencia de sede (R12). Cuando > 0,
+    # entre dos aulas compatibles con capacidad similar, el LP prefiere
+    # la que está en la sede preferida de la materia (regla
+    # `sede_preferida_para_horario`: sede del lab compatible primero,
+    # sede de la carrera si no). Los defaults están calibrados así:
+    #   λ_over  = 10.0  → sobrecupo domina.
+    #   λ_pref  =  5.0  → sede alternativa es más costosa que
+    #                     desperdiciar hasta 5 asientos, pero menos que
+    #                     dejar 1 alumno sin lugar.
+    #   λ_under =  1.0  → subutilización es lo más permisivo.
+    # Setear a 0 para desactivar la preferencia (comportamiento previo a
+    # Fase 3). Cuando la sede preferida es None (materia sin restricción
+    # de sede), el término no aplica para ese horario aunque λ sea > 0.
+    lambda_sede_pref: float = 5.0
     activar_alpha: bool = False  # Fase 8 (no implementado todavía)
     timeout_seconds: int = 300
     # Política de re-run respecto a clases con aula_asignada_manualmente=True.
@@ -118,6 +132,17 @@ class LPInputs:
     # ``config.respetar_ediciones_manuales=True``. Sin pins, el dict
     # queda vacío y el LP resuelve libre.
     aulas_fijas: dict[str, str] = field(default_factory=dict)
+    # Sede preferida por horario (R12, Fase 3). Se resuelve via
+    # `sede_preferida_para_horario` respetando el override de carrera
+    # asignada por comisión. Puede quedar ``None`` para horarios sin
+    # sede preferida (materias comunes sin default para comunes) — el
+    # término blando del objetivo no se aplica a esos.
+    sede_preferida_por_horario: dict[str, str | None] = field(
+        default_factory=dict,
+    )
+    # aula_id -> sede_id del aula. Se expone para que build_model pueda
+    # armar los coeficientes del término blando de preferencia de sede.
+    aula_sede_id: dict[str, str] = field(default_factory=dict)
     # Errores no fatales detectados durante build_inputs (materias sin
     # forecast, virtuales filtradas, etc.). El caller decide si abortar.
     warnings: list[str] = field(default_factory=list)
@@ -366,6 +391,13 @@ def build_inputs(
         cc: sedes_admisibles_para_carrera(session, cc)
         for cc in carreras_override_unicas
     }
+    # Sede preferida por horario (R12, Fase 3). Se calcula acá porque
+    # ya tenemos resueltas las sedes admisibles por horario (via override
+    # de comisión si aplica). Reutiliza la función pura de helpers.
+    from src.services.asignacion_aulas_helpers import (
+        sede_preferida_desde_sets,
+    )
+    sede_preferida_por_horario: dict[str, str | None] = {}
     for h in horarios:
         carrera_override = carrera_asignada_de_horario.get(h.id)
         if carrera_override:
@@ -374,10 +406,15 @@ def build_inputs(
             )
         else:
             admisibles = sedes_admisibles_por_materia.get(h.materia_codigo)
+        lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
+        sede_preferida_por_horario[h.id] = sede_preferida_desde_sets(
+            labs_de_materia=lab_aulas_m,
+            sedes_admisibles=admisibles,
+            aula_sede_id=aula_sede_id,
+        )
         if admisibles is None:
             # Sin restriccion de sede para este horario (fallback "todas").
             continue
-        lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas:
             if not compat[(h.id, a.id)]:
                 continue
@@ -405,6 +442,8 @@ def build_inputs(
         dictado_de_comision=dictado_de_comision,
         coef_actual=coef_actual,
         aulas_fijas=aulas_fijas,
+        sede_preferida_por_horario=sede_preferida_por_horario,
+        aula_sede_id=aula_sede_id,
         warnings=warnings,
     )
 
@@ -563,9 +602,30 @@ def build_model(
         )
 
     # Función objetivo.
+    #
+    # R12 (Fase 3): término blando de preferencia de sede. Para cada
+    # variable x[h, a], sumamos `λ_sede_pref` al costo si el aula está
+    # en una sede distinta a la preferida de h. Sin variables nuevas:
+    # el coeficiente se computa acá y se acumula en el lpSum. Horarios
+    # con sede preferida == None (materia común sin default para
+    # comunes) no aportan término. Setear λ_sede_pref=0 desactiva el
+    # término y recupera el comportamiento previo a Fase 3.
+    sede_pref_terms = []
+    if config.lambda_sede_pref > 0:
+        sede_pref = inputs.sede_preferida_por_horario
+        aula_sede = inputs.aula_sede_id
+        for (hid, aid), var in x.items():
+            sede_pref_h = sede_pref.get(hid)
+            if sede_pref_h is None:
+                continue
+            sede_a = aula_sede.get(aid)
+            if sede_a != sede_pref_h:
+                sede_pref_terms.append(var)
+
     prob += (
         config.lambda_over * pulp.lpSum(over_vars.values())
         + config.lambda_under * pulp.lpSum(under_vars.values())
+        + config.lambda_sede_pref * pulp.lpSum(sede_pref_terms)
     ), "objetivo"
 
     # R1: asignación única.

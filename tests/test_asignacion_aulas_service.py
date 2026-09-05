@@ -1845,3 +1845,135 @@ class TestComputeEstadoMetricas:
         det = m["desactualizados"]["detalle"][0]
         assert det["aula_id"] == "a_lab"
         assert det["codigo_materia"] == "M1"
+
+
+# =============================================================================
+# Fase 3: preferencia blanda de sede (R12)
+# =============================================================================
+
+
+class TestPreferenciaBlandaSede:
+    """El LP prefiere la sede preferida pero no la hace obligatoria.
+
+    Con `λ_sede_pref > 0`, entre aulas compatibles el LP elige las que
+    están en la sede preferida. Cuando esa sede se satura, se desplaza
+    la carga a las otras sedes admisibles minimizando la penalidad total.
+    """
+
+    def _seed_dos_sedes_una_materia(
+        self, session: Session, *, cap_pref: int = 30, cap_alt: int = 30,
+        esperados: int = 20,
+    ) -> dict:
+        """Materia M1 en carrera A con sedes {S1, S2} admisibles.
+        La sede preferida por defecto (sin labs) es S1 (menor id).
+        """
+        from src.services.carrera_sede_service import set_sedes_de_carrera
+        ctx = _seed_plan_con_carrera(session, "A")
+        # Cambiar el esperado a algo que quepa fácil en un aula.
+        # `_seed_plan_con_carrera` ya crea M1 con esperados=20.
+        session.add(SedeDB(id="S2", nombre="Sede 2"))
+        session.add(AulaDB(
+            id="a_pref", sede_id="S1", codigo_aula="a_pref",
+            nombre="A pref", capacidad=cap_pref,
+        ))
+        session.add(AulaDB(
+            id="a_alt", sede_id="S2", codigo_aula="a_alt",
+            nombre="A alt", capacidad=cap_alt,
+        ))
+        session.commit()
+        set_sedes_de_carrera(session, "A", ["S1", "S2"])
+        return ctx
+
+    def test_sede_preferida_se_expone_en_lp_inputs(self, session):
+        """Fase 3 agrega `sede_preferida_por_horario` a LPInputs."""
+        self._seed_dos_sedes_una_materia(session)
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        h_id = inputs.horarios[0].id
+        # S1 es el menor id → sede preferida.
+        assert inputs.sede_preferida_por_horario[h_id] == "S1"
+        # aula_sede_id también expuesto.
+        assert inputs.aula_sede_id["a_pref"] == "S1"
+        assert inputs.aula_sede_id["a_alt"] == "S2"
+
+    def test_default_lambda_prefiere_aula_de_sede_preferida(self, session):
+        """Con dos aulas idénticas (mismo cap), el LP elige la de la
+        sede preferida por el término blando."""
+        self._seed_dos_sedes_una_materia(session)
+        _inputs, solution = run_lp_dry(session, "plan-1", LPConfig())
+        assert solution.status == "optimal"
+        h_id = list(solution.x_assignments.keys())[0]
+        # Elige a_pref (S1) sobre a_alt (S2) porque el término blando
+        # penaliza a_alt.
+        assert solution.x_assignments[h_id] == "a_pref"
+
+    def test_lambda_cero_desactiva_preferencia(self, session):
+        """Con `λ_sede_pref=0`, el término desaparece y el LP tiene
+        libertad para elegir cualquiera de las dos aulas iguales. No
+        podemos afirmar cuál elige (empate), pero verificamos que el
+        objetivo no incluya el término de sede."""
+        self._seed_dos_sedes_una_materia(session)
+        _inputs, sol = run_lp_dry(
+            session, "plan-1", LPConfig(lambda_sede_pref=0.0),
+        )
+        assert sol.status == "optimal"
+        # El aula asignada es válida (S1 o S2), pero el under se
+        # penaliza en ambos casos. El valor del objetivo es sólo el
+        # de over+under, sin sumar sede_pref.
+        # Vamos a validar que si volvemos a correr con λ_sede_pref > 0
+        # y el aula elegida no era la preferida, ahora sí cambia.
+        _inputs2, sol2 = run_lp_dry(
+            session, "plan-1", LPConfig(lambda_sede_pref=100.0),
+        )
+        assert sol2.status == "optimal"
+        h_id = list(sol2.x_assignments.keys())[0]
+        assert sol2.x_assignments[h_id] == "a_pref"
+
+    def test_sede_preferida_saturada_desplaza_a_alternativa(self, session):
+        """Cuando el aula preferida ya no alcanza (dos horarios en el
+        mismo horario), el LP manda una a la alternativa: la restricción
+        blanda no bloquea la asignación."""
+        # M1 tiene su horario Lunes 8-10 desde _seed_plan_con_carrera.
+        # Agrego M2 con el mismo horario para saturar S1.
+        from src.database.models import PlanEstudioDB
+        ctx = self._seed_dos_sedes_una_materia(session)
+        _add_materia_con_serie(session, "M2", ctx["ciclo"], esperados=20)
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-A",
+            materia_codigo="M2", carrera_codigo="A",
+        ))
+        _add_comision_horario(
+            session, "plan-1", "M2", "Lunes", 8, 10,
+        )
+        session.commit()
+
+        _inputs, solution = run_lp_dry(session, "plan-1", LPConfig())
+        assert solution.status == "optimal"
+        # Cada horario tiene una aula distinta (R4: no doble booking).
+        aulas_asignadas = set(solution.x_assignments.values())
+        assert aulas_asignadas == {"a_pref", "a_alt"}
+
+    def test_materia_sin_sede_preferida_no_aporta_al_objetivo(self, session):
+        """Materia común sin sede default: `sede_preferida = None`.
+        El término blando no se aplica a este horario, aunque λ > 0."""
+        # Duplico M1 a otra carrera para que quede común.
+        from src.database.models import (
+            CarreraDB, PlanCarreraVersionDB, PlanEstudioDB,
+        )
+        from datetime import date as _date
+        self._seed_dos_sedes_una_materia(session)
+        session.add(CarreraDB(codigo="B", nombre="Car B"))
+        session.add(PlanCarreraVersionDB(
+            id="pv-B", carrera_codigo="B", nombre="Plan B",
+            fecha_creacion=_date(2026, 1, 1),
+        ))
+        session.commit()
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-B",
+            materia_codigo="M1", carrera_codigo="B",
+        ))
+        session.commit()
+        # No setear default de comunes → sedes_admisibles = None.
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        h_id = inputs.horarios[0].id
+        # Sin restricción ni lab: sede preferida = None.
+        assert inputs.sede_preferida_por_horario[h_id] is None

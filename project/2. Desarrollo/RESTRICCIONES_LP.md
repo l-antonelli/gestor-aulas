@@ -65,7 +65,12 @@ En orden de prioridad:
    mano el aula de un horario (marcada como "asignada
    manualmente"), el asignador respeta esa decisión y no la
    pisa (salvo que se apague ese toggle).
-6. **Ajuste de capacidad al forecast de inscriptos.** Entre las
+6. **Preferencia de sede.** Entre las sedes admisibles, prefiere
+   la "sede preferida" de cada materia: donde vive el laboratorio
+   compatible si la materia tiene lab, o la sede habilitada para
+   la carrera si no. No es una restricción dura: si la sede
+   preferida se satura, el asignador acepta otra sede admisible.
+7. **Ajuste de capacidad al forecast de inscriptos.** Entre las
    aulas que cumplen todo lo anterior, prefiere las que entran
    con margen razonable a la cantidad esperada de inscriptos.
    Penaliza fuerte quedarse corto (aula chica que rebalsa) y
@@ -76,9 +81,6 @@ En orden de prioridad:
 - **No** tiene en cuenta desplazamientos entre sedes a lo largo
   del día de una misma comisión o carrera+año. Puede mandar dos
   clases contiguas a sedes distintas sin darse cuenta.
-- **No** tiene noción de "sede preferida" versus "sede tolerable":
-  cualquier sede admisible es igual de válida para el asignador
-  actual.
 - **No** puede reservar o bloquear aulas puntualmente (por
   mantenimiento, evento externo, etc.).
 - **No** considera preferencias de docentes ni de estudiantes:
@@ -106,12 +108,16 @@ En orden de prioridad:
   requerido; (3) partición teoría/lab que no cierra con las horas
   declaradas por la materia. El panel de validación del plan
   reporta las tres.
-- **Una clase queda en una sede que no es la esperada.**
-  Habitualmente es porque la sede "esperada" no tenía aula del
-  tipo o la capacidad necesaria en esa franja, y el asignador
-  encontró una alternativa admisible en otra sede. Revisar las
-  sedes habilitadas de la carrera, la capacidad del aula esperada
-  y la carga simultánea en esa franja.
+- **Una clase queda en una sede que no es la preferida.** El
+  asignador prioriza la sede preferida (donde vive el lab si la
+  materia tiene lab, o la sede habilitada por la carrera si no)
+  pero acepta otra si esa se satura. Habitualmente es porque la
+  sede preferida no tenía aula del tipo o la capacidad necesaria
+  en esa franja, y el asignador encontró una alternativa
+  admisible en otra sede. Revisar las sedes habilitadas de la
+  carrera, la capacidad del aula esperada y la carga simultánea
+  en esa franja. En las próximas fases este caso va a quedar
+  marcado explícitamente en las métricas de calidad del plan.
 - **Un aula queda subutilizada.** El asignador tolera hasta 20 %
   de asientos vacíos sin penalidad. Si querés apretar más las
   aulas, se puede bajar `tol_under` en la configuración del LP.
@@ -180,7 +186,9 @@ Notas de implementación:
 ## 2. Función objetivo
 
 ```
-minimizar  λ_over · Σ over[h]  +  λ_under · Σ under[h]
+minimizar  λ_over  · Σ over[h]
+         + λ_under · Σ under[h]
+         + λ_sede_pref · Σ_{(h,a): sede(a) ≠ sede_pref(h)} x[h, a]
 ```
 
 Parámetros:
@@ -188,15 +196,18 @@ Parámetros:
 - `λ_over = 10.0` (default en `LPConfig`). Penaliza sobrecupo con
   peso alto.
 - `λ_under = 1.0`. Penaliza subutilización con peso 10× menor.
+- `λ_sede_pref = 5.0` (**agregado en Fase 3**). Penaliza cada
+  horario asignado a una sede distinta a su preferida.
 
-Interpretación: preferimos aulas que caben **con margen** antes que
-aulas apretadas. Cuando el margen no alcanza, preferimos apretar
-antes que rebalsar. Los pesos son parametrizables desde `LPConfig`
-pero no están expuestos en la UI hoy.
+Interpretación: preferimos aulas que caben **con margen** antes
+que aulas apretadas, y dentro de las que caen bien, preferimos
+las que están en la sede natural de la materia. Cuando el margen
+no alcanza, preferimos apretar antes que rebalsar; y cuando la
+sede preferida no tiene capacidad, aceptamos otra sede admisible.
 
-**Sin término de preferencia de sede** — hoy la sede es una
-restricción dura (R10). Fase 3 sumará un término
-`λ_sede · Σ pref_penalty[h]` para hacerla blanda.
+Los pesos son parametrizables desde `LPConfig` pero **no están
+expuestos en la UI hoy** — Fase 5 (panel de restricciones) los va
+a hacer editables.
 
 ---
 
@@ -372,6 +383,48 @@ admisible.
   aulas compatibles (`horarios_sin_aula_compatible` con
   razón "R10").
 
+### R12 — Preferencia blanda de sede (Fase 3, 2026-09-05)
+**Fuente:** `asignacion_aulas_service.py:565-585` (término en el
+objetivo) + `asignacion_aulas_helpers.py:sede_preferida_desde_sets`
+(regla de sede preferida).
+
+Añade al objetivo un término blando:
+
+```
++ λ_sede_pref · Σ_{(h, a) ∈ x, sede(a) ≠ sede_pref(h)} x[h, a]
+```
+
+Para cada variable `x[h, a]`, si el aula está en una sede distinta
+a la preferida de `h`, se suma `λ_sede_pref` al costo. Horarios
+cuya sede preferida es `None` (materia común sin default para
+comunes) no aportan término.
+
+La sede preferida se computa via
+`sede_preferida_para_horario`: lab-first (sede del lab
+compatible), sede de la carrera si no hay labs, `None` si no
+aplica ninguna restricción.
+
+- **Tipo:** blanda. Aparece en el objetivo, no como restricción.
+- **Parámetros de `LPConfig`:**
+  - `lambda_sede_pref = 5.0` — peso del término.
+    Calibración de defaults:
+    - `λ_over = 10.0` (sobrecupo domina).
+    - `λ_sede_pref = 5.0` (sede alternativa es peor que
+      desperdiciar 5 asientos, pero mejor que dejar 1 sin lugar).
+    - `λ_under = 1.0` (subutilización es lo más permisivo).
+  - `lambda_sede_pref = 0` desactiva el término (recupera
+    comportamiento previo a Fase 3).
+- **Nunca vuelve el problema infactible** (sólo agrega un costo).
+- **Verificación empírica** (Plan v0, ciclo 2026-1C, 2026-09-05):
+  - Con `λ_sede_pref = 5.0`: 530 horarios en sede preferida,
+    16 en alternativa. Objetivo = 14 333.
+  - Con `λ_sede_pref = 0`: mismos 530/16 (misma solución óptima
+    en cantidad), objetivo = 14 253.
+  - Los 16 desplazados coinciden con casos donde la sede
+    preferida se satura y el LP encuentra aula en la alternativa.
+    Ese conjunto es la lista concreta que motiva Fase 4
+    (restricción de sedes consecutivas).
+
 ### R11 — Pins de ediciones manuales
 **Fuente:** `asignacion_aulas_service.py:589-606`.
 
@@ -438,6 +491,7 @@ Parámetros de `LPConfig` (`asignacion_aulas_service.py:66-84`):
 |---|---|---|---|
 | `lambda_over` | 10.0 | Peso del sobrecupo. | No |
 | `lambda_under` | 1.0 | Peso de la subutilización. | No |
+| `lambda_sede_pref` | 5.0 | Peso de la preferencia blanda de sede (R12). Setear a 0 para desactivar. | No (planeado en Fase 5) |
 | `tol_over` | 0.0 | Fracción de cap[a] permitida sobre insc antes de penalizar. | No |
 | `tol_under` | 0.20 | Fracción de cap[a] permitida bajo insc antes de penalizar (20 %). | No |
 | `activar_alpha` | False | Habilita R9 (redistribución de coeficientes). | No |
@@ -589,7 +643,7 @@ infactible".
 | Fase | Estado | Problema | Cambio |
 |---|---|---|---|
 | 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
-| 3 | Pendiente | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se descompone: (a) restricción dura de "sedes admisibles" (mismo set actual), (b) penalidad blanda por caer fuera de la sede preferida (misma función que ya expuso Fase 2). |
+| 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
 | 3.5 | Pendiente | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con al menos 4 opciones: **demanda dura por sede** (horarios sin alternativa, cota de infactibilidad), **demanda preferida por sede** (actual, corregida en Fase 2), **demanda máxima por sede** (cota superior: todos los que podrían caer ahí), **demanda total sin sede** (cota inferior de factibilidad global). Objetivo: analizar factibilidad **antes** de correr el LP y ver cuánto margen hay entre lo duro y lo preferido. |
 | 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
 | 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
