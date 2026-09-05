@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2200 1500" font-family="Arial, Helvetica, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B5E20"/>
+    </marker>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4A148C"/>
+    </marker>
+    <marker id="arrowO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#BF360C"/>
+    </marker>
+    <marker id="arrowR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B71C1C"/>
+    </marker>
+    <style>
+      .title { font-weight: bold; font-size: 22px; fill: #111; text-anchor: middle; }
+      .subtitle { font-size: 13px; fill: #555; text-anchor: middle; font-style: italic; }
+      .zone-label { font-weight: bold; font-size: 15px; text-anchor: middle; }
+      .zone-caption { font-size: 11px; fill: #555; text-anchor: middle; font-style: italic; }
+      .ent { stroke-width: 2; }
+      .ent-catalog { fill: #E3F2FD; stroke: #01579B; }
+      .ent-catalog-key { fill: #B3E5FC; stroke: #01579B; stroke-width: 2.5; }
+      .ent-plan { fill: #E8F5E9; stroke: #1B5E20; }
+      .ent-plan-key { fill: #C8E6C9; stroke: #1B5E20; stroke-width: 2.5; }
+      .ent-ciclo { fill: #FFF3E0; stroke: #E65100; }
+      .ent-ciclo-key { fill: #FFE0B2; stroke: #E65100; stroke-width: 2.5; }
+      .ent-oper { fill: #F3E5F5; stroke: #4A148C; }
+      .ent-oper-key { fill: #E1BEE7; stroke: #4A148C; stroke-width: 2.5; }
+      .ent-fisico { fill: #FFFDE7; stroke: #F57F17; }
+      .ent-fisico-key { fill: #FFF9C4; stroke: #F57F17; stroke-width: 2.5; }
+      .ent-audit { fill: #FCE4EC; stroke: #B71C1C; }
+      .ent-name { font-weight: bold; font-size: 13px; fill: #111; text-anchor: middle; }
+      .ent-desc { font-size: 10px; fill: #333; text-anchor: middle; }
+      .rel { stroke-width: 1.4; fill: none; }
+      .rel-catalog { stroke: #01579B; }
+      .rel-plan { stroke: #1B5E20; }
+      .rel-ciclo { stroke: #BF360C; }
+      .rel-oper { stroke: #4A148C; }
+      .rel-fisico { stroke: #F57F17; }
+      .rel-label { fill: #222; font-size: 10px; font-style: italic; text-anchor: middle; }
+      .rel-label-bg { fill: #FFFFFF; stroke: #DDD; stroke-width: 0.4; }
+      .legend-title { font-weight: bold; font-size: 13px; fill: #111; }
+      .legend-text { font-size: 11px; fill: #333; }
+    </style>
+  </defs>
+
+  <text x="1100" y="30" class="title">Diagrama Entidad-Relacion — Base de Datos del Sistema</text>
+  <text x="1100" y="52" class="subtitle">22 tablas organizadas por zona semantica del modelo</text>
+
+  <!-- ================================================================
+       ZONA A: CATALOGO MAESTRO
+       ================================================================ -->
+  <rect x="40" y="80" width="720" height="360" rx="14" fill="#F1FBFF" stroke="#01579B" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="400" y="105" class="zone-label" fill="#01579B">A. CATALOGO MAESTRO</text>
+  <text x="400" y="122" class="zone-caption">Datos base estables y de larga vigencia</text>
+
+  <!-- Materia (key) -->
+  <rect x="70" y="150" width="170" height="70" rx="8" class="ent-catalog-key"/>
+  <text x="155" y="172" class="ent-name">MateriaDB</text>
+  <text x="155" y="188" class="ent-desc">codigo (PK), nombre</text>
+  <text x="155" y="202" class="ent-desc">horas_teoria, horas_lab</text>
+  <text x="155" y="215" class="ent-desc">periodo, virtual, optativa</text>
+
+  <!-- Carrera (key) -->
+  <rect x="270" y="150" width="170" height="70" rx="8" class="ent-catalog-key"/>
+  <text x="355" y="172" class="ent-name">CarreraDB</text>
+  <text x="355" y="188" class="ent-desc">codigo (PK), nombre</text>
+  <text x="355" y="202" class="ent-desc">titulo, duracion_anios</text>
+  <text x="355" y="215" class="ent-desc">dicta_recursado</text>
+
+  <!-- Sede -->
+  <rect x="470" y="150" width="160" height="60" rx="8" class="ent-catalog-key"/>
+  <text x="550" y="172" class="ent-name">SedeDB</text>
+  <text x="550" y="188" class="ent-desc">id (UUID PK)</text>
+  <text x="550" y="202" class="ent-desc">nombre (UNIQUE)</text>
+  <text x="550" y="215" class="ent-desc" font-weight="bold">es_default_comunes</text>
+
+  <!-- Correlativa -->
+  <rect x="70" y="260" width="170" height="60" rx="8" class="ent-catalog"/>
+  <text x="155" y="282" class="ent-name">CorrelativaDB</text>
+  <text x="155" y="298" class="ent-desc">carrera + materia +</text>
+  <text x="155" y="312" class="ent-desc">correlativa (PK triple)</text>
+
+  <!-- MateriaLaboratorio -->
+  <rect x="270" y="260" width="170" height="60" rx="8" class="ent-catalog"/>
+  <text x="355" y="282" class="ent-name">MateriaLaboratorioDB</text>
+  <text x="355" y="298" class="ent-desc">materia_codigo (PK)</text>
+  <text x="355" y="312" class="ent-desc">aula_id (PK)</text>
+
+  <!-- CarreraSede -->
+  <rect x="470" y="260" width="160" height="60" rx="8" class="ent-catalog"/>
+  <text x="550" y="282" class="ent-name">CarreraSedeDB</text>
+  <text x="550" y="298" class="ent-desc">carrera (PK)</text>
+  <text x="550" y="312" class="ent-desc">sede_id (PK)</text>
+
+  <!-- ConfiguracionHoraria -->
+  <rect x="70" y="360" width="200" height="60" rx="8" class="ent-catalog"/>
+  <text x="170" y="382" class="ent-name">ConfiguracionHoraria</text>
+  <text x="170" y="398" class="ent-desc">id=1 (singleton)</text>
+  <text x="170" y="412" class="ent-desc">granularidad, hora inicio/fin</text>
+
+  <!-- InscripcionHistorica -->
+  <rect x="300" y="360" width="200" height="60" rx="8" class="ent-catalog"/>
+  <text x="400" y="382" class="ent-name">InscripcionHistoricaDB</text>
+  <text x="400" y="398" class="ent-desc">(materia, anio, cuatri) PK</text>
+  <text x="400" y="412" class="ent-desc">inscriptos: alimenta forecast</text>
+
+  <!-- ================================================================
+       ZONA B: ESTRUCTURA CURRICULAR
+       ================================================================ -->
+  <rect x="790" y="80" width="620" height="230" rx="14" fill="#F1FBF2" stroke="#1B5E20" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1100" y="105" class="zone-label" fill="#1B5E20">B. ESTRUCTURA CURRICULAR</text>
+  <text x="1100" y="122" class="zone-caption">Plan de estudios versionado por carrera y cohorte</text>
+
+  <!-- PlanCarreraVersion -->
+  <rect x="820" y="150" width="200" height="70" rx="8" class="ent-plan-key"/>
+  <text x="920" y="172" class="ent-name">PlanCarreraVersionDB</text>
+  <text x="920" y="188" class="ent-desc">id (UUID PK)</text>
+  <text x="920" y="202" class="ent-desc">carrera_codigo, nombre</text>
+  <text x="920" y="215" class="ent-desc">fecha_creacion</text>
+
+  <!-- PlanEstudio -->
+  <rect x="1060" y="150" width="200" height="70" rx="8" class="ent-plan-key"/>
+  <text x="1160" y="172" class="ent-name">PlanEstudioDB</text>
+  <text x="1160" y="188" class="ent-desc">id (UUID PK)</text>
+  <text x="1160" y="202" class="ent-desc">materia + carrera + version</text>
+  <text x="1160" y="215" class="ent-desc">anio_plan, cuatrimestre_plan</text>
+
+  <!-- CicloPlanVersion -->
+  <rect x="1290" y="150" width="100" height="70" rx="8" class="ent-plan"/>
+  <text x="1340" y="172" class="ent-name">CicloPlan</text>
+  <text x="1340" y="186" class="ent-name">VersionDB</text>
+  <text x="1340" y="205" class="ent-desc">ciclo (PK)</text>
+  <text x="1340" y="217" class="ent-desc">version (PK)</text>
+
+  <!-- ================================================================
+       ZONA C: CICLO LECTIVO
+       ================================================================ -->
+  <rect x="1440" y="80" width="720" height="360" rx="14" fill="#FFF8EE" stroke="#E65100" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1800" y="105" class="zone-label" fill="#E65100">C. CICLO LECTIVO</text>
+  <text x="1800" y="122" class="zone-caption">Cuatrimestre concreto y materias efectivamente ofrecidas</text>
+
+  <!-- Ciclo -->
+  <rect x="1470" y="150" width="200" height="70" rx="8" class="ent-ciclo-key"/>
+  <text x="1570" y="172" class="ent-name">CicloDB</text>
+  <text x="1570" y="188" class="ent-desc">id "AAAA-NC" (PK)</text>
+  <text x="1570" y="202" class="ent-desc">anio, numero (1|2)</text>
+  <text x="1570" y="215" class="ent-desc">fecha_inicio, fecha_fin</text>
+
+  <!-- Dictado -->
+  <rect x="1710" y="150" width="200" height="70" rx="8" class="ent-ciclo-key"/>
+  <text x="1810" y="172" class="ent-name">DictadoDB</text>
+  <text x="1810" y="188" class="ent-desc">id (UUID PK)</text>
+  <text x="1810" y="202" class="ent-desc">materia, dictado_codigo</text>
+  <text x="1810" y="215" class="ent-desc">virtual: Optional (herencia)</text>
+
+  <!-- DictadoCiclo -->
+  <rect x="1950" y="150" width="180" height="70" rx="8" class="ent-ciclo"/>
+  <text x="2040" y="172" class="ent-name">DictadoCicloDB</text>
+  <text x="2040" y="188" class="ent-desc">dictado_id (PK)</text>
+  <text x="2040" y="202" class="ent-desc">ciclo_id (PK)</text>
+  <text x="2040" y="215" class="ent-desc">materias anuales: 2 ciclos</text>
+
+  <!-- Schedule -->
+  <rect x="1470" y="260" width="200" height="70" rx="8" class="ent-ciclo-key"/>
+  <text x="1570" y="282" class="ent-name">ScheduleDB</text>
+  <text x="1570" y="298" class="ent-desc">id (UUID PK)</text>
+  <text x="1570" y="312" class="ent-desc">ciclo_id, nombre</text>
+  <text x="1570" y="325" class="ent-desc">source_filename, fecha_upload</text>
+
+  <!-- ScheduleEntry -->
+  <rect x="1710" y="260" width="200" height="70" rx="8" class="ent-ciclo"/>
+  <text x="1810" y="282" class="ent-name">ScheduleEntryDB</text>
+  <text x="1810" y="298" class="ent-desc">schedule + materia</text>
+  <text x="1810" y="312" class="ent-desc">dia, hora_inicio, hora_fin</text>
+  <text x="1810" y="325" class="ent-desc">comision_id, tipo, virtual</text>
+
+  <!-- ScheduleValidation -->
+  <rect x="1950" y="260" width="180" height="70" rx="8" class="ent-ciclo"/>
+  <text x="2040" y="282" class="ent-name">ScheduleValidationDB</text>
+  <text x="2040" y="298" class="ent-desc">snapshot cobertura,</text>
+  <text x="2040" y="312" class="ent-desc">extras, laboratorios,</text>
+  <text x="2040" y="325" class="ent-desc">conflictos, staleness</text>
+
+  <!-- ================================================================
+       ZONA D: PLAN DE CURSADA
+       ================================================================ -->
+  <rect x="40" y="480" width="2120" height="600" rx="14" fill="#FBF6FC" stroke="#4A148C" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1100" y="510" class="zone-label" fill="#4A148C">D. PLAN DE CURSADA — Planificacion viva generada desde un cronograma</text>
+  <text x="1100" y="528" class="zone-caption">Comisiones vivas + horarios semanales; el LP asigna aulas al patron</text>
+
+  <!-- PlanificacionCursada (nucleo) -->
+  <rect x="90" y="560" width="220" height="90" rx="8" class="ent-oper-key"/>
+  <text x="200" y="585" class="ent-name">PlanificacionCursadaDB</text>
+  <text x="200" y="602" class="ent-desc">id (UUID PK), nombre</text>
+  <text x="200" y="616" class="ent-desc">ciclo_id, schedule_id</text>
+  <text x="200" y="630" class="ent-desc">forecast_metodo_default</text>
+  <text x="200" y="642" class="ent-desc" font-style="italic">borrador o vigente</text>
+
+  <!-- Comision (nucleo dual) -->
+  <rect x="380" y="560" width="220" height="90" rx="8" class="ent-oper-key"/>
+  <text x="490" y="585" class="ent-name">ComisionDB</text>
+  <text x="490" y="602" class="ent-desc">id (PK), materia, dictado</text>
+  <text x="490" y="616" class="ent-desc" font-weight="bold">schedule_id XOR plan_id</text>
+  <text x="490" y="630" class="ent-desc">nombre, numero, cupo</text>
+  <text x="490" y="644" class="ent-desc">coef_asignacion, carrera_asig</text>
+
+  <!-- Horario (nucleo) -->
+  <rect x="670" y="560" width="220" height="90" rx="8" class="ent-oper-key"/>
+  <text x="780" y="585" class="ent-name">HorarioDB</text>
+  <text x="780" y="602" class="ent-desc">id (PK), comision + materia</text>
+  <text x="780" y="616" class="ent-desc">dia, hora_inicio, hora_fin</text>
+  <text x="780" y="630" class="ent-desc" font-weight="bold">aula_id (LP asigna aca)</text>
+  <text x="780" y="644" class="ent-desc">aula_asignada_manualmente</text>
+
+  <!-- Clase (deprecado) -->
+  <rect x="960" y="560" width="220" height="90" rx="8" class="ent-oper" stroke-dasharray="5,3"/>
+  <text x="1070" y="585" class="ent-name">ClaseDB</text>
+  <text x="1070" y="602" class="ent-desc" font-style="italic" fill="#B71C1C">DEPRECADO (2026-08)</text>
+  <text x="1070" y="618" class="ent-desc">cache tecnico</text>
+  <text x="1070" y="632" class="ent-desc">horario_id + fecha + aula</text>
+  <text x="1070" y="644" class="ent-desc">se conserva por cascadas</text>
+
+  <!-- Aula (fisica) -->
+  <rect x="1250" y="560" width="220" height="90" rx="8" class="ent-fisico-key"/>
+  <text x="1360" y="585" class="ent-name">AulaDB</text>
+  <text x="1360" y="602" class="ent-desc">id (UUID PK), sede_id</text>
+  <text x="1360" y="616" class="ent-desc">codigo_aula (UNIQUE)</text>
+  <text x="1360" y="630" class="ent-desc">capacidad, tipo</text>
+  <text x="1360" y="644" class="ent-desc">descripcion</text>
+
+  <!-- LPRun (snapshot) -->
+  <rect x="1540" y="560" width="220" height="90" rx="8" class="ent-oper"/>
+  <text x="1650" y="585" class="ent-name">LPRunDB</text>
+  <text x="1650" y="602" class="ent-desc">id (UUID PK), plan_id</text>
+  <text x="1650" y="616" class="ent-desc">status: optimal|infeasible</text>
+  <text x="1650" y="630" class="ent-desc">config (lambdas, tols)</text>
+  <text x="1650" y="644" class="ent-desc">details_json (por horario)</text>
+
+  <!-- PlanValidation (snapshot) -->
+  <rect x="1830" y="560" width="220" height="90" rx="8" class="ent-oper"/>
+  <text x="1940" y="585" class="ent-name">PlanValidationDB</text>
+  <text x="1940" y="602" class="ent-desc">snapshot de validacion</text>
+  <text x="1940" y="616" class="ent-desc">cobertura, particiones,</text>
+  <text x="1940" y="630" class="ent-desc">conflictos (con ignorados)</text>
+  <text x="1940" y="644" class="ent-desc">staleness (counts)</text>
+
+  <!-- MateriaForecastConfig -->
+  <rect x="90" y="720" width="220" height="80" rx="8" class="ent-oper"/>
+  <text x="200" y="742" class="ent-name">MateriaForecastConfigDB</text>
+  <text x="200" y="758" class="ent-desc">(plan, materia, cuatri) PK</text>
+  <text x="200" y="772" class="ent-desc">metodo (override o None)</text>
+  <text x="200" y="786" class="ent-desc">valor_override (manual)</text>
+
+  <!-- IgnoredConflict -->
+  <rect x="380" y="720" width="220" height="80" rx="8" class="ent-oper"/>
+  <text x="490" y="742" class="ent-name">IgnoredConflictDB</text>
+  <text x="490" y="758" class="ent-desc">(plan, mat_a, mat_b) PK</text>
+  <text x="490" y="772" class="ent-desc">mat_a &lt; mat_b (lexicograf.)</text>
+  <text x="490" y="786" class="ent-desc">razon, fecha_creacion</text>
+
+  <!-- ChangeLog -->
+  <rect x="670" y="720" width="220" height="80" rx="8" class="ent-audit"/>
+  <text x="780" y="742" class="ent-name">ChangeLogDB</text>
+  <text x="780" y="758" class="ent-desc">entity_type + entity_id</text>
+  <text x="780" y="772" class="ent-desc">action, field, old/new</text>
+  <text x="780" y="786" class="ent-desc">reason, origin, when</text>
+
+  <!-- ================================================================
+       RELACIONES
+       ================================================================ -->
+  <!-- Carrera -> PlanCarreraVersion -->
+  <path d="M 440 185 L 820 185" class="rel rel-plan" marker-end="url(#arrowG)"/>
+  <rect x="580" y="175" width="90" height="16" rx="3" class="rel-label-bg"/>
+  <text x="625" y="187" class="rel-label">versiona (1:N)</text>
+
+  <!-- PlanCarreraVersion -> PlanEstudio -->
+  <path d="M 1020 185 L 1060 185" class="rel rel-plan" marker-end="url(#arrowG)"/>
+
+  <!-- Materia -> PlanEstudio -->
+  <path d="M 240 185 L 240 230 L 1160 230 L 1160 220" class="rel rel-plan" marker-end="url(#arrowG)"/>
+  <rect x="640" y="220" width="130" height="16" rx="3" class="rel-label-bg"/>
+  <text x="705" y="232" class="rel-label">aparece en plan (M:N)</text>
+
+  <!-- Correlativa -> Materia + Carrera -->
+  <path d="M 155 260 L 155 220" class="rel rel-catalog" marker-end="url(#arrowB)"/>
+  <path d="M 240 285 L 270 285" class="rel rel-catalog" marker-end="url(#arrowB)" stroke-dasharray="3,3"/>
+
+  <!-- MateriaLaboratorio: Materia <-> Aula -->
+  <path d="M 355 260 L 355 240 L 240 240 L 240 220" class="rel rel-fisico" marker-end="url(#arrowO)"/>
+  <path d="M 440 290 L 1360 290 L 1360 560" class="rel rel-fisico" marker-end="url(#arrowO)"/>
+  <rect x="800" y="280" width="200" height="16" rx="3" class="rel-label-bg"/>
+  <text x="900" y="292" class="rel-label">laboratorios compatibles (M:N)</text>
+
+  <!-- CarreraSede: Carrera <-> Sede -->
+  <path d="M 470 285 L 440 285 L 440 260 L 400 260 L 400 220" class="rel rel-fisico"/>
+  <path d="M 550 260 L 550 210" class="rel rel-fisico" marker-end="url(#arrowO)"/>
+
+  <!-- Sede -> Aula -->
+  <path d="M 550 220 L 550 500 L 1360 500 L 1360 560" class="rel rel-fisico" marker-end="url(#arrowO)"/>
+  <rect x="900" y="490" width="90" height="16" rx="3" class="rel-label-bg"/>
+  <text x="945" y="502" class="rel-label">ubica al aula</text>
+
+  <!-- Ciclo <-> PlanCarreraVersion via CicloPlanVersion -->
+  <path d="M 1290 185 L 1260 185" class="rel rel-ciclo"/>
+  <path d="M 1390 185 L 1470 185" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+  <rect x="1380" y="130" width="180" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1470" y="142" class="rel-label">versiones activas en el ciclo</text>
+
+  <!-- Ciclo <-> Dictado via DictadoCiclo -->
+  <path d="M 1670 185 L 1710 185" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+  <path d="M 1910 185 L 1950 185" class="rel rel-ciclo"/>
+
+  <!-- Materia -> Dictado -->
+  <path d="M 240 155 L 240 60 L 1810 60 L 1810 150" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+  <rect x="900" y="50" width="240" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1020" y="62" class="rel-label">se dicta como (1:N Materia → Dictado)</text>
+
+  <!-- Ciclo -> Schedule -->
+  <path d="M 1570 220 L 1570 260" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+
+  <!-- Schedule -> ScheduleEntry -->
+  <path d="M 1670 295 L 1710 295" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+
+  <!-- Materia -> ScheduleEntry (referencia) -->
+  <path d="M 155 220 L 155 340 L 1810 340 L 1810 330" class="rel rel-catalog" stroke-dasharray="3,3" marker-end="url(#arrowB)"/>
+  <rect x="900" y="330" width="140" height="16" rx="3" class="rel-label-bg"/>
+  <text x="970" y="342" class="rel-label">referencia una materia</text>
+
+  <!-- Schedule -> ScheduleValidation -->
+  <path d="M 1670 295 L 1730 295 L 1730 380 L 1950 380 L 1950 330" class="rel rel-ciclo" marker-end="url(#arrowR)"/>
+  <rect x="1810" y="365" width="120" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1870" y="377" class="rel-label">snapshots validacion</text>
+
+  <!-- Ciclo -> PlanificacionCursada -->
+  <path d="M 1470 200 L 200 200 L 200 560" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="600" y="200" width="220" height="16" rx="3" class="rel-label-bg"/>
+  <text x="710" y="212" class="rel-label">contexto temporal del plan (1:N)</text>
+
+  <!-- Schedule -> PlanificacionCursada -->
+  <path d="M 1570 330 L 1570 550 L 200 550 L 200 560" class="rel rel-oper" marker-end="url(#arrowP)" stroke-dasharray="3,3"/>
+  <rect x="800" y="540" width="130" height="16" rx="3" class="rel-label-bg"/>
+  <text x="865" y="552" class="rel-label">origen del plan</text>
+
+  <!-- Plan -> Comision -->
+  <path d="M 310 610 L 380 610" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="315" y="590" width="60" height="16" rx="3" class="rel-label-bg"/>
+  <text x="345" y="602" class="rel-label">contiene</text>
+
+  <!-- Schedule -> Comision (dual) -->
+  <path d="M 1810 330 L 1810 540 L 490 540 L 490 560" class="rel rel-oper" marker-end="url(#arrowP)" stroke-dasharray="3,3"/>
+  <rect x="900" y="530" width="200" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1000" y="542" class="rel-label">comisiones template del cronograma</text>
+
+  <!-- Comision -> Horario -->
+  <path d="M 600 610 L 670 610" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="605" y="590" width="60" height="16" rx="3" class="rel-label-bg"/>
+  <text x="635" y="602" class="rel-label">agenda</text>
+
+  <!-- Horario -> Clase -->
+  <path d="M 890 610 L 960 610" class="rel rel-oper" marker-end="url(#arrowP)" stroke-dasharray="3,3"/>
+  <rect x="895" y="590" width="60" height="16" rx="3" class="rel-label-bg"/>
+  <text x="925" y="602" class="rel-label">expande</text>
+
+  <!-- Materia -> Comision -->
+  <path d="M 240 220 L 240 470 L 490 470 L 490 560" class="rel rel-oper" marker-end="url(#arrowP)"/>
+
+  <!-- Dictado -> Comision -->
+  <path d="M 1810 220 L 1810 470 L 490 470" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="900" y="460" width="220" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1010" y="472" class="rel-label">instancia del dictado + materia</text>
+
+  <!-- Horario -> Aula -->
+  <path d="M 890 610 L 900 610 L 900 690 L 1360 690 L 1360 650" class="rel rel-fisico" marker-end="url(#arrowO)"/>
+  <rect x="1000" y="675" width="180" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1090" y="687" class="rel-label">aula del patron (LP asigna)</text>
+
+  <!-- Plan -> LPRun -->
+  <path d="M 310 605 L 350 605 L 350 510 L 1650 510 L 1650 560" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="1400" y="500" width="140" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1470" y="512" class="rel-label">corridas del asignador</text>
+
+  <!-- Plan -> PlanValidation -->
+  <path d="M 310 605 L 340 605 L 340 490 L 1940 490 L 1940 560" class="rel rel-oper" marker-end="url(#arrowP)"/>
+  <rect x="1700" y="480" width="140" height="16" rx="3" class="rel-label-bg"/>
+  <text x="1770" y="492" class="rel-label">snapshots validacion</text>
+
+  <!-- Plan -> MateriaForecastConfig -->
+  <path d="M 200 650 L 200 720" class="rel rel-oper" marker-end="url(#arrowP)"/>
+
+  <!-- Plan -> IgnoredConflict -->
+  <path d="M 310 640 L 490 640 L 490 720" class="rel rel-oper" marker-end="url(#arrowP)" stroke-dasharray="3,3"/>
+
+  <!-- Materia -> InscripcionHistorica -->
+  <path d="M 155 220 L 155 360" class="rel rel-catalog" marker-end="url(#arrowB)"/>
+  <rect x="30" y="290" width="120" height="16" rx="3" class="rel-label-bg"/>
+  <text x="90" y="302" class="rel-label">historial (1:N)</text>
+
+  <!-- ================================================================
+       LEYENDA
+       ================================================================ -->
+  <g transform="translate(950 830)">
+    <rect x="0" y="0" width="1180" height="230" rx="10" fill="#FAFAFA" stroke="#999" stroke-width="1"/>
+    <text x="30" y="30" class="legend-title">Como leer este diagrama</text>
+
+    <rect x="30" y="45" width="24" height="14" class="ent-catalog-key"/>
+    <text x="60" y="57" class="legend-text"><tspan font-weight="bold">Catalogo Maestro</tspan> — datos base: materias, carreras, aulas, sedes, tablas puente estables.</text>
+
+    <rect x="30" y="65" width="24" height="14" class="ent-plan-key"/>
+    <text x="60" y="77" class="legend-text"><tspan font-weight="bold">Estructura Curricular</tspan> — plan de estudios versionado por carrera.</text>
+
+    <rect x="30" y="85" width="24" height="14" class="ent-ciclo-key"/>
+    <text x="60" y="97" class="legend-text"><tspan font-weight="bold">Ciclo Lectivo</tspan> — cuatrimestre concreto, dictados y cronogramas.</text>
+
+    <rect x="30" y="105" width="24" height="14" class="ent-oper-key"/>
+    <text x="60" y="117" class="legend-text"><tspan font-weight="bold">Plan de Cursada</tspan> — planificacion viva: comisiones, horarios, snapshots de LP/validacion.</text>
+
+    <rect x="30" y="125" width="24" height="14" class="ent-fisico-key"/>
+    <text x="60" y="137" class="legend-text"><tspan font-weight="bold">Recursos Fisicos</tspan> — aulas y su ubicacion (Sede).</text>
+
+    <rect x="30" y="145" width="24" height="14" class="ent-audit"/>
+    <text x="60" y="157" class="legend-text"><tspan font-weight="bold">Auditoria</tspan> — ChangeLogDB registra mutaciones importantes (hooks + eventos explicitos).</text>
+
+    <text x="30" y="185" class="legend-title">Convenciones</text>
+    <line x1="30" y1="200" x2="70" y2="200" stroke="#333" stroke-width="1.4"/>
+    <text x="80" y="204" class="legend-text">FK obligatoria (NOT NULL).</text>
+    <line x1="300" y1="200" x2="340" y2="200" stroke="#333" stroke-width="1.4" stroke-dasharray="3,3"/>
+    <text x="350" y="204" class="legend-text">FK opcional o referencia debil.</text>
+    <text x="600" y="204" class="legend-text"><tspan font-weight="bold">Cajas con borde grueso:</tspan> entidades pilar de su zona.</text>
+    <text x="900" y="224" class="legend-text"><tspan font-weight="bold">"XOR":</tspan> exactamente uno de los FKs esta seteado (validado a nivel servicio).</text>
+  </g>
+</svg>

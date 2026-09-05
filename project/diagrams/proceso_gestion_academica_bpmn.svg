@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2900 940" font-family="Arial, Helvetica, sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <style>
+      .lane-header { font-weight: bold; font-size: 13px; fill: #222; }
+      .pool-header { font-weight: bold; font-size: 15px; fill: #111; }
+      .task { fill: #FFFFFF; stroke: #333; stroke-width: 1.5; }
+      .task-label { fill: #111; text-anchor: middle; }
+      .start-event { fill: #FFFFFF; stroke: #2E7D32; stroke-width: 2; }
+      .end-event { fill: #FFFFFF; stroke: #B71C1C; stroke-width: 4; }
+      .gateway { fill: #FFFFFF; stroke: #E65100; stroke-width: 2; }
+      .gateway-symbol { fill: #E65100; font-weight: bold; font-size: 22px; text-anchor: middle; }
+      .flow { stroke: #333; stroke-width: 1.5; fill: none; }
+      .flow-label { fill: #555; font-size: 11px; font-style: italic; }
+      .title { font-weight: bold; font-size: 20px; fill: #111; text-anchor: middle; }
+      .subtitle { font-size: 12px; fill: #555; text-anchor: middle; font-style: italic; }
+    </style>
+  </defs>
+
+  <!-- Titulo -->
+  <text x="1450" y="30" class="title">Proceso de Gestion de Informacion Academica</text>
+  <text x="1450" y="50" class="subtitle">Elaboracion, integracion, asignacion de espacios y difusion de la programacion horaria</text>
+
+  <!-- POOL -->
+  <rect x="20" y="70" width="2860" height="860" fill="none" stroke="#111" stroke-width="2"/>
+  <!-- Pool header vertical -->
+  <rect x="20" y="70" width="30" height="860" fill="#ECEFF1" stroke="#111" stroke-width="1.5"/>
+  <text transform="translate(40 500) rotate(-90)" class="pool-header" text-anchor="middle">Facultad de Ingenieria</text>
+
+  <!-- ============ LANES ============ -->
+  <!-- Lane 1: Direcciones de Escuelas -->
+  <rect x="50" y="70" width="70" height="172" fill="#E3F2FD" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="70" width="2760" height="172" fill="#F5FAFE" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 156) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Direcciones de</tspan>
+    <tspan x="0" dy="14">Escuelas Academicas</tspan>
+    <tspan x="0" dy="14">(Ciclo Superior)</tspan>
+  </text>
+
+  <!-- Lane 2: Area de Ingreso -->
+  <rect x="50" y="242" width="70" height="172" fill="#E8F5E9" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="242" width="2760" height="172" fill="#F6FCF7" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 328) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Area de Ingreso</tspan>
+    <tspan x="0" dy="14">(Ciclo Basico)</tspan>
+  </text>
+
+  <!-- Lane 3: Secretaria Academica -->
+  <rect x="50" y="414" width="70" height="172" fill="#FFF3E0" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="414" width="2760" height="172" fill="#FFFAF3" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 500) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="0">Secretaria Academica</tspan>
+  </text>
+
+  <!-- Lane 4: Secretaria Tecnica -->
+  <rect x="50" y="586" width="70" height="172" fill="#F3E5F5" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="586" width="2760" height="172" fill="#FBF6FC" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 672) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="0">Secretaria Tecnica</tspan>
+  </text>
+
+  <!-- Lane 5: Areas de Difusion -->
+  <rect x="50" y="758" width="70" height="172" fill="#FFFDE7" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="758" width="2760" height="172" fill="#FFFEF5" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 844) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Bedelia / Escuelas /</tspan>
+    <tspan x="0" dy="14">Sec. Estudiantil</tspan>
+    <tspan x="0" dy="14">(Difusion)</tspan>
+  </text>
+
+  <!-- ============ LANE 1: DIRECCIONES ESCUELAS (y-center = 156) ============ -->
+  <!-- Start -->
+  <circle cx="180" cy="156" r="20" class="start-event"/>
+  <text x="180" y="196" class="task-label" font-size="10">Inicio del proceso</text>
+
+  <!-- T1 -->
+  <rect x="270" y="126" width="140" height="60" rx="8" class="task"/>
+  <text x="340" y="150" class="task-label">
+    <tspan x="340" dy="0">Analizar disponibilidad</tspan>
+    <tspan x="340" dy="14">horaria del cuerpo</tspan>
+    <tspan x="340" dy="14">docente</tspan>
+  </text>
+
+  <!-- T2 -->
+  <rect x="430" y="126" width="140" height="60" rx="8" class="task"/>
+  <text x="500" y="150" class="task-label">
+    <tspan x="500" dy="0">Distribuir comisiones</tspan>
+    <tspan x="500" dy="14">teoricas y practicas y</tspan>
+    <tspan x="500" dy="14">secuenciar dictados</tspan>
+  </text>
+
+  <!-- T3 -->
+  <rect x="590" y="126" width="140" height="60" rx="8" class="task"/>
+  <text x="660" y="150" class="task-label">
+    <tspan x="660" dy="0">Elaborar propuesta</tspan>
+    <tspan x="660" dy="14">horaria del</tspan>
+    <tspan x="660" dy="14">Ciclo Superior</tspan>
+  </text>
+
+  <!-- Flechas Lane 1 -->
+  <path d="M 200 156 L 270 156" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 410 156 L 430 156" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 570 156 L 590 156" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 2: AREA INGRESO (y-center = 328) ============ -->
+  <!-- Start -->
+  <circle cx="180" cy="328" r="20" class="start-event"/>
+  <text x="180" y="368" class="task-label" font-size="10">Inicio del proceso</text>
+
+  <!-- T1 -->
+  <rect x="270" y="298" width="140" height="60" rx="8" class="task"/>
+  <text x="340" y="322" class="task-label">
+    <tspan x="340" dy="0">Proyectar cantidad</tspan>
+    <tspan x="340" dy="14">de comisiones</tspan>
+    <tspan x="340" dy="14">necesarias</tspan>
+  </text>
+
+  <!-- T2 -->
+  <rect x="430" y="298" width="140" height="60" rx="8" class="task"/>
+  <text x="500" y="322" class="task-label">
+    <tspan x="500" dy="0">Distribuir en turnos</tspan>
+    <tspan x="500" dy="14">operacionales y</tspan>
+    <tspan x="500" dy="14">franjas T/P</tspan>
+  </text>
+
+  <!-- T3 -->
+  <rect x="590" y="298" width="140" height="60" rx="8" class="task"/>
+  <text x="660" y="322" class="task-label">
+    <tspan x="660" dy="0">Elaborar propuesta</tspan>
+    <tspan x="660" dy="14">horaria del</tspan>
+    <tspan x="660" dy="14">Ciclo Basico</tspan>
+  </text>
+
+  <!-- Flechas Lane 2 -->
+  <path d="M 200 328 L 270 328" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 410 328 L 430 328" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 570 328 L 590 328" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 3: SECRETARIA ACADEMICA (y-center = 500) ============ -->
+  <!-- Consolidar -->
+  <rect x="780" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="850" y="494" class="task-label">
+    <tspan x="850" dy="0">Consolidar propuestas</tspan>
+    <tspan x="850" dy="14">en una grilla</tspan>
+    <tspan x="850" dy="14">unica de trabajo</tspan>
+  </text>
+
+  <!-- Auditar -->
+  <rect x="940" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="1010" y="494" class="task-label">
+    <tspan x="1010" dy="0">Auditar cumplimiento</tspan>
+    <tspan x="1010" dy="14">normativo (planes y</tspan>
+    <tspan x="1010" dy="14">correlatividades)</tspan>
+  </text>
+
+  <!-- Revisar incompatibilidades -->
+  <rect x="1100" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="1170" y="494" class="task-label">
+    <tspan x="1170" dy="0">Revisar cruces de</tspan>
+    <tspan x="1170" dy="14">docentes y</tspan>
+    <tspan x="1170" dy="14">solapamientos de alumnos</tspan>
+  </text>
+
+  <!-- Gateway XOR -->
+  <polygon points="1300,470 1330,500 1300,530 1270,500" class="gateway"/>
+  <text x="1300" y="508" class="gateway-symbol">&#215;</text>
+  <text x="1300" y="458" class="task-label" font-size="11" font-style="italic">Discrepancias?</text>
+
+  <!-- Aprobar Grilla -->
+  <rect x="1370" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="1440" y="494" class="task-label">
+    <tspan x="1440" dy="0">Aprobar y emitir</tspan>
+    <tspan x="1440" dy="14">Grilla Horaria</tspan>
+    <tspan x="1440" dy="14">General Consolidada</tspan>
+  </text>
+
+  <!-- Refrendar -->
+  <rect x="2050" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="2120" y="494" class="task-label">
+    <tspan x="2120" dy="0">Refrendar cuadro</tspan>
+    <tspan x="2120" dy="14">definitivo de</tspan>
+    <tspan x="2120" dy="14">ocupacion de aulas</tspan>
+  </text>
+
+  <!-- Emitir Matriz -->
+  <rect x="2210" y="470" width="140" height="60" rx="8" class="task"/>
+  <text x="2280" y="494" class="task-label">
+    <tspan x="2280" dy="0">Consolidar y emitir</tspan>
+    <tspan x="2280" dy="14">Matriz Definitiva</tspan>
+    <tspan x="2280" dy="14">de Horarios y Aulas</tspan>
+  </text>
+
+  <!-- Flechas Lane 3 (internas) -->
+  <path d="M 920 500 L 940 500" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1080 500 L 1100 500" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1240 500 L 1270 500" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1330 500 L 1370 500" class="flow" marker-end="url(#arrow)"/>
+  <text x="1350" y="493" class="flow-label">no</text>
+
+  <!-- Loop-back del gateway (si hay discrepancias) hacia Consolidar -->
+  <path d="M 1300 470 L 1300 440 L 850 440 L 850 470" class="flow" marker-end="url(#arrow)"/>
+  <text x="1075" y="434" class="flow-label" text-anchor="middle">si, reprocesar propuestas</text>
+
+  <path d="M 2190 500 L 2210 500" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 4: SECRETARIA TECNICA (y-center = 672) ============ -->
+  <!-- Evaluar inventario -->
+  <rect x="1530" y="642" width="140" height="60" rx="8" class="task"/>
+  <text x="1600" y="666" class="task-label">
+    <tspan x="1600" dy="0">Evaluar inventario</tspan>
+    <tspan x="1600" dy="14">de planta fisica</tspan>
+    <tspan x="1600" dy="14">y equipamiento</tspan>
+  </text>
+
+  <!-- Acoplamiento -->
+  <rect x="1690" y="642" width="140" height="60" rx="8" class="task"/>
+  <text x="1760" y="666" class="task-label">
+    <tspan x="1760" dy="0">Acoplar materia,</tspan>
+    <tspan x="1760" dy="14">horario y aula</tspan>
+    <tspan x="1760" dy="14">segun aforo y recursos</tspan>
+  </text>
+
+  <!-- Cuadro ocupacion -->
+  <rect x="1850" y="642" width="140" height="60" rx="8" class="task"/>
+  <text x="1920" y="666" class="task-label">
+    <tspan x="1920" dy="0">Confeccionar cuadro</tspan>
+    <tspan x="1920" dy="14">definitivo de</tspan>
+    <tspan x="1920" dy="14">ocupacion de aulas</tspan>
+  </text>
+
+  <!-- Flechas internas Lane 4 -->
+  <path d="M 1670 672 L 1690 672" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1830 672 L 1850 672" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 5: DIFUSION (y-center = 844) ============ -->
+  <!-- Notificar / distribuir a areas -->
+  <rect x="2410" y="814" width="160" height="60" rx="8" class="task"/>
+  <text x="2490" y="838" class="task-label">
+    <tspan x="2490" dy="0">Distribuir Matriz a</tspan>
+    <tspan x="2490" dy="14">Bedelia, Escuelas y</tspan>
+    <tspan x="2490" dy="14">Sec. Estudiantil (SIU)</tspan>
+  </text>
+
+  <!-- Publicar -->
+  <rect x="2610" y="814" width="160" height="60" rx="8" class="task"/>
+  <text x="2690" y="838" class="task-label">
+    <tspan x="2690" dy="0">Publicar en carteleras</tspan>
+    <tspan x="2690" dy="14">institucionales y</tspan>
+    <tspan x="2690" dy="14">portales web</tspan>
+  </text>
+
+  <!-- End -->
+  <circle cx="2810" cy="844" r="20" class="end-event"/>
+  <text x="2810" y="884" class="task-label" font-size="10">Fin del proceso</text>
+
+  <!-- Flechas Lane 5 -->
+  <path d="M 2570 844 L 2610 844" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 2770 844 L 2790 844" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ FLECHAS ENTRE LANES ============ -->
+  <!-- Lane 1 (Escuelas) -> Lane 3 (Sec Academica: Consolidar) -->
+  <path d="M 730 156 L 850 156 L 850 470" class="flow" marker-end="url(#arrow)"/>
+  <text x="820" y="150" class="flow-label">propuesta Ciclo Superior</text>
+
+  <!-- Lane 2 (Ingreso) -> Lane 3 (Sec Academica: Consolidar) -->
+  <path d="M 730 328 L 850 328 L 850 470" class="flow" marker-end="url(#arrow)"/>
+  <text x="820" y="322" class="flow-label">propuesta Ciclo Basico</text>
+
+  <!-- Lane 3 (Aprobar Grilla) -> Lane 4 (Evaluar inventario) -->
+  <path d="M 1510 500 L 1600 500 L 1600 642" class="flow" marker-end="url(#arrow)"/>
+  <text x="1520" y="494" class="flow-label">Grilla Consolidada</text>
+
+  <!-- Lane 4 (Cuadro ocupacion) -> Lane 3 (Refrendar) -->
+  <path d="M 1990 672 L 2120 672 L 2120 530" class="flow" marker-end="url(#arrow)"/>
+  <text x="2015" y="666" class="flow-label">cuadro de ocupacion</text>
+
+  <!-- Lane 3 (Matriz) -> Lane 5 (Distribuir) -->
+  <path d="M 2350 500 L 2490 500 L 2490 814" class="flow" marker-end="url(#arrow)"/>
+  <text x="2360" y="494" class="flow-label">Matriz Definitiva</text>
+
+  <!-- ============ LEYENDA ============ -->
+  <g transform="translate(2400 60)">
+    <rect x="0" y="0" width="470" height="0" fill="none"/>
+  </g>
+</svg>

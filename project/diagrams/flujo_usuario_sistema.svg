@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3200 1080" font-family="Arial, Helvetica, sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <style>
+      .lane-header { font-weight: bold; font-size: 13px; fill: #222; }
+      .pool-header { font-weight: bold; font-size: 15px; fill: #111; }
+      .task { fill: #FFFFFF; stroke: #333; stroke-width: 1.5; }
+      .task-label { fill: #111; text-anchor: middle; }
+      .start-event { fill: #FFFFFF; stroke: #2E7D32; stroke-width: 2; }
+      .end-event { fill: #FFFFFF; stroke: #B71C1C; stroke-width: 4; }
+      .gateway { fill: #FFFFFF; stroke: #E65100; stroke-width: 2; }
+      .gateway-symbol { fill: #E65100; font-weight: bold; font-size: 22px; text-anchor: middle; }
+      .flow { stroke: #333; stroke-width: 1.5; fill: none; }
+      .flow-label { fill: #555; font-size: 11px; font-style: italic; }
+      .title { font-weight: bold; font-size: 20px; fill: #111; text-anchor: middle; }
+      .subtitle { font-size: 12px; fill: #555; text-anchor: middle; font-style: italic; }
+      .phase-badge { fill: #ECEFF1; stroke: #607D8B; stroke-width: 1; }
+      .phase-badge-label { fill: #37474F; font-weight: bold; font-size: 11px; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Titulo -->
+  <text x="1600" y="30" class="title">Flujo de Trabajo del Usuario en el Sistema</text>
+  <text x="1600" y="50" class="subtitle">Gestion de datos maestros, carga de cronograma, generacion del plan y asignacion de aulas — por modulo del sistema</text>
+
+  <!-- POOL -->
+  <rect x="20" y="70" width="3160" height="1000" fill="none" stroke="#111" stroke-width="2"/>
+  <rect x="20" y="70" width="30" height="1000" fill="#ECEFF1" stroke="#111" stroke-width="1.5"/>
+  <text transform="translate(40 570) rotate(-90)" class="pool-header" text-anchor="middle">Gestor de Aulas — Modulos del sistema</text>
+
+  <!-- ============ LANES (6 modulos, cada uno 155px) ============ -->
+  <!-- Lane 1: Materias -->
+  <rect x="50" y="70" width="70" height="155" fill="#E1F5FE" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="70" width="3060" height="155" fill="#F4FBFE" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 147) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="0">Materias</tspan>
+  </text>
+
+  <!-- Lane 2: Aulas y Sedes -->
+  <rect x="50" y="225" width="70" height="155" fill="#FFF3E0" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="225" width="3060" height="155" fill="#FFFAF3" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 302) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Aulas y</tspan>
+    <tspan x="0" dy="14">Sedes</tspan>
+  </text>
+
+  <!-- Lane 3: Carreras -->
+  <rect x="50" y="380" width="70" height="155" fill="#E8F5E9" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="380" width="3060" height="155" fill="#F6FCF7" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 457) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Carreras</tspan>
+    <tspan x="0" dy="14">(planes de estudio)</tspan>
+  </text>
+
+  <!-- Lane 4: Ciclos -->
+  <rect x="50" y="535" width="70" height="155" fill="#F3E5F5" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="535" width="3060" height="155" fill="#FBF6FC" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 612) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Ciclos</tspan>
+    <tspan x="0" dy="14">(ciclo lectivo y dictados)</tspan>
+  </text>
+
+  <!-- Lane 5: Cronogramas -->
+  <rect x="50" y="690" width="70" height="155" fill="#FFFDE7" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="690" width="3060" height="155" fill="#FFFEF5" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 767) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Cronogramas</tspan>
+    <tspan x="0" dy="14">(cargar, editar, validar)</tspan>
+  </text>
+
+  <!-- Lane 6: Planes y Asignacion de Aulas -->
+  <rect x="50" y="845" width="70" height="200" fill="#E0F7FA" stroke="#111" stroke-width="1.5"/>
+  <rect x="120" y="845" width="3060" height="200" fill="#F0FBFC" stroke="#111" stroke-width="1"/>
+  <text transform="translate(85 945) rotate(-90)" class="lane-header" text-anchor="middle">
+    <tspan x="0" dy="-6">Planes y</tspan>
+    <tspan x="0" dy="14">Asignacion de Aulas</tspan>
+  </text>
+
+  <!-- ============ FASES (bandas superiores) ============ -->
+  <!-- Fase 1: Setup / Datos maestros -->
+  <rect x="140" y="80" width="600" height="18" class="phase-badge"/>
+  <text x="440" y="93" class="phase-badge-label">FASE 1 — Gestion de datos maestros</text>
+
+  <!-- Fase 2: Ciclos + Dictados -->
+  <rect x="760" y="80" width="620" height="18" class="phase-badge"/>
+  <text x="1070" y="93" class="phase-badge-label">FASE 2 — Alta del ciclo lectivo y dictados</text>
+
+  <!-- Fase 3: Cronograma -->
+  <rect x="1400" y="80" width="800" height="18" class="phase-badge"/>
+  <text x="1800" y="93" class="phase-badge-label">FASE 3 — Cronograma horario</text>
+
+  <!-- Fase 4: Plan + Aulas -->
+  <rect x="2220" y="80" width="940" height="18" class="phase-badge"/>
+  <text x="2690" y="93" class="phase-badge-label">FASE 4 — Plan de cursada y asignacion de aulas</text>
+
+  <!-- ============ LANE 1: MATERIAS (y-center = 147) ============ -->
+  <!-- Start -->
+  <circle cx="180" cy="147" r="20" class="start-event"/>
+  <text x="180" y="190" class="task-label" font-size="10">Inicio</text>
+
+  <!-- T1: Cargar/actualizar materias -->
+  <rect x="240" y="117" width="180" height="60" rx="8" class="task"/>
+  <text x="330" y="141" class="task-label">
+    <tspan x="330" dy="0">Cargar/actualizar</tspan>
+    <tspan x="330" dy="14">materias (codigo, nombre,</tspan>
+    <tspan x="330" dy="14">horas, tipo)</tspan>
+  </text>
+
+  <!-- T2: Asociar laboratorios compatibles -->
+  <rect x="440" y="117" width="180" height="60" rx="8" class="task"/>
+  <text x="530" y="141" class="task-label">
+    <tspan x="530" dy="0">Asociar laboratorios</tspan>
+    <tspan x="530" dy="14">compatibles y</tspan>
+    <tspan x="530" dy="14">requerimientos tecnicos</tspan>
+  </text>
+
+  <!-- Flechas Lane 1 -->
+  <path d="M 200 147 L 240 147" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 420 147 L 440 147" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 2: AULAS Y SEDES (y-center = 302) ============ -->
+  <!-- T3: Cargar aulas y sedes -->
+  <rect x="240" y="272" width="180" height="60" rx="8" class="task"/>
+  <text x="330" y="296" class="task-label">
+    <tspan x="330" dy="0">Cargar/mantener</tspan>
+    <tspan x="330" dy="14">aulas y sedes</tspan>
+    <tspan x="330" dy="14">(capacidad, tipo)</tspan>
+  </text>
+
+  <!-- Flechas Lane 2: se ejecuta en paralelo — dejo entrada implicita -->
+
+  <!-- ============ LANE 3: CARRERAS (y-center = 457) ============ -->
+  <!-- T4: Cargar carreras y version de plan -->
+  <rect x="240" y="427" width="180" height="60" rx="8" class="task"/>
+  <text x="330" y="451" class="task-label">
+    <tspan x="330" dy="0">Cargar carreras y</tspan>
+    <tspan x="330" dy="14">versionar planes de</tspan>
+    <tspan x="330" dy="14">estudio</tspan>
+  </text>
+
+  <!-- T5: Configurar sedes admisibles y correlativas -->
+  <rect x="440" y="427" width="180" height="60" rx="8" class="task"/>
+  <text x="530" y="451" class="task-label">
+    <tspan x="530" dy="0">Configurar sedes</tspan>
+    <tspan x="530" dy="14">admisibles y</tspan>
+    <tspan x="530" dy="14">correlativas</tspan>
+  </text>
+
+  <!-- Flechas Lane 3 -->
+  <path d="M 420 457 L 440 457" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 4: CICLOS (y-center = 612) ============ -->
+  <!-- T6: Crear ciclo lectivo -->
+  <rect x="780" y="582" width="180" height="60" rx="8" class="task"/>
+  <text x="870" y="606" class="task-label">
+    <tspan x="870" dy="0">Crear ciclo lectivo</tspan>
+    <tspan x="870" dy="14">(año/cuatri + versiones</tspan>
+    <tspan x="870" dy="14">de plan)</tspan>
+  </text>
+
+  <!-- T7: Crear dictados -->
+  <rect x="980" y="582" width="180" height="60" rx="8" class="task"/>
+  <text x="1070" y="606" class="task-label">
+    <tspan x="1070" dy="0">Crear dictados</tspan>
+    <tspan x="1070" dy="14">del ciclo</tspan>
+    <tspan x="1070" dy="14">(bulk-create)</tspan>
+  </text>
+
+  <!-- T8: Ajustar dictados -->
+  <rect x="1180" y="582" width="180" height="60" rx="8" class="task"/>
+  <text x="1270" y="606" class="task-label">
+    <tspan x="1270" dy="0">Ajustar dictados:</tspan>
+    <tspan x="1270" dy="14">virtualidad, recursado,</tspan>
+    <tspan x="1270" dy="14">divergencias</tspan>
+  </text>
+
+  <!-- Flechas internas Lane 4 -->
+  <path d="M 960 612 L 980 612" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1160 612 L 1180 612" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Flechas de conexion entre carriles de la FASE 1 hacia FASE 2 (llegan a T6 Crear ciclo lectivo) -->
+  <!-- Convergencia visual: desde el borde derecho de materias/aulas/carreras hacia arriba-izquierda del bloque de ciclos -->
+  <path d="M 620 147 L 720 147 L 720 612 L 780 612" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 420 302 L 720 302" class="flow"/>
+  <path d="M 620 457 L 720 457" class="flow"/>
+
+  <!-- ============ LANE 5: CRONOGRAMAS (y-center = 767) ============ -->
+  <!-- T9: Cargar cronograma (Excel) -->
+  <rect x="1420" y="737" width="180" height="60" rx="8" class="task"/>
+  <text x="1510" y="761" class="task-label">
+    <tspan x="1510" dy="0">Cargar cronograma</tspan>
+    <tspan x="1510" dy="14">desde Excel/CSV</tspan>
+    <tspan x="1510" dy="14">(nombre + ciclo)</tspan>
+  </text>
+
+  <!-- T10: Editar cronograma -->
+  <rect x="1620" y="737" width="180" height="60" rx="8" class="task"/>
+  <text x="1710" y="761" class="task-label">
+    <tspan x="1710" dy="0">Editar cronograma:</tspan>
+    <tspan x="1710" dy="14">asociar comisiones,</tspan>
+    <tspan x="1710" dy="14">tipos, virtualidad</tspan>
+  </text>
+
+  <!-- T11: Validar cronograma -->
+  <rect x="1820" y="737" width="180" height="60" rx="8" class="task"/>
+  <text x="1910" y="761" class="task-label">
+    <tspan x="1910" dy="0">Validar cronograma</tspan>
+    <tspan x="1910" dy="14">(cobertura, extras,</tspan>
+    <tspan x="1910" dy="14">particiones, choques)</tspan>
+  </text>
+
+  <!-- Gateway XOR: crono validado? -->
+  <polygon points="2080,737 2110,767 2080,797 2050,767" class="gateway"/>
+  <text x="2080" y="775" class="gateway-symbol">&#215;</text>
+  <text x="2080" y="725" class="task-label" font-size="11" font-style="italic">Cronograma en verde?</text>
+
+  <!-- Flechas internas Lane 5 -->
+  <path d="M 1600 767 L 1620 767" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 1800 767 L 1820 767" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 2000 767 L 2050 767" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Loop-back del gateway (si NO validado) hacia editar cronograma -->
+  <path d="M 2080 737 L 2080 710 L 1710 710 L 1710 737" class="flow" marker-end="url(#arrow)"/>
+  <text x="1895" y="704" class="flow-label" text-anchor="middle">no, corregir errores</text>
+
+  <!-- Flecha Lane4 (T8 Ajustar dictados) -> Lane5 (T9 Cargar cronograma) -->
+  <path d="M 1360 612 L 1510 612 L 1510 737" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ============ LANE 6: PLANES Y ASIGNACION (y-center = 917) ============ -->
+  <!-- T12: Generar plan (wizard) -->
+  <rect x="2240" y="887" width="180" height="60" rx="8" class="task"/>
+  <text x="2330" y="911" class="task-label">
+    <tspan x="2330" dy="0">Generar plan de</tspan>
+    <tspan x="2330" dy="14">cursada (wizard,</tspan>
+    <tspan x="2330" dy="14">metodo de forecast)</tspan>
+  </text>
+
+  <!-- T13: Ajustar comisiones -->
+  <rect x="2440" y="887" width="180" height="60" rx="8" class="task"/>
+  <text x="2530" y="911" class="task-label">
+    <tspan x="2530" dy="0">Ajustar comisiones:</tspan>
+    <tspan x="2530" dy="14">cupos, pesos,</tspan>
+    <tspan x="2530" dy="14">carrera orientada</tspan>
+  </text>
+
+  <!-- T14: Revisar detalle plan -->
+  <rect x="2640" y="887" width="180" height="60" rx="8" class="task"/>
+  <text x="2730" y="911" class="task-label">
+    <tspan x="2730" dy="0">Revisar detalle</tspan>
+    <tspan x="2730" dy="14">del plan y</tspan>
+    <tspan x="2730" dy="14">validaciones</tspan>
+  </text>
+
+  <!-- T15: Correr asignador -->
+  <rect x="2200" y="982" width="180" height="60" rx="8" class="task"/>
+  <text x="2290" y="1006" class="task-label">
+    <tspan x="2290" dy="0">Correr asignador</tspan>
+    <tspan x="2290" dy="14">de aulas (pesos,</tspan>
+    <tspan x="2290" dy="14">tolerancias, tiempo)</tspan>
+  </text>
+
+  <!-- Gateway XOR: asignador resuelto? -->
+  <polygon points="2440,982 2470,1012 2440,1042 2410,1012" class="gateway"/>
+  <text x="2440" y="1020" class="gateway-symbol">&#215;</text>
+  <text x="2440" y="970" class="task-label" font-size="11" font-style="italic">Resuelto?</text>
+
+  <!-- T16: Revisar resultado / activar plan (sin generar clases) -->
+  <rect x="2510" y="982" width="180" height="60" rx="8" class="task"/>
+  <text x="2600" y="1006" class="task-label">
+    <tspan x="2600" dy="0">Revisar resultado y</tspan>
+    <tspan x="2600" dy="14">consolidar plan</tspan>
+    <tspan x="2600" dy="14">con aulas asignadas</tspan>
+  </text>
+
+  <!-- T17 (opcional): Ajustar datos si infactible -->
+  <rect x="2760" y="982" width="180" height="60" rx="8" class="task"/>
+  <text x="2850" y="1006" class="task-label">
+    <tspan x="2850" dy="0">Ajustar datos</tspan>
+    <tspan x="2850" dy="14">(virtualidad, sedes,</tspan>
+    <tspan x="2850" dy="14">inventario, franjas)</tspan>
+  </text>
+
+  <!-- End -->
+  <circle cx="2960" cy="1012" r="20" class="end-event"/>
+  <text x="2960" y="1055" class="task-label" font-size="10">Plan de cursada listo</text>
+
+  <!-- Flechas internas Lane 6 -->
+  <path d="M 2420 917 L 2440 917" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 2620 917 L 2640 917" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Bajada de la fila superior (T14 Revisar detalle) a la fila inferior (T15 Correr asignador) -->
+  <path d="M 2730 947 L 2730 962 L 2290 962 L 2290 982" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Correr asignador -> Gateway -->
+  <path d="M 2380 1012 L 2410 1012" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Gateway (si) -> Revisar resultado -->
+  <path d="M 2470 1012 L 2510 1012" class="flow" marker-end="url(#arrow)"/>
+  <text x="2490" y="1005" class="flow-label">si</text>
+
+  <!-- Gateway (no) -> Ajustar datos -->
+  <path d="M 2440 1042 L 2440 1075 L 2850 1075 L 2850 1042" class="flow" marker-end="url(#arrow)"/>
+  <text x="2445" y="1069" class="flow-label">no</text>
+
+  <!-- Ajustar datos -> Correr asignador otra vez (reintentar) -->
+  <path d="M 2760 1012 L 2690 1012 L 2690 970 L 2290 970 L 2290 982" class="flow" marker-end="url(#arrow)"/>
+  <text x="2500" y="964" class="flow-label" text-anchor="middle">reintentar</text>
+
+  <!-- Revisar resultado -> End -->
+  <path d="M 2690 1012 L 2940 1012" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- Flecha Lane5 (Gateway cronograma) -> Lane6 (T12 Generar plan) -->
+  <path d="M 2110 767 L 2330 767 L 2330 887" class="flow" marker-end="url(#arrow)"/>
+  <text x="2130" y="760" class="flow-label">si, cronograma vigente</text>
+
+</svg>

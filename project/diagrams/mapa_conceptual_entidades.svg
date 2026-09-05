@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1500" font-family="Arial, Helvetica, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B5E20"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4A148C"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#BF360C"/>
+    </marker>
+    <style>
+      .title { font-weight: bold; font-size: 24px; fill: #111; text-anchor: middle; }
+      .subtitle { font-size: 14px; fill: #555; text-anchor: middle; font-style: italic; }
+      .zone-label { font-weight: bold; font-size: 16px; fill: #333; text-anchor: middle; }
+      .zone-caption { font-size: 12px; fill: #555; text-anchor: middle; font-style: italic; }
+
+      .entity-catalog { fill: #E1F5FE; stroke: #01579B; stroke-width: 2; }
+      .entity-catalog-key { fill: #B3E5FC; stroke: #01579B; stroke-width: 2.5; }
+      .entity-plan { fill: #E8F5E9; stroke: #1B5E20; stroke-width: 2; }
+      .entity-plan-key { fill: #C8E6C9; stroke: #1B5E20; stroke-width: 2.5; }
+      .entity-ciclo { fill: #FFF3E0; stroke: #E65100; stroke-width: 2; }
+      .entity-ciclo-key { fill: #FFE0B2; stroke: #E65100; stroke-width: 2.5; }
+      .entity-oper { fill: #F3E5F5; stroke: #4A148C; stroke-width: 2; }
+      .entity-oper-key { fill: #E1BEE7; stroke: #4A148C; stroke-width: 2.5; }
+      .entity-fisico { fill: #FFFDE7; stroke: #F57F17; stroke-width: 2; }
+
+      .entity-name { font-weight: bold; font-size: 15px; fill: #111; text-anchor: middle; }
+      .entity-desc { font-size: 11px; fill: #444; text-anchor: middle; }
+
+      .rel-line { stroke: #444; stroke-width: 1.6; fill: none; }
+      .rel-line-plan { stroke: #1B5E20; stroke-width: 1.8; fill: none; }
+      .rel-line-oper { stroke: #4A148C; stroke-width: 1.8; fill: none; }
+      .rel-line-fisico { stroke: #BF360C; stroke-width: 1.8; fill: none; }
+
+      .rel-label { fill: #222; font-size: 11px; font-style: italic; text-anchor: middle; }
+      .rel-label-bg { fill: #FFFFFF; stroke: #DDD; stroke-width: 0.5; }
+
+      .legend-title { font-weight: bold; font-size: 13px; fill: #111; }
+      .legend-text { font-size: 12px; fill: #333; }
+    </style>
+  </defs>
+
+  <!-- Titulo -->
+  <text x="1200" y="40" class="title">Mapa Conceptual — Modelo de Entidades del Sistema</text>
+  <text x="1200" y="65" class="subtitle">Como piensa el sistema el problema de la gestion academica y la asignacion de aulas</text>
+
+  <!-- =========================================================
+       ZONAS SEMANTICAS (fondos suaves)
+       ========================================================= -->
+
+  <!-- Zona A: Catalogo Maestro (top-left) -->
+  <rect x="50" y="110" width="720" height="380" rx="14" fill="#F1FBFF" stroke="#01579B" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="410" y="140" class="zone-label" fill="#01579B">A. CATALOGO MAESTRO</text>
+  <text x="410" y="160" class="zone-caption">Datos base estables y de larga vigencia</text>
+
+  <!-- Zona B: Estructura Curricular (top-right) -->
+  <rect x="820" y="110" width="720" height="380" rx="14" fill="#F1FBF2" stroke="#1B5E20" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1180" y="140" class="zone-label" fill="#1B5E20">B. ESTRUCTURA CURRICULAR</text>
+  <text x="1180" y="160" class="zone-caption">Plan de estudios: que se cursa y en que orden</text>
+
+  <!-- Zona C: Ciclo Lectivo (top-right corner) -->
+  <rect x="1590" y="110" width="760" height="380" rx="14" fill="#FFF8EE" stroke="#E65100" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1970" y="140" class="zone-label" fill="#E65100">C. CICLO LECTIVO</text>
+  <text x="1970" y="160" class="zone-caption">Que se dicta este cuatrimestre y bajo que modalidad</text>
+
+  <!-- Zona D: Planificacion Operativa (middle-bottom) -->
+  <rect x="50" y="530" width="2050" height="480" rx="14" fill="#FBF6FC" stroke="#4A148C" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="1075" y="560" class="zone-label" fill="#4A148C">D. PLANIFICACION OPERATIVA</text>
+  <text x="1075" y="580" class="zone-caption">Del horario crudo al plan definitivo con aulas: cronograma, plan, comisiones, horarios y clases</text>
+
+  <!-- Zona E: Recursos Fisicos (bottom-left) -->
+  <rect x="50" y="1050" width="720" height="260" rx="14" fill="#FFFEF0" stroke="#F57F17" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="410" y="1080" class="zone-label" fill="#BF360C">E. RECURSOS FISICOS</text>
+  <text x="410" y="1100" class="zone-caption">Inventario de la planta fisica de la facultad</text>
+
+  <!-- =========================================================
+       ZONA A - CATALOGO MAESTRO
+       ========================================================= -->
+
+  <!-- Materia -->
+  <rect x="100" y="200" width="200" height="90" rx="10" class="entity-catalog-key"/>
+  <text x="200" y="228" class="entity-name">Materia</text>
+  <text x="200" y="250" class="entity-desc">Asignatura del catalogo</text>
+  <text x="200" y="266" class="entity-desc">(codigo, nombre, horas,</text>
+  <text x="200" y="280" class="entity-desc">tipo, laboratorios compatibles)</text>
+
+  <!-- Carrera -->
+  <rect x="360" y="200" width="200" height="90" rx="10" class="entity-catalog-key"/>
+  <text x="460" y="228" class="entity-name">Carrera</text>
+  <text x="460" y="250" class="entity-desc">Programa de grado</text>
+  <text x="460" y="266" class="entity-desc">(codigo, nombre, sedes</text>
+  <text x="460" y="280" class="entity-desc">habilitadas, dicta recursado)</text>
+
+  <!-- Sede -->
+  <rect x="600" y="215" width="140" height="65" rx="10" class="entity-catalog"/>
+  <text x="670" y="240" class="entity-name">Sede</text>
+  <text x="670" y="260" class="entity-desc">Edificio donde</text>
+  <text x="670" y="274" class="entity-desc">se dictan clases</text>
+
+  <!-- Tipo de Aula -->
+  <rect x="100" y="360" width="200" height="90" rx="10" class="entity-catalog"/>
+  <text x="200" y="388" class="entity-name">Tipo de Aula</text>
+  <text x="200" y="410" class="entity-desc">Categoria de espacio</text>
+  <text x="200" y="426" class="entity-desc">(teorica, laboratorio,</text>
+  <text x="200" y="440" class="entity-desc">taller, anfiteatro)</text>
+
+  <!-- Correlativa -->
+  <rect x="360" y="360" width="200" height="90" rx="10" class="entity-catalog"/>
+  <text x="460" y="388" class="entity-name">Correlativa</text>
+  <text x="460" y="410" class="entity-desc">Relacion de precedencia</text>
+  <text x="460" y="426" class="entity-desc">entre materias dentro</text>
+  <text x="460" y="440" class="entity-desc">de un plan</text>
+
+  <!-- =========================================================
+       ZONA B - ESTRUCTURA CURRICULAR
+       ========================================================= -->
+
+  <!-- Version de Plan -->
+  <rect x="870" y="200" width="220" height="100" rx="10" class="entity-plan-key"/>
+  <text x="980" y="230" class="entity-name">Version de Plan</text>
+  <text x="980" y="252" class="entity-desc">Snapshot fechado del plan</text>
+  <text x="980" y="268" class="entity-desc">de estudios de una carrera</text>
+  <text x="980" y="284" class="entity-desc">(evoluciona por cohorte)</text>
+
+  <!-- Plan de Estudio (celda) -->
+  <rect x="1170" y="200" width="220" height="100" rx="10" class="entity-plan"/>
+  <text x="1280" y="230" class="entity-name">Plan de Estudio</text>
+  <text x="1280" y="252" class="entity-desc">Ubica cada materia en</text>
+  <text x="1280" y="268" class="entity-desc">un año/cuatrimestre de</text>
+  <text x="1280" y="284" class="entity-desc">una version de plan</text>
+
+  <!-- Bloques de Cursada Anual/Cuatri -->
+  <rect x="1020" y="370" width="220" height="70" rx="10" class="entity-plan"/>
+  <text x="1130" y="395" class="entity-name">Año / Cuatrimestre</text>
+  <text x="1130" y="415" class="entity-desc">Del plan (1er año 1C,</text>
+  <text x="1130" y="430" class="entity-desc">3er año 2C, etc.)</text>
+
+  <!-- =========================================================
+       ZONA C - CICLO LECTIVO
+       ========================================================= -->
+
+  <!-- Ciclo Lectivo -->
+  <rect x="1640" y="200" width="230" height="100" rx="10" class="entity-ciclo-key"/>
+  <text x="1755" y="230" class="entity-name">Ciclo Lectivo</text>
+  <text x="1755" y="252" class="entity-desc">Cuatrimestre concreto</text>
+  <text x="1755" y="268" class="entity-desc">(2026-1C, 2026-2C...)</text>
+  <text x="1755" y="284" class="entity-desc">con fechas y versiones</text>
+
+  <!-- Dictado -->
+  <rect x="1920" y="200" width="230" height="100" rx="10" class="entity-ciclo-key"/>
+  <text x="2035" y="230" class="entity-name">Dictado</text>
+  <text x="2035" y="252" class="entity-desc">Materia efectivamente</text>
+  <text x="2035" y="268" class="entity-desc">ofrecida este ciclo</text>
+  <text x="2035" y="284" class="entity-desc">(activo, virtual, recursado)</text>
+
+  <!-- Modalidad Virtual / Recursado (nota) -->
+  <rect x="1780" y="370" width="230" height="70" rx="10" class="entity-ciclo"/>
+  <text x="1895" y="395" class="entity-name">Modalidad</text>
+  <text x="1895" y="415" class="entity-desc">Presencial / Virtual y</text>
+  <text x="1895" y="430" class="entity-desc">regular / recursado</text>
+
+  <!-- =========================================================
+       ZONA D - PLANIFICACION OPERATIVA
+       ========================================================= -->
+
+  <!-- Cronograma -->
+  <rect x="120" y="640" width="220" height="100" rx="10" class="entity-oper-key"/>
+  <text x="230" y="670" class="entity-name">Cronograma</text>
+  <text x="230" y="692" class="entity-desc">Datos crudos de horarios</text>
+  <text x="230" y="708" class="entity-desc">tal como vienen del Excel</text>
+  <text x="230" y="724" class="entity-desc">de la Facultad</text>
+
+  <!-- Entrada de Cronograma -->
+  <rect x="120" y="790" width="220" height="90" rx="10" class="entity-oper"/>
+  <text x="230" y="818" class="entity-name">Entrada de</text>
+  <text x="230" y="836" class="entity-name">Cronograma</text>
+  <text x="230" y="858" class="entity-desc">Una fila del Excel:</text>
+  <text x="230" y="872" class="entity-desc">materia, dia, franja horaria</text>
+
+  <!-- Plan de Cursada -->
+  <rect x="450" y="640" width="240" height="100" rx="10" class="entity-oper-key"/>
+  <text x="570" y="670" class="entity-name">Plan de Cursada</text>
+  <text x="570" y="692" class="entity-desc">Planificacion trabajable</text>
+  <text x="570" y="708" class="entity-desc">generada desde un cronograma</text>
+  <text x="570" y="724" class="entity-desc">(borrador / activo)</text>
+
+  <!-- Comision -->
+  <rect x="770" y="640" width="220" height="100" rx="10" class="entity-oper-key"/>
+  <text x="880" y="670" class="entity-name">Comision</text>
+  <text x="880" y="692" class="entity-desc">Grupo/turno dentro de</text>
+  <text x="880" y="708" class="entity-desc">un dictado (cupo, peso,</text>
+  <text x="880" y="724" class="entity-desc">carrera orientada)</text>
+
+  <!-- Horario -->
+  <rect x="1070" y="640" width="220" height="100" rx="10" class="entity-oper-key"/>
+  <text x="1180" y="670" class="entity-name">Horario</text>
+  <text x="1180" y="692" class="entity-desc">Bloque semanal recurrente</text>
+  <text x="1180" y="708" class="entity-desc">de una comision (dia, hora</text>
+  <text x="1180" y="724" class="entity-desc">inicio, hora fin, tipo T/L)</text>
+
+  <!-- Clase -->
+  <rect x="1370" y="640" width="220" height="100" rx="10" class="entity-oper-key"/>
+  <text x="1480" y="670" class="entity-name">Clase</text>
+  <text x="1480" y="692" class="entity-desc">Instancia concreta en una</text>
+  <text x="1480" y="708" class="entity-desc">fecha (Lunes 12/03 8-10hs)</text>
+  <text x="1480" y="724" class="entity-desc">con aula asignada</text>
+
+  <!-- Asignacion de Aula (conceptual) -->
+  <rect x="1670" y="640" width="240" height="100" rx="10" class="entity-oper"/>
+  <text x="1790" y="670" class="entity-name">Asignacion de Aula</text>
+  <text x="1790" y="692" class="entity-desc">Resultado del optimizador:</text>
+  <text x="1790" y="708" class="entity-desc">horario/clase → aula fisica</text>
+  <text x="1790" y="724" class="entity-desc">respetando restricciones</text>
+
+  <!-- Forecast / Demanda -->
+  <rect x="150" y="920" width="240" height="70" rx="10" class="entity-oper"/>
+  <text x="270" y="945" class="entity-name">Forecast de Demanda</text>
+  <text x="270" y="965" class="entity-desc">Estimacion de inscriptos</text>
+  <text x="270" y="979" class="entity-desc">por comision (historico)</text>
+
+  <!-- Inscripto historico -->
+  <rect x="450" y="920" width="240" height="70" rx="10" class="entity-oper"/>
+  <text x="570" y="945" class="entity-name">Inscriptos historicos</text>
+  <text x="570" y="965" class="entity-desc">Series por materia usadas</text>
+  <text x="570" y="979" class="entity-desc">para alimentar el forecast</text>
+
+  <!-- Validaciones -->
+  <rect x="750" y="920" width="260" height="70" rx="10" class="entity-oper"/>
+  <text x="880" y="945" class="entity-name">Validaciones y Choques</text>
+  <text x="880" y="965" class="entity-desc">Cobertura, particiones T/L,</text>
+  <text x="880" y="979" class="entity-desc">solapamientos por año/carrera</text>
+
+  <!-- =========================================================
+       ZONA E - RECURSOS FISICOS
+       ========================================================= -->
+
+  <!-- Aula -->
+  <rect x="100" y="1130" width="200" height="130" rx="10" class="entity-fisico"/>
+  <text x="200" y="1160" class="entity-name">Aula</text>
+  <text x="200" y="1183" class="entity-desc">Espacio fisico</text>
+  <text x="200" y="1197" class="entity-desc">(codigo, capacidad,</text>
+  <text x="200" y="1211" class="entity-desc">tipo, sede, equipamiento)</text>
+
+  <!-- Franja horaria / Capacidad -->
+  <rect x="340" y="1130" width="200" height="130" rx="10" class="entity-fisico"/>
+  <text x="440" y="1160" class="entity-name">Franja Operativa</text>
+  <text x="440" y="1183" class="entity-desc">Grilla de dias y horas</text>
+  <text x="440" y="1197" class="entity-desc">operativas de la Facultad</text>
+  <text x="440" y="1211" class="entity-desc">(granularidad 15 min)</text>
+
+  <!-- Compatibilidad Aula-Materia -->
+  <rect x="580" y="1130" width="180" height="130" rx="10" class="entity-fisico"/>
+  <text x="670" y="1160" class="entity-name">Compatibilidad</text>
+  <text x="670" y="1183" class="entity-desc">Que aulas sirven</text>
+  <text x="670" y="1197" class="entity-desc">para que materias</text>
+  <text x="670" y="1211" class="entity-desc">(laboratorios especificos)</text>
+
+  <!-- =========================================================
+       RELACIONES ETIQUETADAS
+       ========================================================= -->
+
+  <!-- Materia - Plan de Estudio -->
+  <path d="M 300 245 L 1170 245" class="rel-line-plan" marker-end="url(#arrowGreen)"/>
+  <rect x="620" y="235" width="230" height="20" rx="4" class="rel-label-bg"/>
+  <text x="735" y="249" class="rel-label">forma parte de una version de plan</text>
+
+  <!-- Carrera - Version de Plan -->
+  <path d="M 560 260 L 870 260" class="rel-line-plan" marker-end="url(#arrowGreen)"/>
+  <rect x="595" y="248" width="230" height="20" rx="4" class="rel-label-bg"/>
+  <text x="710" y="262" class="rel-label">tiene sucesivas versiones de plan</text>
+
+  <!-- Version de Plan - Plan de Estudio -->
+  <path d="M 1090 250 L 1170 250" class="rel-line-plan" marker-end="url(#arrowGreen)"/>
+
+  <!-- Plan de Estudio - Año/Cuatri -->
+  <path d="M 1250 300 L 1150 370" class="rel-line-plan" marker-end="url(#arrowGreen)"/>
+  <rect x="1130" y="325" width="150" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1205" y="339" class="rel-label">ubica a la materia</text>
+
+  <!-- Correlativa - Materia (referencia doble) -->
+  <path d="M 400 360 L 250 290" class="rel-line" marker-end="url(#arrow)"/>
+  <rect x="245" y="315" width="150" height="20" rx="4" class="rel-label-bg"/>
+  <text x="320" y="329" class="rel-label">condiciona el orden</text>
+
+  <!-- Tipo de Aula - Aula -->
+  <path d="M 200 450 L 200 1130" class="rel-line-fisico" marker-end="url(#arrowOrange)" stroke-dasharray="4,4"/>
+  <rect x="35" y="770" width="150" height="20" rx="4" class="rel-label-bg"/>
+  <text x="110" y="784" class="rel-label">clasifica al aula</text>
+
+  <!-- Carrera - Sede -->
+  <path d="M 560 245 L 600 245" class="rel-line" marker-end="url(#arrow)"/>
+
+  <!-- Ciclo - Version de Plan -->
+  <path d="M 1640 250 L 1090 250" class="rel-line" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
+  <rect x="1330" y="203" width="280" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1470" y="217" class="rel-label">se dicta segun N versiones de plan</text>
+
+  <!-- Ciclo - Dictado -->
+  <path d="M 1870 250 L 1920 250" class="rel-line" marker-end="url(#arrow)"/>
+
+  <!-- Dictado - Materia -->
+  <path d="M 2035 300 L 2035 335 L 200 335 L 200 290" class="rel-line" marker-end="url(#arrow)"/>
+  <rect x="1080" y="325" width="260" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1210" y="339" class="rel-label">activa una materia para el ciclo</text>
+
+  <!-- Dictado - Modalidad -->
+  <path d="M 2035 300 L 1895 370" class="rel-line" marker-end="url(#arrow)"/>
+  <rect x="1900" y="330" width="120" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1960" y="344" class="rel-label">tiene modalidad</text>
+
+  <!-- =========================================================
+       RELACIONES ZONA D (planificacion operativa)
+       ========================================================= -->
+
+  <!-- Ciclo -> Cronograma -->
+  <path d="M 1755 300 L 1755 590 L 230 590 L 230 640" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="580" y="578" width="240" height="20" rx="4" class="rel-label-bg"/>
+  <text x="700" y="592" class="rel-label">cada ciclo recibe un cronograma</text>
+
+  <!-- Cronograma -> Entrada -->
+  <path d="M 230 740 L 230 790" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="235" y="750" width="140" height="20" rx="4" class="rel-label-bg"/>
+  <text x="305" y="764" class="rel-label">agrupa muchas filas</text>
+
+  <!-- Entrada -> Materia -->
+  <path d="M 230 880 L 230 1050" class="rel-line-oper" stroke-dasharray="4,4"/>
+  <path d="M 230 990 L 200 990" class="rel-line-oper" marker-end="url(#arrowPurple)" stroke-dasharray="4,4"/>
+  <text x="130" y="990" class="rel-label" text-anchor="end" font-style="italic">referencia una materia</text>
+
+  <!-- Cronograma -> Plan de Cursada -->
+  <path d="M 340 690 L 450 690" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="345" y="655" width="100" height="20" rx="4" class="rel-label-bg"/>
+  <text x="395" y="669" class="rel-label">se genera de</text>
+
+  <!-- Plan de Cursada -> Comision -->
+  <path d="M 690 690 L 770 690" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="695" y="655" width="70" height="20" rx="4" class="rel-label-bg"/>
+  <text x="730" y="669" class="rel-label">contiene</text>
+
+  <!-- Comision -> Dictado (sube a zona C) -->
+  <path d="M 880 640 L 880 400 L 1920 400 L 2035 400 L 2035 300" class="rel-line-oper" stroke-dasharray="4,4" marker-end="url(#arrowPurple)"/>
+  <rect x="1400" y="388" width="220" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1510" y="402" class="rel-label">pertenece a un dictado del ciclo</text>
+
+  <!-- Comision -> Horario -->
+  <path d="M 990 690 L 1070 690" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="995" y="655" width="70" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1030" y="669" class="rel-label">tiene</text>
+
+  <!-- Horario -> Clase -->
+  <path d="M 1290 690 L 1370 690" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="1295" y="655" width="70" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1330" y="669" class="rel-label">se instancia</text>
+
+  <!-- Clase -> Asignacion -->
+  <path d="M 1590 690 L 1670 690" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+  <rect x="1595" y="655" width="70" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1630" y="669" class="rel-label">recibe</text>
+
+  <!-- Asignacion -> Aula -->
+  <path d="M 1790 740 L 1790 1195 L 300 1195" class="rel-line-fisico" marker-end="url(#arrowOrange)"/>
+  <rect x="900" y="1183" width="260" height="20" rx="4" class="rel-label-bg"/>
+  <text x="1030" y="1197" class="rel-label">apunta a un aula compatible del inventario</text>
+
+  <!-- Comision -> Forecast -->
+  <path d="M 770 730 L 270 920" class="rel-line-oper" stroke-dasharray="4,4"/>
+  <rect x="345" y="820" width="200" height="20" rx="4" class="rel-label-bg"/>
+  <text x="445" y="834" class="rel-label">demanda estimada de asientos</text>
+
+  <!-- Forecast <- Inscriptos historicos -->
+  <path d="M 450 955 L 390 955" class="rel-line-oper" marker-end="url(#arrowPurple)"/>
+
+  <!-- Plan de Cursada -> Validaciones -->
+  <path d="M 570 740 L 700 920" class="rel-line-oper" stroke-dasharray="4,4"/>
+  <rect x="590" y="820" width="100" height="20" rx="4" class="rel-label-bg"/>
+  <text x="640" y="834" class="rel-label">se valida</text>
+
+  <!-- Aula -> Franja -->
+  <path d="M 300 1195 L 340 1195" class="rel-line-fisico" marker-end="url(#arrowOrange)"/>
+
+  <!-- Aula <-> Compatibilidad <-> Materia -->
+  <path d="M 540 1195 L 580 1195" class="rel-line-fisico" marker-end="url(#arrowOrange)"/>
+  <path d="M 670 1130 L 200 290" class="rel-line-fisico" stroke-dasharray="4,4" marker-end="url(#arrowOrange)"/>
+  <rect x="240" y="670" width="230" height="20" rx="4" class="rel-label-bg"/>
+  <text x="355" y="684" class="rel-label" opacity="0"></text>
+
+  <!-- =========================================================
+       LEYENDA
+       ========================================================= -->
+  <g transform="translate(1220 1050)">
+    <rect x="0" y="0" width="1130" height="260" rx="10" fill="#FAFAFA" stroke="#999" stroke-width="1"/>
+    <text x="30" y="30" class="legend-title">Como leer este mapa</text>
+
+    <!-- Color codigo -->
+    <rect x="30" y="55" width="24" height="16" class="entity-catalog-key"/>
+    <text x="65" y="68" class="legend-text"><tspan font-weight="bold">Catalogo Maestro</tspan> — datos base (materias, carreras, tipos): cambian poco.</text>
+
+    <rect x="30" y="80" width="24" height="16" class="entity-plan-key"/>
+    <text x="65" y="93" class="legend-text"><tspan font-weight="bold">Estructura Curricular</tspan> — plan de estudios y su versionado en el tiempo.</text>
+
+    <rect x="30" y="105" width="24" height="16" class="entity-ciclo-key"/>
+    <text x="65" y="118" class="legend-text"><tspan font-weight="bold">Ciclo Lectivo</tspan> — que materias se dictan este cuatri y bajo que modalidad.</text>
+
+    <rect x="30" y="130" width="24" height="16" class="entity-oper-key"/>
+    <text x="65" y="143" class="legend-text"><tspan font-weight="bold">Planificacion Operativa</tspan> — cronograma, plan de cursada, comisiones, clases.</text>
+
+    <rect x="30" y="155" width="24" height="16" class="entity-fisico"/>
+    <text x="65" y="168" class="legend-text"><tspan font-weight="bold">Recursos Fisicos</tspan> — inventario de aulas y su capacidad/tipo/sede.</text>
+
+    <!-- Convenciones -->
+    <text x="30" y="200" class="legend-title">Convenciones</text>
+    <line x1="30" y1="215" x2="70" y2="215" stroke="#444" stroke-width="1.6"/>
+    <text x="80" y="219" class="legend-text">Relacion estructural entre entidades.</text>
+    <line x1="30" y1="238" x2="70" y2="238" stroke="#444" stroke-width="1.6" stroke-dasharray="4,4"/>
+    <text x="80" y="242" class="legend-text">Referencia debil / dependencia opcional o derivada.</text>
+
+    <text x="600" y="219" class="legend-text"><tspan font-weight="bold">Cajas con borde grueso</tspan>: entidades pilar del modelo.</text>
+    <text x="600" y="242" class="legend-text"><tspan font-weight="bold">Etiquetas en cursiva</tspan>: describen el rol semantico de la relacion.</text>
+  </g>
+
+</svg>
