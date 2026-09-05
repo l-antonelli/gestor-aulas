@@ -119,6 +119,11 @@ En orden de prioridad:
   10× más que subutilización, pero si no hay aula grande
   disponible en la franja puede pasar. Ampliar aulas o partir la
   comisión en más grupos.
+- **¿Cómo veo si el resultado es bueno globalmente?** Más
+  adelante va a haber un panel de "Calidad del resultado" con
+  contadores de horarios sobre/subocupados, sobrecupo total en
+  asientos, aulas usadas vs ociosas, y el peor caso identificado.
+  Ver §8 para el detalle del catálogo.
 - **Cambié el forecast y no veo diferencia.** Los cambios de
   forecast recién impactan al correr de nuevo el asignador desde
   el panel de Aulas del plan.
@@ -588,6 +593,7 @@ infactible".
 | 3.5 | Pendiente | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con al menos 4 opciones: **demanda dura por sede** (horarios sin alternativa, cota de infactibilidad), **demanda preferida por sede** (actual, corregida en Fase 2), **demanda máxima por sede** (cota superior: todos los que podrían caer ahí), **demanda total sin sede** (cota inferior de factibilidad global). Objetivo: analizar factibilidad **antes** de correr el LP y ver cuánto margen hay entre lo duro y lo preferido. |
 | 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
 | 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
+| 6 | Pendiente | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Panel "Calidad del resultado" al tope del Detalle del Plan con 4 familias de métricas: (A) cobertura global, (B) sobre/sub ocupación con totales y peor caso, (C) distribución de aulas (usadas/ociosas, carga por sede), (D) estabilidad del LP (objetivo, tiempo, ediciones manuales, sedes distintas por comisión). |
 
 La función pura `sede_preferida_para_horario` (Fase 2) queda
 disponible en `asignacion_aulas_helpers` y va a ser reutilizada
@@ -629,3 +635,57 @@ La lectura conjunta es la que da información accionable:
   puede recibir más carga si otra sede se satura.
 - `total_sin_sede > sum(oferta)`: infactibilidad global por
   cantidad simultánea. Repartir sedes no lo salva.
+
+### Catálogo de métricas de calidad (Fase 6)
+
+Objetivo: que el operador pueda evaluar a simple vista la calidad
+de una corrida del LP y compararla contra corridas previas o
+contra otras configuraciones. Todo se computa a partir de la
+solución vigente (`HorarioDB.aula_id` + forecast).
+
+**A. Cobertura global.**
+
+- Horarios asignados / total (¿el LP resolvió todo?).
+- Horarios sin aula (falla dura).
+- Horarios asignados a sede **preferida** vs a sede **alternativa**
+  admisible (requiere Fase 3 estable).
+- Porcentaje de comisiones "completas" (todos sus horarios
+  asignados).
+
+**B. Sobre y sub ocupación.**
+
+- Cantidad de horarios sobreocupados (`cap < insc`) y
+  subocupados (`cap > insc · (1 + tol_under)`).
+- **Sobrecupo total**: `Σ max(0, insc - cap)` en asientos
+  faltantes. Traduce "cuántos alumnos no entran" globalmente.
+- **Subutilización total**: `Σ max(0, cap - insc)` en asientos
+  ociosos.
+- Ratio de ocupación (`insc / cap`): promedio, mediana (P50) y
+  P90 sobre los horarios asignados.
+- Peor caso: horario más sobrecargado y horario más ocioso, con
+  nombre visible (materia, comisión, día/hora).
+
+**C. Distribución de aulas.**
+
+- Aulas usadas / total del catálogo (por plan).
+- Aulas nunca usadas (huérfanas del plan).
+- Aulas con carga alta (≥ umbral configurable de franjas
+  ocupadas — por default 70 %).
+- Concentración de ocupación por sede: qué % de la carga total
+  cae en cada sede.
+
+**D. Estabilidad del LP.**
+
+- Valor de la función objetivo de la última corrida.
+- Tiempo de resolución del solver.
+- Ediciones manuales respetadas / totales.
+- Sedes distintas por comisión y día (soporta el análisis de la
+  restricción de sedes consecutivas de Fase 4: cuántas comisiones
+  saltan de sede el mismo día).
+
+Muchas de estas métricas ya se computan parcialmente hoy en
+`_build_details_json` y en el panel de asignación
+(`asignacion_resultado_ui.py`), pero están dispersas y no se ven a
+simple vista. La Fase 6 las consolida en un componente único al
+tope del Detalle del Plan, con tarjetas grandes para las métricas
+clave y expansores para el detalle.
