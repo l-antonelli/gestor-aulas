@@ -26,6 +26,119 @@ Referencias primarias:
 
 ---
 
+## Qué tiene en cuenta el asignador (versión en criollo)
+
+Esta sección es una guía rápida para el operador o para quien
+lea el informe: qué mira el sistema al elegir aulas, qué datos
+alimentan cada decisión y dónde tocar cuando algo no da como
+uno esperaba. Los detalles técnicos y el detrás de escena
+matemático están en las secciones siguientes.
+
+### Qué elige el asignador
+
+Para cada **horario semanal** (materia + comisión + día + rango
+horario) del plan, el asignador decide **qué aula ocupa**.
+Después esa asignación se propaga a las clases concretas del
+cuatrimestre.
+
+### Qué mira para decidir
+
+En orden de prioridad:
+
+1. **Compatibilidad del tipo de aula con el tipo de clase.** Si
+   la clase es teórica, sólo la puede meter en aulas teóricas o
+   anfiteatros. Si es de laboratorio, sólo en aulas de laboratorio
+   listadas como compatibles para esa materia.
+2. **Sedes admisibles.** Cada materia puede dictarse solamente en
+   ciertas sedes: las habilitadas para la carrera si la materia es
+   específica, la sede default para comunes si la materia es
+   compartida. Excepción: si un laboratorio compatible con la
+   materia vive físicamente en otra sede, esa sede también entra
+   como admisible (para poder usar ese lab).
+3. **No superponer clases en la misma aula.** Dos horarios que se
+   solapan en el tiempo no pueden compartir aula.
+4. **Respetar la carga teoría/laboratorio declarada por la
+   materia.** Si la materia tiene por ejemplo 3h de teoría y 6h
+   de lab, la suma de duraciones de cada tipo tiene que dar
+   exactamente eso a nivel de la comisión.
+5. **Ediciones manuales del operador.** Si en la UI se fijó a
+   mano el aula de un horario (marcada como "asignada
+   manualmente"), el asignador respeta esa decisión y no la
+   pisa (salvo que se apague ese toggle).
+6. **Ajuste de capacidad al forecast de inscriptos.** Entre las
+   aulas que cumplen todo lo anterior, prefiere las que entran
+   con margen razonable a la cantidad esperada de inscriptos.
+   Penaliza fuerte quedarse corto (aula chica que rebalsa) y
+   penaliza suave quedarse con mucho sobrante.
+
+### Qué **no** mira todavía
+
+- **No** tiene en cuenta desplazamientos entre sedes a lo largo
+  del día de una misma comisión o carrera+año. Puede mandar dos
+  clases contiguas a sedes distintas sin darse cuenta.
+- **No** tiene noción de "sede preferida" versus "sede tolerable":
+  cualquier sede admisible es igual de válida para el asignador
+  actual.
+- **No** puede reservar o bloquear aulas puntualmente (por
+  mantenimiento, evento externo, etc.).
+- **No** considera preferencias de docentes ni de estudiantes:
+  los horarios los toma como fijos del cronograma.
+
+### Datos que alimentan cada decisión
+
+| Decisión | Datos que la controlan | Dónde se editan |
+|---|---|---|
+| Qué tipo de aula acepta cada clase. | `tipo_clase` del horario, `tipo` del aula. | Cronogramas → Editar horario · Aulas → Ver detalle. |
+| Qué laboratorios sirven para una materia. | Lista `MateriaLaboratorioDB` (relación materia ↔ aula). | Aulas → Ver detalle de un laboratorio → "Materias que usan este laboratorio". |
+| Sedes habilitadas para una carrera. | Multiselect en Carreras. | Carreras → carrera → "Sedes habilitadas". |
+| Sede por defecto para materias comunes. | Marca `es_default_comunes` en la sede. | Aulas → Sedes → "Sede por defecto para materias comunes". |
+| Excepción: comisión pensada para una carrera en particular. | Campo `carrera_asignada` de la comisión. | Cronogramas / Planes → editar comisión. |
+| Cuántos inscriptos esperar. | Serie histórica + método de forecast por plan. | Inscriptos (para cargar datos) · Planes → Detalle (para ajustar el método). |
+| Horas de teoría / laboratorio de la materia. | Campos `horas_teoria`, `horas_laboratorio`. | Materias → Ficha de la materia. |
+| Respetar un aula fijada a mano. | Flag `aula_asignada_manualmente` del horario. | Panel de asignación → editar aula → "Mantener manual". |
+
+### Casos típicos y qué revisar
+
+- **El asignador no encuentra solución (infactible).** Revisar en
+  orden: (1) horarios sin ninguna aula compatible (falta lab
+  compatible, tipo desalineado, o R10 dejó cero sedes admisibles);
+  (2) franjas con más clases simultáneas que aulas del tipo
+  requerido; (3) partición teoría/lab que no cierra con las horas
+  declaradas por la materia. El panel de validación del plan
+  reporta las tres.
+- **Una clase queda en una sede que no es la esperada.**
+  Habitualmente es porque la sede "esperada" no tenía aula del
+  tipo o la capacidad necesaria en esa franja, y el asignador
+  encontró una alternativa admisible en otra sede. Revisar las
+  sedes habilitadas de la carrera, la capacidad del aula esperada
+  y la carga simultánea en esa franja.
+- **Un aula queda subutilizada.** El asignador tolera hasta 20 %
+  de asientos vacíos sin penalidad. Si querés apretar más las
+  aulas, se puede bajar `tol_under` en la configuración del LP.
+- **Un aula queda con sobrecupo.** El sistema penaliza sobrecupo
+  10× más que subutilización, pero si no hay aula grande
+  disponible en la franja puede pasar. Ampliar aulas o partir la
+  comisión en más grupos.
+- **Cambié el forecast y no veo diferencia.** Los cambios de
+  forecast recién impactan al correr de nuevo el asignador desde
+  el panel de Aulas del plan.
+
+### Diferencia entre "saturación" y "ocupación" en los mapas
+
+- **Saturación**: cuenta la **demanda proyectada** (horarios que
+  la sede podría recibir según las reglas). Es una cota de
+  presión sobre la sede antes de resolver.
+- **Ocupación**: cuenta las **aulas efectivamente usadas** por el
+  asignador en el estado actual del plan.
+
+Cuando saturación > ocupación en una celda, típicamente indica
+que había demanda que la sede podía absorber pero el asignador
+la mandó a otra sede admisible (por capacidad, por labs
+compatibles ubicados afuera, etc.). El detalle de esos casos es
+lo que motiva el fix de "sede preferida" descripto más abajo.
+
+---
+
 ## 1. Variables de decisión
 
 | Variable | Tipo | Dominio | Semántica |
