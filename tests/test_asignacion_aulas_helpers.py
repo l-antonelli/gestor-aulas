@@ -746,6 +746,166 @@ class TestHeatmapPorSede:
         )
         slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
-        # Demanda = 1 en ambas sedes.
+        # Demanda = 1 en ambas sedes (fallback cuando no hay sede
+        # preferida ni restricción — típicamente materias comunes sin
+        # sede default configurada).
         assert out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
         assert out["data"]["S2"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
+
+    def test_teorica_no_duplica_conteo_si_lab_esta_en_otra_sede(self):
+        # Caso A5: materia cuya carrera vive en S1 pero cuyos labs
+        # compatibles están físicamente en S2. La teórica debe contarse
+        # UNA sola vez, en la sede del lab (S2). Antes del fix se
+        # contaba en ambas.
+        h_teo = _h("h1", "Lunes", 8, 10, materia="MLAB", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h_teo], aulas=aulas,
+            materia_lab_map={"MLAB": {"L_S2"}},
+            sedes_admisibles_por_materia={"MLAB": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:15")
+        dia_idx = out["dias"].index("Lunes")
+        s1_teo = out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx]
+        s2_teo = out["data"]["S2"]["teorica"]["demanda"][slot_idx][dia_idx]
+        # La teórica se contabiliza sólo en S2 (donde vive el lab):
+        # coherente con "las teóricas deberían darse donde está el lab".
+        assert s2_teo == 1
+        assert s1_teo == 0
+
+    def test_teorica_va_a_sede_de_carrera_cuando_no_hay_lab(self):
+        # Sin labs compatibles: la sede preferida cae en el set de
+        # sedes admisibles por carrera.
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={"M1": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:15")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
+        assert out["data"]["S2"]["teorica"]["demanda"][slot_idx][dia_idx] == 0
+
+    def test_lab_no_cambia_su_conteo_por_el_fix_de_teoricas(self):
+        # Los labs se cuentan sólo en la sede donde vive el lab
+        # compatible, con o sin fix. Nos aseguramos de no haber roto
+        # ese conteo.
+        h_lab = _h("h1", "Lunes", 8, 10, materia="MLAB", tipo="laboratorio")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h_lab], aulas=aulas,
+            materia_lab_map={"MLAB": {"L_S2"}},
+            sedes_admisibles_por_materia={"MLAB": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:15")
+        dia_idx = out["dias"].index("Lunes")
+        # El lab se cuenta sólo en la sede que tiene un aula
+        # compatible (S2), como siempre.
+        assert out["data"]["S2"]["laboratorio"]["demanda"][slot_idx][dia_idx] == 1
+        assert out["data"]["S1"]["laboratorio"]["demanda"][slot_idx][dia_idx] == 0
+
+    def test_materia_con_lab_en_misma_sede_que_carrera(self):
+        # Caso feliz: la carrera y el lab conviven en la misma sede.
+        # La teórica se cuenta ahí, como es de esperar.
+        h_teo = _h("h1", "Lunes", 8, 10, materia="MOK", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h_teo], aulas=aulas,
+            materia_lab_map={"MOK": {"L_S1"}},
+            sedes_admisibles_por_materia={"MOK": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        slot_idx = out["slots"].index("08:00-08:15")
+        dia_idx = out["dias"].index("Lunes")
+        assert out["data"]["S1"]["teorica"]["demanda"][slot_idx][dia_idx] == 1
+        assert out["data"]["S2"]["teorica"]["demanda"][slot_idx][dia_idx] == 0
+
+
+class TestSedePreferidaParaHorario:
+    """Tests para `sede_preferida_para_horario` (regla usada en el fix)."""
+
+    def _setup(self):
+        aula_sede_id = {
+            "aula_S1": "S1", "aula_S2": "S2",
+            "lab_S1": "S1", "lab_S2": "S2",
+        }
+        return aula_sede_id
+
+    def test_sin_lab_devuelve_primera_sede_admisible(self):
+        from src.services.asignacion_aulas_helpers import (
+            sede_preferida_para_horario,
+        )
+        aula_sede_id = self._setup()
+        sede = sede_preferida_para_horario(
+            materia_codigo="M1",
+            materia_lab_map={},
+            sedes_admisibles_por_materia={"M1": {"S2", "S1"}},
+            aula_sede_id=aula_sede_id,
+        )
+        # Determinístico por sede_id: S1 antes que S2.
+        assert sede == "S1"
+
+    def test_con_lab_en_una_sede_devuelve_esa(self):
+        from src.services.asignacion_aulas_helpers import (
+            sede_preferida_para_horario,
+        )
+        aula_sede_id = self._setup()
+        sede = sede_preferida_para_horario(
+            materia_codigo="MLAB",
+            materia_lab_map={"MLAB": {"lab_S2"}},
+            sedes_admisibles_por_materia={"MLAB": {"S1"}},  # carrera vive en S1
+            aula_sede_id=aula_sede_id,
+        )
+        # Lab manda: prefiere S2 aunque la carrera esté en S1.
+        assert sede == "S2"
+
+    def test_lab_en_varias_sedes_prefiere_interseccion_con_carrera(self):
+        from src.services.asignacion_aulas_helpers import (
+            sede_preferida_para_horario,
+        )
+        aula_sede_id = self._setup()
+        sede = sede_preferida_para_horario(
+            materia_codigo="MLAB",
+            materia_lab_map={"MLAB": {"lab_S1", "lab_S2"}},
+            sedes_admisibles_por_materia={"MLAB": {"S2"}},
+            aula_sede_id=aula_sede_id,
+        )
+        # Ambas sedes tienen lab; la carrera restringe a S2 → gana S2.
+        assert sede == "S2"
+
+    def test_lab_en_varias_sedes_sin_interseccion_orden_determinista(self):
+        from src.services.asignacion_aulas_helpers import (
+            sede_preferida_para_horario,
+        )
+        aula_sede_id = self._setup()
+        sede = sede_preferida_para_horario(
+            materia_codigo="MLAB",
+            materia_lab_map={"MLAB": {"lab_S1", "lab_S2"}},
+            # Restricción por carrera apunta a una sede sin lab: no
+            # hay intersección, se elige por orden.
+            sedes_admisibles_por_materia={"MLAB": {"S3"}},
+            aula_sede_id=aula_sede_id,
+        )
+        assert sede == "S1"
+
+    def test_sin_restriccion_ni_lab_devuelve_none(self):
+        from src.services.asignacion_aulas_helpers import (
+            sede_preferida_para_horario,
+        )
+        aula_sede_id = self._setup()
+        sede = sede_preferida_para_horario(
+            materia_codigo="MCOMUN",
+            materia_lab_map={},
+            sedes_admisibles_por_materia={"MCOMUN": None},
+            aula_sede_id=aula_sede_id,
+        )
+        # Sin sede preferida: caller decide (heatmap contará en todas).
+        assert sede is None

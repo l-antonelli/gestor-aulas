@@ -895,6 +895,75 @@ def compute_heatmap_demanda_oferta(
 # Impacto de R10 (restriccion de sede por carrera)
 # =============================================================================
 
+def sede_preferida_para_horario(
+    materia_codigo: str,
+    materia_lab_map: dict[str, set[str]],
+    sedes_admisibles_por_materia: dict[str, set[str] | None],
+    aula_sede_id: dict[str, str],
+) -> str | None:
+    """Sede "preferida" donde una teórica de esta materia debería dictarse.
+
+    Reglas (en orden):
+
+    1. **Si la materia tiene labs compatibles**: la sede donde vive el(los)
+       lab(s). Coherente con "las teóricas deberían darse donde está el
+       lab" para minimizar desplazamientos entre teórica y práctica.
+       - Si todos los labs están en la misma sede, esa es la preferida.
+       - Si hay labs en varias sedes y alguna de esas coincide con las
+         sedes admisibles por carrera de la materia, se prefiere la
+         intersección (compromiso lab + carrera).
+       - Si no hay intersección, se elige la sede del lab de menor id
+         (determinístico).
+    2. **Si no tiene labs pero sí sedes admisibles restringidas**: la
+       primera sede admisible (orden alfabético por id — determinístico).
+    3. **Si no tiene labs y no hay restricción de sede** (materia común
+       sin default para comunes, o cualquier configuración que devuelva
+       ``None``): retorna ``None``. El caller decide cómo contar (típico:
+       contar en todas las sedes).
+
+    Esta función se usa para el mapa de saturación (para no doblar-contar
+    la teórica en múltiples sedes) y potencialmente para la Fase 3
+    (preferencia blanda en el LP).
+
+    Args:
+        materia_codigo: código de la materia del horario.
+        materia_lab_map: por materia, set de aula_id de labs compatibles.
+        sedes_admisibles_por_materia: por materia, set de sede_ids
+            admisibles (o ``None`` para "sin restricción").
+        aula_sede_id: mapping aula_id → sede_id.
+
+    Returns:
+        sede_id preferido o ``None`` si la materia no tiene lab ni
+        restricción de sede.
+    """
+    labs = materia_lab_map.get(materia_codigo) or set()
+    sedes_de_labs: set[str] = set()
+    for a_id in labs:
+        sede = aula_sede_id.get(a_id)
+        if sede is not None:
+            sedes_de_labs.add(sede)
+
+    if sedes_de_labs:
+        if len(sedes_de_labs) == 1:
+            return next(iter(sedes_de_labs))
+        # Varios labs en sedes distintas: preferir la intersección con
+        # las sedes admisibles por carrera.
+        admis = sedes_admisibles_por_materia.get(materia_codigo)
+        if admis is not None:
+            interseccion = sedes_de_labs & admis
+            if interseccion:
+                return sorted(interseccion)[0]
+        # Sin intersección o materia sin restricción de sede: elegimos
+        # determinísticamente por orden de sede_id.
+        return sorted(sedes_de_labs)[0]
+
+    # Sin labs: caemos en el set de sedes admisibles por carrera.
+    admis = sedes_admisibles_por_materia.get(materia_codigo)
+    if admis is None or not admis:
+        return None
+    return sorted(admis)[0]
+
+
 def compute_heatmap_por_sede(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],
@@ -1025,41 +1094,68 @@ def compute_heatmap_por_sede(
             "peor": _empty_peor(),
         }
 
+    # Pre-cómputo de sede preferida por materia (para no doblar-contar
+    # las teóricas cuando la materia tiene lab en una sede distinta a
+    # la de su carrera). Ver `sede_preferida_para_horario` para las
+    # reglas. Los labs se cuentan aparte (siempre en la sede donde
+    # vive el lab compatible).
+    materias_unicas = {h.materia_codigo for h in horarios}
+    sede_pref_por_materia: dict[str, str | None] = {
+        mc: sede_preferida_para_horario(
+            mc, materia_lab_map, sedes_admisibles_por_materia, aula_sede_id,
+        )
+        for mc in materias_unicas
+    }
+
     # Para cada celda × sede, agrupar horarios por categoría.
     # Estructura: por_celda_sede[(si,di,sede)][cat] = {"horarios":[ids],
     # "materias":set}
     por_celda_sede: dict[tuple[int, int, str], dict[str, dict]] = {}
     for h in horarios:
         admis = sedes_admisibles_por_materia.get(h.materia_codigo)
-        # Lab compatible: su sede siempre cuenta como admisible.
         labs = materia_lab_map.get(h.materia_codigo, set())
+        sede_pref = sede_pref_por_materia.get(h.materia_codigo)
+        # Sedes donde la materia tiene lab compatible (para categoría
+        # laboratorio). Se calcula una sola vez fuera del loop de celdas.
+        sedes_con_lab_de_materia = {
+            aula_sede_id.get(a_id) for a_id in labs
+            if aula_sede_id.get(a_id) is not None
+        }
         for si, di in _celdas_de_horario(h):
             for sede in sedes_con_aulas:
-                # ¿Esta sede es admisible para este horario?
-                tiene_lab_en_sede = any(
-                    aula_sede_id.get(a_id) == sede for a_id in labs
-                )
-                if admis is None:
-                    sede_admisible = True
-                else:
-                    sede_admisible = (sede in admis) or tiene_lab_en_sede
-                if not sede_admisible:
-                    continue
                 # Categoría según tipo del horario.
-                if h.tipo_clase == "teorica":
-                    cat = "teorica"
-                elif h.tipo_clase == "laboratorio":
-                    # Sólo cuenta si la sede tiene labs compatibles
-                    # con esta materia. Si no, no aporta a esta sede.
-                    if not tiene_lab_en_sede:
+                if h.tipo_clase == "laboratorio":
+                    # Los labs se cuentan sólo en las sedes que tienen
+                    # laboratorio compatible con esta materia. No aplica
+                    # sede preferida: el lab físicamente se dicta donde
+                    # está el aula compatible.
+                    if sede not in sedes_con_lab_de_materia:
                         continue
                     cat = "laboratorio"
                 else:
-                    # tipo_clase=None: lo contamos como teorica
-                    # (decisión del LP es lo más probable). Si la
-                    # materia tiene lab y sede tiene lab compatible,
-                    # también podría ir a lab — caso optimista
-                    # ignorado por simplicidad.
+                    # Teórica (o tipo_clase=None, que optimísticamente
+                    # se cuenta como teórica). Se cuenta UNA sola vez,
+                    # en la sede preferida de la materia:
+                    # - Si hay sede preferida y coincide con `sede`:
+                    #   contar acá.
+                    # - Si no hay sede preferida (materia común sin
+                    #   default): se cuenta en TODAS las sedes admisibles
+                    #   como fallback (mismo comportamiento que antes,
+                    #   sólo aplica a este caso residual).
+                    if sede_pref is not None:
+                        if sede != sede_pref:
+                            continue
+                    else:
+                        # Fallback: contar en todas las sedes admisibles.
+                        tiene_lab_en_sede = sede in sedes_con_lab_de_materia
+                        if admis is None:
+                            sede_admisible = True
+                        else:
+                            sede_admisible = (
+                                sede in admis
+                            ) or tiene_lab_en_sede
+                        if not sede_admisible:
+                            continue
                     cat = "teorica"
                 key = (si, di, sede)
                 grupo = por_celda_sede.setdefault(key, {}).setdefault(

@@ -131,11 +131,13 @@ En orden de prioridad:
 - **Ocupación**: cuenta las **aulas efectivamente usadas** por el
   asignador en el estado actual del plan.
 
-Cuando saturación > ocupación en una celda, típicamente indica
-que había demanda que la sede podía absorber pero el asignador
-la mandó a otra sede admisible (por capacidad, por labs
-compatibles ubicados afuera, etc.). El detalle de esos casos es
-lo que motiva el fix de "sede preferida" descripto más abajo.
+Cuando saturación > ocupación en una celda, indica que había
+demanda que la sede podía absorber pero el asignador la mandó a
+otra sede admisible (típicamente por capacidad o por combinación
+de restricciones). Cada teórica se cuenta una sola vez, en su
+**sede preferida** (la del lab compatible si tiene lab; si no, la
+sede de la carrera). Ya no aparece inflada por conectividad de
+laboratorios en sedes distintas.
 
 ---
 
@@ -434,7 +436,11 @@ Parámetros de `LPConfig` (`asignacion_aulas_service.py:66-84`):
 
 ## 6. Semántica de "sede admisible" y el bug de doble conteo
 
-**Bug detectado (foco de Fase 2).**
+> **Estado (2026-09-05)**: el bug descripto en esta sección está
+> corregido. Ver "Fix implementado" al final. Se conserva el
+> planteo original porque describe el problema y el razonamiento
+> que llevó a la solución (base del criterio de "sede preferida"
+> que se reutiliza en Fases 3 y 4).
 
 `compute_heatmap_por_sede`
 (`asignacion_aulas_helpers.py:898-1137`) cuenta la demanda teórica
@@ -493,6 +499,50 @@ teórica sigue "prefiriendo" la del lab: eso hace que el mapa de
 saturación refleje la realidad esperada (donde el solver la va a
 querer poner) sin inflar sedes por conectividad de lab.
 
+### Fix implementado (Fase 2, 2026-09-05)
+
+Se agregó la función pura `sede_preferida_para_horario` en
+`asignacion_aulas_helpers.py` con las reglas descriptas arriba, y
+se modificó `compute_heatmap_por_sede` para consumirla:
+
+- La **categoría teórica** se contabiliza una sola vez, en la sede
+  preferida devuelta por la función. Nunca se suma en más de una
+  sede.
+- La **categoría laboratorio** se sigue contabilizando en la(s)
+  sede(s) donde vive un aula de lab compatible (sin cambio). Nunca
+  hubo doble conteo acá — el lab físicamente se dicta donde está
+  el aula.
+- **Fallback**: si la materia no tiene ni labs compatibles ni set
+  de sedes admisibles restringido (caso común sin default para
+  comunes), la teórica se cuenta en todas las sedes admisibles.
+  Es el mismo comportamiento previo, aplicable sólo a ese caso
+  residual.
+
+Verificación empírica sobre el caso A5 (Lunes 08:00-08:15,
+Plan v0, ciclo 2026-1C):
+
+| Sede | Teórica antes | Teórica ahora |
+|---|---|---|
+| Pellegrini | 14/22 | 14/22 |
+| Siberia | 4/20 | 3/20 |
+
+A5 ahora se contabiliza **sólo en Pellegrini** (donde viven los
+labs LAB-004 y LAB-005). La divergencia visible entre saturación
+14 y ocupación 13 en Pellegrini deja de ser doble conteo y pasa a
+ser **una divergencia real y accionable**: el LP mandó A5 a
+Siberia (IMAE-Aula-13) aunque su sede preferida era Pellegrini,
+típicamente por capacidad o combinación con otras restricciones.
+Esa clase de casos es lo que las Fases 3 y 4 van a capturar y
+señalizar.
+
+Tests agregados en `tests/test_asignacion_aulas_helpers.py`:
+
+- `TestHeatmapPorSede.test_teorica_no_duplica_conteo_si_lab_esta_en_otra_sede`
+- `TestHeatmapPorSede.test_teorica_va_a_sede_de_carrera_cuando_no_hay_lab`
+- `TestHeatmapPorSede.test_lab_no_cambia_su_conteo_por_el_fix_de_teoricas`
+- `TestHeatmapPorSede.test_materia_con_lab_en_misma_sede_que_carrera`
+- `TestSedePreferidaParaHorario.*` (5 tests dedicados a la función pura).
+
 ---
 
 ## 7. Diagnóstico de infactibilidad estructural
@@ -523,15 +573,14 @@ infactible".
 
 ## 8. Puntos abiertos que motivan las próximas fases
 
-| Fase | Problema | Cambio propuesto |
-|---|---|---|
-| 2 | Doble conteo en saturación teórica cuando lab está en otra sede. | Definir sede preferida por materia (lab-first, luego carrera). Contar cada teórica una vez. |
-| 3 | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se descompone: (a) restricción dura de "sedes admisibles" (mismo set actual), (b) penalidad blanda por caer fuera de la sede preferida. |
-| 4 | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
-| 5 | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
+| Fase | Estado | Problema | Cambio |
+|---|---|---|---|
+| 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
+| 3 | Pendiente | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se descompone: (a) restricción dura de "sedes admisibles" (mismo set actual), (b) penalidad blanda por caer fuera de la sede preferida (misma función que ya expuso Fase 2). |
+| 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
+| 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
 
-**Prerrequisito común a Fases 2-4.** Introducir un concepto de
-"sede preferida por horario" (o materia) accesible desde
-`asignacion_aulas_helpers` sin duplicar lógica de resolución. La
-Fase 2 puede exponerlo como función pura y las Fases 3-4 lo
-consumen.
+La función pura `sede_preferida_para_horario` (Fase 2) queda
+disponible en `asignacion_aulas_helpers` y va a ser reutilizada
+por Fases 3 y 4 para calcular la sede preferida por horario sin
+duplicar lógica.
