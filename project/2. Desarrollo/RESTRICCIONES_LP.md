@@ -139,6 +139,14 @@ de restricciones). Cada teórica se cuenta una sola vez, en su
 sede de la carrera). Ya no aparece inflada por conectividad de
 laboratorios en sedes distintas.
 
+Más adelante el mapa de saturación va a soportar varias vistas
+para analizar factibilidad de antemano: **demanda dura** (lo que
+no tiene alternativa de sede — si supera la oferta es
+infactibilidad segura), **demanda preferida** (la actual),
+**demanda máxima** (todo lo que podría caer en la sede) y
+**demanda total sin sede** (cota global). Ver §8 para el detalle
+de cada vista.
+
 ---
 
 ## 1. Variables de decisión
@@ -577,10 +585,47 @@ infactible".
 |---|---|---|---|
 | 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
 | 3 | Pendiente | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se descompone: (a) restricción dura de "sedes admisibles" (mismo set actual), (b) penalidad blanda por caer fuera de la sede preferida (misma función que ya expuso Fase 2). |
+| 3.5 | Pendiente | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con al menos 4 opciones: **demanda dura por sede** (horarios sin alternativa, cota de infactibilidad), **demanda preferida por sede** (actual, corregida en Fase 2), **demanda máxima por sede** (cota superior: todos los que podrían caer ahí), **demanda total sin sede** (cota inferior de factibilidad global). Objetivo: analizar factibilidad **antes** de correr el LP y ver cuánto margen hay entre lo duro y lo preferido. |
 | 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
 | 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
 
 La función pura `sede_preferida_para_horario` (Fase 2) queda
 disponible en `asignacion_aulas_helpers` y va a ser reutilizada
-por Fases 3 y 4 para calcular la sede preferida por horario sin
-duplicar lógica.
+por Fases 3, 3.5 y 4 para calcular la sede preferida por horario
+sin duplicar lógica.
+
+### Anatomía de las 4 vistas del mapa (Fase 3.5)
+
+Cada vista responde una pregunta distinta sobre la factibilidad
+del plan. Los 4 números se computan para la misma celda
+(sede × día × franja × categoría) y el usuario elige cuál mirar.
+
+- **Demanda dura por sede.** Cuenta los horarios cuya única sede
+  admisible es ésta (no tienen alternativa). Si este número
+  supera la oferta de la sede, es **infactibilidad estructural**:
+  el LP no puede resolverlo pase lo que pase.
+- **Demanda preferida por sede.** Cuenta los horarios cuya sede
+  preferida es ésta (regla `sede_preferida_para_horario`). Es la
+  vista que ya existe hoy — refleja el "plan feliz" donde cada
+  materia va a la sede natural.
+- **Demanda máxima por sede.** Cuenta los horarios que podrían
+  caer en esta sede aunque prefieran otra (todo el set de sedes
+  admisibles). Cota superior: si esto es menor que la oferta,
+  hay margen; si es mayor, el LP eligirá desplazar algunos a
+  otras sedes.
+- **Demanda total sin sede.** Ignora la sede: cuenta cuántos
+  horarios simultáneos hay en cada franja del sistema entero.
+  Es la cota inferior global. Si supera la oferta agregada
+  (todas las sedes juntas), el plan no cabe ni redistribuyendo.
+
+La lectura conjunta es la que da información accionable:
+
+- `dura ≤ oferta ≤ preferida`: el plan feliz no cabe pero hay
+  espacio para desplazar. La Fase 3 (preferencia blanda) va a
+  poder resolverlo minimizando desplazamientos.
+- `dura > oferta`: bloqueante. Hay que revisar configuración
+  (sedes habilitadas, labs compatibles) o el catálogo de aulas.
+- `preferida ≤ oferta ≤ máxima`: la sede tiene margen; el LP
+  puede recibir más carga si otra sede se satura.
+- `total_sin_sede > sum(oferta)`: infactibilidad global por
+  cantidad simultánea. Repartir sedes no lo salva.
