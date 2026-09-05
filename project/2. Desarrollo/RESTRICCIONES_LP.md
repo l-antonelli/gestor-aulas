@@ -644,7 +644,7 @@ infactible".
 |---|---|---|---|
 | 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
 | 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
-| 3.5 | Pendiente | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con al menos 4 opciones: **demanda dura por sede** (horarios sin alternativa, cota de infactibilidad), **demanda preferida por sede** (actual, corregida en Fase 2), **demanda máxima por sede** (cota superior: todos los que podrían caer ahí), **demanda total sin sede** (cota inferior de factibilidad global). Objetivo: analizar factibilidad **antes** de correr el LP y ver cuánto margen hay entre lo duro y lo preferido. |
+| 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
 | 4 | Pendiente | No hay restricción de sedes consecutivas. | Nueva restricción parametrizable: margen mínimo entre horarios contiguos de la misma comisión (o carrera+año) que caen en sedes distintas. |
 | 5 | Pendiente | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Panel en `Planes → Configuración` (o pestaña nueva) que liste cada Ri con estado (dura/blanda/off), parámetros editables (dentro de bounds razonables), y link al diagnóstico estructural. |
 | 6 | Pendiente | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Panel "Calidad del resultado" al tope del Detalle del Plan con 4 familias de métricas: (A) cobertura global, (B) sobre/sub ocupación con totales y peor caso, (C) distribución de aulas (usadas/ociosas, carga por sede), (D) estabilidad del LP (objetivo, tiempo, ediciones manuales, sedes distintas por comisión). |
@@ -689,6 +689,26 @@ La lectura conjunta es la que da información accionable:
   puede recibir más carga si otra sede se satura.
 - `total_sin_sede > sum(oferta)`: infactibilidad global por
   cantidad simultánea. Repartir sedes no lo salva.
+
+**Estado (Fase 3.5, hecha 2026-09-05):** las 4 vistas están
+disponibles en la UI del panel de asignación (radio button "Vista"
+arriba del heatmap por sede). El dict retornado por
+`compute_heatmap_por_sede` incluye `demanda_dura`, `demanda_preferida`
+(= alias del campo `demanda` de siempre, backwards-compat),
+`demanda_maxima` y sus respectivos ratios; el heatmap agregado
+"Total sin sede" viene en `heatmap["total"]` computado por
+`compute_heatmap_total_sin_sede`. Ejemplo empírico Plan v0 · Lunes
+08:00-08:15 · teóricas:
+
+| Sede | Dura | Preferida | Máxima | Oferta |
+|---|---|---|---|---|
+| Pellegrini | 13 | 14 | 14 | 22 |
+| Siberia | 3 | 3 | 4 | 20 |
+| **Total sin sede** | — | — | **17** | **42** |
+
+A5 aparece: en la dura de ninguna sede (admite 2), en la preferida
+de Pellegrini (por lab), en la máxima de Pellegrini y Siberia, y en
+el total agregado una sola vez.
 
 ### Catálogo de métricas de calidad (Fase 6)
 

@@ -170,6 +170,7 @@ def _recompute_heatmap_por_sede_live(
         AulaSlot,
         HorarioSlot,
         compute_heatmap_por_sede,
+        compute_heatmap_total_sin_sede,
     )
     from src.services.carrera_sede_service import (
         sedes_admisibles_para_carrera,
@@ -286,6 +287,13 @@ def _recompute_heatmap_por_sede_live(
         heatmap,
         horarios_db=hs_all,
         aulas_db=aulas_db,
+    )
+
+    # Fase 3.5: heatmap agregado sin discriminar sede (cota inferior
+    # de factibilidad global). Se adjunta como key `total` para que
+    # la UI pueda mostrarlo bajo la vista "Total sin sede".
+    heatmap["total"] = compute_heatmap_total_sin_sede(
+        horario_slots, aulas, materia_lab_map,
     )
     return heatmap
 
@@ -930,6 +938,154 @@ def _render_aulas_libres_por_franja(
         )
 
 
+def _render_heatmap_total_sin_sede(heatmap_sede: dict, key_ns: str) -> None:
+    """Renderiza la vista **Total sin sede** de Fase 3.5.
+
+    Es una cota inferior de factibilidad global: cuenta cuántos
+    horarios simultáneos hay en cada franja (por tipo), ignorando en
+    qué sede podrían caer. Si el total supera la oferta agregada, el
+    plan no cabe ni redistribuyendo entre sedes.
+
+    Espera que `heatmap_sede` incluya la key `total` con el resultado
+    de `compute_heatmap_total_sin_sede` (adjuntada por
+    `_recompute_heatmap_por_sede_live`).
+    """
+    import altair as alt
+    import pandas as pd
+
+    total = heatmap_sede.get("total")
+    if not total:
+        st.info(
+            "No hay datos agregados disponibles para esta vista. "
+            "Volvé a correr el asignador para regenerar el heatmap."
+        )
+        return
+
+    dias = total["dias"]
+    slots = total["slots"]
+    data_all = total["data"]
+    oferta_total = total.get("oferta_total", {})
+
+    st.caption(
+        "Suma de horarios simultáneos **sin discriminar sede**. La "
+        "oferta es el catálogo agregado (teóricas: todas las aulas "
+        "teóricas + anfiteatros del sistema; laboratorios: el mayor "
+        "pool disponible para las materias con lab). Si el ratio "
+        "supera 1, el plan tiene infactibilidad global — repartir "
+        "sedes no lo salva."
+    )
+
+    cat_label = {
+        "peor": "Peor caso (entre teóricas y laboratorios)",
+        "teorica": "Sólo aulas teóricas / anfiteatros",
+        "laboratorio": "Sólo aulas laboratorio",
+    }
+    cat_sel = st.radio(
+        "Categoría",
+        options=["peor", "teorica", "laboratorio"],
+        format_func=lambda c: cat_label[c],
+        horizontal=True,
+        key=f"{key_ns}_heat_total_cat",
+    )
+
+    cat_data = data_all.get(cat_sel, {})
+    if not cat_data:
+        st.info("Sin datos para la categoría seleccionada.")
+        return
+
+    demanda = cat_data["demanda"]
+    oferta = cat_data["oferta"]
+    ratio = cat_data["ratio"]
+    n_slots = len(slots)
+    n_dias = len(dias)
+
+    color_scale = alt.Scale(
+        domain=["vacío", "OK (≤80%)", "ajustado (80–100%)", "saturado (>100%)"],
+        range=["#1e1e1e", "#2e7d32", "#f9a825", "#c62828"],
+    )
+
+    def _bucket(r: float) -> str:
+        if r <= 0:
+            return "vacío"
+        if r <= 0.8:
+            return "OK (≤80%)"
+        if r <= 1.0:
+            return "ajustado (80–100%)"
+        return "saturado (>100%)"
+
+    # Recorte de filas extremas vacías (idéntico al heatmap por sede).
+    row_sums = [sum(ratio[i]) for i in range(n_slots)]
+    nz = [i for i, s in enumerate(row_sums) if s > 0]
+    if not nz:
+        st.info("Sin demanda registrada para esta categoría.")
+        return
+    i0, i1 = nz[0], nz[-1]
+
+    long_rows = []
+    for si in range(i0, i1 + 1):
+        for di in range(n_dias):
+            d = int(demanda[si][di])
+            o = int(oferta[si][di])
+            r_ = float(ratio[si][di])
+            long_rows.append({
+                "slot": slots[si],
+                "dia": dias[di],
+                "demanda": d,
+                "oferta": o,
+                "ratio": r_,
+                "bucket": _bucket(r_),
+                "etiqueta": f"{d}/{o}" if d > 0 else "",
+            })
+    df_long = pd.DataFrame(long_rows)
+    slots_v = slots[i0:i1 + 1]
+
+    tooltips = [
+        alt.Tooltip("dia:N", title="Día"),
+        alt.Tooltip("slot:N", title="Franja"),
+        alt.Tooltip("demanda:Q", title="Horarios simultáneos"),
+        alt.Tooltip("oferta:Q", title="Oferta agregada"),
+        alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+    ]
+
+    n_teo_tot = oferta_total.get("teorica", 0)
+    n_lab_tot = oferta_total.get("laboratorio", 0)
+    st.markdown(
+        f"**🌐 Total sin discriminar sede** · {n_teo_tot} aula(s) "
+        f"teórica(s)+anfiteatro(s) · pool máx. de lab: {n_lab_tot}"
+    )
+
+    heatmap = (
+        alt.Chart(df_long)
+        .mark_rect(stroke="#2a2a2a", strokeWidth=0.5)
+        .encode(
+            x=alt.X(
+                "dia:N", title=None, sort=dias,
+                axis=alt.Axis(
+                    orient="top", labelAngle=0, labelFontSize=11,
+                ),
+            ),
+            y=alt.Y(
+                "slot:N", title=None, sort=slots_v,
+                axis=alt.Axis(labelFontSize=10),
+            ),
+            color=alt.Color(
+                "bucket:N", scale=color_scale, legend=alt.Legend(title="Saturación global"),
+            ),
+            tooltip=tooltips,
+        )
+    )
+    text = (
+        alt.Chart(df_long)
+        .mark_text(color="white", fontSize=10)
+        .encode(
+            x=alt.X("dia:N", sort=dias),
+            y=alt.Y("slot:N", sort=slots_v),
+            text="etiqueta:N",
+        )
+    )
+    st.altair_chart(heatmap + text, use_container_width=True)
+
+
 def _render_heatmap_por_sede(
     heatmap_sede: dict,
     key_ns: str,
@@ -962,14 +1118,11 @@ def _render_heatmap_por_sede(
     if es_saturacion:
         st.caption(
             "Cada celda muestra **demanda/oferta** en esa sede para "
-            "esa franja. La demanda son los horarios que la sede "
-            "admite (según la regla de sedes admisibles: sedes "
-            "habilitadas para la carrera de la materia o sede por "
-            "defecto para materias comunes, más la compatibilidad "
-            "de laboratorio). La oferta son las aulas de la sede "
-            "del tipo necesario. Verde ≤80% · amarillo 80–100% · "
-            "rojo >100% (saturación segura: más horarios que "
-            "aulas).  \nEn la vista **peor caso**, la etiqueta "
+            "esa franja. La demanda depende de la vista elegida "
+            "(ver **Vista** más abajo). La oferta son las aulas de "
+            "la sede del tipo necesario. Verde ≤80% · amarillo "
+            "80–100% · rojo >100% (más horarios que aulas del "
+            "tipo).  \nEn la vista **peor caso**, la etiqueta "
             "incluye **T** (peor entre teóricas) o **L** (peor "
             "entre laboratorios) para que se distinga en qué "
             "categoría satura cada celda. En el tooltip se ve el "
@@ -987,6 +1140,54 @@ def _render_heatmap_por_sede(
             "la etiqueta incluye **T** o **L** según qué categoría "
             "concentra la ocupación en cada celda."
         )
+
+    # Vista de saturación (sólo aplica en modo saturación; en
+    # ocupación las "usadas/total" ya son un dato del estado, no
+    # tiene sentido distinguir dura/preferida/máxima).
+    vista_sel = "preferida"
+    if es_saturacion:
+        vista_label = {
+            "dura": (
+                "🔒 Dura — sólo lo que no puede ir a otra sede"
+            ),
+            "preferida": (
+                "🎯 Preferida — plan feliz (default)"
+            ),
+            "maxima": (
+                "📈 Máxima — todo lo que podría caer acá"
+            ),
+            "total": (
+                "🌐 Total sin sede — cota global"
+            ),
+        }
+        vista_sel = st.radio(
+            "Vista",
+            options=["dura", "preferida", "maxima", "total"],
+            format_func=lambda v: vista_label[v],
+            index=1,
+            horizontal=True,
+            key=f"{key_ns}_heatsede_vista",
+            help=(
+                "**Dura**: horarios cuya única sede admisible es "
+                "ésta. Si `dura > oferta` la sede es infactible: "
+                "esos horarios no se pueden mover.\n"
+                "**Preferida**: horarios cuya sede preferida es "
+                "ésta (regla lab-first, luego carrera). Es el "
+                "'plan feliz'.\n"
+                "**Máxima**: todo horario que podría caer en esta "
+                "sede (incluyendo materias donde otras sedes son "
+                "más deseables). Muestra el margen que tiene el LP "
+                "para redistribuir.\n"
+                "**Total sin sede**: cuenta simultáneos ignorando "
+                "sede. Si el total supera la oferta agregada, no "
+                "cabe ni redistribuyendo."
+            ),
+        )
+
+    # Vista "total sin sede" — heatmap agregado, no por-sede.
+    if es_saturacion and vista_sel == "total":
+        _render_heatmap_total_sin_sede(heatmap_sede, key_ns)
+        return
 
     cat_label = {
         "peor": "Peor caso (entre teóricas y laboratorios)",
@@ -1031,6 +1232,32 @@ def _render_heatmap_por_sede(
             return "ajustado (80–100%)"
         return "saturado (>100%)"
 
+    # Selección de matrices según la vista (Fase 3.5). Sólo se
+    # sobreescriben `demanda` y `ratio`; `oferta` y el resto son iguales
+    # para las 3 vistas.
+    def _matrices_para_vista(cat_data: dict) -> tuple[list, list]:
+        if vista_sel == "dura":
+            return (
+                cat_data.get("demanda_dura", cat_data["demanda"]),
+                cat_data.get("ratio_dura", cat_data["ratio"]),
+            )
+        if vista_sel == "maxima":
+            return (
+                cat_data.get("demanda_maxima", cat_data["demanda"]),
+                cat_data.get("ratio_maxima", cat_data["ratio"]),
+            )
+        # preferida (default) o modo ocupación: alias `demanda`/`ratio`.
+        return cat_data["demanda"], cat_data["ratio"]
+
+    # Cuando la vista es 'máxima', puede haber sedes con demanda 0 en
+    # preferida pero > 0 en máxima. Ampliamos el set de sedes visibles
+    # para no ocultar información útil.
+    if vista_sel == "maxima":
+        sedes_con_demanda = [
+            s for s in sedes_meta
+            if s.get("tiene_demanda") or s.get("tiene_demanda_maxima")
+        ]
+
     for sede_meta in sedes_con_demanda:
         sede_id = sede_meta["sede_id"]
         sede_nombre = sede_meta["sede_nombre"]
@@ -1038,8 +1265,7 @@ def _render_heatmap_por_sede(
         n_lab = sede_meta["n_aulas_laboratorio"]
 
         cat_data = data_all[sede_id][cat_sel]
-        ratio = cat_data["ratio"]
-        demanda = cat_data["demanda"]
+        demanda, ratio = _matrices_para_vista(cat_data)
         oferta = cat_data["oferta"]
 
         # ¿Hay alguna celda con demanda en esta categoría?
@@ -1111,7 +1337,7 @@ def _render_heatmap_por_sede(
 
         # Para la vista "peor" traemos también las matrices de teorica
         # y laboratorio para poder enriquecer el tooltip con datos por
-        # categoría. Cuando la vista es una categoría fija, no aplica.
+        # categoría. Respetamos la vista (dura/preferida/máxima) elegida.
         _cat_gan_v = None
         _teo_demanda_v = None
         _teo_oferta_v = None
@@ -1123,9 +1349,15 @@ def _render_heatmap_por_sede(
                 _cat_gan_v = _cat_gan_raw[i0:i1 + 1]
             _teo = data_all[sede_id].get("teorica", {})
             _lab = data_all[sede_id].get("laboratorio", {})
-            _teo_demanda_v = _teo.get("demanda", [])[i0:i1 + 1] or None
+            _teo_dem_full, _ = _matrices_para_vista(_teo) if _teo else ([], [])
+            _lab_dem_full, _ = _matrices_para_vista(_lab) if _lab else ([], [])
+            _teo_demanda_v = (
+                _teo_dem_full[i0:i1 + 1] if _teo_dem_full else None
+            )
             _teo_oferta_v = _teo.get("oferta", [])[i0:i1 + 1] or None
-            _lab_demanda_v = _lab.get("demanda", [])[i0:i1 + 1] or None
+            _lab_demanda_v = (
+                _lab_dem_full[i0:i1 + 1] if _lab_dem_full else None
+            )
             _lab_oferta_v = _lab.get("oferta", [])[i0:i1 + 1] or None
 
         _CAT_ABREV = {"teorica": "T", "laboratorio": "L"}

@@ -8,6 +8,7 @@ from src.services.asignacion_aulas_helpers import (
     compute_compat,
     compute_heatmap_demanda_oferta,
     compute_heatmap_por_sede,
+    compute_heatmap_total_sin_sede,
     compute_impacto_r10,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
@@ -909,3 +910,197 @@ class TestSedePreferidaParaHorario:
         )
         # Sin sede preferida: caller decide (heatmap contará en todas).
         assert sede is None
+
+
+class TestHeatmapVistasMultiples:
+    """Fase 3.5: el heatmap por sede expone 3 vistas paralelas
+    (`demanda_dura`, `demanda_preferida`, `demanda_maxima`) además del
+    alias `demanda` que sigue reflejando la vista preferida."""
+
+    def _build_aulas_dos_sedes(self):
+        return [
+            AulaSlot(id="t1_S1", tipo="teorica", capacidad=30),
+            AulaSlot(id="t2_S1", tipo="teorica", capacidad=30),
+            AulaSlot(id="L_S1", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="t1_S2", tipo="teorica", capacidad=30),
+            AulaSlot(id="L_S2", tipo="laboratorio", capacidad=30),
+        ]
+
+    def _aula_sede_id(self):
+        return {
+            "t1_S1": "S1", "t2_S1": "S1", "L_S1": "S1",
+            "t1_S2": "S2", "L_S2": "S2",
+        }
+
+    def _sede_nombre(self):
+        return {"S1": "Sede 1", "S2": "Sede 2"}
+
+    def test_dura_solo_cuando_hay_unica_sede_admisible(self):
+        """Materia con `admis={S1}` y sin lab en otro lado → aporta a
+        `demanda_dura[S1]`. Materia con admis={S1,S2} no aporta a dura."""
+        h_solo = _h("h1", "Lunes", 8, 10, materia="M_SOLO", tipo="teorica")
+        h_amb = _h("h2", "Lunes", 8, 10, materia="M_AMB", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h_solo, h_amb], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={
+                "M_SOLO": {"S1"}, "M_AMB": {"S1", "S2"},
+            },
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        s1_teo = out["data"]["S1"]["teorica"]
+        # Vista dura: sólo M_SOLO (única sede) aporta.
+        assert s1_teo["demanda_dura"][si][di] == 1
+        # Preferida: M_SOLO va a S1 (única) y M_AMB va a S1 (menor id).
+        assert s1_teo["demanda_preferida"][si][di] == 2
+        # Máxima: ambos aparecen en S1 (ambos la admiten).
+        assert s1_teo["demanda_maxima"][si][di] == 2
+        # En S2 sólo M_AMB entra como máxima.
+        s2_teo = out["data"]["S2"]["teorica"]
+        assert s2_teo["demanda_dura"][si][di] == 0
+        assert s2_teo["demanda_preferida"][si][di] == 0
+        assert s2_teo["demanda_maxima"][si][di] == 1
+
+    def test_maxima_incluye_sede_alcanzable_por_lab(self):
+        """Caso A5: carrera en S1 pero lab en S2. La sede S2 aparece
+        como demanda_maxima (por el lab) aunque la preferida es S2
+        (Fase 2) y la dura no aplica (hay 2 sedes admisibles).
+        """
+        h = _h("h1", "Lunes", 8, 10, materia="MLAB", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas,
+            materia_lab_map={"MLAB": {"L_S2"}},
+            sedes_admisibles_por_materia={"MLAB": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        s1 = out["data"]["S1"]["teorica"]
+        s2 = out["data"]["S2"]["teorica"]
+        # Preferida (Fase 2): la teórica va a S2 (donde está el lab).
+        assert s2["demanda_preferida"][si][di] == 1
+        assert s1["demanda_preferida"][si][di] == 0
+        # Máxima: ambas sedes son admisibles (S1 por carrera, S2 por lab).
+        assert s1["demanda_maxima"][si][di] == 1
+        assert s2["demanda_maxima"][si][di] == 1
+        # Dura: hay 2 sedes admisibles → 0 en ambas.
+        assert s1["demanda_dura"][si][di] == 0
+        assert s2["demanda_dura"][si][di] == 0
+
+    def test_coherencia_dura_pref_maxima(self):
+        """Invariante: en cada celda × sede × cat, dura ≤ preferida ≤ maxima."""
+        h1 = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="M2", tipo="teorica")
+        h3 = _h("h3", "Lunes", 8, 10, materia="M3", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h1, h2, h3], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={
+                "M1": {"S1"}, "M2": {"S1", "S2"}, "M3": None,
+            },
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        for meta in out["sedes"]:
+            for cat in ("teorica", "laboratorio"):
+                d = out["data"][meta["sede_id"]][cat]
+                for si in range(len(out["slots"])):
+                    for di in range(len(out["dias"])):
+                        dura = d["demanda_dura"][si][di]
+                        pref = d["demanda_preferida"][si][di]
+                        max_ = d["demanda_maxima"][si][di]
+                        assert dura <= pref <= max_, (
+                            f"cat={cat} si={si} di={di} "
+                            f"dura={dura} pref={pref} max={max_}"
+                        )
+
+    def test_alias_demanda_igual_a_preferida(self):
+        """El campo `demanda` sigue siendo alias de `demanda_preferida`
+        para no romper calleres previos a Fase 3.5."""
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        aulas = self._build_aulas_dos_sedes()
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas, materia_lab_map={},
+            sedes_admisibles_por_materia={"M1": {"S1"}},
+            aula_sede_id=self._aula_sede_id(),
+            sede_nombre=self._sede_nombre(),
+        )
+        for meta in out["sedes"]:
+            for cat in ("teorica", "laboratorio"):
+                d = out["data"][meta["sede_id"]][cat]
+                for si in range(len(out["slots"])):
+                    for di in range(len(out["dias"])):
+                        assert (
+                            d["demanda"][si][di]
+                            == d["demanda_preferida"][si][di]
+                        )
+
+
+class TestHeatmapTotalSinSede:
+    """Fase 3.5: cota inferior de factibilidad global."""
+
+    def test_suma_ignora_sede(self):
+        """3 horarios teóricos solapan en la misma franja: total=3
+        aunque cada uno prefiera una sede distinta."""
+        h1 = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        h2 = _h("h2", "Lunes", 8, 10, materia="M2", tipo="teorica")
+        h3 = _h("h3", "Lunes", 8, 10, materia="M3", tipo="teorica")
+        aulas = [
+            AulaSlot(id="t1", tipo="teorica", capacidad=30),
+            AulaSlot(id="t2", tipo="teorica", capacidad=30),
+            AulaSlot(id="anf", tipo="anfiteatro", capacidad=100),
+        ]
+        out = compute_heatmap_total_sin_sede(
+            horarios=[h1, h2, h3], aulas=aulas, materia_lab_map={},
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        assert out["data"]["teorica"]["demanda"][si][di] == 3
+        # Oferta agregada: 2 teóricas + 1 anfiteatro = 3.
+        assert out["oferta_total"]["teorica"] == 3
+        assert out["data"]["teorica"]["oferta"][si][di] == 3
+        assert out["data"]["teorica"]["ratio"][si][di] == 1.0
+
+    def test_infactibilidad_global_ratio_supera_1(self):
+        """Cuando la suma total supera la oferta agregada, el ratio > 1."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia=f"M{i}", tipo="teorica")
+            for i in range(5)
+        ]
+        aulas = [
+            AulaSlot(id="t1", tipo="teorica", capacidad=30),
+            AulaSlot(id="t2", tipo="teorica", capacidad=30),
+        ]
+        out = compute_heatmap_total_sin_sede(
+            horarios=hs, aulas=aulas, materia_lab_map={},
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        # 5 horarios simultáneos, 2 aulas totales → ratio 2.5.
+        assert out["data"]["teorica"]["demanda"][si][di] == 5
+        assert out["data"]["teorica"]["ratio"][si][di] == 2.5
+
+    def test_laboratorio_usa_pool_maximo_por_materia(self):
+        """Para labs, la oferta agregada es el mayor pool disponible
+        entre las materias con lab presentes en el plan."""
+        h_lab = _h("h1", "Lunes", 8, 10, materia="MLAB", tipo="laboratorio")
+        aulas = [
+            AulaSlot(id="L1", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="L2", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="L3", tipo="laboratorio", capacidad=30),
+        ]
+        # MLAB tiene sólo 2 labs compatibles → oferta = 2 (no 3).
+        out = compute_heatmap_total_sin_sede(
+            horarios=[h_lab], aulas=aulas,
+            materia_lab_map={"MLAB": {"L1", "L2"}},
+        )
+        assert out["oferta_total"]["laboratorio"] == 2
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        assert out["data"]["laboratorio"]["demanda"][si][di] == 1
+        assert out["data"]["laboratorio"]["oferta"][si][di] == 2

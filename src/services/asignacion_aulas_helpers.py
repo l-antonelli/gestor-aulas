@@ -1074,10 +1074,19 @@ def compute_heatmap_por_sede(
         return [[0] * n_dias for _ in range(n_slots)]
 
     def _empty_categoria() -> dict:
+        # Contadores por vista (Fase 3.5). La key `demanda` queda como
+        # alias de `demanda_preferida` para backwards-compat con calleres
+        # existentes; se sincroniza al final del cómputo.
         return {
             "ratio": _zeros_f(),
             "demanda": _zeros_i(),
             "oferta": _zeros_i(),
+            "demanda_dura": _zeros_i(),
+            "demanda_preferida": _zeros_i(),
+            "demanda_maxima": _zeros_i(),
+            "ratio_dura": _zeros_f(),
+            "ratio_preferida": _zeros_f(),
+            "ratio_maxima": _zeros_f(),
         }
 
     def _empty_peor() -> dict:
@@ -1113,62 +1122,90 @@ def compute_heatmap_por_sede(
         for mc in materias_unicas
     }
 
-    # Para cada celda × sede, agrupar horarios por categoría.
-    # Estructura: por_celda_sede[(si,di,sede)][cat] = {"horarios":[ids],
-    # "materias":set}
+    # Para cada celda × sede, agrupar horarios por categoría, con 3
+    # contadores paralelos (Fase 3.5):
+    # - dura:      sede es la ÚNICA admisible para el horario.
+    # - preferida: sede es la sede preferida (regla de Fase 2).
+    # - maxima:    sede es alguna de las admisibles (incluyendo por lab).
+    # Estructura: por_celda_sede[(si,di,sede)][cat] = {
+    #     "dura": set[hid], "preferida": set[hid], "maxima": set[hid],
+    #     "materias": set[mat],
+    # }
     por_celda_sede: dict[tuple[int, int, str], dict[str, dict]] = {}
     for h in horarios:
         admis = sedes_admisibles_por_materia.get(h.materia_codigo)
         labs = materia_lab_map.get(h.materia_codigo, set())
         sede_pref = sede_pref_por_materia.get(h.materia_codigo)
-        # Sedes donde la materia tiene lab compatible (para categoría
-        # laboratorio). Se calcula una sola vez fuera del loop de celdas.
-        sedes_con_lab_de_materia = {
-            aula_sede_id.get(a_id) for a_id in labs
-            if aula_sede_id.get(a_id) is not None
+        # Sedes donde la materia tiene lab compatible.
+        sedes_con_lab_de_materia: set[str] = {
+            sd for a_id in labs
+            if (sd := aula_sede_id.get(a_id)) is not None
         }
+        # Sedes admisibles totales: unión de las de carrera (o todas si
+        # admis is None) con las que aportan lab compatible.
+        if admis is None:
+            sedes_admisibles_tot: set[str] | None = None  # sin restricción
+        else:
+            sedes_admisibles_tot = set(admis) | sedes_con_lab_de_materia
+
         for si, di in _celdas_de_horario(h):
-            for sede in sedes_con_aulas:
-                # Categoría según tipo del horario.
-                if h.tipo_clase == "laboratorio":
-                    # Los labs se cuentan sólo en las sedes que tienen
-                    # laboratorio compatible con esta materia. No aplica
-                    # sede preferida: el lab físicamente se dicta donde
-                    # está el aula compatible.
-                    if sede not in sedes_con_lab_de_materia:
-                        continue
-                    cat = "laboratorio"
+            # Categoría del horario.
+            if h.tipo_clase == "laboratorio":
+                cat = "laboratorio"
+                # Para labs, las sedes que "cuentan" son las que tienen
+                # lab compatible con esta materia. Todas las cuentas
+                # (dura/preferida/maxima) se suman ahí.
+                candidatas = sedes_con_lab_de_materia & set(sedes_con_aulas)
+                # "Dura" para lab: si sólo hay una sede con lab compatible,
+                # esa es la única admisible → cuenta como demanda dura.
+                sedes_duras = candidatas if len(candidatas) == 1 else set()
+                # "Preferida" para lab: la sede donde vive el lab
+                # (siempre que sea única). Si hay labs en varias sedes,
+                # ninguna es "preferida" en sentido estricto y el conteo
+                # preferido cae en todas las candidatas (comportamiento
+                # equivalente al máximo — evita esconder demanda).
+                sedes_pref = (
+                    candidatas if len(candidatas) >= 1 else set()
+                )
+                # "Máxima" para lab: todas las que tienen lab compatible.
+                sedes_max = candidatas
+            else:
+                cat = "teorica"
+                # Vista MÁXIMA: todas las sedes admisibles. Si admis is
+                # None, es cualquier sede (materia sin restricción).
+                if sedes_admisibles_tot is None:
+                    sedes_max = set(sedes_con_aulas)
                 else:
-                    # Teórica (o tipo_clase=None, que optimísticamente
-                    # se cuenta como teórica). Se cuenta UNA sola vez,
-                    # en la sede preferida de la materia:
-                    # - Si hay sede preferida y coincide con `sede`:
-                    #   contar acá.
-                    # - Si no hay sede preferida (materia común sin
-                    #   default): se cuenta en TODAS las sedes admisibles
-                    #   como fallback (mismo comportamiento que antes,
-                    #   sólo aplica a este caso residual).
-                    if sede_pref is not None:
-                        if sede != sede_pref:
-                            continue
-                    else:
-                        # Fallback: contar en todas las sedes admisibles.
-                        tiene_lab_en_sede = sede in sedes_con_lab_de_materia
-                        if admis is None:
-                            sede_admisible = True
-                        else:
-                            sede_admisible = (
-                                sede in admis
-                            ) or tiene_lab_en_sede
-                        if not sede_admisible:
-                            continue
-                    cat = "teorica"
+                    sedes_max = sedes_admisibles_tot & set(sedes_con_aulas)
+                # Vista PREFERIDA: sólo la sede preferida (si existe) o
+                # fallback a todas las admisibles cuando no hay
+                # preferida (materia común sin default).
+                if sede_pref is not None:
+                    sedes_pref = (
+                        {sede_pref} if sede_pref in sedes_con_aulas else set()
+                    )
+                else:
+                    sedes_pref = sedes_max
+                # Vista DURA: sólo cuando hay UNA única sede admisible.
+                sedes_duras = sedes_max if len(sedes_max) == 1 else set()
+
+            for sede in sedes_con_aulas:
+                if sede not in sedes_max:
+                    continue  # esta sede no puede recibir a `h` ni
+                              # como máximo optimista → nada que sumar.
                 key = (si, di, sede)
                 grupo = por_celda_sede.setdefault(key, {}).setdefault(
-                    cat, {"horarios": [], "materias": set()},
+                    cat, {
+                        "dura": set(), "preferida": set(),
+                        "maxima": set(), "materias": set(),
+                    },
                 )
-                grupo["horarios"].append(h.id)
+                grupo["maxima"].add(h.id)
                 grupo["materias"].add(h.materia_codigo)
+                if sede in sedes_pref:
+                    grupo["preferida"].add(h.id)
+                if sede in sedes_duras:
+                    grupo["dura"].add(h.id)
 
     # Computar oferta por (sede, categoría): es la cantidad de aulas
     # del tipo. Para lab, idealmente se mide por materia (cada materia
@@ -1183,25 +1220,44 @@ def compute_heatmap_por_sede(
             aulas_por_sede[sede]["laboratorio"]
         )
 
-    # Llenar data.
+    # Llenar data. "peor" usa la vista PREFERIDA (Fase 2/3) para el
+    # cálculo de peor caso porque es la que refleja el "plan feliz".
+    # Las otras vistas quedan en sus propias claves.
+    def _ratio(d: int, o: int) -> float:
+        if o > 0:
+            return d / o
+        return 999.0 if d > 0 else 0.0
+
     for (si, di, sede), grupos in por_celda_sede.items():
         peor_ratio_cell = 0.0
         peor_dem_cell = 0
         peor_of_cell = 0
         peor_cat_cell = ""
         for cat, datos in grupos.items():
-            d = len(datos["horarios"])
+            d_dura = len(datos["dura"])
+            d_pref = len(datos["preferida"])
+            d_max = len(datos["maxima"])
             o = oferta_estatica.get((sede, cat), 0)
-            r = (d / o) if o > 0 else (float("inf") if d > 0 else 0.0)
-            r_safe = r if r != float("inf") else 999.0
-            data[sede][cat]["demanda"][si][di] = d
+            r_dura = _ratio(d_dura, o)
+            r_pref = _ratio(d_pref, o)
+            r_max = _ratio(d_max, o)
+            # Vistas nuevas + alias backwards-compat.
+            data[sede][cat]["demanda_dura"][si][di] = d_dura
+            data[sede][cat]["demanda_preferida"][si][di] = d_pref
+            data[sede][cat]["demanda_maxima"][si][di] = d_max
+            data[sede][cat]["ratio_dura"][si][di] = r_dura
+            data[sede][cat]["ratio_preferida"][si][di] = r_pref
+            data[sede][cat]["ratio_maxima"][si][di] = r_max
+            # `demanda` / `ratio` mantienen la semántica previa
+            # (= preferida) para no romper calleres existentes.
+            data[sede][cat]["demanda"][si][di] = d_pref
             data[sede][cat]["oferta"][si][di] = o
-            data[sede][cat]["ratio"][si][di] = r_safe
-            if r_safe > peor_ratio_cell or (
-                r_safe == peor_ratio_cell and d > peor_dem_cell
+            data[sede][cat]["ratio"][si][di] = r_pref
+            if r_pref > peor_ratio_cell or (
+                r_pref == peor_ratio_cell and d_pref > peor_dem_cell
             ):
-                peor_ratio_cell = r_safe
-                peor_dem_cell = d
+                peor_ratio_cell = r_pref
+                peor_dem_cell = d_pref
                 peor_of_cell = o
                 peor_cat_cell = cat
         data[sede]["peor"]["demanda"][si][di] = peor_dem_cell
@@ -1215,9 +1271,18 @@ def compute_heatmap_por_sede(
         nombre = sede_nombre.get(sede, sede)
         n_teo = len(aulas_por_sede[sede]["teorica"])
         n_lab = len(aulas_por_sede[sede]["laboratorio"])
-        # ¿Hay alguna celda con demanda > 0 para esta sede?
+        # `tiene_demanda` refleja la vista preferida (semántica previa,
+        # backwards-compat con la UI). `tiene_demanda_maxima` es útil
+        # para saber si la sede es siquiera candidata (aunque no sea
+        # preferida por ninguna materia).
         tiene_demanda = any(
             data[sede]["peor"]["demanda"][si][di] > 0
+            for si in range(n_slots)
+            for di in range(n_dias)
+        )
+        tiene_demanda_maxima = any(
+            data[sede]["teorica"]["demanda_maxima"][si][di] > 0
+            or data[sede]["laboratorio"]["demanda_maxima"][si][di] > 0
             for si in range(n_slots)
             for di in range(n_dias)
         )
@@ -1227,6 +1292,7 @@ def compute_heatmap_por_sede(
             "n_aulas_teoricas": n_teo,
             "n_aulas_laboratorio": n_lab,
             "tiene_demanda": tiene_demanda,
+            "tiene_demanda_maxima": tiene_demanda_maxima,
         })
     # Orden alfabético.
     sedes_meta.sort(key=lambda s: s["sede_nombre"])
@@ -1236,6 +1302,166 @@ def compute_heatmap_por_sede(
         "dias": DIAS,
         "slots": slots_label,
         "data": data,
+    }
+
+
+def compute_heatmap_total_sin_sede(
+    horarios: list[HorarioSlot],
+    aulas: list[AulaSlot],
+    materia_lab_map: dict[str, set[str]],
+    *,
+    granularidad_minutos: int = 15,
+    hora_inicio: int = 7,
+    hora_fin: int = 23,
+) -> dict:
+    """Heatmap agregado por día × franja × categoría, sin discriminar sede.
+
+    Cota inferior de factibilidad global: cuenta cuántos horarios
+    simultáneos hay en cada celda ignorando qué sede podría recibirlos.
+    Es la vista "Total sin sede" de Fase 3.5. Si en una franja el total
+    supera la oferta agregada de todas las sedes, el plan no cabe ni
+    redistribuyendo.
+
+    Args:
+        horarios: horarios del plan (no virtuales).
+        aulas: catálogo global de aulas.
+        materia_lab_map: por materia, aulas de laboratorio compatibles
+            (para saber si una materia con `tipo_clase=None` puede caer
+            en laboratorio, aunque acá se cuenta optimísticamente como
+            teórica igual que en `compute_heatmap_por_sede`).
+        granularidad_minutos, hora_inicio, hora_fin: idem otros heatmaps.
+
+    Returns:
+        ``{
+            "dias": [...], "slots": [...],
+            "data": {
+                "teorica":     {"demanda": [[int]], "oferta": [[int]],
+                                "ratio": [[float]]},
+                "laboratorio": {... idem ...},
+                "peor":        {... peor caso entre categorías + cat_ganadora},
+            },
+            "oferta_total": {"teorica": int, "laboratorio": int},
+        }``
+    """
+    DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+    start = hora_inicio * 60
+    end = hora_fin * 60
+    slot_bounds: list[tuple[int, int]] = []
+    _s = start
+    while _s + granularidad_minutos <= end:
+        slot_bounds.append((_s, _s + granularidad_minutos))
+        _s += granularidad_minutos
+    slots_label = [
+        f"{a // 60:02d}:{a % 60:02d}-{b // 60:02d}:{b % 60:02d}"
+        for a, b in slot_bounds
+    ]
+    n_slots = len(slot_bounds)
+    n_dias = len(DIAS)
+    dia_idx = {d: i for i, d in enumerate(DIAS)}
+
+    def _celdas(h: HorarioSlot) -> list[tuple[int, int]]:
+        di = dia_idx.get(h.dia)
+        if di is None:
+            return []
+        h_s = h.hora_inicio.hour * 60 + h.hora_inicio.minute
+        h_e = h.hora_fin.hour * 60 + h.hora_fin.minute
+        return [
+            (si, di) for si, (a, b) in enumerate(slot_bounds)
+            if h_s < b and h_e > a
+        ]
+
+    def _zeros_i() -> list[list[int]]:
+        return [[0] * n_dias for _ in range(n_slots)]
+
+    def _zeros_f() -> list[list[float]]:
+        return [[0.0] * n_dias for _ in range(n_slots)]
+
+    # Oferta agregada por tipo.
+    n_teoricas = sum(
+        1 for a in aulas if a.tipo in ("teorica", "anfiteatro")
+    )
+    n_labs_por_materia: dict[str, int] = {
+        mc: len(labs) for mc, labs in materia_lab_map.items()
+    }
+    # Para lab, la oferta "agregada" no tiene sentido único: cada
+    # materia tiene su pool. Usamos el máximo pool de lab entre las
+    # materias presentes como cota razonable. Si querés algo más
+    # exigente el consumer puede mirar el ratio por materia aparte.
+    materias_con_lab_en_plan = {
+        h.materia_codigo for h in horarios
+        if h.tipo_clase == "laboratorio"
+    }
+    n_lab_maximo = max(
+        (n_labs_por_materia.get(mc, 0) for mc in materias_con_lab_en_plan),
+        default=0,
+    )
+
+    demanda_teo = _zeros_i()
+    demanda_lab = _zeros_i()
+    for h in horarios:
+        cat = "laboratorio" if h.tipo_clase == "laboratorio" else "teorica"
+        for si, di in _celdas(h):
+            if cat == "teorica":
+                demanda_teo[si][di] += 1
+            else:
+                demanda_lab[si][di] += 1
+
+    def _mk(demanda: list[list[int]], oferta: int) -> dict:
+        ratio = _zeros_f()
+        for si in range(n_slots):
+            for di in range(n_dias):
+                d = demanda[si][di]
+                if oferta > 0:
+                    ratio[si][di] = d / oferta
+                elif d > 0:
+                    ratio[si][di] = 999.0
+        return {
+            "demanda": demanda,
+            "oferta": [[oferta] * n_dias for _ in range(n_slots)],
+            "ratio": ratio,
+        }
+
+    data = {
+        "teorica": _mk(demanda_teo, n_teoricas),
+        "laboratorio": _mk(demanda_lab, n_lab_maximo),
+    }
+
+    # Peor caso entre categorías por celda.
+    peor_r = _zeros_f()
+    peor_d = _zeros_i()
+    peor_o = _zeros_i()
+    peor_cat = [["" for _ in range(n_dias)] for _ in range(n_slots)]
+    for si in range(n_slots):
+        for di in range(n_dias):
+            candidatos = [
+                ("teorica", data["teorica"]["demanda"][si][di],
+                 data["teorica"]["oferta"][si][di],
+                 data["teorica"]["ratio"][si][di]),
+                ("laboratorio", data["laboratorio"]["demanda"][si][di],
+                 data["laboratorio"]["oferta"][si][di],
+                 data["laboratorio"]["ratio"][si][di]),
+            ]
+            candidatos.sort(key=lambda c: (c[3], c[1]), reverse=True)
+            cat, d, o, r = candidatos[0]
+            peor_r[si][di] = r
+            peor_d[si][di] = d
+            peor_o[si][di] = o
+            peor_cat[si][di] = cat
+    data["peor"] = {
+        "ratio": peor_r,
+        "demanda": peor_d,
+        "oferta": peor_o,
+        "cat_ganadora": peor_cat,
+    }
+
+    return {
+        "dias": DIAS,
+        "slots": slots_label,
+        "data": data,
+        "oferta_total": {
+            "teorica": n_teoricas,
+            "laboratorio": n_lab_maximo,
+        },
     }
 
 
