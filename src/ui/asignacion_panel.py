@@ -544,6 +544,42 @@ def _render_config_form(
                 key=f"{key_ns}_timeout",
             )
 
+            strict_r5 = st.toggle(
+                "R5 estricta (valida horas de teoría y de laboratorio)",
+                value=True,
+                help=(
+                    "Con **R5 estricta** el LP exige que la suma de "
+                    "horarios de teoría iguale las horas de teoría "
+                    "declaradas por la materia, **y** que la suma de "
+                    "horarios de laboratorio iguale las horas de "
+                    "laboratorio. Además, los horarios virtuales "
+                    "cuentan hacia estas sumas aunque no ocupen aula.\n\n"
+                    "Con R5 estricta **apagada** (modo legacy) sólo "
+                    "se valida el balance de laboratorio, y los "
+                    "horarios virtuales quedan excluidos del modelo. "
+                    "Los planes con teoría incompleta pasan sin aviso. "
+                    "Sirve para migrar planes pre-Fase 8.1 sin que "
+                    "revienten. **Default: encendido (recomendado).**"
+                ),
+                key=f"{key_ns}_strict_r5",
+            )
+
+            lambda_intersede_val = st.number_input(
+                "Peso de intersede blando (λ intersede)",
+                min_value=0.0, value=0.0, step=1.0,
+                help=(
+                    "Peso adicional al objetivo por cada par de "
+                    "horarios contiguos de una misma comisión que "
+                    "quedan en sedes distintas. Complementa el "
+                    "margen intersede (dura). Con 0 (default) sólo "
+                    "aplica la restricción dura. Con λ > 0, el LP "
+                    "va a preferir soluciones que además minimicen "
+                    "los cambios de sede dentro del día — útil para "
+                    "reducir traslados innecesarios."
+                ),
+                key=f"{key_ns}_lambda_intersede",
+            )
+
             activar_alpha = st.toggle(
                 "Redistribuir pesos entre comisiones (experimental)",
                 value=False,
@@ -570,6 +606,8 @@ def _render_config_form(
         tol_over=float(tol_over),
         tol_under=float(tol_under),
         margen_min_intersede_minutos=int(margen_intersede),
+        lambda_intersede=float(lambda_intersede_val),
+        strict_r5=bool(strict_r5),
         timeout_seconds=int(timeout),
         respetar_ediciones_manuales=bool(respetar),
         activar_alpha=bool(activar_alpha),
@@ -590,12 +628,14 @@ def _render_summary(run: LPRunDB) -> None:
     status_emoji = {
         "optimal": "✅",
         "infeasible": "❌",
+        "infeasible_estructural": "❌",
         "timeout": "⏱️",
         "error": "⚠️",
     }.get(run.status, "❔")
     _status_humano = {
         "optimal": "resuelta",
         "infeasible": "no se pudo resolver",
+        "infeasible_estructural": "no se pudo resolver (bloqueo estructural)",
         "timeout": "se agotó el tiempo",
         "error": "hubo un error",
     }.get(run.status, run.status)
@@ -604,8 +644,84 @@ def _render_summary(run: LPRunDB) -> None:
         f"**🕒 Corrida:** {run.run_at.strftime('%Y-%m-%d %H:%M')}"
     )
 
+    # Fase 8.2: bloque veredicto (persistido en details_json).
+    _render_veredicto(run)
+
     if run.error_message:
         st.error(run.error_message)
+
+
+def _render_veredicto(run: LPRunDB) -> None:
+    """Extrae y renderiza el bloque `veredicto` del details_json."""
+    import json
+    try:
+        details = json.loads(run.details_json or "{}")
+    except (TypeError, ValueError):
+        return
+    veredicto = details.get("veredicto")
+    if not veredicto:
+        return
+    with st.container(border=True):
+        st.markdown("### 📋 Veredicto de la corrida")
+        resumen = veredicto.get("resumen", "")
+        status = veredicto.get("status", "")
+        if status == "optimal":
+            st.success(resumen)
+        elif status.startswith("infeasible"):
+            st.error(resumen)
+        elif status == "timeout":
+            st.warning(resumen)
+        else:
+            st.info(resumen)
+
+        # Causa concreta (si aplica).
+        causa = veredicto.get("causa_infactibilidad")
+        if causa:
+            st.markdown(f"**Causa detectada**: {causa}")
+
+        # Bloqueos diagnosticados (pre-solve).
+        bloqueos = veredicto.get("bloqueos_diagnosticados") or []
+        if bloqueos:
+            with st.expander(
+                f"🔴 Detalle de {len(bloqueos)} bloqueo(s) pre-solve",
+                expanded=(status == "infeasible_estructural"),
+            ):
+                for b in bloqueos[:10]:
+                    st.markdown(
+                        f"**{b.get('codigo_regla', '?')}** · "
+                        f"{b.get('titulo', '')}"
+                    )
+                    st.markdown(b.get("detalle", ""))
+                    st.markdown("---")
+                if len(bloqueos) > 10:
+                    st.caption(f"(+ {len(bloqueos) - 10} más)")
+
+        # Horarios sin asignar (si LP corrió pero dejó horarios afuera).
+        sin_asig = veredicto.get("horarios_sin_asignar") or []
+        if sin_asig and status != "infeasible_estructural":
+            with st.expander(
+                f"❓ {len(sin_asig)} horario(s) presenciales sin aula",
+                expanded=False,
+            ):
+                st.caption(
+                    "Estos horarios están en el modelo pero no "
+                    "recibieron aula. Suele indicar infactibilidad "
+                    "parcial o horarios sin aulas compatibles."
+                )
+                for hid in sin_asig[:20]:
+                    st.text(f"  · {hid}")
+                if len(sin_asig) > 20:
+                    st.caption(f"(+ {len(sin_asig) - 20} más)")
+
+        # Restricciones activas (transparencia total).
+        rest = veredicto.get("restricciones_activas") or {}
+        if rest:
+            with st.expander(
+                "⚙️ Parámetros usados en esta corrida",
+                expanded=False,
+            ):
+                for k, v in sorted(rest.items()):
+                    st.markdown(f"- **{k}**: `{v}`")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(

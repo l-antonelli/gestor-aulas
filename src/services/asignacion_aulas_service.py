@@ -99,6 +99,14 @@ class LPConfig:
     # distintas (además de la restricción dura). Reservado para
     # futuras iteraciones — hoy solo se cablea la infraestructura.
     lambda_intersede: float = 0.0
+    # R5 completa (Fase 8.1): además de exigir que Σ dur·t == hlab,
+    # exige que Σ dur·(1-t) == hteo. En este modo los horarios
+    # virtuales se incluyen en el modelo (sin ocupar aula) para que
+    # sus duraciones sumen al balance R5. Con strict_r5=False se
+    # recupera el comportamiento previo (sólo se controla hlab; hteo
+    # queda como "flotante" implícito). El default es True porque es
+    # la semántica que corresponde al problema de negocio.
+    strict_r5: bool = True
     activar_alpha: bool = False  # Fase 8 (no implementado todavía)
     timeout_seconds: int = 300
     # Política de re-run respecto a clases con aula_asignada_manualmente=True.
@@ -164,6 +172,11 @@ class LPInputs:
     pares_intersede_riesgo: list[tuple[str, str, int]] = field(
         default_factory=list,
     )
+    # IDs de horarios que están en el modelo pero NO deben tomar aula
+    # (por ejemplo, horarios virtuales cuando strict_r5=True). Estos
+    # participan en R5 (contribuyen a hteo/hlab) pero se excluyen de
+    # R1/R3/R4/R7 (no ocupan aula, no colisionan, no penalizan cap).
+    no_ocupa_aula_ids: set[str] = field(default_factory=set)
     # Errores no fatales detectados durante build_inputs (materias sin
     # forecast, virtuales filtradas, etc.). El caller decide si abortar.
     warnings: list[str] = field(default_factory=list)
@@ -281,6 +294,7 @@ def build_inputs(
     aulas_fijas: dict[str, str] = {}
     aulas_ids_validas = {a.id for a in aulas}
 
+    no_ocupa_aula_ids: set[str] = set()
     for h in horarios_db:
         # Resolver virtualidad con jerarquia horario > dictado > materia.
         # Los tres niveles pueden ser None (heredar del padre) excepto
@@ -291,11 +305,17 @@ def build_inputs(
             materia_virtual=materia_virtual.get(h.codigo_materia, False),
         )
         if es_virtual:
-            warnings.append(
-                f"Horario {h.id} excluido: virtual "
-                f"(materia {h.codigo_materia})"
-            )
-            continue
+            if not config.strict_r5:
+                # Modo legacy: los virtuales se filtran del modelo
+                # (comportamiento previo a Fase 8.1).
+                warnings.append(
+                    f"Horario {h.id} excluido: virtual "
+                    f"(materia {h.codigo_materia})"
+                )
+                continue
+            # strict_r5=True: los virtuales entran al modelo pero
+            # marcados como "no toman aula". Contribuyen a R5.
+            no_ocupa_aula_ids.add(h.id)
         _car = carrera_asignada_por_comision.get(h.comision_id)
         if _car:
             carrera_asignada_de_horario[h.id] = _car
@@ -476,6 +496,7 @@ def build_inputs(
         sede_preferida_por_horario=sede_preferida_por_horario,
         aula_sede_id=aula_sede_id,
         pares_intersede_riesgo=pares_intersede_riesgo,
+        no_ocupa_aula_ids=no_ocupa_aula_ids,
         warnings=warnings,
     )
 
@@ -566,12 +587,13 @@ def build_model(
     prob = pulp.LpProblem("asignacion_aulas", pulp.LpMinimize)
 
     # Variables x[h, a] solo para pares compatibles (R3 pre-computada).
-    # tuplado (hid, aid) -> variable binaria. Si un par no es compatible, no hay variable y el modelo no puede asignar esa aula a ese horario.
-    # o sea basicamente la variable x se lee como "x[h,a] existe y es 1" <=> "h se asigna a a", y si el par no es compatible, x[h,a] no existe y por lo tanto h no puede asignarse a a.
+    # Horarios en `no_ocupa_aula_ids` (virtuales bajo strict_r5) no
+    # generan variables x — no toman aula por diseño.
     x: dict[tuple[str, str], pulp.LpVariable] = {}
-    #     horario_id, aula_id , valor de x (var. de asignacion)
     for (hid, aid), is_compat in inputs.compat.items():
         if not is_compat:
+            continue
+        if hid in inputs.no_ocupa_aula_ids:
             continue
         x[(hid, aid)] = pulp.LpVariable(
             f"x_{hid}_{aid}", cat=pulp.LpBinary,
@@ -660,12 +682,15 @@ def build_model(
         + config.lambda_sede_pref * pulp.lpSum(sede_pref_terms)
     ), "objetivo"
 
-    # R1: asignación única.
+    # R1: asignación única. No aplica a horarios `no_ocupa_aula` —
+    # esos no toman aula por diseño.
     aulas_por_horario: dict[str, list[str]] = {}
     for (hid, aid), _ in x.items():
         aulas_por_horario.setdefault(hid, []).append(aid)
 
     for h in inputs.horarios:
+        if h.id in inputs.no_ocupa_aula_ids:
+            continue
         compat_aulas = aulas_por_horario.get(h.id, [])
         if not compat_aulas:
             # Horario sin ninguna aula compatible → infactible por
@@ -713,44 +738,63 @@ def build_model(
                     )
 
     # R5: Partición teoría/lab por comisión.
-    # Σ_{h ∈ k} dur[h] · t[h] = hlab[materia(k)]
-    # (la ecuación de teoría es redundante con la suma total y se omite).
+    #
+    # Ecuación de laboratorio:
+    #     Σ_{h ∈ k} dur[h] · t[h] = hlab[materia(k)]
+    #
+    # Ecuación de teoría (Fase 8.1, se agrega cuando strict_r5=True):
+    #     Σ_{h ∈ k} dur[h] · (1 - t[h]) = hteo[materia(k)]
+    #
+    # Antes de Fase 8.1 sólo se validaba la ecuación de laboratorio;
+    # los horarios teóricos "flotaban" y una teoría incompleta pasaba
+    # silenciosamente. Con strict_r5=True se cierra la validación.
+    #
+    # Los horarios en `no_ocupa_aula_ids` (virtuales bajo strict_r5)
+    # participan de esta ecuación con su duración, aunque no toman
+    # aula. Eso permite validar coherencia hteo/hlab aunque parte de
+    # la teoría se dicte virtualmente.
     horarios_por_comision: dict[str, list[str]] = {}
     for hid, cid in inputs.comision_de_horario.items():
         horarios_por_comision.setdefault(cid, []).append(hid)
 
     if "R5" not in relax_set:
         for cid, hids in horarios_por_comision.items():
-            # Materia de la comisión: la sacamos de cualquier horario.
             if not hids:
                 continue
             m = inputs.materia_de_horario[hids[0]]
             hl = inputs.hlab.get(m, 0.0)
-            # Si la comisión no tiene horarios con tipo_clase=None y la
-            # suma fijada ya iguala hlab, no hay nada que el LP decida.
-            # Esa restricción la chequeamos como pre-condición en
-            # validar_particion_factible; acá la agregamos siempre como
-            # restricción para que el LP arroje infactibilidad si los
-            # números no cuadran.
-            terms = []
+            ht = inputs.hteo.get(m, 0.0)
+            terms_lab = []
+            terms_teo = []
             for hid in hids:
                 d = inputs.dur[hid]
                 if hid in t:
-                    terms.append(d * t[hid])
+                    terms_lab.append(d * t[hid])
+                    terms_teo.append(d * (1 - t[hid]))
                 else:
-                    terms.append(d * t_const[hid])
+                    tc = t_const[hid]
+                    terms_lab.append(d * tc)
+                    terms_teo.append(d * (1 - tc))
             prob += (
-                pulp.lpSum(terms) == hl,
+                pulp.lpSum(terms_lab) == hl,
                 f"R5_lab_{cid}",
             )
+            if config.strict_r5:
+                prob += (
+                    pulp.lpSum(terms_teo) == ht,
+                    f"R5_teo_{cid}",
+                )
 
     # R6: Pool de aulas para tipo decidido (sólo aplica cuando
     # tipo_clase=None y por lo tanto t[h] es variable).
+    # Los horarios `no_ocupa_aula` no tienen x[h,a], no aplica R6.
     if "R6" not in relax_set:
         aulas_teoricas = {a.id for a in inputs.aulas if a.tipo == "teorica"}
         for h in inputs.horarios:
             if h.id not in t:
                 continue  # tipo fijado, R3 lo cubre
+            if h.id in inputs.no_ocupa_aula_ids:
+                continue
             lab_aulas_m = inputs.materia_lab_map.get(h.materia_codigo, set())
             # R6a: si t[h] = 0 (teórica), x[h, a]=0 para a ∉ A_t.
             # Equivalente: Σ_{a ∈ A_t} x[h, a] ≥ 1 - t[h].
@@ -783,8 +827,11 @@ def build_model(
     # R7: linealización del penalty de capacidad.
     # Cuando α está activo, insc[h] no es una constante sino la
     # expresión lineal `total_esp[materia(h)] · α[comision(h)]`.
+    # Horarios `no_ocupa_aula` no tienen R7: no consumen capacidad.
     cap_por_aula = {a.id: a.capacidad for a in inputs.aulas}
     for h in inputs.horarios:
+        if h.id in inputs.no_ocupa_aula_ids:
+            continue
         compat_aulas = aulas_por_horario.get(h.id, [])
         if config.activar_alpha:
             cid = inputs.comision_de_horario[h.id]
@@ -841,6 +888,14 @@ def build_model(
         sedes_lista = sorted(aulas_de_sede.keys())
 
         for h1_id, h2_id, _gap in inputs.pares_intersede_riesgo:
+            # Si alguno del par es virtual (no ocupa aula), R13 no
+            # aplica: no hay conflicto de sede porque uno de los
+            # horarios no cae en ninguna aula física.
+            if (
+                h1_id in inputs.no_ocupa_aula_ids
+                or h2_id in inputs.no_ocupa_aula_ids
+            ):
+                continue
             # Sedes candidatas: sólo aquellas con x[h*, a] activa para
             # cada uno. Reduce el número de pares (s1, s2) a los que
             # realmente pueden materializarse.
@@ -1185,6 +1240,7 @@ def persist_run(
     apply_result: ApplyResult,
     diagnosis: Optional[InfeasibilityDiagnosis] = None,
     iis: Optional[dict] = None,
+    reporte_estructural: Optional[object] = None,
 ) -> LPRunDB:
     """Inserta una fila en LPRunDB con la corrida y su resumen.
 
@@ -1203,6 +1259,100 @@ def persist_run(
     n_sub = details["n_subutilizados"]
     if iis is not None:
         details["iis"] = iis
+
+    # Fase 8.2: bloque veredicto en details_json.
+    # Consolida en un lugar visible: qué status devolvió el solver
+    # (o si se saltó por infactibilidad estructural), qué causa
+    # concreta hay (con lista de bloqueos), qué horarios quedaron
+    # sin aula y qué restricciones estaban activas con qué valor.
+    horarios_sin_asignar = [
+        h.id for h in inputs.horarios
+        if h.id not in solution.x_assignments
+        and h.id not in inputs.no_ocupa_aula_ids
+    ]
+    if solution.status == "optimal":
+        veredicto_status = "optimal"
+        resumen = (
+            f"✅ Plan resuelto. Se asignó aula a los "
+            f"{len(solution.x_assignments)} horarios presenciales "
+            f"(de {len(inputs.horarios)} horarios totales, "
+            f"{len(inputs.no_ocupa_aula_ids)} son virtuales y no "
+            "toman aula)."
+        )
+        causa = None
+    elif reporte_estructural is not None and not reporte_estructural.factible:
+        veredicto_status = "infeasible_estructural"
+        resumen = (
+            f"❌ El plan es infactible estructuralmente. Se detectaron "
+            f"{reporte_estructural.n_bloqueos()} bloqueo(s) antes de "
+            "correr el solver — corregilos y volvé a intentar."
+        )
+        causa = (
+            f"{reporte_estructural.n_bloqueos()} bloqueo(s) por reglas: "
+            + ", ".join(
+                f"{c} ({n})"
+                for c, n in sorted(
+                    reporte_estructural.resumen_por_regla.items()
+                )
+            )
+        )
+    elif solution.status == "infeasible":
+        veredicto_status = "infeasible"
+        resumen = (
+            "❌ El solver reportó infactibilidad. Revisá el detalle "
+            "abajo para ver qué combinación de restricciones causa "
+            "el problema (diagnóstico estructural o IIS)."
+        )
+        causa = solution.error_message or "Sin causa identificable."
+    elif solution.status == "timeout":
+        veredicto_status = "timeout"
+        resumen = (
+            f"⏱ El solver alcanzó el timeout de "
+            f"{config.timeout_seconds}s sin resolver. Aumentá el "
+            "timeout o revisá si hay una causa estructural."
+        )
+        causa = "Timeout del solver."
+    else:
+        veredicto_status = solution.status or "error"
+        resumen = (
+            f"⚠️ Estado inesperado del solver: {solution.status}. "
+            f"{solution.error_message or ''}"
+        )
+        causa = solution.error_message
+    details["veredicto"] = {
+        "status": veredicto_status,
+        "resumen": resumen,
+        "causa_infactibilidad": causa,
+        "bloqueos_diagnosticados": [
+            {
+                "codigo_regla": b.codigo_regla,
+                "severidad": b.severidad,
+                "titulo": b.titulo,
+                "detalle": b.detalle,
+                "entidades_a_revisar": b.entidades_a_revisar,
+            }
+            for b in (
+                reporte_estructural.bloqueos
+                if reporte_estructural is not None else []
+            )
+        ],
+        "horarios_sin_asignar": horarios_sin_asignar,
+        "restricciones_activas": {
+            "strict_r5": config.strict_r5,
+            "lambda_over": config.lambda_over,
+            "lambda_under": config.lambda_under,
+            "lambda_sede_pref": config.lambda_sede_pref,
+            "tol_over": config.tol_over,
+            "tol_under": config.tol_under,
+            "margen_min_intersede_minutos":
+                config.margen_min_intersede_minutos,
+            "lambda_intersede": config.lambda_intersede,
+            "activar_alpha": config.activar_alpha,
+            "respetar_ediciones_manuales":
+                config.respetar_ediciones_manuales,
+            "timeout_seconds": config.timeout_seconds,
+        },
+    }
 
     error_message = solution.error_message
     if diagnosis is not None:
@@ -1601,8 +1751,49 @@ def run_lp(
     # resuelve OK, queda como warning informativo en el snapshot).
     diagnosis = diagnose(inputs)
 
-    prob, vars_dict = build_model(inputs, cfg)
-    solution = solve(prob, vars_dict, cfg)
+    # Fase 8.2: chequeo de factibilidad estructural pre-solve. Si
+    # encuentra bloqueos, no vale la pena correr el solver — sabemos
+    # que va a dar infactible y perderíamos 5 minutos de timeout.
+    # Sólo aplica cuando strict_r5=True (el modo full-robusto).
+    reporte_estructural = None
+    skip_solve = False
+    if cfg.strict_r5:
+        try:
+            from src.services.factibilidad_service import (
+                check_factibilidad_estructural,
+            )
+            reporte_estructural = check_factibilidad_estructural(
+                session, plan_id,
+                margen_min_intersede_minutos=cfg.margen_min_intersede_minutos,
+            )
+            if not reporte_estructural.factible:
+                skip_solve = True
+        except Exception as _exc:  # pragma: no cover
+            # El chequeo falló (import roto, DB en estado raro, etc.)
+            # No queremos que un bug en el chequeo bloquee la corrida:
+            # dejamos correr el solver como en el flujo previo.
+            reporte_estructural = None
+
+    if skip_solve:
+        # No corremos el solver — devolvemos una solución vacía con
+        # status "infeasible" y el reporte estructural como causa.
+        solution = LPSolution(
+            status="infeasible",
+            objective=None,
+            x_assignments={},
+            tipo_resuelto={},
+            over={}, under={},
+            solver_seconds=0.0,
+            error_message=(
+                "Infactibilidad estructural detectada antes del solve. "
+                f"{reporte_estructural.n_bloqueos()} bloqueo(s). "
+                "Ver detalle abajo."
+            ),
+        )
+        vars_dict = {}
+    else:
+        prob, vars_dict = build_model(inputs, cfg)
+        solution = solve(prob, vars_dict, cfg)
 
     # IIS automático: solo cuando el solver dice infeasible Y las
     # cotas estructurales no detectaron causas. Si las cotas detectan
@@ -1643,6 +1834,7 @@ def run_lp(
     run = persist_run(
         session, plan_id, cfg, inputs, solution, fecha_desde,
         apply_result, diagnosis=diagnosis, iis=iis_result,
+        reporte_estructural=reporte_estructural,
     )
 
     # Evento agregado del LP: una sola fila en ChangeLogDB por corrida.

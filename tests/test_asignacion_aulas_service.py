@@ -22,6 +22,7 @@ from src.database.models import (
     HorarioDB,
     InscripcionHistoricaDB,
     MateriaDB,
+    MateriaLaboratorioDB,
     PlanificacionCursadaDB,
     SedeDB,
 )
@@ -115,7 +116,17 @@ def _add_comision_horario(
     coef: float = 1.0,
 ):
     """Agrega una comisión y un horario para esa comisión. Devuelve
-    el horario."""
+    el horario.
+
+    IMPORTANTE (Fase 8.1): además ajusta `MateriaDB.horas_teoria` /
+    `horas_laboratorio` para que la suma acumulada de duraciones de
+    los horarios cargados coincida con `hteo + hlab`. Sin este ajuste
+    el LP con `strict_r5=True` daría infactible en los tests
+    preexistentes que crean materias con hteo=4 pero un solo horario
+    de 2h. La corrección mantiene consistencia semántica sin cambiar
+    los tests uno por uno.
+    """
+    from src.database.models import MateriaDB as _MDB
     com_id = str(uuid.uuid4())
     comision = ComisionDB(
         id=com_id,
@@ -140,6 +151,38 @@ def _add_comision_horario(
     session.add(comision)
     session.add(horario)
     session.commit()
+
+    # Recalcular hteo/hlab sobre la MATERIA sumando los horarios de
+    # la primera comisión (la que acabamos de crear u otra existente).
+    # Esto mantiene R5 factible por construcción.
+    mat = session.get(_MDB, materia_codigo)
+    if mat is not None:
+        primera_com = session.exec(
+            select(ComisionDB).where(
+                ComisionDB.materia_codigo == materia_codigo
+            ).order_by(ComisionDB.numero)  # type: ignore[arg-type]
+        ).first()
+        if primera_com is not None:
+            horarios_com = list(session.exec(
+                select(HorarioDB).where(
+                    HorarioDB.comision_id == primera_com.id
+                )
+            ).all())
+            hteo_sum = 0.0
+            hlab_sum = 0.0
+            for h in horarios_com:
+                hs = h.hora_inicio.hour + h.hora_inicio.minute / 60
+                he = h.hora_fin.hour + h.hora_fin.minute / 60
+                d = he - hs
+                if h.tipo_clase == "laboratorio":
+                    hlab_sum += d
+                else:
+                    hteo_sum += d
+            mat.horas_teoria = hteo_sum
+            mat.horas_laboratorio = hlab_sum
+            mat.horas_semanales = hteo_sum + hlab_sum
+            session.add(mat)
+            session.commit()
     return horario
 
 
@@ -166,7 +209,9 @@ class TestBuildInputs:
         assert inputs.compat[(h.id, "a1")] is True
         assert inputs.sim_groups == []  # un solo horario, sin grupos
 
-    def test_filtra_materias_virtuales(self, session):
+    def test_filtra_materias_virtuales_legacy(self, session):
+        """Con strict_r5=False (modo legacy) las materias virtuales
+        quedan filtradas del modelo — comportamiento previo a Fase 8.1."""
         ctx = _seed_basic(session)
         m_vir = MateriaDB(
             codigo="VIR", nombre="Virtual", virtual=True,
@@ -182,22 +227,46 @@ class TestBuildInputs:
         session.add(AulaDB(id="a1", sede_id="S1", codigo_aula="a1", nombre="Aula 1", capacidad=30))
         session.commit()
 
-        inputs = build_inputs(session, "plan-1", LPConfig())
-
+        inputs = build_inputs(
+            session, "plan-1", LPConfig(strict_r5=False),
+        )
         assert len(inputs.horarios) == 0
         assert any("virtual" in w for w in inputs.warnings)
 
-    def test_filtra_dictados_virtuales_del_ciclo(self, session):
-        """Materia presencial pero su DictadoDB del ciclo está marcado
-        virtual: debe ser excluida del LP igual que las materias virtuales
-        del catálogo. Caso típico: recursados que se dictan por Zoom.
-        """
+    def test_materias_virtuales_entran_con_flag_no_ocupa_aula(self, session):
+        """Con strict_r5=True (default, Fase 8.1) las materias virtuales
+        entran al modelo con flag `no_ocupa_aula`, para que participen de
+        R5 pero no tomen aula."""
+        ctx = _seed_basic(session)
+        m_vir = MateriaDB(
+            codigo="VIR", nombre="Virtual", virtual=True,
+            horas_semanales=2, horas_teoria=2, horas_laboratorio=0,
+        )
+        session.add(m_vir)
+        session.add(DictadoDB(
+            id="d-vir", materia_codigo="VIR", dictado_codigo="VIR-2026-1C",
+        ))
+        session.add(DictadoCicloDB(dictado_id="d-vir", ciclo_id=ctx["ciclo"].id))
+        session.commit()
+        h = _add_comision_horario(session, "plan-1", "VIR", "Lunes", 8, 10)
+        session.add(AulaDB(id="a1", sede_id="S1", codigo_aula="a1", nombre="Aula 1", capacidad=30))
+        session.commit()
+
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        assert h.id in {hs.id for hs in inputs.horarios}
+        assert h.id in inputs.no_ocupa_aula_ids
+
+    def test_dictado_virtual_del_ciclo_flag_no_ocupa_aula(self, session):
+        """Materia presencial pero con DictadoDB del ciclo marcado
+        virtual: bajo strict_r5=True el horario entra con flag
+        `no_ocupa_aula` (Fase 8.1). Con strict_r5=False mantiene el
+        comportamiento legacy de exclusión total."""
         ctx = _seed_basic(session)
         ciclo = ctx["ciclo"]
         # Materia presencial.
         m = MateriaDB(
             codigo="REC", nombre="Recursado", virtual=False,
-            horas_semanales=4, horas_teoria=4, horas_laboratorio=0,
+            horas_semanales=2, horas_teoria=2, horas_laboratorio=0,
         )
         # Dictado del ciclo marcado virtual (modalidad excepcional).
         d = DictadoDB(
@@ -206,26 +275,32 @@ class TestBuildInputs:
         )
         session.add_all([m, d])
         session.add(DictadoCicloDB(dictado_id="d-rec", ciclo_id=ciclo.id))
-        # Serie histórica para que el forecast no falle.
         session.add(InscripcionHistoricaDB(
             materia_codigo="REC", anio=ciclo.anio - 1,
             cuatrimestre=f"{ciclo.numero}C", inscriptos=20,
         ))
         session.commit()
-        _add_comision_horario(session, "plan-1", "REC", "Lunes", 8, 10)
+        h = _add_comision_horario(session, "plan-1", "REC", "Lunes", 8, 10)
         session.add(AulaDB(
             id="a1", sede_id="S1", codigo_aula="a1",
             nombre="Aula 1", capacidad=30,
         ))
         session.commit()
 
+        # strict_r5=True (default, Fase 8.1): entra con flag.
         inputs = build_inputs(session, "plan-1", LPConfig())
+        assert h.id in {hs.id for hs in inputs.horarios}
+        assert h.id in inputs.no_ocupa_aula_ids
 
-        # El horario quedó filtrado, no entra al LP.
-        assert len(inputs.horarios) == 0
+        # strict_r5=False: legacy, filtrado.
+        inputs_legacy = build_inputs(
+            session, "plan-1", LPConfig(strict_r5=False),
+        )
+        assert len(inputs_legacy.horarios) == 0
         assert any(
-            "excluido: virtual" in w for w in inputs.warnings
-        ), f"warnings esperados; got {inputs.warnings}"
+            "excluido: virtual" in w
+            for w in inputs_legacy.warnings
+        )
 
     def test_dictado_no_virtual_no_se_filtra(self, session):
         """Sanity: si el dictado del ciclo NO es virtual, el horario
@@ -244,16 +319,17 @@ class TestBuildInputs:
         assert len(inputs.horarios) == 1
         assert inputs.horarios[0].id == h.id
 
-    def test_horario_virtual_override_gana_sobre_dictado_presencial(self, session):
-        """HorarioDB.virtual=True aisla ese horario del LP aunque el
-        dictado no sea virtual. Caso: un dictado con 2 horarios, uno
-        presencial y otro virtual (ej. lab presencial + teorica online).
+    def test_horario_virtual_override_flag_no_ocupa_aula(self, session):
+        """HorarioDB.virtual=True marca ese horario como no_ocupa_aula
+        bajo strict_r5=True (Fase 8.1). Caso: un dictado con 2 horarios,
+        uno presencial y otro virtual (ej. lab presencial + teoría
+        online). Ambos participan de R5 pero sólo el presencial toma
+        aula.
         """
         ctx = _seed_basic(session)
         ciclo = ctx["ciclo"]
         _add_materia_con_serie(session, "MIX", ciclo, esperados=20)
         h_pres = _add_comision_horario(session, "plan-1", "MIX", "Lunes", 8, 10)
-        # Un segundo horario para la misma comision, esta vez virtual.
         from sqlmodel import select as _select
         com = session.exec(
             _select(ComisionDB).where(ComisionDB.materia_codigo == "MIX")
@@ -264,9 +340,16 @@ class TestBuildInputs:
             codigo_materia="MIX",
             dia="Lunes",
             hora_inicio=time(10, 0), hora_fin=time(12, 0),
-            virtual=True,  # override a nivel horario
+            tipo_clase="teorica",
+            virtual=True,
         )
         session.add(h_virt)
+        # Ajustar materia para que hteo cubra ambos horarios (4h).
+        m = session.get(MateriaDB, "MIX")
+        m.horas_teoria = 4.0
+        m.horas_laboratorio = 0.0
+        m.horas_semanales = 4.0
+        session.add(m)
         session.add(AulaDB(
             id="a1", sede_id="S1", codigo_aula="a1",
             nombre="Aula 1", capacidad=30,
@@ -274,10 +357,13 @@ class TestBuildInputs:
         session.commit()
 
         inputs = build_inputs(session, "plan-1", LPConfig())
-        # El horario virtual quedo filtrado; el presencial sigue.
         ids = {h.id for h in inputs.horarios}
+        # Ambos horarios entran al modelo.
         assert h_pres.id in ids
-        assert "h-virt-mix" not in ids
+        assert "h-virt-mix" in ids
+        # El virtual está marcado no_ocupa_aula, el presencial no.
+        assert "h-virt-mix" in inputs.no_ocupa_aula_ids
+        assert h_pres.id not in inputs.no_ocupa_aula_ids
 
     def test_horario_virtual_false_override_gana_sobre_dictado_virtual(self, session):
         """HorarioDB.virtual=False fuerza presencial aunque el dictado
@@ -919,6 +1005,13 @@ def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
         tipo_clase="teorica",
     )
     session.add_all([com1, com2, h1, h2])
+    # Ajustar hteo de la materia para que cada comisión tenga 2h de
+    # teoría (R5 strict). Cada comisión tiene 1 horario de 2h.
+    m = session.get(MateriaDB, "ALFA")
+    m.horas_teoria = 2.0
+    m.horas_laboratorio = 0.0
+    m.horas_semanales = 2.0
+    session.add(m)
     # Dos aulas iguales cap=60.
     session.add_all([
         _Aula(id="a60_1", sede_id="S1", codigo_aula="a60_1",
@@ -1999,7 +2092,6 @@ class TestRestriccionSedesConsecutivas:
         from src.services.carrera_sede_service import set_sedes_de_carrera
         ctx = _seed_plan_con_carrera(session, "A")
         # M1 ya tiene 1 horario Lunes 8-10. Agrego uno más contiguo.
-        # Necesito trabajar con la MISMA comisión, así que reuso su id.
         com = session.exec(
             select(ComisionDB).where(ComisionDB.materia_codigo == "M1")
         ).first()
@@ -2012,6 +2104,14 @@ class TestRestriccionSedesConsecutivas:
             hora_fin=time(h2_fin, 0),
             tipo_clase="teorica",
         ))
+        # Ajustar hteo de la materia para cubrir ambos horarios
+        # (2h + duración del segundo). Necesario con strict_r5=True.
+        dur2 = h2_fin - h2_ini
+        m = session.get(MateriaDB, "M1")
+        m.horas_teoria = 2.0 + dur2
+        m.horas_laboratorio = 0.0
+        m.horas_semanales = 2.0 + dur2
+        session.add(m)
         session.add(SedeDB(id="S2", nombre="Sede 2"))
         session.add(AulaDB(
             id="a_S1", sede_id="S1", codigo_aula="a_S1",
@@ -2092,3 +2192,106 @@ class TestRestriccionSedesConsecutivas:
         )
         inputs = build_inputs(session, "plan-1", LPConfig())
         assert inputs.pares_intersede_riesgo == []
+
+
+# =============================================================================
+# Fase 8.1: R5 completa (teoría + laboratorio) — nuevas ecuaciones
+# =============================================================================
+
+
+class TestR5Completa:
+    """R5 con strict_r5=True valida tanto teoría como laboratorio."""
+
+    def _seed(self, session, hteo, hlab):
+        ciclo = CicloDB(
+            id="2026-1C", anio=2026, numero=1,
+            fecha_inicio=date(2026, 3, 9), fecha_fin=date(2026, 7, 3),
+        )
+        plan = PlanificacionCursadaDB(
+            id="plan-1", nombre="P1", ciclo_id="2026-1C",
+        )
+        sede = SedeDB(id="S1", nombre="S1")
+        session.add_all([ciclo, plan, sede])
+        session.commit()
+        m = MateriaDB(
+            codigo="M1", nombre="M1",
+            horas_semanales=hteo + hlab,
+            horas_teoria=hteo, horas_laboratorio=hlab,
+        )
+        d = DictadoDB(
+            id="d-M1", materia_codigo="M1",
+            dictado_codigo="M1-2026-1C",
+            inicio_dictado=date(2026, 3, 9),
+            fin_dictado=date(2026, 7, 3),
+        )
+        session.add_all([
+            m, d,
+            DictadoCicloDB(dictado_id="d-M1", ciclo_id="2026-1C"),
+            InscripcionHistoricaDB(
+                materia_codigo="M1", anio=2025,
+                cuatrimestre="1C", inscriptos=20,
+            ),
+        ])
+        # Aulas para teoría y lab.
+        session.add(AulaDB(
+            id="t1", sede_id="S1", codigo_aula="T1", nombre="T1",
+            capacidad=30, tipo="teorica",
+        ))
+        session.add(AulaDB(
+            id="l1", sede_id="S1", codigo_aula="L1", nombre="L1",
+            capacidad=30, tipo="laboratorio",
+        ))
+        session.add(MateriaLaboratorioDB(materia_codigo="M1", aula_id="l1"))
+        session.commit()
+
+    def _add_horario(
+        self, session, tipo, dia, hi, hf, virtual=False,
+    ):
+        com = session.exec(select(ComisionDB)).first()
+        if com is None:
+            cid = str(uuid.uuid4())
+            com = ComisionDB(
+                id=cid, materia_codigo="M1", plan_cursada_id="plan-1",
+                comision_key="M1-001", nombre="C1", numero=1, cupo=30,
+                coef_asignacion=1.0,
+            )
+            session.add(com)
+            session.commit()
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com.id, codigo_materia="M1",
+            dia=dia, hora_inicio=time(hi, 0), hora_fin=time(hf, 0),
+            tipo_clase=tipo, virtual=virtual,
+        ))
+        session.commit()
+
+    def test_hteo_incompleta_da_infactible(self, session):
+        """Materia hteo=4, hlab=2. Cronograma: 1 lab 2h + 1 teoría 2h.
+        Faltan 2h de teoría — con strict_r5 el LP debe dar infactible.
+        Con strict_r5=False sigue óptimo (comportamiento legacy)."""
+        from src.database.models import MateriaLaboratorioDB
+        self._seed(session, hteo=4, hlab=2)
+        self._add_horario(session, "laboratorio", "Lunes", 8, 10)
+        self._add_horario(session, "teorica", "Martes", 8, 10)
+
+        _, sol = run_lp_dry(session, "plan-1", LPConfig())
+        assert sol.status == "infeasible"
+
+        _, sol_legacy = run_lp_dry(
+            session, "plan-1", LPConfig(strict_r5=False),
+        )
+        assert sol_legacy.status == "optimal"
+
+    def test_hteo_completa_con_virtual_da_optimo(self, session):
+        """Materia hteo=4, hlab=2. Cronograma: 1 lab 2h + 1 teoría 2h
+        + 1 teoría virtual 2h. Total 6h = hteo+hlab. Bajo strict_r5=True
+        el virtual cuenta y da óptimo."""
+        from src.database.models import MateriaLaboratorioDB
+        self._seed(session, hteo=4, hlab=2)
+        self._add_horario(session, "laboratorio", "Lunes", 8, 10)
+        self._add_horario(session, "teorica", "Martes", 8, 10)
+        self._add_horario(session, "teorica", "Miércoles", 8, 10, virtual=True)
+
+        inputs, sol = run_lp_dry(session, "plan-1", LPConfig())
+        assert sol.status == "optimal"
+        # Se asignaron aulas a los dos presenciales, no al virtual.
+        assert len(sol.x_assignments) == 2

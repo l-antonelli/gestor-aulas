@@ -282,6 +282,46 @@ pero esas situaciones son mucho menos frecuentes.
 
 ---
 
+### ¿Cómo interpreto el veredicto de una corrida?
+
+Después de correr el asignador, en el panel de resultado aparece un
+container **📋 Veredicto de la corrida** con cuatro estados
+posibles:
+
+- **✅ optimal** — El plan se resolvió completo. Todos los horarios
+  presenciales recibieron aula. Los horarios virtuales quedan sin
+  aula por diseño (no ocupan aula pero cuentan hacia las horas
+  declaradas de la materia).
+
+- **❌ infeasible_estructural** — El chequeo pre-solve detectó
+  bloqueos ANTES de correr el solver. No se gastó tiempo del solver
+  porque ya sabíamos que no iba a resolver. El veredicto lista cada
+  bloqueo con su regla (R1, R3+R4, R5, R11, R13, compat-pigeonhole,
+  compat-hall) y las entidades a revisar. **Acción**: corregir los
+  datos (aulas, materias, carreras, horarios) según el detalle y
+  volver a intentar.
+
+- **❌ infeasible** — El solver corrió pero no encontró solución.
+  El chequeo pre-solve no había detectado bloqueos, pero alguna
+  combinación de restricciones vuelve el problema imposible. Se
+  ejecuta automáticamente un diagnóstico cruzado (IIS por
+  relajación selectiva) para identificar la restricción culpable.
+  **Acción**: revisar la sección "Diagnóstico cruzado" del veredicto.
+
+- **⏱ timeout** — El solver alcanzó el timeout sin resolver. Suele
+  significar que el modelo es muy grande o que hay ambigüedades
+  costosas de resolver. **Acción**: subir el timeout en la
+  configuración avanzada, o revisar si hay bloqueos estructurales
+  ocultos.
+
+**Restricciones activas** — El veredicto también incluye un
+expander con los valores concretos que se usaron en la corrida
+(λ over, λ under, λ sede pref, margen intersede, strict_r5, etc.).
+Esto es útil para reproducir una corrida o comparar dos corridas
+con configuraciones distintas.
+
+---
+
 ### Restricciones duras vs. blandas y dónde se configura cada una
 
 El asignador combina **reglas duras** (que definen qué asignaciones
@@ -458,24 +498,37 @@ de otros).
   aulas admiten a un subconjunto Hall-violador (`hall_violators`).
 
 ### R5 — Partición teoría / lab por comisión
-**Fuente:** `asignacion_aulas_service.py:623-653`.
+**Fuente:** `asignacion_aulas_service.py:build_model → sección R5`.
 
 Para cada comisión `k` con materia `m`:
 
 ```
-Σ_{h ∈ k} dur[h] · t[h] = hlab[m]
+Σ_{h ∈ k} dur[h] · t[h]     = hlab[m]     (laboratorio)
+Σ_{h ∈ k} dur[h] · (1-t[h]) = hteo[m]     (teoría, sólo con strict_r5)
 ```
 
-La partición teoría es implícita (`dur_total - hlab`). Los horarios
-con `tipo_clase` fijo contribuyen con `t_const` como constante.
+Ambas ecuaciones aplican simultáneamente cuando
+`LPConfig.strict_r5=True` (default desde Fase 8.1). En modo legacy
+(`strict_r5=False`) sólo se instancia la ecuación de laboratorio y
+la de teoría queda implícita — permite que la suma de horas de
+teoría sea menor que hteo sin generar infactibilidad, comportamiento
+previo al fix.
+
+Los horarios con `tipo_clase` fijo contribuyen con `t_const` como
+constante. Los horarios virtuales (marcados como `no_ocupa_aula`)
+**sí participan** de esta ecuación con su duración, aunque no toman
+aula — así, si la teoría se dicta parte presencial y parte virtual,
+ambas partes suman correctamente.
 
 - **Tipo:** dura. Relajable con `relax={"R5"}` para diagnóstico.
-- **Parámetros:** ninguno directos, pero depende de los valores de
-  `MateriaDB.horas_laboratorio` y `MateriaDB.horas_teoria` +
-  la lista de horarios cargados.
-- **Infactible si:** la suma de duraciones de los horarios de la
-  comisión no permite bipartir exactamente en `hteo + hlab`.
-  Detectado por `validar_particion_factible` antes del solve.
+- **Parámetros:** `LPConfig.strict_r5` (bool). Default True.
+- **Datos que alimentan:** `MateriaDB.horas_teoria`,
+  `MateriaDB.horas_laboratorio` (editables en Materias → editar
+  materia); duraciones de los horarios cargados en el cronograma.
+- **Infactible si:** la suma de duraciones no cierra contra
+  `hteo + hlab`, o alguna de las ecuaciones no cierra por
+  separado. Detectado por `validar_particion_factible` antes del
+  solve y también por el chequeo estructural de Fase 7.
 
 ### R6 — Consistencia tipo ↔ pool de aulas (para tipos indefinidos)
 **Fuente:** `asignacion_aulas_service.py:655-689`.
@@ -881,6 +934,10 @@ infactible".
 | 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
 | 3.5-labs | ✅ Hecho (2026-09-07) | El mapa contaba labs contra el catálogo global aunque las materias sólo pudieran usar labs específicos. No detectaba infactibilidades por compatibilidad estructural. | Sub-control **"Oferta de labs a considerar"** con opciones **🌐 Todo el catálogo** (default) y **🧪 Sólo compatibles**. En modo compatibles, cada celda usa la unión de labs compatibles de las materias con demanda ahí como oferta (`oferta_compat`, `ratio_compat`). Nueva función pura `check_lab_compatibilidad_en_celda` que detecta **pigeonhole** y **Hall** por celda. Las celdas con Hall violation se marcan con ⚠️ y quedan rojas aunque el ratio numérico esté por debajo de 1; tooltip lista las materias del subconjunto conflictivo. |
 | 7 | ✅ Hecho (2026-09-07) | Faltaba una forma de saber si el plan iba a resolver antes de correr el LP. El mapa cubría labs y capacidad pero no otras causas de infactibilidad. | Nuevo `factibilidad_service.py` con `check_factibilidad_estructural`, que consolida chequeos de todas las familias de bloqueo (R1, R3+R4, R5, R11, R13, compat-pigeonhole, compat-hall). Devuelve un `ReporteFactibilidad` con bloqueos categorizados por regla + detalle concreto. Panel de UI con semáforo + botón explícito arriba del form del asignador. Verificación empírica sobre Plan v0: detectó 3 casos R5 (partición teoría/lab imposible) antes de correr el solve. |
+| 8.1 | ✅ Hecho (2026-09-07) | R5 sólo validaba `Σ dur·t == hlab` (laboratorio). No había ecuación análoga para teoría — el LP permitía cronogramas con horas de teoría incompletas silenciosamente. Los horarios virtuales se filtraban completamente y no contaban hacia hteo/hlab. | Nuevo flag `LPConfig.strict_r5=True` (default). Cuando está activo, el LP añade la ecuación `Σ dur·(1-t) == hteo` en R5, garantizando que la teoría también cierre. Los horarios virtuales ahora entran al modelo con flag `no_ocupa_aula` (no toman `x[h,a]`, no participan de R1/R3/R4/R6/R7/R10/R11/R12/R13) pero sí contribuyen a la ecuación R5. Comportamiento legacy disponible via `strict_r5=False`. Tests que reproducen el escenario mixto: LP infactible con hteo incompleta; LP óptimo con virtual que cierra hteo. |
+| 8.2 | ✅ Hecho (2026-09-07) | Falta transparencia sobre por qué el LP dio factible o infactible. Los detalles quedaban dispersos en `error_message`, `diagnosis`, `iis` y el panel. Además, correr el solver ante un plan estructuralmente infactible gastaba hasta 5 min de timeout inútil. | Antes de correr el solver, `run_lp` ahora ejecuta `check_factibilidad_estructural`. Si hay bloqueos, se saltea el solve y se devuelve status `infeasible_estructural` con la causa. En todos los casos, el `details_json` del `LPRunDB` incluye un bloque `veredicto` con `status`, `resumen` humano-legible, `causa_infactibilidad`, `bloqueos_diagnosticados`, `horarios_sin_asignar` y `restricciones_activas` (dump completo de `LPConfig`). La UI del summary del panel del asignador tiene un container 📋 "Veredicto de la corrida" que muestra todo esto con expanders. |
+| 8.3 | ✅ Hecho (2026-09-07) | `LPConfig` tenía parámetros no expuestos en la UI (strict_r5, lambda_intersede) — quedaban ocultos y no configurables sin editar código. | Auditoría completa: cada campo de `LPConfig` tiene ahora widget en el form del asignador con help detallado. Nueva sección "Configuración avanzada" agrupa strict_r5 y lambda_intersede. `activar_alpha` sigue como experimental. Todos los widgets escriben al `LPConfig` que devuelve `_render_config_form`. |
+| 8.4 | ✅ Hecho (2026-09-07) | Documentación dispersa: los cambios de Fases 2-7 no habían quedado consolidados en un único lugar. | Esta sección actualizada: cada regla con formulación matemática, datos que la alimentan, parámetros configurables, casos de infactibilidad. Sección nueva "¿Cómo interpreto el veredicto?" en la parte criolla. |
 | 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
 | 5 | ✅ Hecho (2026-09-05) | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Rediseñado el form de configuración en `asignacion_panel.py` con **4 containers** (alcance temporal, ajuste de capacidad, preferencias de sede, avanzado). Cada parámetro nuevo de Fases 2–4 tiene su input y su help correspondiente. Los inputs se propagan a `LPConfig` en el submit. |
 | 6 | ✅ Hecho (2026-09-05) | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Nuevo `metricas_calidad_service.py` con `compute_metricas_calidad` que devuelve un `MetricasCalidad` con 4 familias: cobertura, sobre/sub ocupación, distribución de aulas, LP + traslados. Panel `_render_panel_calidad` en Planes → Detalle con 4 containers y métricas grandes + expanders de detalle. |
