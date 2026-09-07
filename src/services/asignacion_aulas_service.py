@@ -465,7 +465,15 @@ def build_inputs(
             if aula_sede_id.get(a.id) not in admisibles:
                 compat[(h.id, a.id)] = False
 
-    sim_groups = compute_simultaneidad_groups(horarios)
+    # `sim_groups` sólo debe contener horarios que compiten por aula
+    # física — los virtuales/no_ocupa_aula no toman aula y por lo tanto
+    # no participan de R4 ni de las cotas Hall/pigeonhole que verifican
+    # capacidad. Sin este filtro `diagnose_infeasibility` los cuenta
+    # como demanda y reporta franjas saturadas falsamente.
+    horarios_para_sim = [
+        h for h in horarios if h.id not in no_ocupa_aula_ids
+    ]
+    sim_groups = compute_simultaneidad_groups(horarios_para_sim)
 
     # R13 (Fase 4): pares de horarios contiguos en riesgo intersede.
     from src.services.asignacion_aulas_helpers import (
@@ -505,14 +513,24 @@ def diagnose(inputs: LPInputs) -> InfeasibilityDiagnosis:
     """Wrapper sobre ``diagnose_infeasibility`` + pre-validación de
     partición teoría/lab. Toma un LPInputs y devuelve un Diagnóstico
     con todas las causas estructurales detectables sin correr el LP."""
+    # Excluir horarios `no_ocupa_aula` (virtuales bajo strict_r5) del
+    # diagnóstico de asignación de aulas: no toman aula y por lo tanto
+    # no aportan a la demanda R1/R3/R4/R6. `sim_groups` ya viene
+    # filtrado de `build_inputs`. Sí participan de R5, que se maneja
+    # aparte más abajo.
+    horarios_activos = [
+        h for h in inputs.horarios
+        if h.id not in inputs.no_ocupa_aula_ids
+    ]
     diag = diagnose_infeasibility(
-        horarios=inputs.horarios,
+        horarios=horarios_activos,
         aulas=inputs.aulas,
         materia_lab_map=inputs.materia_lab_map,
         sim_groups=inputs.sim_groups,
         compat_override=inputs.compat,
     )
-    # Pre-validación R5 (partición factible).
+    # Pre-validación R5 (partición factible). Acá SÍ incluimos los
+    # virtuales porque contribuyen a hteo/hlab.
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
     for h in inputs.horarios:
         cid = inputs.comision_de_horario[h.id]

@@ -1189,47 +1189,13 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
     latest = get_latest_run(session, plan_id)
 
     # ======================================================
-    # Expander: Estado de Asignaciones (métricas + mapa + tabla)
-    # ======================================================
-    metricas = _compute_estado_metricas(session, plan_id, latest)
-    # Banner de desactualizados: si hay asignaciones que ya no son
-    # admisibles con las reglas vigentes, avisar antes de que el
-    # usuario mire el mapa (donde la inconsistencia se manifiesta
-    # como "aulas libres en franjas saturadas").
-    _render_banner_desactualizados(session, metricas)
-    with st.expander("📊 Estado de asignaciones", expanded=True):
-        _render_estado_metricas(metricas)
-        if latest is not None:
-            st.markdown("---")
-            from src.ui.asignacion_resultado_ui import render_resultado
-            render_resultado(session, latest, key_ns=f"{key_ns}_res")
-        else:
-            st.info(
-                "Todavía no se ejecutó ninguna asignación para este "
-                "plan. Corré la asignación desde el expander de abajo "
-                "para ver el detalle del mapa de saturación y la "
-                "tabla por horario."
-            )
-
-    # ======================================================
-    # Expander: Gestión de Asignaciones (edición manual + cronograma)
-    # ======================================================
-    with st.expander("🛠️ Gestión de asignaciones", expanded=False):
-        st.caption(
-            "Editá manualmente las asignaciones de aulas de cada "
-            "horario, marcá cambios como manuales para que la próxima "
-            "corrida del asignador los respete, y revisá el cronograma "
-            "de cada aula."
-        )
-        from src.ui.aula_cronograma_view import render_aula_cronograma
-        render_aula_cronograma(session, plan_id, key_ns=f"{key_ns}_aula")
-
-    # ======================================================
     # Expander: Asignador de Aulas (correr nueva corrida + resumen)
+    # → PRIMERO para que sea lo primero que ve el usuario.
     # ======================================================
+    cfg = None
     with st.expander(
         "🏛️ Asignador de aulas",
-        expanded=(latest is None),
+        expanded=True,
     ):
         if latest is not None:
             _render_summary(latest)
@@ -1249,12 +1215,11 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
             )
             st.caption(
                 "ℹ️ La asignación intenta encontrar un aula a cada "
-                "horario presencial del plan. NO entran los horarios "
-                "de materias virtuales del catálogo, dictados marcados "
-                "como virtuales para el ciclo, ni horarios individuales "
-                "marcados como virtuales. Si la asignación no resuelve, "
-                "revisá primero en **Ciclos → 📚 Dictados** que las "
-                "materias recursadas estén marcadas como virtuales."
+                "horario presencial del plan. Los horarios virtuales "
+                "entran al modelo con flag `no_ocupa_aula` — cuentan "
+                "para R5 pero no toman aula. Si la asignación no "
+                "resuelve, revisá el chequeo de factibilidad "
+                "estructural arriba."
             )
 
             cfg = _render_config_form(session, plan_id, key_ns)
@@ -1270,12 +1235,61 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
         else:
             _mensajes_status = {
                 "infeasible": "no se encontró solución válida",
+                "infeasible_estructural": (
+                    "el chequeo estructural detectó bloqueos antes "
+                    "del solve"
+                ),
                 "timeout": "se agotó el tiempo máximo",
                 "error": "hubo un error inesperado",
             }
             _msg = _mensajes_status.get(run.status, run.status)
             st.error(
-                f"La asignación no resolvió: {_msg}. "
-                f"{run.error_message or 'Sin detalles.'}"
+                f"La asignación no resolvió: {_msg}. Mirá el "
+                "**📋 Veredicto de la corrida** arriba para el detalle."
             )
         st.rerun()
+
+    # ======================================================
+    # Expander: Estado de Asignaciones (métricas + mapa + tabla)
+    # → SEGUNDO: mapa de saturación como visor de factibilidad.
+    # ======================================================
+    metricas = _compute_estado_metricas(session, plan_id, latest)
+    _render_banner_desactualizados(session, metricas)
+    with st.expander(
+        "📊 Estado de asignaciones y mapa de saturación",
+        expanded=False,
+    ):
+        st.caption(
+            "Este panel funciona en dos modos: **antes** de correr el "
+            "asignador, el mapa de saturación te ayuda a analizar si "
+            "el plan es factible (dónde puede haber demanda mayor a "
+            "la oferta de aulas). **Después** de correr el asignador, "
+            "muestra además el detalle del resultado. Usá el mapa "
+            "junto con el 🚦 chequeo de factibilidad para detectar "
+            "fuentes de infactibilidad antes de correr el LP."
+        )
+        _render_estado_metricas(metricas)
+        if latest is not None:
+            st.markdown("---")
+            from src.ui.asignacion_resultado_ui import render_resultado
+            render_resultado(session, latest, key_ns=f"{key_ns}_res")
+        else:
+            st.info(
+                "Todavía no se ejecutó ninguna asignación para este "
+                "plan. Corré la asignación arriba para ver el detalle "
+                "del mapa de saturación y la tabla por horario."
+            )
+
+    # ======================================================
+    # Expander: Gestión de Asignaciones (edición manual + cronograma)
+    # ======================================================
+    with st.expander("🛠️ Gestión de asignaciones", expanded=False):
+        st.caption(
+            "Editá manualmente las asignaciones de aulas de cada "
+            "horario, marcá cambios como manuales para que la próxima "
+            "corrida del asignador los respete, y revisá el cronograma "
+            "de cada aula."
+        )
+        from src.ui.aula_cronograma_view import render_aula_cronograma
+        render_aula_cronograma(session, plan_id, key_ns=f"{key_ns}_aula")
+

@@ -282,6 +282,86 @@ pero esas situaciones son mucho menos frecuentes.
 
 ---
 
+### Preferencia de sede: dura vs blanda, y dónde se define
+
+El manejo de sedes tiene **dos capas** que trabajan en conjunto —
+una dura que decide qué sede es **admisible** y una blanda que
+decide qué sede es **preferida**. Es la parte del modelo donde
+más confusión hay porque intervienen varios datos, así que la
+detallamos acá.
+
+**Capa 1 — Sedes admisibles (R10, dura)**
+
+Determina en qué sedes puede caer un horario. Se instancia como
+una restricción dura del LP: si un aula no está en una sede
+admisible para el horario, no se crea la variable `x[h, a]` y por
+lo tanto es imposible que ese horario termine ahí.
+
+Las sedes admisibles se resuelven a nivel de **horario**
+combinando tres cosas:
+
+| Origen | Se edita en | Efecto |
+|---|---|---|
+| Sedes habilitadas de la carrera | 🎓 **Carreras → carrera → "Sedes habilitadas"** | Base: la materia sólo puede caer en aulas de estas sedes. Si vacío, no aplica R10 (todas admisibles). |
+| Sede default para comunes | 🏛️ **Aulas → Sedes → "Sede por defecto para materias comunes"** | Para materias que aparecen en 2+ carreras (comunes), esta sede sobreescribe la lista de la carrera. |
+| Override por comisión | 📅 **Cronogramas → editar comisión → "Restringir a una carrera"** | Reemplaza la lista de la carrera con las sedes habilitadas de OTRA carrera, sólo para esa comisión. |
+| Excepción por lab compatible | 🏛️ **Aulas → laboratorio → "Materias que usan este laboratorio"** | Aunque una aula esté fuera del set admisible, si está listada como lab compatible con la materia, prevalece y sí es admisible. |
+
+Si después de todo esto un horario no tiene ninguna aula
+admisible, el LP es infactible (R1). El chequeo estructural lo
+reporta antes del solve.
+
+**Capa 2 — Sede preferida (R12, blanda)**
+
+Dentro del conjunto de sedes admisibles, hay una que es
+**preferida**. Es una preferencia con costo, no una restricción:
+el LP puede asignar aulas fuera de la sede preferida si le
+conviene por capacidad o para respetar R13.
+
+La sede preferida se calcula automáticamente por
+`sede_preferida_para_horario` con esta regla:
+
+1. Si la materia tiene laboratorios compatibles → sede del lab.
+2. Si hay varios labs en distintas sedes → intersección con las
+   sedes admisibles por carrera.
+3. Si no hay labs → primera sede admisible por orden alfabético.
+4. Si no hay ninguna restricción de sede → `None` (no hay
+   preferencia).
+
+**Cómo se traduce a costos en el objetivo**: por cada variable
+`x[h, a]` donde el aula está en una sede distinta a la preferida
+del horario, se suma `λ_sede_pref` al objetivo. Cuanto más alto
+`λ_sede_pref`, más fuerza la preferencia.
+
+Parámetros:
+
+| Parámetro | Default | Efecto | Se edita en |
+|---|---|---|---|
+| `lambda_sede_pref` | 5.0 | Peso del término blando de preferencia de sede. Con 0 se desactiva (todas las sedes admisibles quedan igual de deseables). | Panel del asignador → "⚖️ Ajuste al forecast" → "Peso de preferencia de sede (λ sede)". |
+
+**Regla mnemotécnica**: "R10 dice **dónde puede caer**, R12 dice
+**dónde debería preferir caer**". Los datos que alimentan R10
+(carreras, sedes por carrera, sedes default para comunes, labs
+compatibles) también determinan R12 automáticamente — no hay que
+configurar la sede preferida a mano.
+
+**Ejemplo: materia A5 (Informática Aplicada)**
+
+- Carrera de A5 = **A** (Electrónica).
+- Sedes habilitadas de A: **Siberia**.
+- Labs compatibles de A5: LAB-004, LAB-005 — ambos en **Pellegrini**.
+- Sedes admisibles para A5 (R10, dura): **{Siberia, Pellegrini}**
+  (Pellegrini se cuela porque tiene labs compatibles).
+- Sede preferida para A5 (R12, blanda): **Pellegrini** (regla 1:
+  vive el lab).
+
+Resultado: el LP intenta poner A5 en Pellegrini. Si Pellegrini se
+satura en esa franja, la manda a Siberia — que también es
+admisible — pagando `λ_sede_pref = 5` por el desplazamiento. Si no
+hubiera opciones en Siberia tampoco, el plan sería infactible (R1).
+
+---
+
 ### ¿Cómo interpreto el veredicto de una corrida?
 
 Después de correr el asignador, en el panel de resultado aparece un
