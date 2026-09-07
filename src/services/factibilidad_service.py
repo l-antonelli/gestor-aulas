@@ -335,9 +335,17 @@ def check_factibilidad_estructural(
         ))
 
     # R5: particiones teoría/lab imposibles.
+    # Sólo aplica a materias con laboratorio (hlab > 0). Para materias
+    # sin laboratorio, la ecuación R5 del LP no se instancia: los
+    # horarios teóricos "flotan libres" y una suma menor a hteo+hlab
+    # no genera infactibilidad estructural. Alineado con la validación
+    # oficial del panel de Detalle (que también filtra por hlab > 0).
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
     for h in horarios_slots:
         cid = comision_de_horario[h.id]
+        # Materias sin laboratorio: R5 no se aplica.
+        if hlab.get(h.materia_codigo, 0.0) <= 0:
+            continue
         horarios_por_comision.setdefault(cid, []).append(
             (h.id, dur[h.id], h.tipo_clase)
         )

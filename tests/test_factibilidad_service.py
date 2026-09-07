@@ -134,6 +134,20 @@ class TestR5ParticionImposible:
         r = check_factibilidad_estructural(session, "plan-1")
         assert any(b.codigo_regla == "R5" for b in r.bloqueos)
 
+    def test_materia_sin_lab_horas_incompletas_no_bloquea(self, session):
+        """Materia con hlab=0: R5 no se aplica al LP, así que no debe
+        reportar bloqueo aunque suma_horarios < hteo (regresión: bug
+        de falso positivo detectado 2026-09-07)."""
+        # Materia con hteo=4, hlab=0 pero un solo horario de 2h.
+        # Esto NO es infactible para el LP (R5 no se materializa).
+        _seed_plan_basico(session, hteo=4, hlab=0)
+        r = check_factibilidad_estructural(session, "plan-1")
+        assert not any(b.codigo_regla == "R5" for b in r.bloqueos), (
+            "R5 no debe reportar bloqueo cuando la materia no tiene "
+            "laboratorio: la ecuación de partición no se instancia "
+            "en el LP para esas materias."
+        )
+
 
 class TestCompatHall:
 
