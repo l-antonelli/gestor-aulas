@@ -207,6 +207,114 @@ def _render_tabla_manuales(
                 st.rerun()
 
 
+def _render_check_factibilidad(
+    session: Session, plan_id: str, key_ns: str,
+) -> None:
+    """Panel de chequeo de factibilidad estructural pre-solve (Fase 7).
+
+    Ofrece un botón explícito para correr el chequeo. Muestra
+    semáforo + panel de bloqueos categorizados por regla.
+    """
+    from src.services.factibilidad_service import (
+        check_factibilidad_estructural,
+    )
+
+    with st.container(border=True):
+        st.markdown("### 🚦 Chequeo de factibilidad estructural")
+        st.caption(
+            "Analiza el plan antes de correr el asignador y detecta "
+            "situaciones que van a hacer infactible el LP: horarios "
+            "sin aula compatible, franjas saturadas, particiones "
+            "imposibles teoría/lab, pares conflictivos de "
+            "laboratorios y otros. Si el semáforo está en 🔴 rojo, "
+            "corregí los datos antes de correr el asignador — ya "
+            "sabemos que no va a resolver."
+        )
+
+        # Toggle margen intersede — para que el chequeo R13 refleje
+        # la misma config que se va a usar al correr el LP.
+        margen_key = f"{key_ns}_check_margen_intersede"
+        margen_val = st.session_state.get(
+            margen_key,
+            st.session_state.get(f"{key_ns}_margen_intersede", 30),
+        )
+
+        col_btn, col_info = st.columns([1, 3])
+        with col_btn:
+            correr = st.button(
+                "▶️ Chequear factibilidad",
+                key=f"{key_ns}_check_run",
+                type="primary",
+            )
+        with col_info:
+            estado_key = f"{key_ns}_check_reporte"
+            if estado_key not in st.session_state:
+                st.caption(
+                    "Todavía no se corrió el chequeo. Apretá el "
+                    "botón para analizar el plan."
+                )
+
+        if correr:
+            with st.spinner("Analizando factibilidad estructural…"):
+                reporte = check_factibilidad_estructural(
+                    session, plan_id,
+                    margen_min_intersede_minutos=int(margen_val),
+                )
+            st.session_state[estado_key] = reporte
+
+        reporte = st.session_state.get(estado_key)
+        if reporte is None:
+            return
+
+        # Semáforo + resumen.
+        if reporte.factible:
+            st.success(
+                "✅ **El plan pasa las validaciones estructurales.** "
+                "No se detectaron bloqueos conocidos que hagan al LP "
+                "infactible. Otras causas (por ejemplo capacidad "
+                "insuficiente) sólo se ven al correr el asignador."
+            )
+        else:
+            st.error(
+                f"❌ **{reporte.n_bloqueos()} bloqueo(s) detectado(s).** "
+                "El LP va a dar infactible con la configuración actual. "
+                "Corregí los datos antes de correr el asignador."
+            )
+            # Resumen por regla.
+            resumen_texto = ", ".join(
+                f"**{codigo}**: {n}"
+                for codigo, n in sorted(reporte.resumen_por_regla.items())
+            )
+            st.caption(f"Bloqueos por regla → {resumen_texto}")
+
+            # Panel de detalle.
+            for i, bloqueo in enumerate(reporte.bloqueos):
+                emoji = "🔴" if bloqueo.severidad == "bloqueante" else "🟡"
+                titulo = (
+                    f"{emoji} **{bloqueo.codigo_regla}** · {bloqueo.titulo}"
+                )
+                with st.expander(titulo, expanded=(i < 3)):
+                    st.markdown(bloqueo.detalle)
+                    if bloqueo.entidades_a_revisar:
+                        # Mostrar como caption las entidades que hay que
+                        # revisar (materias, aulas, carreras, etc.).
+                        st.caption(
+                            "Entidades a revisar: "
+                            + " · ".join(
+                                f"`{e}`"
+                                for e in bloqueo.entidades_a_revisar
+                            )
+                        )
+
+        if reporte.advertencias:
+            with st.expander(
+                f"🟡 {len(reporte.advertencias)} advertencia(s) (no bloquean)",
+                expanded=False,
+            ):
+                for adv in reporte.advertencias:
+                    st.markdown(f"**{adv.titulo}**  \n{adv.detalle}")
+
+
 def _render_config_form(
     session: Session, plan_id: str, key_ns: str,
 ) -> LPConfig | None:
@@ -231,6 +339,9 @@ def _render_config_form(
     _respetar_state = st.session_state.get(f"{key_ns}_respetar", True)
     if _respetar_state:
         _render_tabla_manuales(session, plan_id, key_ns)
+
+    # Panel de chequeo de factibilidad estructural (Fase 7).
+    _render_check_factibilidad(session, plan_id, key_ns)
 
     with st.form(f"{key_ns}_lp_form"):
         st.markdown("### ⚙️ Configuración del asignador")

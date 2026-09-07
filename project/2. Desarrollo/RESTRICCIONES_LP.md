@@ -257,17 +257,28 @@ admisibles, etc.).
 
 #### Estrategia de troubleshooting recomendada
 
-1. **Antes de correr el LP**, mirar el mapa de saturación en las
-   4 vistas para labs (Dura / Preferida / Máxima / Total sin sede)
-   con el modo **"Sólo compatibles"** activado. Cualquier celda
-   roja o con ⚠️ es una alerta previa que va a hacer que el LP
-   dé infactible.
-2. **Después de correr el LP** infactible, revisar el panel de
-   diagnóstico estructural que reporta cada una de las causas
-   arriba con detalles concretos (nombres de materias, comisiones,
-   horarios, aulas).
-3. **Iterativamente**: arreglar la causa de mayor severidad
-   (usualmente falta de compatibilidad estructural), re-correr.
+1. **Antes de correr el LP**, apretar el botón **"🚦 Chequear
+   factibilidad"** en Planes → Aulas. Consolida en un único
+   reporte todas las causas de infactibilidad estructural (R1,
+   R3+R4, R5, R11, R13, compat-pigeonhole, compat-hall). Si el
+   semáforo está en 🔴 rojo, corregir los datos antes de correr
+   el asignador.
+2. **Complementariamente**, mirar el mapa de saturación en las
+   4 vistas para labs con el modo **"Sólo compatibles"** activado.
+   Cualquier celda roja o con ⚠️ ahí es una alerta que el chequeo
+   estructural también capta.
+3. **Después de correr el LP** infactible (raro si el chequeo dio
+   verde), revisar el panel de diagnóstico interno del LP que
+   reporta cada una de las causas con detalles concretos.
+4. **Iterativamente**: arreglar la causa de mayor severidad
+   (usualmente falta de compatibilidad estructural o R5), re-correr
+   el chequeo, re-correr el LP.
+
+**Nota sobre la garantía del semáforo verde**: si el chequeo dice
+factible, quiere decir que las causas *estructurales* típicas están
+resueltas. El LP todavía puede resultar infactible por combinaciones
+inusuales o por límites del solver (timeout, precisión numérica),
+pero esas situaciones son mucho menos frecuentes.
 
 ---
 
@@ -869,6 +880,7 @@ infactible".
 | 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
 | 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
 | 3.5-labs | ✅ Hecho (2026-09-07) | El mapa contaba labs contra el catálogo global aunque las materias sólo pudieran usar labs específicos. No detectaba infactibilidades por compatibilidad estructural. | Sub-control **"Oferta de labs a considerar"** con opciones **🌐 Todo el catálogo** (default) y **🧪 Sólo compatibles**. En modo compatibles, cada celda usa la unión de labs compatibles de las materias con demanda ahí como oferta (`oferta_compat`, `ratio_compat`). Nueva función pura `check_lab_compatibilidad_en_celda` que detecta **pigeonhole** y **Hall** por celda. Las celdas con Hall violation se marcan con ⚠️ y quedan rojas aunque el ratio numérico esté por debajo de 1; tooltip lista las materias del subconjunto conflictivo. |
+| 7 | ✅ Hecho (2026-09-07) | Faltaba una forma de saber si el plan iba a resolver antes de correr el LP. El mapa cubría labs y capacidad pero no otras causas de infactibilidad. | Nuevo `factibilidad_service.py` con `check_factibilidad_estructural`, que consolida chequeos de todas las familias de bloqueo (R1, R3+R4, R5, R11, R13, compat-pigeonhole, compat-hall). Devuelve un `ReporteFactibilidad` con bloqueos categorizados por regla + detalle concreto. Panel de UI con semáforo + botón explícito arriba del form del asignador. Verificación empírica sobre Plan v0: detectó 3 casos R5 (partición teoría/lab imposible) antes de correr el solve. |
 | 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
 | 5 | ✅ Hecho (2026-09-05) | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Rediseñado el form de configuración en `asignacion_panel.py` con **4 containers** (alcance temporal, ajuste de capacidad, preferencias de sede, avanzado). Cada parámetro nuevo de Fases 2–4 tiene su input y su help correspondiente. Los inputs se propagan a `LPConfig` en el submit. |
 | 6 | ✅ Hecho (2026-09-05) | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Nuevo `metricas_calidad_service.py` con `compute_metricas_calidad` que devuelve un `MetricasCalidad` con 4 familias: cobertura, sobre/sub ocupación, distribución de aulas, LP + traslados. Panel `_render_panel_calidad` en Planes → Detalle con 4 containers y métricas grandes + expanders de detalle. |
