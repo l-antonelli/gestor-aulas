@@ -938,7 +938,63 @@ def _render_aulas_libres_por_franja(
         )
 
 
-def _render_heatmap_total_sin_sede(heatmap_sede: dict, key_ns: str) -> None:
+def _mapa_caption(
+    *, modo: str, vista: str, categoria: str, oferta: str,
+) -> str:
+    """Genera un caption compacto que describe la combinación de
+    controles del mapa. Dinámico según lo que eligió el usuario."""
+    if modo == "ocupacion":
+        return (
+            "Muestra **aulas usadas/total** en cada sede por "
+            "franja. **Usadas** = aulas que tienen algún horario "
+            "asignado en la DB (estado real del plan). Verde ≤80% "
+            "· amarillo 80–100% · rojo >100% no puede ocurrir "
+            "(usadas nunca supera total)."
+        )
+    txt_vista = {
+        "dura": (
+            "Vista **Dura**: sólo se cuentan los horarios que "
+            "NO pueden ir a otra sede. Si demanda > oferta, esos "
+            "horarios no se pueden mover — infactibilidad segura."
+        ),
+        "preferida": (
+            "Vista **Preferida**: 'plan feliz' — cada horario "
+            "cuenta una vez en su sede preferida (lab-first, "
+            "luego carrera)."
+        ),
+        "maxima": (
+            "Vista **Máxima**: cota superior — cada horario "
+            "cuenta en todas las sedes que podría aceptar. "
+            "Muestra el margen del asignador."
+        ),
+        "total": (
+            "Vista **Total sin sede**: cuenta simultáneos "
+            "ignorando sede. Cota inferior global."
+        ),
+    }.get(vista, "")
+    txt_oferta = ""
+    if categoria in ("peor", "laboratorio"):
+        if oferta == "compatibles":
+            txt_oferta = (
+                " · Oferta de labs = **sólo compatibles**. Detecta "
+                "infactibilidad estructural (pigeonhole + Hall) "
+                "cuando los labs disponibles no alcanzan para las "
+                "materias de la celda. ⚠️ marca casos Hall."
+            )
+        else:
+            txt_oferta = (
+                " · Oferta de labs = **todo el catálogo** (sin "
+                "filtrar compatibilidad)."
+            )
+    return (
+        f"{txt_vista}{txt_oferta} · Verde ≤80% · "
+        f"amarillo 80–100% · rojo >100%."
+    )
+
+
+def _render_heatmap_total_sin_sede(
+    heatmap_sede: dict, key_ns: str, *, oferta_sel: str = "catalogo",
+) -> None:
     """Renderiza la vista **Total sin sede** de Fase 3.5.
 
     Es una cota inferior de factibilidad global: cuenta cuántos
@@ -966,36 +1022,30 @@ def _render_heatmap_total_sin_sede(heatmap_sede: dict, key_ns: str) -> None:
     data_all = total["data"]
     oferta_total = total.get("oferta_total", {})
 
-    st.caption(
-        "Suma de horarios simultáneos **sin discriminar sede**. La "
-        "oferta es el catálogo agregado (teóricas: todas las aulas "
-        "teóricas + anfiteatros del sistema; laboratorios: el mayor "
-        "pool disponible para las materias con lab). Si el ratio "
-        "supera 1, el plan tiene infactibilidad global — repartir "
-        "sedes no lo salva."
-    )
-
-    cat_label = {
-        "peor": "Peor caso (entre teóricas y laboratorios)",
-        "teorica": "Sólo aulas teóricas / anfiteatros",
-        "laboratorio": "Sólo aulas laboratorio",
-    }
-    cat_sel = st.radio(
-        "Categoría",
-        options=["peor", "teorica", "laboratorio"],
-        format_func=lambda c: cat_label[c],
-        horizontal=True,
-        key=f"{key_ns}_heat_total_cat",
-    )
+    # Los tres controles del bloque "Cómo ver el mapa" del caller ya
+    # se rederizaron; acá sólo consumimos la categoría vía session_state
+    # y usamos `oferta_sel` que llega por parámetro.
+    cat_sel = st.session_state.get(f"{key_ns}_heatsede_cat", "peor")
 
     cat_data = data_all.get(cat_sel, {})
     if not cat_data:
         st.info("Sin datos para la categoría seleccionada.")
         return
 
+    # Elegir oferta según el sub-control (labs). Para teóricas
+    # oferta_compat == oferta.
+    usar_compat = (
+        oferta_sel == "compatibles" and cat_sel in ("peor", "laboratorio")
+    )
     demanda = cat_data["demanda"]
-    oferta = cat_data["oferta"]
-    ratio = cat_data["ratio"]
+    if usar_compat and cat_sel == "laboratorio":
+        oferta = cat_data.get("oferta_compat", cat_data["oferta"])
+        ratio = cat_data.get("ratio_compat", cat_data["ratio"])
+    else:
+        oferta = cat_data["oferta"]
+        ratio = cat_data["ratio"]
+    hall_violation = cat_data.get("hall_violation")
+    hall_materias = cat_data.get("hall_materias")
     n_slots = len(slots)
     n_dias = len(dias)
 
@@ -1027,14 +1077,34 @@ def _render_heatmap_total_sin_sede(heatmap_sede: dict, key_ns: str) -> None:
             d = int(demanda[si][di])
             o = int(oferta[si][di])
             r_ = float(ratio[si][di])
+            hall_hit = (
+                usar_compat
+                and hall_violation is not None
+                and cat_sel == "laboratorio"
+                and hall_violation[si][di]
+            )
+            hall_str = ""
+            if hall_hit and hall_materias is not None:
+                mats = hall_materias[si][di]
+                if mats:
+                    hall_str = (
+                        "⚠️ Hall: {"
+                        + ", ".join(mats)
+                        + "} comparten un pool insuficiente."
+                    )
+            bucket_final = (
+                "saturado (>100%)" if hall_hit else _bucket(r_)
+            )
+            prefix = "⚠️ " if hall_hit else ""
             long_rows.append({
                 "slot": slots[si],
                 "dia": dias[di],
                 "demanda": d,
                 "oferta": o,
                 "ratio": r_,
-                "bucket": _bucket(r_),
-                "etiqueta": f"{d}/{o}" if d > 0 else "",
+                "bucket": bucket_final,
+                "etiqueta": f"{prefix}{d}/{o}" if d > 0 else "",
+                "hall_msg": hall_str,
             })
     df_long = pd.DataFrame(long_rows)
     slots_v = slots[i0:i1 + 1]
@@ -1045,13 +1115,16 @@ def _render_heatmap_total_sin_sede(heatmap_sede: dict, key_ns: str) -> None:
         alt.Tooltip("demanda:Q", title="Horarios simultáneos"),
         alt.Tooltip("oferta:Q", title="Oferta agregada"),
         alt.Tooltip("ratio:Q", title="Ratio", format=".2f"),
+        alt.Tooltip("hall_msg:N", title="Alerta Hall"),
     ]
 
     n_teo_tot = oferta_total.get("teorica", 0)
     n_lab_tot = oferta_total.get("laboratorio", 0)
+    oferta_lbl = "sólo compatibles" if usar_compat else "todo el catálogo"
     st.markdown(
         f"**🌐 Total sin discriminar sede** · {n_teo_tot} aula(s) "
-        f"teórica(s)+anfiteatro(s) · pool máx. de lab: {n_lab_tot}"
+        f"teórica(s)+anfiteatro(s) · {n_lab_tot} laboratorio(s) del "
+        f"catálogo · oferta labs = **{oferta_lbl}**"
     )
 
     heatmap = (
@@ -1115,92 +1188,110 @@ def _render_heatmap_por_sede(
 
     es_saturacion = modo == "saturacion"
 
-    if es_saturacion:
-        st.caption(
-            "Cada celda muestra **demanda/oferta** en esa sede para "
-            "esa franja. La demanda depende de la vista elegida "
-            "(ver **Vista** más abajo). La oferta son las aulas de "
-            "la sede del tipo necesario. Verde ≤80% · amarillo "
-            "80–100% · rojo >100% (más horarios que aulas del "
-            "tipo).  \nEn la vista **peor caso**, la etiqueta "
-            "incluye **T** (peor entre teóricas) o **L** (peor "
-            "entre laboratorios) para que se distinga en qué "
-            "categoría satura cada celda. En el tooltip se ve el "
-            "desglose completo de las dos categorías."
-        )
-    else:
-        st.caption(
-            "Cada celda muestra **usadas/total** en esa sede para "
-            "esa franja. **Usadas** son las aulas que efectivamente "
-            "tienen algún horario asignado en la DB (estado real "
-            "del plan). **Total** son las aulas de la sede del "
-            "tipo. Verde ≤80% (holgura) · amarillo 80–100% · rojo "
-            ">100% no puede ocurrir en este modo (nunca hay más "
-            "usadas que existentes).  \nEn la vista **peor caso**, "
-            "la etiqueta incluye **T** o **L** según qué categoría "
-            "concentra la ocupación en cada celda."
+    # ------------------------------------------------------------------
+    # Panel unificado de controles del heatmap.
+    # ------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("**🔍 Cómo ver el mapa**")
+
+        # ── Vista (sólo en modo saturación).
+        vista_sel = "preferida"
+        if es_saturacion:
+            vista_label = {
+                "dura": "🔒 Dura",
+                "preferida": "🎯 Preferida",
+                "maxima": "📈 Máxima",
+                "total": "🌐 Total sin sede",
+            }
+            vista_sel = st.radio(
+                "Vista",
+                options=["dura", "preferida", "maxima", "total"],
+                format_func=lambda v: vista_label[v],
+                index=1,
+                horizontal=True,
+                key=f"{key_ns}_heatsede_vista",
+                help=(
+                    "**Dura**: horarios cuya única sede admisible "
+                    "es ésta. Si `dura > oferta` esa sede es "
+                    "infactible.\n"
+                    "**Preferida**: horarios cuya sede preferida "
+                    "es ésta (regla lab-first, luego carrera). Es "
+                    "el 'plan feliz'.\n"
+                    "**Máxima**: todo horario que podría caer en "
+                    "esta sede (incluye materias que la admiten "
+                    "aunque prefieran otra).\n"
+                    "**Total sin sede**: cuenta simultáneos "
+                    "ignorando sede. Cota global."
+                ),
+            )
+
+        # ── Categoría.
+        cat_label = {
+            "peor": "Peor caso (T o L)",
+            "teorica": "Teóricas / anfiteatros",
+            "laboratorio": "Laboratorios",
+        }
+        cat_sel = st.radio(
+            "Categoría",
+            options=["peor", "teorica", "laboratorio"],
+            format_func=lambda c: cat_label[c],
+            horizontal=True,
+            key=f"{key_ns}_heatsede_cat",
         )
 
-    # Vista de saturación (sólo aplica en modo saturación; en
-    # ocupación las "usadas/total" ya son un dato del estado, no
-    # tiene sentido distinguir dura/preferida/máxima).
-    vista_sel = "preferida"
-    if es_saturacion:
-        vista_label = {
-            "dura": (
-                "🔒 Dura — sólo lo que no puede ir a otra sede"
-            ),
-            "preferida": (
-                "🎯 Preferida — plan feliz (default)"
-            ),
-            "maxima": (
-                "📈 Máxima — todo lo que podría caer acá"
-            ),
-            "total": (
-                "🌐 Total sin sede — cota global"
-            ),
-        }
-        vista_sel = st.radio(
-            "Vista",
-            options=["dura", "preferida", "maxima", "total"],
-            format_func=lambda v: vista_label[v],
-            index=1,
-            horizontal=True,
-            key=f"{key_ns}_heatsede_vista",
-            help=(
-                "**Dura**: horarios cuya única sede admisible es "
-                "ésta. Si `dura > oferta` la sede es infactible: "
-                "esos horarios no se pueden mover.\n"
-                "**Preferida**: horarios cuya sede preferida es "
-                "ésta (regla lab-first, luego carrera). Es el "
-                "'plan feliz'.\n"
-                "**Máxima**: todo horario que podría caer en esta "
-                "sede (incluyendo materias donde otras sedes son "
-                "más deseables). Muestra el margen que tiene el LP "
-                "para redistribuir.\n"
-                "**Total sin sede**: cuenta simultáneos ignorando "
-                "sede. Si el total supera la oferta agregada, no "
-                "cabe ni redistribuyendo."
-            ),
+        # ── Sub-control: oferta a considerar (aparece sólo cuando la
+        # categoría involucra labs, en modo saturación). Para teóricas
+        # todas las aulas del tipo son compatibles, así que el modo
+        # "compatibles" no cambia nada.
+        oferta_sel = "catalogo"
+        muestra_oferta_control = (
+            es_saturacion and cat_sel in ("peor", "laboratorio")
+        )
+        if muestra_oferta_control:
+            oferta_label = {
+                "catalogo": "🌐 Todo el catálogo",
+                "compatibles": "🧪 Sólo compatibles (labs)",
+            }
+            oferta_sel = st.radio(
+                "Oferta de labs a considerar",
+                options=["catalogo", "compatibles"],
+                format_func=lambda o: oferta_label[o],
+                index=0,
+                horizontal=True,
+                key=f"{key_ns}_heatsede_oferta",
+                help=(
+                    "**Todo el catálogo**: cuenta todas las aulas "
+                    "de laboratorio de la sede como oferta, aunque "
+                    "no sean compatibles con las materias de la "
+                    "celda. Es la vista tradicional.\n"
+                    "**Sólo compatibles**: cuenta sólo los "
+                    "laboratorios listados como compatibles con "
+                    "alguna de las materias que caen en la celda "
+                    "(unión). Detecta infactibilidades **estructurales**: "
+                    "3 horarios que necesitan lab pero entre las "
+                    "materias sólo hay 2 labs compatibles = celda "
+                    "roja. Además marca con ⚠️ los casos Hall — "
+                    "cuando un subconjunto de materias comparte "
+                    "un pool que no alcanza (aunque la unión "
+                    "global cierre)."
+                ),
+            )
+
+        st.caption(
+            _mapa_caption(
+                modo=modo,
+                vista=vista_sel,
+                categoria=cat_sel,
+                oferta=oferta_sel,
+            )
         )
 
     # Vista "total sin sede" — heatmap agregado, no por-sede.
     if es_saturacion and vista_sel == "total":
-        _render_heatmap_total_sin_sede(heatmap_sede, key_ns)
+        _render_heatmap_total_sin_sede(
+            heatmap_sede, key_ns, oferta_sel=oferta_sel,
+        )
         return
-
-    cat_label = {
-        "peor": "Peor caso (entre teóricas y laboratorios)",
-        "teorica": "Sólo aulas teóricas / anfiteatros",
-        "laboratorio": "Sólo aulas laboratorio",
-    }
-    cat_sel = st.radio(
-        "Categoría",
-        options=["peor", "teorica", "laboratorio"],
-        format_func=lambda c: cat_label[c],
-        horizontal=True,
-        key=f"{key_ns}_heatsede_cat",
-    )
 
     sedes_meta = heatmap_sede["sedes"]
     dias = heatmap_sede["dias"]
@@ -1249,6 +1340,13 @@ def _render_heatmap_por_sede(
         # preferida (default) o modo ocupación: alias `demanda`/`ratio`.
         return cat_data["demanda"], cat_data["ratio"]
 
+    def _oferta_para_vista(cat_data: dict) -> list:
+        """Elige entre oferta del catálogo y oferta compatible según
+        `oferta_sel`. Sólo cambia para labs; teóricas son iguales."""
+        if oferta_sel == "compatibles":
+            return cat_data.get("oferta_compat", cat_data["oferta"])
+        return cat_data["oferta"]
+
     # Cuando la vista es 'máxima', puede haber sedes con demanda 0 en
     # preferida pero > 0 en máxima. Ampliamos el set de sedes visibles
     # para no ocultar información útil.
@@ -1265,8 +1363,19 @@ def _render_heatmap_por_sede(
         n_lab = sede_meta["n_aulas_laboratorio"]
 
         cat_data = data_all[sede_id][cat_sel]
-        demanda, ratio = _matrices_para_vista(cat_data)
-        oferta = cat_data["oferta"]
+        demanda, ratio_full = _matrices_para_vista(cat_data)
+        oferta = _oferta_para_vista(cat_data)
+        # Si estamos en modo "compatibles" y categoría involucra labs,
+        # recalcular ratio usando la oferta compatible por celda.
+        # Para peor caso, sólo la categoría lab tiene oferta_compat
+        # distinta, así que ajustamos ese ratio ahí.
+        if oferta_sel == "compatibles" and cat_sel == "laboratorio":
+            ratio = cat_data.get("ratio_compat", ratio_full)
+        else:
+            ratio = ratio_full
+        # Datos de violación Hall para posibles ⚠️ en el tooltip.
+        hall_violation = cat_data.get("hall_violation")
+        hall_materias = cat_data.get("hall_materias")
 
         # ¿Hay alguna celda con demanda en esta categoría?
         _hay_dem_cat = any(
@@ -1381,11 +1490,30 @@ def _render_heatmap_por_sede(
                     cat_gan = ""
                     if _cat_gan_v is not None:
                         cat_gan = _cat_gan_v[si][di]
+                    # ⚠️ Hall violation (sólo si modo compatibles y hay
+                    # demanda). Sólo marca celda si categoría muestra labs.
+                    hall_hit = (
+                        oferta_sel == "compatibles"
+                        and cat_sel in ("peor", "laboratorio")
+                        and hall_violation is not None
+                        and hall_violation[si][di]
+                    )
+                    hall_str = ""
+                    if hall_hit and hall_materias is not None:
+                        mats = hall_materias[si][di]
+                        if mats:
+                            hall_str = (
+                                "⚠️ Hall: {"
+                                + ", ".join(mats)
+                                + "} comparten un pool de labs "
+                                "insuficiente."
+                            )
                     if d > 0:
                         abrev = _CAT_ABREV.get(cat_gan, "")
+                        prefix_hall = "⚠️ " if hall_hit else ""
                         etiqueta = (
-                            f"{d}/{o} {abrev}".strip()
-                            if abrev else f"{d}/{o}"
+                            f"{prefix_hall}{d}/{o} {abrev}".strip()
+                            if abrev else f"{prefix_hall}{d}/{o}"
                         )
                         cat_nombre = _CAT_NOMBRE.get(cat_gan, "—")
                     else:
@@ -1411,19 +1539,23 @@ def _render_heatmap_por_sede(
                     teo_txt = f"{t_d}/{t_o}" if t_o or t_d else "—"
                     lab_txt = f"{l_d}/{l_o}" if l_o or l_d else "—"
 
+                    # Si hay Hall violation, forzamos bucket rojo aunque
+                    # el ratio numérico esté por debajo de 1.
+                    bucket_final = _bucket(r_) if not hall_hit else "saturado (>100%)"
                     long_rows.append({
                         "slot": slot_label,
                         "dia": dia,
                         "demanda": d,
                         "oferta": o,
                         "ratio": r_,
-                        "bucket": _bucket(r_),
+                        "bucket": bucket_final,
                         "etiqueta": etiqueta,
                         "n_libres": n_libres,
                         "aulas_libres": libres_str,
                         "cat_ganadora": cat_nombre,
                         "teorica_txt": teo_txt,
                         "laboratorio_txt": lab_txt,
+                        "hall_msg": hall_str,
                     })
             df_long = pd.DataFrame(long_rows)
 
@@ -1468,6 +1600,7 @@ def _render_heatmap_por_sede(
                 alt.Tooltip(
                     "laboratorio_txt:N", title=_cat_desglose_lab,
                 ),
+                alt.Tooltip("hall_msg:N", title="Alerta Hall"),
                 alt.Tooltip("n_libres:Q", title="N° aulas libres"),
                 alt.Tooltip("aulas_libres:N", title=_libres_lbl),
             ]

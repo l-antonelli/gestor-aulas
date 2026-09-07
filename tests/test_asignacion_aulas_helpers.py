@@ -5,6 +5,8 @@ from datetime import time
 from src.services.asignacion_aulas_helpers import (
     AulaSlot,
     HorarioSlot,
+    LabCompatCheck,
+    check_lab_compatibilidad_en_celda,
     compute_compat,
     compute_heatmap_demanda_oferta,
     compute_heatmap_por_sede,
@@ -1109,3 +1111,196 @@ class TestHeatmapTotalSinSede:
         di = out["dias"].index("Lunes")
         assert out["data"]["laboratorio"]["demanda"][si][di] == 1
         assert out["data"]["laboratorio"]["oferta"][si][di] == 3
+
+
+class TestCheckLabCompatibilidadEnCelda:
+    """Detección de infactibilidad estructural de labs por celda
+    (pigeonhole + Hall)."""
+
+    def test_sin_horarios_no_hay_conflicto(self):
+        r = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=[],
+            materia_lab_map={},
+            aulas_lab_catalogo={"L1", "L2", "L3"},
+        )
+        assert r.demanda == 0
+        assert r.oferta_compatible == 0
+        assert not r.infactible
+
+    def test_pigeonhole_falla_demanda_supera_union(self):
+        """3 horarios de la misma materia con sólo 2 labs compatibles."""
+        hs = [
+            _h(f"h{i}", "Lunes", 8, 10, materia="M1", tipo="laboratorio")
+            for i in range(3)
+        ]
+        r = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=hs,
+            materia_lab_map={"M1": {"L1", "L2"}},
+            aulas_lab_catalogo={"L1", "L2", "L3"},
+        )
+        assert r.demanda == 3
+        assert r.oferta_compatible == 2
+        assert r.infactible_pigeonhole is True
+        assert r.infactible is True
+
+    def test_hall_detecta_subconjunto_que_pigeonhole_no_ve(self):
+        """Caso clásico: H1 puede ir a {A,B,C}, H2 a {A}, H3 a {A}.
+        Unión total = 3, demanda = 3 → pigeonhole OK. Pero {H2, H3}
+        sólo pueden ir a {A} → Hall violado."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio"),
+            _h("h2", "Lunes", 8, 10, materia="M2", tipo="laboratorio"),
+            _h("h3", "Lunes", 8, 10, materia="M3", tipo="laboratorio"),
+        ]
+        r = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=hs,
+            materia_lab_map={
+                "M1": {"A", "B", "C"},
+                "M2": {"A"},
+                "M3": {"A"},
+            },
+            aulas_lab_catalogo={"A", "B", "C"},
+        )
+        assert r.demanda == 3
+        assert r.oferta_compatible == 3
+        assert r.infactible_pigeonhole is False
+        assert r.infactible_hall is True
+        # M2 y M3 son el subconjunto violador más chico.
+        assert set(r.subconjunto_hall) == {"M2", "M3"}
+
+    def test_caso_feliz_no_falla_nada(self):
+        """Cada materia con su lab distinto → OK."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio"),
+            _h("h2", "Lunes", 8, 10, materia="M2", tipo="laboratorio"),
+        ]
+        r = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=hs,
+            materia_lab_map={"M1": {"A"}, "M2": {"B"}},
+            aulas_lab_catalogo={"A", "B"},
+        )
+        assert r.infactible is False
+        assert r.oferta_compatible == 2
+
+    def test_filtra_por_catalogo_restringido(self):
+        """Si el catálogo restringido no incluye ciertos labs, no
+        cuentan como oferta compatible."""
+        hs = [
+            _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio"),
+        ]
+        r = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=hs,
+            materia_lab_map={"M1": {"A", "B"}},
+            aulas_lab_catalogo={"A"},  # B no está en el catálogo restringido
+        )
+        assert r.oferta_compatible == 1
+        assert r.oferta_catalogo == 1
+
+
+class TestHeatmapConCompatibilidadLabs:
+    """Fase 3.5-labs: los heatmaps exponen oferta_compat + hall_violation
+    para categoría laboratorio, para que la UI pueda ofrecer el modo
+    'sólo compatibles' con detección de infactibilidad estructural."""
+
+    def test_total_sin_sede_expone_oferta_compat_de_labs(self):
+        """Vista total: la oferta_compat de labs es la unión de labs
+        compatibles de las materias con demanda en la celda."""
+        # M1 puede ir a L1,L2  · M2 puede ir a L3 → unión = 3 labs.
+        h1 = _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio")
+        h2 = _h("h2", "Lunes", 8, 10, materia="M2", tipo="laboratorio")
+        aulas = [
+            AulaSlot(id="L1", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="L2", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="L3", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="L4", tipo="laboratorio", capacidad=30),
+        ]
+        out = compute_heatmap_total_sin_sede(
+            horarios=[h1, h2], aulas=aulas,
+            materia_lab_map={"M1": {"L1", "L2"}, "M2": {"L3"}},
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        d = out["data"]["laboratorio"]
+        # Oferta catálogo total = 4 labs. Oferta compat = 3 (L1,L2,L3).
+        assert d["oferta"][si][di] == 4
+        assert d["oferta_compat"][si][di] == 3
+        assert d["demanda"][si][di] == 2
+        # Con oferta compat 3 y demanda 2: ratio_compat = 2/3.
+        assert abs(d["ratio_compat"][si][di] - 2 / 3) < 1e-6
+        # Sin violación Hall en este caso.
+        assert d["hall_violation"][si][di] is False
+
+    def test_total_sin_sede_detecta_hall_violation(self):
+        """Caso Hall: H1 puede ir a {A,B,C}, H2 y H3 sólo a {A}. La
+        celda queda marcada con hall_violation=True aunque la unión
+        global cierre."""
+        h1 = _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio")
+        h2 = _h("h2", "Lunes", 8, 10, materia="M2", tipo="laboratorio")
+        h3 = _h("h3", "Lunes", 8, 10, materia="M3", tipo="laboratorio")
+        aulas = [
+            AulaSlot(id="A", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="B", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="C", tipo="laboratorio", capacidad=30),
+        ]
+        out = compute_heatmap_total_sin_sede(
+            horarios=[h1, h2, h3], aulas=aulas,
+            materia_lab_map={
+                "M1": {"A", "B", "C"},
+                "M2": {"A"},
+                "M3": {"A"},
+            },
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        d = out["data"]["laboratorio"]
+        # Oferta compat = 3 (unión = {A,B,C}), demanda = 3 → pigeonhole OK.
+        assert d["oferta_compat"][si][di] == 3
+        assert d["demanda"][si][di] == 3
+        # Pero Hall violation por {M2, M3}.
+        assert d["hall_violation"][si][di] is True
+        assert set(d["hall_materias"][si][di]) == {"M2", "M3"}
+
+    def test_por_sede_expone_oferta_compat_de_labs(self):
+        """Vista por sede: la oferta_compat de labs se calcula
+        restringiéndose a los labs de esa sede."""
+        aulas = [
+            AulaSlot(id="LS1_1", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="LS1_2", tipo="laboratorio", capacidad=30),
+            AulaSlot(id="LS2_1", tipo="laboratorio", capacidad=30),
+        ]
+        aula_sede_id = {
+            "LS1_1": "S1", "LS1_2": "S1", "LS2_1": "S2",
+        }
+        # M1 puede usar LS1_1 y LS2_1. En sede S1 sólo puede ir a LS1_1.
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="laboratorio")
+        out = compute_heatmap_por_sede(
+            horarios=[h], aulas=aulas,
+            materia_lab_map={"M1": {"LS1_1", "LS2_1"}},
+            sedes_admisibles_por_materia={"M1": None},
+            aula_sede_id=aula_sede_id,
+            sede_nombre={"S1": "Sede 1", "S2": "Sede 2"},
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        # En S1: oferta_catalogo=2 labs, oferta_compat=1 (sólo LS1_1).
+        s1_lab = out["data"]["S1"]["laboratorio"]
+        assert s1_lab["oferta"][si][di] == 2
+        assert s1_lab["oferta_compat"][si][di] == 1
+
+    def test_teorica_oferta_compat_igual_a_oferta(self):
+        """Para teóricas, todas las aulas del tipo son compatibles →
+        oferta_compat == oferta."""
+        h = _h("h1", "Lunes", 8, 10, materia="M1", tipo="teorica")
+        aulas = [
+            AulaSlot(id="t1", tipo="teorica", capacidad=30),
+            AulaSlot(id="t2", tipo="teorica", capacidad=30),
+        ]
+        out = compute_heatmap_total_sin_sede(
+            horarios=[h], aulas=aulas, materia_lab_map={},
+        )
+        si = out["slots"].index("08:00-08:15")
+        di = out["dias"].index("Lunes")
+        d = out["data"]["teorica"]
+        assert d["oferta_compat"][si][di] == d["oferta"][si][di]
+        assert d["hall_violation"][si][di] is False
+

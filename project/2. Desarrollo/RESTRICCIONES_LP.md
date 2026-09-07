@@ -147,6 +147,130 @@ En orden de prioridad:
 - **Ocupación**: cuenta las **aulas efectivamente usadas** por el
   asignador en el estado actual del plan.
 
+### Fuentes de infactibilidad y cómo detectarlas antes de correr el LP
+
+Antes de correr el asignador conviene entender qué situaciones lo
+vuelven **estructuralmente infactible** — o sea, no importa qué
+solver se use, el problema no tiene solución con la configuración
+actual y hay que ajustar datos. Estas son las causas típicas, en
+orden de frecuencia:
+
+#### 1. Un horario sin ninguna aula compatible (R1 + R3 + R10)
+
+Un horario individual no tiene ninguna aula del catálogo que
+pueda aceptarlo. Puede pasar por:
+
+- **Falta de laboratorio compatible** para una materia cuyo tipo
+  de clase es "laboratorio" (o inferido como tal por R6). Se
+  arregla en **Aulas → laboratorio → "Materias que usan este
+  laboratorio"**.
+- **Sedes admisibles vacías**: la carrera no tiene sedes
+  habilitadas y la materia no tiene labs en otras sedes. Se
+  arregla en **Carreras → Sedes habilitadas** o marcando una
+  **Sede por defecto para materias comunes** (Aulas → Sedes).
+- **Tipo de aula incorrecto**: un horario teórico sin aulas
+  teóricas ni anfiteatros en el catálogo. Se arregla creando
+  aulas del tipo correcto.
+
+**Cómo lo detecta el sistema**: `diagnose_infeasibility` reporta
+esto como `horarios_sin_aula_compatible`. También aparece en el
+mapa de saturación como celda **con demanda pero oferta = 0**.
+
+#### 2. Franja saturada (pigeonhole global — R4)
+
+Más horarios simultáneos que aulas compatibles con la unión. Por
+ejemplo: 4 clases teóricas al mismo tiempo, pero sólo hay 3
+aulas teóricas + anfiteatros en las sedes admisibles.
+
+- Se arregla ampliando el catálogo de aulas o reordenando el
+  cronograma para reducir simultaneidad.
+- **En el mapa de saturación**: aparece como celda **roja** con
+  demanda > oferta.
+
+#### 3. Saturación por tipo dentro de una franja (R3 + R4 + R6)
+
+Refinamiento del anterior: la unión general de aulas puede ser
+suficiente, pero al separar por tipo no. Por ejemplo, 3
+laboratorios simultáneos con sólo 2 aulas de laboratorio (aunque
+haya 5 teóricas libres, no sirven).
+
+- Se arregla igual que (2) pero mirando **por tipo** en el mapa.
+- El mapa lo hace visible con la **Categoría** "Sólo aulas
+  laboratorio" o "Sólo aulas teóricas / anfiteatros".
+
+#### 4. Compatibilidad de laboratorios (pigeonhole + Hall)
+
+Cuando 2+ horarios de laboratorio ocurren en simultáneo y los
+labs compatibles con esas materias no alcanzan para todos.
+
+- **Pigeonhole**: si `demanda > |unión de labs compatibles|`.
+  Ejemplo: 3 horarios, entre las 3 materias sólo comparten 2
+  labs compatibles → infactible seguro.
+- **Hall** (más fino): existe un subconjunto de materias que sólo
+  puede ir a un pool más chico que el subconjunto. Ejemplo: M1
+  puede ir a {A, B, C}, M2 sólo a {A}, M3 sólo a {A}. Unión = 3,
+  demanda = 3, pigeonhole OK, pero M2 y M3 pelean por A y una
+  queda sin aula.
+
+**Cómo verlo**: en el mapa de saturación, cambiar el sub-control
+**Oferta de labs a considerar** a **"🧪 Sólo compatibles"**. Las
+celdas donde falla pigeonhole quedan **rojas**; las que fallan
+Hall (aunque pigeonhole cierre) llevan ⚠️ y también quedan rojas.
+El tooltip lista las materias del subconjunto conflictivo.
+
+Se arregla:
+- Ampliar la lista de labs compatibles de las materias
+  problemáticas (Aulas → lab → "Materias que usan este
+  laboratorio").
+- Cambiar el cronograma para desolapar esos labs.
+- Agregar aulas de laboratorio al catálogo.
+
+#### 5. Partición teoría/lab infactible (R5)
+
+La suma de duraciones de los horarios de una comisión no permite
+bipartir exactamente en las horas de teoría + horas de laboratorio
+declaradas por la materia. Por ejemplo, materia con 3h teoría +
+6h lab (9h totales) y sólo 2 horarios de 2h = 4h totales.
+
+- Se arregla ajustando los horarios del cronograma o las horas
+  declaradas de la materia (**Materias → editar → Horas de
+  teoría/laboratorio**).
+- **En el mapa no aparece**, pero `diagnose_infeasibility` lo
+  reporta como `particion_problemas`.
+
+#### 6. Sedes consecutivas irresolubles (R13)
+
+Dos horarios de la misma comisión con gap < margen intersede
+donde no existe una sede común admisible para ambos.
+
+- Se arregla bajando el `margen_min_intersede_minutos` o
+  agregando labs compatibles en una sede en común.
+
+#### 7. Pin manual apunta a un aula incompatible (R11)
+
+Un horario tiene `aula_asignada_manualmente=True` con un aula que
+ya no es compatible (cambió el tipo, la sede quedó fuera de las
+admisibles, etc.).
+
+- Se arregla desmarcando el pin en el editor de horarios o
+  reasignando manualmente a un aula válida.
+
+#### Estrategia de troubleshooting recomendada
+
+1. **Antes de correr el LP**, mirar el mapa de saturación en las
+   4 vistas para labs (Dura / Preferida / Máxima / Total sin sede)
+   con el modo **"Sólo compatibles"** activado. Cualquier celda
+   roja o con ⚠️ es una alerta previa que va a hacer que el LP
+   dé infactible.
+2. **Después de correr el LP** infactible, revisar el panel de
+   diagnóstico estructural que reporta cada una de las causas
+   arriba con detalles concretos (nombres de materias, comisiones,
+   horarios, aulas).
+3. **Iterativamente**: arreglar la causa de mayor severidad
+   (usualmente falta de compatibilidad estructural), re-correr.
+
+---
+
 ### Restricciones duras vs. blandas y dónde se configura cada una
 
 El asignador combina **reglas duras** (que definen qué asignaciones
@@ -744,6 +868,7 @@ infactible".
 | 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
 | 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
 | 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
+| 3.5-labs | ✅ Hecho (2026-09-07) | El mapa contaba labs contra el catálogo global aunque las materias sólo pudieran usar labs específicos. No detectaba infactibilidades por compatibilidad estructural. | Sub-control **"Oferta de labs a considerar"** con opciones **🌐 Todo el catálogo** (default) y **🧪 Sólo compatibles**. En modo compatibles, cada celda usa la unión de labs compatibles de las materias con demanda ahí como oferta (`oferta_compat`, `ratio_compat`). Nueva función pura `check_lab_compatibilidad_en_celda` que detecta **pigeonhole** y **Hall** por celda. Las celdas con Hall violation se marcan con ⚠️ y quedan rojas aunque el ratio numérico esté por debajo de 1; tooltip lista las materias del subconjunto conflictivo. |
 | 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
 | 5 | ✅ Hecho (2026-09-05) | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Rediseñado el form de configuración en `asignacion_panel.py` con **4 containers** (alcance temporal, ajuste de capacidad, preferencias de sede, avanzado). Cada parámetro nuevo de Fases 2–4 tiene su input y su help correspondiente. Los inputs se propagan a `LPConfig` en el submit. |
 | 6 | ✅ Hecho (2026-09-05) | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Nuevo `metricas_calidad_service.py` con `compute_metricas_calidad` que devuelve un `MetricasCalidad` con 4 familias: cobertura, sobre/sub ocupación, distribución de aulas, LP + traslados. Panel `_render_panel_calidad` en Planes → Detalle con 4 containers y métricas grandes + expanders de detalle. |

@@ -699,6 +699,115 @@ def _hall_violator_via_matching(adj: list[set[str]]) -> set[int] | None:
 
 
 # =============================================================================
+# Compatibilidad de labs por celda (pigeonhole + Hall)
+# =============================================================================
+
+@dataclass
+class LabCompatCheck:
+    """Resultado del análisis de compatibilidad de labs en una celda.
+
+    Atributos:
+        demanda: cuántos horarios de tipo laboratorio activos en la celda.
+        oferta_catalogo: cuántas aulas de tipo laboratorio hay en el
+            catálogo restringido (por ejemplo, todas las del sistema o
+            todas las de una sede).
+        oferta_compatible: |unión de labs compatibles de las materias
+            con demanda en la celda|. Es la oferta pigeonhole.
+        infactible_pigeonhole: demanda > oferta_compatible.
+        infactible_hall: existe un subconjunto S de horarios donde
+            |unión de sus labs compatibles| < |S| (matching bipartito
+            infactible).
+        subconjunto_hall: materias del subconjunto Hall-violador más
+            chico si `infactible_hall`; vacío si no aplica.
+    """
+    demanda: int = 0
+    oferta_catalogo: int = 0
+    oferta_compatible: int = 0
+    infactible_pigeonhole: bool = False
+    infactible_hall: bool = False
+    subconjunto_hall: list[str] = field(default_factory=list)
+
+    @property
+    def infactible(self) -> bool:
+        return self.infactible_pigeonhole or self.infactible_hall
+
+
+def check_lab_compatibilidad_en_celda(
+    horarios_lab_en_celda: list[HorarioSlot],
+    materia_lab_map: dict[str, set[str]],
+    aulas_lab_catalogo: set[str],
+) -> LabCompatCheck:
+    """Evalúa infactibilidad estructural de laboratorios en una celda.
+
+    Aplica dos tests:
+
+    1. **Pigeonhole**: `demanda > |unión de labs compatibles|`.
+    2. **Hall** (más fino): existe algún subconjunto S de horarios
+       donde `|unión de sus labs compatibles| < |S|`, aunque el
+       pigeonhole global no falle. Detecta casos como H2, H3 sólo
+       pueden ir a LabA (con H1 que puede ir a más labs).
+
+    Para grupos chicos (≤ ``_HALL_ENUM_LIMIT``) enumera subconjuntos
+    exactamente y reporta el más chico violador. Para grupos grandes
+    usa matching bipartito por augmenting paths.
+
+    Args:
+        horarios_lab_en_celda: horarios de tipo laboratorio activos
+            en la celda. Múltiples horarios pueden ser de la misma
+            materia (comisiones distintas) — cada uno cuenta como
+            demanda separada porque necesita su propio aula.
+        materia_lab_map: por materia, set de aula_id de labs compatibles.
+        aulas_lab_catalogo: set de aula_id de tipo laboratorio dentro
+            del catálogo restringido (sistema completo o filtrado por
+            sede). La unión de compatibles se intersecta con este set.
+
+    Returns:
+        `LabCompatCheck` con las métricas.
+    """
+    result = LabCompatCheck()
+    result.demanda = len(horarios_lab_en_celda)
+    result.oferta_catalogo = len(aulas_lab_catalogo)
+
+    if not horarios_lab_en_celda:
+        return result
+
+    # Adyacencia por horario: labs compatibles ∩ catálogo restringido.
+    adj: list[set[str]] = []
+    for h in horarios_lab_en_celda:
+        labs_h = materia_lab_map.get(h.materia_codigo, set())
+        adj.append(labs_h & aulas_lab_catalogo)
+
+    # Oferta compatible: unión global de adyacencias.
+    union_all: set[str] = set()
+    for a in adj:
+        union_all |= a
+    result.oferta_compatible = len(union_all)
+
+    # Pigeonhole: demanda > oferta_compatible.
+    if result.demanda > result.oferta_compatible:
+        result.infactible_pigeonhole = True
+
+    # Hall: buscar subconjunto violador. Si pigeonhole ya falló, Hall
+    # también falla con S = todos. Igual buscamos el subconjunto MÁS
+    # CHICO para reportar mejor.
+    n = len(adj)
+    if n <= _HALL_ENUM_LIMIT:
+        violator = _hall_smallest_violator_enum(adj)
+    else:
+        violator = _hall_violator_via_matching(adj)
+
+    if violator is not None:
+        result.infactible_hall = True
+        # Reportar materias del subconjunto violador (dedup).
+        materias = sorted({
+            horarios_lab_en_celda[i].materia_codigo for i in violator
+        })
+        result.subconjunto_hall = materias
+
+    return result
+
+
+# =============================================================================
 # Heatmap demanda vs oferta (cuello de botella por franja)
 # =============================================================================
 
@@ -1077,6 +1186,11 @@ def compute_heatmap_por_sede(
         # Contadores por vista (Fase 3.5). La key `demanda` queda como
         # alias de `demanda_preferida` para backwards-compat con calleres
         # existentes; se sincroniza al final del cómputo.
+        # `*_compat` guardan la oferta y ratio en el modo "sólo aulas
+        # compatibles" (relevante para categoría laboratorio: chequea
+        # pigeonhole + Hall con la unión de labs compatibles). Para
+        # teóricas todas las aulas del tipo son compatibles, así que
+        # `oferta_compat == oferta`.
         return {
             "ratio": _zeros_f(),
             "demanda": _zeros_i(),
@@ -1087,6 +1201,15 @@ def compute_heatmap_por_sede(
             "ratio_dura": _zeros_f(),
             "ratio_preferida": _zeros_f(),
             "ratio_maxima": _zeros_f(),
+            # Sólo relevante para categoría laboratorio (Fase 3.5-labs).
+            "oferta_compat": _zeros_i(),
+            "ratio_compat": _zeros_f(),
+            "hall_violation": [
+                [False] * n_dias for _ in range(n_slots)
+            ],
+            "hall_materias": [
+                [[] for _ in range(n_dias)] for _ in range(n_slots)
+            ],
         }
 
     def _empty_peor() -> dict:
@@ -1198,12 +1321,18 @@ def compute_heatmap_por_sede(
                     cat, {
                         "dura": set(), "preferida": set(),
                         "maxima": set(), "materias": set(),
+                        "horarios_slot": [],
                     },
                 )
                 grupo["maxima"].add(h.id)
                 grupo["materias"].add(h.materia_codigo)
+                # Guardar el HorarioSlot para chequeos Hall posteriores.
+                # Sólo lo agregamos si la sede está en `pref` (para no
+                # inflar el chequeo con horarios que en la práctica
+                # no van a caer acá).
                 if sede in sedes_pref:
                     grupo["preferida"].add(h.id)
+                    grupo["horarios_slot"].append(h)
                 if sede in sedes_duras:
                     grupo["dura"].add(h.id)
 
@@ -1227,6 +1356,12 @@ def compute_heatmap_por_sede(
         if o > 0:
             return d / o
         return 999.0 if d > 0 else 0.0
+
+    # Aulas de lab por sede (set de aula_id).
+    labs_por_sede: dict[str, set[str]] = {
+        sede: {a.id for a in bucket["laboratorio"]}
+        for sede, bucket in aulas_por_sede.items()
+    }
 
     for (si, di, sede), grupos in por_celda_sede.items():
         peor_ratio_cell = 0.0
@@ -1253,6 +1388,32 @@ def compute_heatmap_por_sede(
             data[sede][cat]["demanda"][si][di] = d_pref
             data[sede][cat]["oferta"][si][di] = o
             data[sede][cat]["ratio"][si][di] = r_pref
+            # Modo "sólo compatibles" (Fase 3.5-labs):
+            # - Teóricas: oferta_compat = oferta (todas son compatibles).
+            # - Laboratorios: unión de labs compatibles de las materias
+            #   con demanda en esta celda ∩ labs de la sede. Chequea
+            #   además Hall para detectar infactibilidad más fina.
+            if cat == "laboratorio":
+                horarios_lab = datos.get("horarios_slot", [])
+                check = check_lab_compatibilidad_en_celda(
+                    horarios_lab_en_celda=horarios_lab,
+                    materia_lab_map=materia_lab_map,
+                    aulas_lab_catalogo=labs_por_sede.get(sede, set()),
+                )
+                data[sede][cat]["oferta_compat"][si][di] = (
+                    check.oferta_compatible
+                )
+                data[sede][cat]["ratio_compat"][si][di] = _ratio(
+                    check.demanda, check.oferta_compatible,
+                )
+                if check.infactible_hall:
+                    data[sede][cat]["hall_violation"][si][di] = True
+                    data[sede][cat]["hall_materias"][si][di] = (
+                        check.subconjunto_hall
+                    )
+            else:
+                data[sede][cat]["oferta_compat"][si][di] = o
+                data[sede][cat]["ratio_compat"][si][di] = r_pref
             if r_pref > peor_ratio_cell or (
                 r_pref == peor_ratio_cell and d_pref > peor_dem_cell
             ):
@@ -1454,6 +1615,8 @@ def compute_heatmap_total_sin_sede(
 
     demanda_teo = _zeros_i()
     demanda_lab = _zeros_i()
+    # Horarios de lab por celda para chequeo de compatibilidad Hall.
+    horarios_lab_por_celda: dict[tuple[int, int], list[HorarioSlot]] = {}
     for h in horarios:
         cat = "laboratorio" if h.tipo_clase == "laboratorio" else "teorica"
         for si, di in _celdas(h):
@@ -1461,6 +1624,9 @@ def compute_heatmap_total_sin_sede(
                 demanda_teo[si][di] += 1
             else:
                 demanda_lab[si][di] += 1
+                horarios_lab_por_celda.setdefault(
+                    (si, di), [],
+                ).append(h)
 
     def _mk(demanda: list[list[int]], oferta: int) -> dict:
         ratio = _zeros_f()
@@ -1481,6 +1647,49 @@ def compute_heatmap_total_sin_sede(
         "teorica": _mk(demanda_teo, n_teoricas),
         "laboratorio": _mk(demanda_lab, n_labs_totales),
     }
+
+    # Modo "sólo compatibles" para labs: por cada celda con demanda de
+    # lab, computar la unión de labs compatibles y chequear Hall.
+    aulas_lab_ids_total = {a.id for a in aulas if a.tipo == "laboratorio"}
+    oferta_compat_lab = _zeros_i()
+    ratio_compat_lab = _zeros_f()
+    hall_violation_lab = [
+        [False] * n_dias for _ in range(n_slots)
+    ]
+    hall_materias_lab: list[list[list[str]]] = [
+        [[] for _ in range(n_dias)] for _ in range(n_slots)
+    ]
+    for (si, di), horarios_celda in horarios_lab_por_celda.items():
+        check = check_lab_compatibilidad_en_celda(
+            horarios_lab_en_celda=horarios_celda,
+            materia_lab_map=materia_lab_map,
+            aulas_lab_catalogo=aulas_lab_ids_total,
+        )
+        oferta_compat_lab[si][di] = check.oferta_compatible
+        if check.oferta_compatible > 0:
+            ratio_compat_lab[si][di] = (
+                check.demanda / check.oferta_compatible
+            )
+        elif check.demanda > 0:
+            ratio_compat_lab[si][di] = 999.0
+        if check.infactible_hall:
+            hall_violation_lab[si][di] = True
+            hall_materias_lab[si][di] = check.subconjunto_hall
+
+    # Para labs además guardamos los campos del modo compatibles.
+    data["laboratorio"]["oferta_compat"] = oferta_compat_lab
+    data["laboratorio"]["ratio_compat"] = ratio_compat_lab
+    data["laboratorio"]["hall_violation"] = hall_violation_lab
+    data["laboratorio"]["hall_materias"] = hall_materias_lab
+    # Para teóricas, oferta_compat == oferta (todas son compatibles).
+    data["teorica"]["oferta_compat"] = data["teorica"]["oferta"]
+    data["teorica"]["ratio_compat"] = data["teorica"]["ratio"]
+    data["teorica"]["hall_violation"] = [
+        [False] * n_dias for _ in range(n_slots)
+    ]
+    data["teorica"]["hall_materias"] = [
+        [[] for _ in range(n_dias)] for _ in range(n_slots)
+    ]
 
     # Peor caso entre categorías por celda.
     peor_r = _zeros_f()
