@@ -6,7 +6,7 @@ Requirements: 7.1, 7.2, 7.4, 7.5
 import streamlit as st
 from sqlmodel import select, col
 from src.database.connection import get_session, init_db
-from src.database.models import AulaDB, MateriaLaboratorioDB, SedeDB
+from src.database.models import AulaDB, MateriaDB, MateriaLaboratorioDB, SedeDB
 from src.services.crud_services import materia_service
 from src.ui.materia_form_renderer import MateriaFormRenderer
 from src.ui.carrera_status_widget import CarreraStatusWidget
@@ -486,19 +486,35 @@ def render_custom_materia_page():
             
             if search_term:
                 try:
-                    all_materias = materia_service.get_all(session)
+                    # Traemos TODAS las materias (no limitamos a 100 como
+                    # hace `get_all` por default). El buscador tiene que
+                    # ver el catálogo entero.
+                    _term = search_term.strip().lower()
+                    all_materias_db = list(session.exec(select(MateriaDB)).all())
                     filtered_materias = [
-                        m for m in all_materias
-                        if search_term.lower() in m.codigo.lower() or search_term.lower() in m.nombre.lower()
+                        m for m in all_materias_db
+                        if _term in m.codigo.lower()
+                        or _term in m.nombre.lower()
                     ]
-                    
+
                     if filtered_materias:
-                        st.write(f"Encontradas {len(filtered_materias)} materia(s):")
-                        for materia in filtered_materias:
-                            st.write(f"📚 {materia.codigo} - {materia.nombre}")
+                        st.write(
+                            f"Encontradas {len(filtered_materias)} "
+                            f"materia(s):"
+                        )
+                        for materia in sorted(
+                            filtered_materias, key=lambda m: m.codigo
+                        ):
+                            _badge = " · 🚫 archivada" if not materia.active else ""
+                            st.write(
+                                f"📚 **{materia.codigo}** — {materia.nombre}{_badge}"
+                            )
                     else:
-                        st.info("No se encontraron materias que coincidan con la búsqueda.")
-                
+                        st.info(
+                            "No se encontraron materias que coincidan "
+                            "con la búsqueda."
+                        )
+
                 except Exception as e:
                     st.error(f"Error en la búsqueda: {str(e)}")
 

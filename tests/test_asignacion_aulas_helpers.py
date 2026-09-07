@@ -1085,22 +1085,27 @@ class TestHeatmapTotalSinSede:
         assert out["data"]["teorica"]["demanda"][si][di] == 5
         assert out["data"]["teorica"]["ratio"][si][di] == 2.5
 
-    def test_laboratorio_usa_pool_maximo_por_materia(self):
-        """Para labs, la oferta agregada es el mayor pool disponible
-        entre las materias con lab presentes en el plan."""
+    def test_laboratorio_oferta_es_total_de_labs_del_sistema(self):
+        """Para labs, la oferta agregada es el TOTAL de aulas de tipo
+        'laboratorio' del catálogo (cota inferior real de factibilidad
+        global). No usamos el pool de una materia particular porque en
+        una franja pueden dictarse varias materias con labs distintos.
+        """
         h_lab = _h("h1", "Lunes", 8, 10, materia="MLAB", tipo="laboratorio")
         aulas = [
             AulaSlot(id="L1", tipo="laboratorio", capacidad=30),
             AulaSlot(id="L2", tipo="laboratorio", capacidad=30),
             AulaSlot(id="L3", tipo="laboratorio", capacidad=30),
         ]
-        # MLAB tiene sólo 2 labs compatibles → oferta = 2 (no 3).
+        # MLAB sólo puede usar {L1, L2}, pero la oferta agregada global
+        # sigue siendo 3 (los 3 labs del catálogo). Si la demanda es 1,
+        # el ratio agregado es 1/3.
         out = compute_heatmap_total_sin_sede(
             horarios=[h_lab], aulas=aulas,
             materia_lab_map={"MLAB": {"L1", "L2"}},
         )
-        assert out["oferta_total"]["laboratorio"] == 2
+        assert out["oferta_total"]["laboratorio"] == 3
         si = out["slots"].index("08:00-08:15")
         di = out["dias"].index("Lunes")
         assert out["data"]["laboratorio"]["demanda"][si][di] == 1
-        assert out["data"]["laboratorio"]["oferta"][si][di] == 2
+        assert out["data"]["laboratorio"]["oferta"][si][di] == 3

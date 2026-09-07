@@ -1302,6 +1302,13 @@ with tab_dictados:
                     # dicta. Para desactivar hay que borrarlo (queda como
                     # divergencia si la regla dice que deberia existir).
                     with col_activo:
+                        # Spacer del alto de la label de los selectboxes
+                        # vecinos para que el botón quede alineado con
+                        # el input (no con la label).
+                        st.markdown(
+                            "<div style='height:1.75em'></div>",
+                            unsafe_allow_html=True,
+                        )
                         if st.button(
                             "🗑️ Borrar",
                             key=(
@@ -1353,6 +1360,12 @@ with tab_dictados:
                     #   aparecerá en `rule_says_skip_but_exists` del
                     #   panel para que quede trazado como excepción.
                     with col_activo:
+                        # Spacer para alinear el botón con el selectbox
+                        # de `col_rec` (que tiene label visible).
+                        st.markdown(
+                            "<div style='height:1.75em'></div>",
+                            unsafe_allow_html=True,
+                        )
                         if st.button(
                             "✅ Crear",
                             key=(

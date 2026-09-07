@@ -1439,25 +1439,18 @@ def compute_heatmap_total_sin_sede(
     def _zeros_f() -> list[list[float]]:
         return [[0.0] * n_dias for _ in range(n_slots)]
 
-    # Oferta agregada por tipo.
+    # Oferta agregada por tipo (cota inferior global — no discrimina
+    # sede ni compatibilidad por materia).
     n_teoricas = sum(
         1 for a in aulas if a.tipo in ("teorica", "anfiteatro")
     )
-    n_labs_por_materia: dict[str, int] = {
-        mc: len(labs) for mc, labs in materia_lab_map.items()
-    }
-    # Para lab, la oferta "agregada" no tiene sentido único: cada
-    # materia tiene su pool. Usamos el máximo pool de lab entre las
-    # materias presentes como cota razonable. Si querés algo más
-    # exigente el consumer puede mirar el ratio por materia aparte.
-    materias_con_lab_en_plan = {
-        h.materia_codigo for h in horarios
-        if h.tipo_clase == "laboratorio"
-    }
-    n_lab_maximo = max(
-        (n_labs_por_materia.get(mc, 0) for mc in materias_con_lab_en_plan),
-        default=0,
-    )
+    # Para lab, la oferta agregada es el TOTAL de aulas de tipo
+    # 'laboratorio' del catálogo. Si tenés 3 horarios de lab
+    # simultáneos y sólo 3 labs físicos en el sistema, ya sabés que
+    # el plan está al límite estructuralmente, sin importar la
+    # compatibilidad por materia. La compatibilidad más fina se ve
+    # en la vista Máxima por sede.
+    n_labs_totales = sum(1 for a in aulas if a.tipo == "laboratorio")
 
     demanda_teo = _zeros_i()
     demanda_lab = _zeros_i()
@@ -1486,7 +1479,7 @@ def compute_heatmap_total_sin_sede(
 
     data = {
         "teorica": _mk(demanda_teo, n_teoricas),
-        "laboratorio": _mk(demanda_lab, n_lab_maximo),
+        "laboratorio": _mk(demanda_lab, n_labs_totales),
     }
 
     # Peor caso entre categorías por celda.
@@ -1523,7 +1516,7 @@ def compute_heatmap_total_sin_sede(
         "data": data,
         "oferta_total": {
             "teorica": n_teoricas,
-            "laboratorio": n_lab_maximo,
+            "laboratorio": n_labs_totales,
         },
     }
 

@@ -147,6 +147,52 @@ En orden de prioridad:
 - **Ocupación**: cuenta las **aulas efectivamente usadas** por el
   asignador en el estado actual del plan.
 
+### Restricciones duras vs. blandas y dónde se configura cada una
+
+El asignador combina **reglas duras** (que definen qué asignaciones
+son válidas — si no se cumplen, no hay solución) y **preferencias
+blandas** (costos en la función objetivo — cuanto más alto el peso,
+más fuerza la preferencia; con peso 0, desaparece). Cada regla se
+alimenta de datos que viven en **entidades del sistema**
+(Materias, Aulas, Carreras, Sedes, Comisiones) o en **parámetros
+del asignador** editables desde el panel de configuración.
+
+Este es el mapa completo:
+
+#### 🔒 Duras (bloquean asignaciones inválidas)
+
+| # | Regla | ¿Qué garantiza? | ¿Dónde se configura? |
+|---|---|---|---|
+| **R1** | Asignación única | Cada horario recibe exactamente una aula. | Automática, no configurable. |
+| **R3** | Compatibilidad de tipo | Teóricas → aulas teóricas o anfiteatros; laboratorios → aulas de laboratorio en la lista de compatibles de la materia. | **Aulas → Ver detalle → "Tipo de aula"** (define teórica/anfiteatro/laboratorio) + **Aulas → Ver detalle del laboratorio → "Materias que usan este laboratorio"** (define compatibilidad materia↔lab). |
+| **R4** | No solapamiento por aula | Dos horarios que se solapan no pueden compartir aula. | Automática, se deriva de los horarios del cronograma. |
+| **R5** | Partición teoría/lab por comisión | La suma de duraciones de horarios de teoría y de laboratorio en una comisión coincide con las horas declaradas por la materia. | **Materias → editar → "Horas de teoría" y "Horas de laboratorio"**. |
+| **R6** | Consistencia tipo↔pool | Un horario con tipo indefinido cae en un aula del pool correcto (teóricas o labs compatibles). | Derivada, alimentada por R3. |
+| **R10** | Sedes admisibles | Un horario sólo puede caer en aulas de las sedes admisibles para su materia. | **Carreras → carrera → "Sedes habilitadas"** (define sedes por carrera) + **Aulas → Sedes → "Sede por defecto para materias comunes"** (para materias que aparecen en varias carreras) + **Cronogramas → editar comisión → "Restringir a una carrera"** (override por comisión). |
+| **R11** | Pins manuales | El asignador respeta aulas fijadas a mano por el operador. | **Planes → Aulas → panel de asignación → toggle "Respetar ediciones manuales"** + el usuario marca cada aula como manual en el editor de horarios. |
+| **R13** | Sedes consecutivas por comisión | Dos horarios contiguos de una misma comisión (mismo día, gap corto) caen en la misma sede. | **Planes → Aulas → panel de asignación → "Margen mínimo entre sedes (minutos)"**. Con 0 se desactiva. |
+
+#### 🎯 Blandas (preferencias en la función objetivo)
+
+| # | Regla | ¿Qué prefiere? | ¿Dónde se configura? |
+|---|---|---|---|
+| **R7 over** | Evitar sobrecupo | Aulas donde los inscriptos esperados no rebalsan la capacidad. | **Planes → Aulas → panel de asignación → "Peso de sobre-ocupación (λ over)"** y **"Tolerancia de sobre-ocupación"**. Se alimenta también de Inscriptos (forecast) y de Aulas → capacidad. |
+| **R7 under** | Evitar aulas mucho más grandes que la demanda | Aulas ajustadas al forecast. | **Planes → Aulas → panel de asignación → "Peso de sub-utilización (λ under)"** y **"Tolerancia de sub-utilización"**. |
+| **R12** | Sede preferida por materia | Sede del lab compatible; si no hay lab, sede habilitada por la carrera. Sin bloquear alternativas. | **Planes → Aulas → panel de asignación → "Peso de preferencia de sede (λ sede)"**. Se alimenta indirectamente de R3 (labs compatibles), R10 (sedes de carrera) y el catálogo de aulas. Con λ = 0 se desactiva. |
+
+#### ¿Qué edito para arreglar cada síntoma?
+
+| Síntoma | Qué revisar (en orden) |
+|---|---|
+| Un horario no encuentra aula (infactible R1) | ¿La materia tiene labs compatibles configurados? (Aulas → detalle lab → materias que lo usan). ¿La carrera tiene sedes habilitadas y hay aulas del tipo correcto en esas sedes? (Carreras → sedes; Aulas por sede). |
+| Una clase cae en una sede inesperada | Revisar sede preferida (regla lab-first). Si querés forzar otra, ajustar la lista de labs compatibles o cambiar el peso `λ sede`. |
+| El plan no cabe en la sede preferida | Verificar que aumentando `λ sede` o bajando `λ under` cambie la solución. Si no cambia, es cuestión de capacidad — falta aula grande en la sede. |
+| Un aula queda sobreocupada | Chequear si hay aulas más grandes libres en esa franja (mapa de saturación, vista Preferida). Si no, ampliar el catálogo o bajar `tol_under` para aceptar aulas mayores. |
+| Alumnos con clases contiguas en sedes distintas | Bajar `margen_min_intersede_minutos` a 0 desactiva; subirlo a 60 refuerza. Si genera infactibilidad, el cronograma tiene comisiones inviables. |
+| El LP tarda mucho | Subir `timeout_seconds` en la config avanzada. |
+
+---
+
 Cuando saturación > ocupación en una celda, indica que había
 demanda que la sede podía absorber pero el asignador la mandó a
 otra sede admisible (típicamente por capacidad o por combinación

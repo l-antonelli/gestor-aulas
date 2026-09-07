@@ -242,6 +242,53 @@ def _render_config_form(
             "cada campo para ver el detalle."
         )
 
+        with st.expander(
+            "ℹ️ ¿Qué son las restricciones duras y las preferencias "
+            "blandas? ¿Dónde se configura cada regla?",
+            expanded=False,
+        ):
+            st.markdown(
+                """
+                El asignador combina **reglas duras** (que si no se
+                cumplen, no hay solución) con **preferencias blandas**
+                (pesos que priorizan sin bloquear). Los parámetros de
+                este panel gobiernan los pesos, tolerancias y umbrales
+                de esas reglas; los **datos** que las alimentan se
+                editan en otras páginas.
+
+                **🔒 Reglas duras**
+
+                | Regla | Qué garantiza | Dónde se configuran los datos |
+                |---|---|---|
+                | R1 · Asignación única | Cada horario recibe un aula. | Automática. |
+                | R3 · Tipo compatible | Teórica → aulas teóricas/anfiteatros; laboratorio → labs de la lista de compatibles de la materia. | 🏛️ **Aulas** → tipo del aula y "Materias que usan este laboratorio". |
+                | R4 · Sin doble booking | Dos horarios simultáneos no comparten aula. | 📅 Cronogramas (la simultaneidad se deriva). |
+                | R5 · Horas teoría/lab | La comisión cumple las horas declaradas. | 📚 **Materias** → horas de teoría y de laboratorio. |
+                | R10 · Sedes admisibles | Sólo aulas de sedes habilitadas para la materia. | 🎓 **Carreras** → sedes habilitadas · 🏛️ Aulas → **Sedes** → default de comunes · Cronogramas → override por comisión. |
+                | R11 · Pins manuales | Se respetan aulas fijadas a mano. | Toggle abajo + edición manual en el panel de horarios. |
+                | R13 · Sedes consecutivas | Horarios contiguos de la misma comisión con gap corto quedan en la misma sede. | Parámetro `Margen mínimo entre sedes` de este panel. |
+
+                **🎯 Preferencias blandas** (aparecen en la función objetivo)
+
+                | Preferencia | Prefiere… | Parámetro |
+                |---|---|---|
+                | Ajuste al forecast (over) | Aulas que no rebalsan. | `Peso de sobre-ocupación (λ over)`. |
+                | Ajuste al forecast (under) | Aulas ajustadas al forecast. | `Peso de sub-utilización (λ under)`. |
+                | Sede preferida (R12) | Sede del lab si hay lab; si no, sede de la carrera. | `Peso de preferencia de sede (λ sede)`. |
+
+                **Regla rápida de troubleshooting**
+
+                - "Este horario no encuentra aula" → revisar R3/R10:
+                  faltan labs compatibles o la carrera no tiene sedes
+                  habilitadas con aulas del tipo correcto.
+                - "Este horario está en otra sede que la que esperaba"
+                  → la preferida se saturó. Ajustar `λ sede` (subir)
+                  o revisar capacidad del catálogo.
+                - "Sobrecupo persistente" → falta aula grande en esa
+                  sede/franja o hay que subir `λ over`.
+                """
+            )
+
         # -----------------------------------------------------------------
         # Fecha de aplicación + toggle de manuales.
         # -----------------------------------------------------------------
