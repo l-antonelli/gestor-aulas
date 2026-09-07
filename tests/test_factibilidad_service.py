@@ -148,6 +148,73 @@ class TestR5ParticionImposible:
             "en el LP para esas materias."
         )
 
+    def test_horarios_virtuales_cuentan_para_hteo(self, session):
+        """Con hlab>0, los horarios virtuales SÍ cuentan hacia hteo.
+        Un horario teórico virtual + uno teórico presencial suman
+        contra hteo. Si el total (incluyendo virtuales) cierra
+        contra hteo+hlab, no debe haber bloqueo."""
+        # Materia: hteo=4, hlab=2, total 6h.
+        _seed_plan_basico(session, hteo=4, hlab=2)
+        com = session.exec(select(ComisionDB)).first()
+        # Cambio el horario existente a lab presencial 2h y agrego:
+        # - teoria presencial 2h
+        # - teoria virtual 2h
+        hor_orig = session.exec(select(HorarioDB)).first()
+        hor_orig.tipo_clase = "laboratorio"
+        session.add(hor_orig)
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com.id, codigo_materia="M1",
+            dia="Martes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="teorica", virtual=False,
+        ))
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com.id, codigo_materia="M1",
+            dia="Miércoles", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="teorica", virtual=True,
+        ))
+        # Agrego lab compatible para que R1 no falle.
+        session.add(AulaDB(
+            id="l1", sede_id="S1", codigo_aula="L1", nombre="L1",
+            capacidad=30, tipo="laboratorio",
+        ))
+        session.add(MateriaLaboratorioDB(materia_codigo="M1", aula_id="l1"))
+        session.commit()
+
+        r = check_factibilidad_estructural(session, "plan-1")
+        # Total = 2 (lab) + 2 (teo pres) + 2 (teo virt) = 6 = hteo+hlab.
+        # R5 debe pasar aunque uno de los horarios sea virtual.
+        assert not any(b.codigo_regla == "R5" for b in r.bloqueos), (
+            "Los horarios virtuales deben contar hacia hteo/hlab. "
+            "Bloqueos: "
+            + str([(b.codigo_regla, b.titulo) for b in r.bloqueos])
+        )
+
+    def test_horarios_virtuales_no_tapan_falta_real_de_horas(self, session):
+        """Contra-prueba: si aun contando virtuales la suma no cierra,
+        R5 debe reportar bloqueo."""
+        # Materia hteo=4, hlab=2 (total 6h), pero sólo 2 horarios de
+        # 2h cada uno (1 lab + 1 teo virt) = 4h. Faltan 2h.
+        _seed_plan_basico(session, hteo=4, hlab=2)
+        hor_orig = session.exec(select(HorarioDB)).first()
+        hor_orig.tipo_clase = "laboratorio"
+        session.add(hor_orig)
+        com = session.exec(select(ComisionDB)).first()
+        session.add(HorarioDB(
+            id=str(uuid.uuid4()), comision_id=com.id, codigo_materia="M1",
+            dia="Miércoles", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="teorica", virtual=True,
+        ))
+        # Lab compatible para descartar R1.
+        session.add(AulaDB(
+            id="l1", sede_id="S1", codigo_aula="L1", nombre="L1",
+            capacidad=30, tipo="laboratorio",
+        ))
+        session.add(MateriaLaboratorioDB(materia_codigo="M1", aula_id="l1"))
+        session.commit()
+
+        r = check_factibilidad_estructural(session, "plan-1")
+        assert any(b.codigo_regla == "R5" for b in r.bloqueos)
+
 
 class TestCompatHall:
 

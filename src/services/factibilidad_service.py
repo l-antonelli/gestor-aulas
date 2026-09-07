@@ -161,22 +161,21 @@ def check_factibilidad_estructural(
         ).all():
             materia_dict_virtual[mc] = v
 
-    # Filtrar virtuales.
+    # Filtrar virtuales para todo lo que tiene que ver con asignación
+    # de aula (R1, R3, R4, R10, R13, compat-hall). Pero mantener una
+    # lista aparte con TODOS los horarios (incluidos virtuales) para
+    # R5 — la partición teoría/lab tiene que reflejar todas las horas
+    # que se dictan, no sólo las que ocupan aula.
     hteo = {m.codigo: float(m.horas_teoria or 0) for m in materias_db}
     hlab = {m.codigo: float(m.horas_laboratorio or 0) for m in materias_db}
 
     horarios_slots: list[HorarioSlot] = []
+    horarios_slots_con_virtuales: list[HorarioSlot] = []
     materia_de_horario: dict[str, str] = {}
     comision_de_horario: dict[str, str] = {}
     dur: dict[str, float] = {}
     horario_db_by_id: dict[str, HorarioDB] = {}
     for h in horarios_db:
-        if resolve_virtual(
-            horario_virtual=h.virtual,
-            dictado_virtual=materia_dict_virtual.get(h.codigo_materia),
-            materia_virtual=materia_virtual.get(h.codigo_materia, False),
-        ):
-            continue
         # Inferir tipo si materia sólo declara uno.
         tipo_efectivo = h.tipo_clase
         if tipo_efectivo is None:
@@ -186,20 +185,29 @@ def check_factibilidad_estructural(
                 tipo_efectivo = "teorica"
             elif m_hlab > 0 and m_hteo == 0:
                 tipo_efectivo = "laboratorio"
-        horarios_slots.append(HorarioSlot(
+        slot = HorarioSlot(
             id=h.id, dia=h.dia,
             hora_inicio=h.hora_inicio, hora_fin=h.hora_fin,
             materia_codigo=h.codigo_materia,
             tipo_clase=tipo_efectivo,
-        ))
+        )
         materia_de_horario[h.id] = h.codigo_materia
         comision_de_horario[h.id] = h.comision_id
-        h_s = (
-            h.hora_inicio.hour + h.hora_inicio.minute / 60
-        )
+        h_s = h.hora_inicio.hour + h.hora_inicio.minute / 60
         h_e = h.hora_fin.hour + h.hora_fin.minute / 60
         dur[h.id] = h_e - h_s
         horario_db_by_id[h.id] = h
+
+        horarios_slots_con_virtuales.append(slot)
+        # Los virtuales quedan afuera de las validaciones que dependen
+        # de asignación de aula, pero entran en la lista completa para R5.
+        if resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dict_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        ):
+            continue
+        horarios_slots.append(slot)
 
     if not horarios_slots:
         reporte.advertencias.append(Bloqueo(
@@ -340,8 +348,16 @@ def check_factibilidad_estructural(
     # horarios teóricos "flotan libres" y una suma menor a hteo+hlab
     # no genera infactibilidad estructural. Alineado con la validación
     # oficial del panel de Detalle (que también filtra por hlab > 0).
+    #
+    # IMPORTANTE: acá usamos `horarios_slots_con_virtuales` (no la
+    # lista filtrada). Los horarios virtuales SÍ cuentan hacia las
+    # horas totales de la materia — "virtual" significa "no ocupa
+    # aula", no "no se dicta". Si la teoría se divide en presencial
+    # + virtual, ambas partes suman para hteo. El LP no valida esto
+    # hoy (bug conocido: sólo verifica igualdad sobre hlab), pero
+    # nuestro chequeo pre-solve sí puede detectarlo.
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
-    for h in horarios_slots:
+    for h in horarios_slots_con_virtuales:
         cid = comision_de_horario[h.id]
         # Materias sin laboratorio: R5 no se aplica.
         if hlab.get(h.materia_codigo, 0.0) <= 0:
