@@ -117,12 +117,36 @@ def _filtrar_diag_virtuales(
             if not filtered_ids:
                 continue
             new = dict(i)
+            orig_ids = ids
             new["horario_ids"] = filtered_ids
-            # Actualizar contadores triviales si aparecen.
+            n_filtered_out = len(orig_ids) - len(filtered_ids)
+            # Actualizar contadores derivados que dependen del conteo
+            # de horarios. Si el filtro sacó ítems que eran virtuales,
+            # también se reducen `n_clases`, `n_necesarias`, etc.
             if "n_clases" in new:
-                new["n_clases"] = len(filtered_ids)
+                new["n_clases"] = max(
+                    0, new["n_clases"] - n_filtered_out
+                )
+            if "n_necesarias" in new:
+                new["n_necesarias"] = max(
+                    0, new["n_necesarias"] - n_filtered_out
+                )
             out.append(new)
-        return out
+        # Descartar items donde el filtro dejó la cuenta por debajo
+        # o igual a la oferta — ya no son saturación real.
+        return [
+            i for i in out
+            if (
+                i.get("n_necesarias") is None
+                or i.get("n_disponibles") is None
+                or i.get("n_necesarias", 0) > i.get("n_disponibles", 0)
+            )
+            and (
+                i.get("n_clases") is None
+                or i.get("n_aulas_compatibles") is None
+                or i.get("n_clases", 0) > i.get("n_aulas_compatibles", 0)
+            )
+        ]
 
     new_diag = dict(diag)
     if diag.get("horarios_sin_aula_compatible"):
@@ -3133,6 +3157,37 @@ def render_resultado(
         session, run.plan_cursada_id,
     )
     diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
+
+    # Cuando la corrida fue óptima Y el diag persistido reporta
+    # advertencias, es probable que ese diag esté stale (armado con
+    # una versión anterior del código que contaba virtuales como
+    # demanda). Regeneramos en vivo desde build_inputs + diagnose
+    # para reflejar el estado actual sin falsos positivos.
+    if run.status == "optimal" and diag and (
+        diag.get("horarios_sin_aula_compatible")
+        or diag.get("franjas_saturadas")
+        or diag.get("saturacion_por_tipo")
+        or diag.get("hall_violators")
+    ):
+        try:
+            from src.services.asignacion_aulas_service import (
+                LPConfig, build_inputs, diagnose,
+            )
+            _inputs_live = build_inputs(session, run.plan_cursada_id, LPConfig())
+            _diag_live = diagnose(_inputs_live)
+            diag = {
+                "horarios_sin_aula_compatible":
+                    _diag_live.horarios_sin_aula_compatible,
+                "franjas_saturadas": _diag_live.franjas_saturadas,
+                "saturacion_por_tipo": _diag_live.saturacion_por_tipo,
+                "hall_violators": _diag_live.hall_violators,
+                "inventario_aulas": _diag_live.inventario_aulas,
+                "particion_problemas": _diag_live.particion_problemas,
+            }
+        except Exception:  # pragma: no cover
+            # Si algo falla en el recompute, seguimos con el diag
+            # filtrado antes: es peor no mostrar nada.
+            pass
 
     # ======================================================
     # Este renderer se invoca dentro del expander "Gestión de
