@@ -12,6 +12,18 @@ este archivo. Si introduce una capacidad nueva, agregar un RF; si
 modifica una existente, actualizar la entrada correspondiente y, si
 cambia el estado de implementación, ajustar la matriz de cobertura.
 
+## Reglas de redacción
+
+- **No usar em-dashes (`—`)**: suenan a texto generado por IA y no
+  reflejan el registro rioplatense natural que buscamos para el
+  informe y para la documentación en general. Reemplazarlos según
+  el sentido de la oración: por comas cuando enmarcan una aclaración
+  breve, por paréntesis cuando es un inciso lateral, por dos puntos
+  cuando introducen una explicación, por punto seguido cuando
+  separan ideas independientes, o simplemente reformulando la
+  oración. Esta regla aplica tanto al informe (`project/Informe/**`)
+  como al resto de la documentación del proyecto.
+
 ## Convenciones
 
 - **Estados**: ✅ Implementado · 🟡 Parcial · ⏳ Pendiente.

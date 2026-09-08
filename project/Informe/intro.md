@@ -49,7 +49,11 @@ A lo largo de este recorrido, el informe exhibe continuamente dos facetas de an�
 
 ## Estructura del informe
 
-<!-- TODO: completar cuando se definan las secciones -->
+El informe se organiza en seis partes que despliegan, en orden, el recorrido descripto arriba. La *Parte I* (Planteo) presenta la introducción y el marco teórico. La *Parte II* (El problema) caracteriza a la FCEIA como organización, describe la operatoria actual y formaliza el problema de asignación como un problema de recursos bajo restricciones. La *Parte III* (Modelización del dominio) presenta las entidades del dominio y su traducción al modelo de datos. La *Parte IV* (La solución) desarrolla la arquitectura de la solución, formula el problema como programa lineal entero — introduciendo antes las herramientas conceptuales de la combinatoria necesarias, como el principio del palomar y el teorema de Hall — y documenta el sistema de validaciones. La *Parte V* (Uso y resultados) muestra la herramienta en acción sobre datos reales y analiza los resultados obtenidos. La *Parte VI* (Cierre) concluye y traza caminos de continuación. Al final se incluyen los anexos de referencia técnica, manual de usuario y trazabilidad de requerimientos.
+
+A modo de anticipo, y para que el lector tenga desde el inicio una idea del andamiaje tecnológico sobre el que se apoya la solución, el sistema se implementó en Python, con una interfaz gráfica construida sobre Streamlit, persistencia en SQLite gestionada mediante el ORM SQLModel y resolución del problema de optimización a través de la biblioteca PuLP contra el resolutor CBC. La justificación de cada una de estas elecciones y su articulación se desarrollan en el capítulo dedicado a la arquitectura de la solución.
+
+El detalle capítulo por capítulo, con las fuentes internas que alimentan cada uno, se encuentra en `estructura.md` (documento vivo dentro de esta misma carpeta).
 
 ## Referencias
 
