@@ -22,13 +22,14 @@ tipologías de §2.1.2 y §2.1.3 sin repetirlas.
 ### 3.1.1 Misión, escala y contexto institucional
 
 La Facultad de Ciencias Exactas, Ingeniería y Agrimensura (en
-adelante, FCEIA) es una de las doce facultades de la Universidad
-Nacional de Rosario (UNR). Su actividad primaria es la formación
-universitaria de grado y de posgrado en disciplinas de la
-ingeniería, las ciencias exactas y la agrimensura. La escala de la
-facultad (decenas de carreras activas, cientos de materias, miles
-de alumnos regulares por cuatrimestre) hace que la coordinación de
-su operatoria académica no sea reducible a la de una unidad
+adelante, FCEIA) es una de las facultades de la Universidad
+Nacional de Rosario (UNR). Actualmente dicta once carreras de
+grado (seis de ingeniería, tres licenciaturas y dos profesorados
+en ciencias exactas), cuenta con una variada oferta de carreras y
+cursos de posgrado y también brinda educación a distancia. La
+escala de la facultad (varias carreras activas, cientos de materias,
+miles de alumnos regulares por cuatrimestre) hace que la coordinación
+de su operatoria académica no sea reducible a la de una unidad
 pequeña: cualquier proceso que la involucre se enfrenta con la
 combinatoria propia de una organización mediana.
 
@@ -39,27 +40,39 @@ comisiones, en qué horarios y en qué aulas. Este documento se ocupa
 específicamente de la última pregunta, aunque en varios momentos
 tendrá que apoyarse en las tres anteriores para dar contexto.
 
-### 3.1.2 Sedes: Pellegrini y Siberia
+### 3.1.2 Sedes: Pellegrini y Centro Universitario Rosario
 
-La FCEIA opera físicamente en dos sedes:
+La FCEIA desarrolla sus actividades académicas en dos sedes
+físicas:
 
-- **Sede Pellegrini** (edificio central, calle Pellegrini): concentra
-  la mayor parte del dictado. En ella coexisten actividades académicas
-  de distintas carreras, que comparten el edificio y sus aulas.
-- **Sede Siberia**: sede complementaria en la que se dictan algunas
-  materias específicas, típicamente ligadas a laboratorios o
-  espacios de práctica que sólo existen allí.
+- **Sede Pellegrini** (Avenida Pellegrini 250, Rosario). Es el
+  edificio histórico de la facultad, inaugurado en 1929. Allí
+  tienen su asiento el Decanato, el Consejo Directivo, las
+  dependencias administrativas, varios institutos y laboratorios y
+  las Escuelas de Formación Básica, Agrimensura, Ingeniería
+  Industrial, Ciencias Exactas y Naturales, y la Escuela de
+  Posgrado y Educación Continua. La sede concentra la mayor parte
+  del dictado y sus aulas son compartidas por materias de distintas
+  carreras.
+- **Centro Universitario Rosario (CUR)** (Riobamba 250 bis). El CUR
+  es un predio de la UNR en el que funcionan varias facultades. La
+  FCEIA cuenta allí con edificios propios en los que se ubican las
+  Escuelas de Ingeniería Mecánica, Ingeniería Civil, Ingeniería
+  Eléctrica e Ingeniería Electrónica, junto con diversos
+  laboratorios, centros e institutos y el Reactor nuclear RA-4.
+  Las materias de las ingenierías del ciclo superior de esas cuatro
+  Escuelas se dictan típicamente en esta sede.
 
-Ambas sedes están bajo gestión centralizada de la facultad y sus
-aulas son de uso exclusivo de FCEIA. La distinción entre sedes es
-relevante para el problema de asignación por dos motivos: primero,
-porque un alumno que cursa dos materias correlativas el mismo día no
-puede trasladarse instantáneamente de una sede a la otra, y por lo
-tanto ciertos pares de horarios que en un edificio único serían
-válidos en dos sedes distintas no lo son; segundo, porque hay
-laboratorios que existen solamente en una de las dos sedes, con lo
-cual el tipo de aula requerida por una materia puede restringir la
-sede donde se dicta.
+Ambas sedes están bajo gestión académica centralizada de FCEIA y sus
+aulas son de uso exclusivo de la facultad. La distinción entre sedes
+es relevante para el problema de asignación por dos motivos:
+primero, porque un alumno que cursa dos materias correlativas el
+mismo día no puede trasladarse instantáneamente de una sede a la
+otra, y por lo tanto ciertos pares de horarios que en un edificio
+único serían válidos en dos sedes distintas no lo son; segundo,
+porque hay laboratorios especializados que existen solamente en una
+de las dos sedes, con lo cual el tipo de aula requerida por una
+materia puede restringir la sede donde se dicta.
 
 ### 3.1.3 Tipología de aulas
 
@@ -78,10 +91,11 @@ asignación, en tres grandes tipos:
   Formalmente, cada materia con contenido de laboratorio declara
   cuáles laboratorios son compatibles con ella.
 - **Espacios específicos**: aulas con requerimientos particulares
-  que no encuadran en las categorías anteriores. Se los menciona
-  para completitud pero, dentro del alcance de este trabajo, se los
-  trata como una variante de aula teórica o de laboratorio según
-  corresponda.
+  (proyectores fijos, mesas de gran tamaño para dibujo o diseño,
+  talleres pesados) que no encuadran en las categorías anteriores.
+  Se los menciona para completitud pero, dentro del alcance de
+  este trabajo, se los trata como una variante de aula teórica o
+  de laboratorio según corresponda.
 
 Las aulas tienen, además, dos atributos operativamente relevantes:
 **capacidad** (cantidad máxima de alumnos que pueden cursar en ella
@@ -93,6 +107,26 @@ anfiteatros para clases plenarias); sobre disponibilidades, la
 convención asumida es que las aulas están disponibles durante toda
 la ventana operativa de la facultad, salvo excepciones puntuales
 que quedan fuera del alcance de este trabajo.
+
+### 3.1.4 Grilla horaria oficial
+
+La facultad organiza institucionalmente el día operativo en tres
+**turnos** (Mañana, Tarde y Noche), estructurados en **bloques
+prefijados de 45 minutos** que constituyen la unidad mínima del
+cronograma oficial. Esta grilla es el marco temporal común dentro
+del cual las cátedras deberían encajar sus horarios de dictado; es
+también la unidad natural de referencia para la coordinación entre
+carreras y para el uso compartido de aulas.
+
+En la práctica, sin embargo, cuando las Escuelas confeccionan sus
+propuestas de agenda académica cuatrimestral no siempre respetan
+los bloques prefijados. Se observan cursadas de duraciones
+distintas a los múltiplos de 45 minutos, cortes desfasados respecto
+de la grilla y superposiciones que la grilla teórica no
+anticiparía. Esta divergencia entre grilla oficial y práctica
+efectiva es una de las fuentes de fricción del proceso actual
+(§3.3.2) y motiva parte de las decisiones de modelización del
+capítulo 4.
 
 ## 3.2 El proceso actual de asignación de aulas
 
@@ -126,85 +160,135 @@ convenciones específicas.
 
 ### 3.2.2 Actores intervinientes
 
-En el proceso actual de asignación intervienen los siguientes
-actores:
+El proceso actual de asignación no está centralizado en una única
+figura sino distribuido entre varias áreas de la facultad. Cada una
+opera sobre un tramo del flujo, con sus propias responsabilidades y
+sus propios documentos de trabajo. Los actores que intervienen son:
 
-- **Coordinación estudiantil**. Área administrativa a cargo del
-  proceso. Su responsable, a quien nos referimos genéricamente
-  como *la coordinadora estudiantil*, es quien materializa las
-  decisiones de asignación de aulas, recibe los requerimientos de
-  las cátedras, resuelve conflictos y publica el resultado.
-- **Cátedras**. Cada materia está a cargo de una cátedra que fija
-  su modalidad de dictado (cantidad de comisiones, horarios,
-  necesidad de laboratorio, contenidos por bloque) dentro de las
-  restricciones que le imponen el plan de estudios y el
-  cronograma general de la facultad.
-- **Autoridades académicas**. Definen políticas generales:
-  calendario, ciclos, planes de estudio, sedes habilitadas para
-  cada carrera, cupos globales.
-- **Alumnos**. Consumen el resultado del proceso: se inscriben a
+- **Direcciones de Escuelas académicas.** Cada Escuela (Formación
+  Básica, Ingeniería Industrial, Ingeniería Mecánica, Ingeniería
+  Civil, Ingeniería Eléctrica, Ingeniería Electrónica, Agrimensura,
+  Ciencias Exactas y Naturales, entre otras) es responsable de
+  diseñar de manera autónoma la grilla horaria de las materias
+  específicas del **Ciclo Superior** de sus carreras. Para eso
+  analiza la disponibilidad horaria de su cuerpo docente, distribuye
+  las comisiones teóricas y prácticas y establece la secuencia de
+  dictado.
+- **Área de Ingreso.** Planifica en forma paralela las asignaturas
+  del **Ciclo Básico** (el tronco común de primer y segundo año de
+  las ingenierías: Cálculo, Álgebra, Física y otras materias de
+  alta concurrencia). Proyecta la cantidad de comisiones necesarias
+  y las distribuye en los tres turnos de la grilla oficial.
+- **Secretaría Académica.** Recibe las propuestas de las Direcciones
+  de Escuelas y del Área de Ingreso, y lleva a cabo la
+  **integración, fiscalización y validación institucional**.
+  Consolida la información en una grilla horaria única, verifica el
+  cumplimiento de los planes de estudio aprobados, controla que no
+  haya solapamientos horarios para un alumno tipo, y que un mismo
+  docente no aparezca en dictados simultáneos. Una vez subsanadas
+  las discrepancias, aprueba la grilla horaria general.
+- **Secretaría Técnica.** Toma como insumo la grilla horaria
+  consolidada y el inventario físico de la planta (aulas teóricas,
+  laboratorios de informática, talleres pesados, laboratorios de
+  ensayo, anfiteatros) y realiza la **asignación de espacios
+  físicos a las clases**. Evalúa capacidad nominal y equipamiento,
+  buscando que cada aula asignada cubra la cantidad esperada de
+  inscriptos y cuente con los recursos técnicos requeridos.
+  Confecciona el cuadro definitivo de ocupación y lo remite a la
+  Secretaría Académica para su refrendo final.
+- **Secretaría Estudiantil.** Gestiona la fase de captura y
+  consolidación de la demanda a través del sistema SIU Guaraní.
+  Administra los períodos de inscripción a asignaturas y comisiones
+  y realiza la carga y actualización final de las aulas asignadas
+  en la plataforma.
+- **Bedelías.** Reciben la matriz definitiva de horarios y aulas
+  para la apertura y control diario de los recintos.
+- **Cátedras y docentes.** Definen la modalidad concreta de
+  dictado de cada materia (cantidad de comisiones, horarios,
+  necesidad de laboratorio) dentro del marco fijado por la Escuela
+  y validado por la Secretaría Académica.
+- **Alumnos.** Consumen el resultado del proceso: se inscriben a
   comisiones y asisten a las clases en las aulas asignadas.
-- **Sistema SIU Guaraní**. Sistema de gestión académica que
+- **Sistema SIU Guaraní.** Sistema de gestión académica que
   administra la información de alumnos, inscripciones y
   comisiones. Detallado en §3.4.
 
-Se destaca que **la coordinadora estudiantil es el único punto del
-sistema donde se toman decisiones de asignación de aulas**. El
-resto de los actores aporta información, restricciones o
-requerimientos, pero la asignación final es una decisión
-centralizada.
+Vale la pena destacar dos rasgos de esta distribución de actores.
+Primero, **la asignación de aulas propiamente dicha es
+responsabilidad de la Secretaría Técnica**, pero opera sobre una
+grilla horaria consolidada por la Secretaría Académica, que a su
+vez es la agregación de propuestas elaboradas de manera autónoma
+por las Direcciones de Escuelas y el Área de Ingreso. Segundo, esta
+distribución es coherente con el diagnóstico organizacional de
+§2.1: las decisiones operativas están **efectivamente
+descentralizadas** en el núcleo profesional (Escuelas y cátedras) y
+la coordinación central se aplica sobre propuestas ya elaboradas,
+no las produce desde cero.
 
 ### 3.2.3 Momentos y modalidad del proceso
 
 El proceso tiene dos momentos operativos distintos:
 
-- **Planificación inicial**: al comienzo de cada cuatrimestre, antes
+- **Planificación inicial.** Al comienzo de cada cuatrimestre, antes
   del inicio de clases y, típicamente, antes de conocer la cantidad
   final de inscriptos, se define el esquema completo de asignación.
   Se toma como punto de partida el esquema del cuatrimestre
   anterior y se lo ajusta según los cambios reportados por las
-  cátedras y las autoridades.
-- **Ajustes dinámicos**: iniciadas las clases, el esquema inicial
+  Escuelas, las cátedras y las autoridades académicas.
+- **Ajustes dinámicos.** Iniciadas las clases, el esquema inicial
   suele requerir ajustes: por incorporación tardía de inscriptos,
   por materias que resultaron más numerosas de lo esperado, por
   cambios de última hora en la disponibilidad de docentes o aulas,
-  por conflictos que se descubren en la práctica. Los ajustes se
-  resuelven caso por caso.
+  por conflictos que se descubren en la práctica, o por
+  requerimientos particulares del calendario de exámenes. Los
+  ajustes se resuelven caso por caso y se propagan hacia las áreas
+  correspondientes (Bedelías, SIU, cátedras).
 
-La modalidad, en ambos momentos, es fundamentalmente **manual**. La
-coordinadora trabaja con planillas (Excel y documentos derivados),
-comunicaciones informales con cátedras (correo electrónico,
-mensajería) y con las autoridades. No existe un sistema de
-información integrado que centralice restricciones, disponibilidades
-y decisiones; la información se organiza en documentos separados
-que la coordinadora integra mentalmente al momento de decidir.
+La modalidad, en ambos momentos, es fundamentalmente **manual**.
+Las Escuelas trabajan sus propuestas en planillas (Excel y
+documentos derivados) y las remiten formalmente a Secretaría
+Académica; ésta las integra en una grilla única también en
+planillas; Secretaría Técnica trabaja la asignación de aulas del
+mismo modo. Las comunicaciones entre áreas son formales pero el
+soporte técnico común es la planilla y el correo. No existe un
+sistema de información integrado que centralice restricciones,
+disponibilidades y decisiones; la información se organiza en
+documentos separados que cada área integra mentalmente al momento
+de decidir.
 
 ### 3.2.4 Diagrama del proceso actual
 
-El diagrama siguiente resume el flujo operativo. Es una
-representación simplificada, elaborada para servir de referencia en
-las secciones que siguen; su fidelidad al detalle administrativo
-concreto no es total pero sí suficiente para el análisis.
+El diagrama siguiente resume el flujo operativo con sus principales
+actores y responsabilidades. Es una representación simplificada,
+elaborada para servir de referencia en las secciones que siguen; su
+fidelidad al detalle administrativo concreto no es total pero sí
+suficiente para el análisis.
 
 ```mermaid
 flowchart TB
-    A[Cierre del cuatrimestre anterior] --> B[Recepción de novedades<br/>de cátedras y autoridades]
-    B --> C[Toma del esquema anterior<br/>como punto de partida]
-    C --> D[Aplicación manual de ajustes:<br/>cambios de horarios, nuevas comisiones,<br/>materias que se abren o cierran]
-    D --> E{¿Conflictos detectados?}
-    E -->|Sí| F[Resolución manual:<br/>reasignación caso por caso,<br/>consulta a cátedras]
-    F --> E
-    E -->|No| G[Publicación del esquema inicial]
-    G --> H[Inicio de clases]
+    A0[Direcciones de Escuelas<br/>diseñan grilla horaria<br/>del Ciclo Superior] --> B
+    A1[Área de Ingreso<br/>diseña grilla horaria<br/>del Ciclo Básico] --> B
+    B[Secretaría Académica<br/>integra propuestas,<br/>valida contra planes de estudio,<br/>detecta superposiciones] --> C{¿Discrepancias<br/>o conflictos?}
+    C -->|Sí| A0
+    C -->|Sí| A1
+    C -->|No| D[Secretaría Académica<br/>consolida y aprueba<br/>grilla horaria general]
+    D --> E[Secretaría Técnica<br/>asigna aulas a clases<br/>según capacidad y equipamiento]
+    E --> F[Secretaría Académica<br/>refrenda cuadro definitivo]
+    F --> G1[Bedelías: apertura<br/>y control diario]
+    F --> G2[Secretaría Estudiantil:<br/>carga aulas en SIU Guaraní,<br/>gestiona inscripciones]
+    F --> G3[Escuelas:<br/>notifican a docentes]
+    G1 --> H[Inicio de clases]
+    G2 --> H
+    G3 --> H
     H --> I{¿Novedad operativa<br/>durante el cuatrimestre?}
-    I -->|Aula superpoblada,<br/>cambio de comisión,<br/>indisponibilidad puntual| J[Ajuste dinámico caso por caso]
+    I -->|Aula superpoblada,<br/>cambio de comisión,<br/>indisponibilidad puntual,<br/>calendario de exámenes| J[Ajuste dinámico<br/>coordinado entre áreas]
     J --> I
     I -->|Fin del cuatrimestre| K[Cierre]
 
     classDef proc fill:#fffbe6,stroke:#c9a227,color:#000
     classDef dec fill:#e6f0ff,stroke:#4a6fa5,color:#000
-    class A,B,C,D,F,G,H,J,K proc
-    class E,I dec
+    class A0,A1,B,D,E,F,G1,G2,G3,H,J,K proc
+    class C,I dec
 ```
 
 ## 3.3 Problemas operativos observados
@@ -212,7 +296,7 @@ flowchart TB
 La descripción del proceso permite ahora enumerar los problemas
 operativos que motivan este trabajo. La lista se construye a partir
 de la observación del funcionamiento actual y de las comunicaciones
-recogidas con la coordinación estudiantil.
+recogidas con las áreas de coordinación académica.
 
 ### 3.3.1 Problemas visibles al alumnado
 
@@ -241,10 +325,11 @@ perceptible en el aula:
 Estos son los problemas ligados a cómo se lleva adelante la
 asignación:
 
-- **Alto costo de tiempo humano.** La coordinadora dedica una
-  proporción significativa de su tiempo a la asignación inicial y,
-  sobre todo, a los ajustes dinámicos, en detrimento de otras
-  tareas de coordinación.
+- **Alto costo de tiempo humano.** Las áreas responsables (Escuelas,
+  Secretaría Académica, Secretaría Técnica) dedican una proporción
+  significativa de su tiempo a la asignación inicial y, sobre todo,
+  a los ajustes dinámicos, en detrimento de otras tareas de
+  coordinación académica.
 - **Sensibilidad a la información no consolidada.** Como los datos
   viven en documentos separados, cualquier cambio en un documento
   fuente puede pasar inadvertido y contaminar decisiones
@@ -276,8 +361,8 @@ características estructurales que el proceso no puede abordar:
   compatibilidades existen entre materias y laboratorios, cuáles
   son las sedes admisibles por carrera) son de conocimiento común
   pero no están explicitadas en ningún documento único. Cada
-  decisión se toma con base en el criterio personal de la
-  coordinadora, alimentado por experiencia acumulada.
+  decisión se toma con base en el criterio personal de las áreas
+  intervinientes, alimentado por experiencia acumulada.
 - **Ausencia de indicadores cuantitativos.** No hay métricas
   sostenidas de ocupación, capacidad excedida, aulas subutilizadas,
   tiempo insumido por reasignaciones. Sin ellas, cualquier
@@ -299,10 +384,27 @@ estado actual del ecosistema de datos de FCEIA en relación con la
 asignación de aulas, y hace explícita la dispersión que motiva
 varias de las decisiones de modelización del capítulo siguiente.
 
+Como marco general vale una analogía tomada de la ingeniería de la
+producción: en cualquier planta industrial, la programación de
+recursos depende de dos artefactos de información básicos, la
+**Lista de Materiales** (en inglés, *Bill of Materials* o BOM), que
+define qué componentes hacen falta para fabricar cada producto, y
+la **Hoja de Ruta** (*Routing Sheet*), que define en qué secuencia y
+en qué máquinas se producen. En el paralelo académico, los **planes
+de estudio** son la lista de materiales de la "producción académica"
+(qué materias componen cada carrera, en qué secuencia, con qué
+correlativas) y las **grillas horarias** son la hoja de ruta (qué
+materia va en qué aula y en qué momento). Si estos dos artefactos
+no están correctamente estructurados y consolidados, cualquier
+proceso posterior de asignación queda comprometido de raíz. Es lo
+que en ingeniería informática se sintetiza como principio *garbage
+in, garbage out* (si entran datos basura, salen resultados basura):
+una premisa que va a atravesar todo el diagnóstico de esta sección.
+
 ### 3.4.1 Las tres fuentes principales
 
-En la práctica, la coordinadora trabaja con información que proviene
-de tres fuentes distintas:
+En la práctica, las áreas involucradas trabajan con información que
+proviene de tres fuentes distintas:
 
 - **Planes de estudio de las carreras.** Cada carrera publica su
   plan de estudios: la lista de materias que la componen, su
@@ -318,36 +420,124 @@ de tres fuentes distintas:
   sistema** y no coinciden con los códigos internos de los planes
   de estudio.
 - **Horarios y cronogramas publicados.** Cada cuatrimestre las
-  cátedras y la coordinación publican los horarios de cursada en
-  planillas y en la web. En estas publicaciones, una misma materia
-  puede aparecer con **nombres distintos** según la carrera desde
-  la cual se la mira (la misma materia de matemática puede
-  llamarse *Análisis Matemático* en una carrera y *Cálculo* en
-  otra, sin que ambos nombres se declaren como equivalentes en
-  ningún documento común).
+  cátedras y las Escuelas publican los horarios de cursada en
+  planillas y en la web de la facultad. En estas publicaciones,
+  una misma materia puede aparecer con **nombres distintos** según
+  la carrera desde la cual se la mira (la misma materia de
+  matemática puede llamarse *Análisis Matemático* en una carrera y
+  *Cálculo* en otra, sin que ambos nombres se declaren como
+  equivalentes en ningún documento común).
 
-### 3.4.2 El problema de la codificación no estandarizada
+### 3.4.2 Codificación no estandarizada de materias
 
 Las tres fuentes anteriores no comparten un identificador estable
-para las entidades comunes. Una misma materia puede tener tres o más
-nombres distintos (el del plan de la carrera A, el del plan de la
-carrera B, el de SIU Guaraní, el del cronograma publicado) sin que
-exista un mapeo formal entre ellos. Este fenómeno es especialmente
-frecuente en las **materias comunes**: asignaturas que forman parte
-de varias carreras a la vez (típicamente las de los primeros años,
-como matemáticas o físicas).
+para las entidades comunes. Una misma materia puede tener tres o
+más nombres distintos (el del plan de la carrera A, el del plan de
+la carrera B, el de SIU Guaraní, el del cronograma publicado) sin
+que exista un mapeo formal entre ellos. Este fenómeno es
+especialmente frecuente en las **materias comunes**: asignaturas
+que forman parte de varias carreras a la vez (típicamente las de
+los primeros años, como matemáticas o físicas).
 
-La consecuencia práctica es que integrar información de las tres
-fuentes es una tarea de reconciliación manual. Saber cuántos
-alumnos de una carrera van a cursar una materia común implica
-identificar la equivalencia entre el código de plan y el código de
-SIU; saber en qué aula estaba dictándose el año pasado implica
-identificar la equivalencia entre el nombre del cronograma y el
-código de plan. Cada una de estas reconciliaciones se hace de
-memoria o consultando documentos accesorios; ninguna está
-sistematizada.
+Existen además casos de fragmentación más severos: **una misma
+asignatura representada por más de un código** dentro de SIU
+Guaraní, generando dos o más conjuntos de inscriptos para la
+misma materia. Esto imposibilita conocer la cantidad real de
+alumnos que van a cursar y, en consecuencia, sesga la estimación
+de demanda que alimenta la asignación de aulas. Casos como
+"Métodos Numéricos" e "Introducción a la Optimización" (que en la
+práctica pueden compartir el mismo dictado unificado pero aparecen
+como asignaturas independientes en los registros) ilustran el
+tipo de problema.
 
-### 3.4.3 Conceptos coloquialmente definidos
+La consecuencia práctica es doble. Por un lado, **integrar
+información de las tres fuentes es una tarea de reconciliación
+manual**: saber cuántos alumnos de una carrera van a cursar una
+materia común implica identificar la equivalencia entre el código
+de plan y el código de SIU, y saber en qué aula se dictaba el año
+pasado implica identificar la equivalencia entre el nombre del
+cronograma y el código de plan. Por otro lado, un sistema
+automatizado que consuma estos datos sin sanearlos previamente
+corre riesgos concretos: puede asignar dos aulas pequeñas donde
+correspondía una consolidada mediana, o partir la programación de
+una misma clase en dos horarios contrapuestos por leer sus dos
+códigos como asignaturas distintas.
+
+### 3.4.3 Codificación no estandarizada de comisiones
+
+El problema análogo se replica a nivel comisiones. **No existe una
+regla unificada** para la asignación del identificador de comisión
+dentro de una materia. Las convenciones varían por cuatrimestre y
+por materia: en algunas se usan números de una cifra (1, 2, 3),
+en otras de tres cifras con patrones específicos (por ejemplo, en
+"Cálculo" se usan 110, 120, 130 en el primer cuatrimestre y 510,
+520, 530 en el segundo, lógica que no se replica en materias con
+comportamiento similar), y en otras se emplea texto libre.
+
+En SIU Guaraní, además, el campo "comisión" es de tipo texto y en
+la mayoría de los casos se completa con una abreviación del
+nombre de la asignatura (por ejemplo, `Calc1_Mañ`) en lugar de un
+identificador estable. Esto transforma al campo en un dato de
+utilidad marginal para el cruce automatizado entre la información
+académica y la administrativa.
+
+La consecuencia sobre el proceso de asignación es directa: al no
+poder asociar con certeza el número real de inscriptos con la
+comisión correcta, cualquier estimación de la demanda por comisión
+queda comprometida, y el motor de asignación (manual o
+automatizado) puede terminar tomando decisiones sobre datos
+implícitamente inconsistentes.
+
+### 3.4.4 Digitalización parcial de planes y horarios
+
+Un tercer eje de fricción es la **forma en que la información
+estructural está publicada**. Los planes de estudio, que definen la
+composición de cada carrera, las correlatividades, la duración y
+las reglas académicas, se encuentran cargados en la web de la
+facultad como **archivos PDF escaneados**. Los horarios de cursada,
+por su parte, se publican como páginas web estáticas cuyo formato
+es difícil de procesar programáticamente.
+
+El impacto para cualquier proceso de gestión asistida por
+computadora es sustancial. Los PDF escaneados son en la práctica
+imágenes: invisibles para las bases de datos relacionales,
+inaccesibles para consultas estructuradas. Cualquier intento de
+extraer la información depende del reconocimiento óptico de
+caracteres, con tasas de error variables sobre códigos, nombres y
+correlatividades. Alternativamente, la transcripción manual traslada
+a personas una tarea repetitiva y propensa a errores tipográficos,
+generando un cuello de botella administrativo recurrente.
+
+A esto se suma el riesgo de **divergencia entre versiones**: al no
+existir una base de datos centralizada que unifique las mallas
+curriculares, coexisten múltiples versiones de la misma
+información en distintos soportes (PDF en la web, planilla en la
+Escuela, memoria institucional) sin garantías de consistencia. Un
+sistema que consuma una versión desactualizada puede producir
+grillas horarias que violen la reglamentación académica vigente
+sin detectarlo.
+
+### 3.4.5 Inventario incompleto de aulas
+
+Del lado del recurso, el problema es análogo: el inventario de
+aulas disponible presenta información **incompleta o
+desactualizada** sobre capacidades reales, aforo y equipamiento
+específico. Aulas cuyo dato de capacidad falta, equipamientos
+declarados que ya no existen, aulas nuevas no relevadas: cualquiera
+de estos huecos compromete la validez de una asignación producida
+sobre esos datos.
+
+Desde la perspectiva de la investigación operativa, el inventario
+de aulas es la **matriz de capacidad instalada** contra la que se
+contrasta la demanda de estudiantes. Sin capacidad instalada
+correctamente relevada, incluso el mejor algoritmo de asignación
+produce soluciones matemáticamente óptimas pero operativamente
+inviables: aulas asignadas que no existen o no están habilitadas,
+capacidades subestimadas que fuerzan reasignaciones de último
+momento, equipamiento supuesto que no está disponible el primer
+día de clases.
+
+### 3.4.6 Conceptos coloquialmente definidos
 
 Un fenómeno estrechamente relacionado, y que ya se mencionó en la
 introducción como una de las motivaciones del diseño guiado por el

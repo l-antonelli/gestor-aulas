@@ -207,3 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 .vscode
+
+# Informe: material fuente local (PDFs de cátedra/bibliografía y borradores)
+project/Informe/bibliografia/
+project/Informe/pautas informe/
+project/Informe/borradores/

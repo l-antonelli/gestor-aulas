@@ -19,13 +19,16 @@ tiene su sección.
 
 Antes de sumergirnos en la formulación formal, conviene enunciar el
 problema en la lengua en la que se plantea todos los cuatrimestres
-en el despacho de la coordinadora estudiantil. Este enunciado nos
-va a servir de referencia para verificar, más adelante, que la
-formulación formal no pierda ninguna pieza del original.
+entre las Escuelas, la Secretaría Académica y la Secretaría Técnica
+de la facultad. Este enunciado nos va a servir de referencia para
+verificar, más adelante, que la formulación formal no pierda
+ninguna pieza del original.
 
-> Al comienzo de cada cuatrimestre, la coordinadora dispone de una
-> lista de **clases** que hay que dictar en cada franja horaria de
-> la semana, y una lista de **aulas** de distintos tipos y
+> Al comienzo de cada cuatrimestre, la Secretaría Técnica de la
+> facultad dispone de una lista de **clases** que hay que dictar en
+> cada franja horaria de la semana (grilla horaria ya consolidada
+> por la Secretaría Académica a partir de las propuestas de las
+> Escuelas), y una lista de **aulas** de distintos tipos y
 > capacidades. Tiene que decidir, para cada clase, en qué aula se
 > va a dictar, respetando las reglas: que dos clases al mismo
 > tiempo no compartan aula, que el tipo de aula sea compatible con
@@ -134,13 +137,24 @@ quedan fuera del alcance, resolver una vez por horario es
 equivalente a resolver una vez por clase, con un modelo
 sustancialmente más chico.
 
+Vale notar la relación entre esta unidad de decisión y la
+**grilla horaria oficial** de la facultad presentada en §3.1.4.
+La grilla organiza el día en tres turnos y bloques de 45 minutos;
+en la práctica, sin embargo, las Escuelas no siempre encajan sus
+horarios en esos bloques. Por eso el modelo no adopta el bloque de
+45 minutos como unidad y sí adopta el horario semanal declarado por
+la cátedra, con sus horas de inicio y de fin efectivas. La grilla
+oficial queda como marco de referencia pero no como restricción
+dura del modelo.
+
 ### 4.3.2 El recurso: el aula
 
 Un **aula** es el recurso que se asigna. Un aula está caracterizada
 por:
 
 - Un **identificador** único dentro de la facultad.
-- Su **sede** (Pellegrini o Siberia, en el caso FCEIA).
+- Su **sede** (Pellegrini o Centro Universitario Rosario, en el
+  caso FCEIA).
 - Su **tipo** dentro de la tipología definida en §3.1.3 (aula
   teórica, laboratorio específico, anfiteatro).
 - Su **capacidad**: la cantidad máxima de alumnos que puede
@@ -226,6 +240,45 @@ institucionales de la facultad:
   cuántas de laboratorio. La suma de duraciones de horarios teóricos
   de una comisión debe coincidir con las horas de teoría declaradas
   por la materia; análogamente con laboratorio.
+- **Protección de trayectorias académicas.** Dos materias del mismo
+  año y carrera que un alumno tipo cursaría en paralelo no pueden
+  tener horarios superpuestos, para no bloquear el progreso
+  académico. La restricción se aplica a nivel del par (año, carrera,
+  cuatrimestre) y admite el matiz de que un alumno cursa una única
+  comisión por materia: alcanza con que exista al menos un par
+  compatible de comisiones para cada par de materias del grupo
+  curricular.
+- **Continuidad de sede entre bloques consecutivos.** Dos clases de
+  la misma comisión programadas en bloques contiguos del mismo día
+  no pueden dictarse en sedes distintas, para evitar el traslado
+  apurado entre Pellegrini y el Centro Universitario Rosario. El
+  sistema implementa esta política de manera parametrizable: si el
+  gap entre dos horarios consecutivos es menor a un margen
+  configurable (por defecto, 30 minutos), la restricción los fuerza
+  a la misma sede.
+
+Adicionalmente, la facultad enuncia dos políticas ligadas al
+funcionamiento cotidiano que este trabajo trata de manera
+diferenciada:
+
+- **Estabilidad de sede en primer año.** Los estudiantes de primer
+  año de cualquier carrera no deberían trasladarse de sede dentro
+  de un mismo día de cursada. La política se justifica por la
+  fragilidad logística de los ingresantes y la necesidad de
+  facilitar su adaptación institucional. **Su implementación
+  completa queda planteada como línea de continuación** (ver §4.6),
+  dado que requiere una noción operativa de "cursada del alumno
+  tipo de primer año" que hoy el modelo no consolida en una
+  entidad.
+- **Flexibilidad ante calendarios de exámenes.** Durante los
+  períodos de exámenes suele ser necesario reubicar transitoriamente
+  algunas clases, tanto por demanda de aulas grandes para toma de
+  exámenes como por indisponibilidad puntual de espacios. El
+  sistema debe permitir generar variantes transitorias de
+  asignación sin descartar la asignación de base. La versión actual
+  no modela indisponibilidades por examen como restricción del
+  programa lineal; queda dentro del alcance operativo de las áreas
+  responsables (ver §4.6.2).
 
 ### 4.4.3 Restricciones que expresan preferencias operativas
 
@@ -283,7 +336,7 @@ de asignar es una estimación, no un dato firme, y una capacidad dura
 convertiría en infactible al problema apenas apareciera una
 comisión mal pronosticada. Codificarla como blanda permite obtener
 siempre una asignación (eventualmente con sobre-ocupación
-señalada) que la coordinadora puede después ajustar con
+señalada) que las áreas responsables pueden después ajustar con
 información más fresca.
 
 ## 4.6 Alcance y no-alcance
@@ -303,8 +356,8 @@ queda dentro del alcance del trabajo y qué queda fuera.
 - La **re-optimización dinámica** durante el cuatrimestre cuando
   aparecen cambios en el catálogo de comisiones o en los horarios
   cargados. El sistema permite volver a correr la asignación
-  respetando decisiones ya tomadas que la coordinadora quiera
-  preservar.
+  respetando decisiones ya tomadas que las áreas responsables
+  quieran preservar.
 - La **auditoría** de las corridas: cada ejecución del asignador
   queda registrada con sus parámetros y su resultado, para
   trazabilidad.

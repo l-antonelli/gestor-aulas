@@ -1,21 +1,63 @@
-# Estructura del informe (propuesta v2)
+# Estructura del informe (propuesta v3)
 
 > **Estado**: propuesta en iteración. Este documento fija el esqueleto
 > del informe y mapea, para cada capítulo, las fuentes internas del
 > repositorio de las que se nutre la redacción. Se actualiza a medida
 > que se toman decisiones sobre alcance, profundidad y bibliografía.
 >
-> **Última actualización**: 2026-09-07 (v2, aplica las decisiones
-> abiertas 1-4 de la v1 y deja pendiente la 5 —bibliografía de IO).
+> **Última actualización**: 2026-09-08 (v3, encuadra la estructura
+> dentro del formato I-32 de la cátedra, fija Morán como bibliografía
+> canónica de IO y agrega restricciones e insumos del borrador
+> original).
+
+---
+
+## 0. Encuadre según pautas de la cátedra (formato I-32)
+
+El informe se rige por el instructivo *El informe escrito* (v2.1,
+06/2023) de la Escuela de Ingeniería Industrial de FCEIA-UNR. Ese
+instructivo fija la estructura global del documento en diez puntos:
+
+1. Carátula.
+2. Dedicatoria (opcional).
+3. Página con advertencia.
+4. Índice o tabla de contenidos.
+5. Prólogo o presentación (una página; motivaciones, encuadre,
+   agradecimientos; se escribe al final).
+6. Síntesis inicial (una página; problema, objetivos, síntesis de
+   conclusiones; se escribe al final).
+7. **Desarrollo**, dividido en capítulos y secciones.
+8. Conclusiones.
+9. Bibliografía completa (orden alfabético, numerada).
+10. Anexos.
+
+**Todo lo que llamamos internamente "capítulos" en este documento
+vive dentro del punto 7 (Desarrollo).** La numeración interna que se
+propone abajo (1 a 12) es la numeración de capítulos del Desarrollo,
+no la del informe global. Los puntos 1-6 se completan al final; los
+puntos 8, 9 y 10 se corresponden respectivamente con nuestro
+capítulo 12 (Conclusiones), la sección Referencias bibliográficas y
+los anexos A a E.
+
+Además, el instructivo fija reglas de formato que se aplican a todo
+el documento sin repetirlas capítulo por capítulo: papel A4, letra
+Times New Roman 12 o Arial 10 con interlineado simple, márgenes de
+2,5 cm en los cuatro lados, texto justificado sin guiones separadores
+de sílabas, encabezado con el título del trabajo, pie con autores y
+numeración `Página X de N`, tablas y figuras numeradas con etiqueta
+en negrita y título en cursiva (formato APA 7), fórmulas centradas y
+numeradas a la derecha entre paréntesis. El tope de extensión son 60
+páginas de cuerpo (90 en casos excepcionales, con justificación),
+sin contar los anexos.
 
 ---
 
 ## 1. Hilo conductor
 
 El informe se organiza como un recorrido que arranca en el **problema
-concreto** que enfrenta la coordinadora estudiantil de la FCEIA y
+concreto** que enfrenta la coordinación académica de la FCEIA y
 termina en una **herramienta de software** que la asiste. Entre esos
-dos extremos, el texto va introduciendo — cada vez que hace falta —
+dos extremos, el texto va introduciendo, cada vez que hace falta,
 las herramientas conceptuales de la ingeniería industrial y de la
 ingeniería de software que permiten pasar de uno al otro.
 
@@ -26,13 +68,13 @@ del problema**. Todo el informe se construye alrededor de esa tesis.
 
 El recorrido, en cuatro tiempos:
 
-1. **Presentar el problema** en su forma coloquial (qué hace la
-   coordinadora, qué inputs recibe, qué outputs produce) y después
+1. **Presentar el problema** en su forma coloquial (quiénes lo
+   ejecutan, qué inputs recibe, qué outputs produce) y después
    darle marco formal (problema de asignación de recursos bajo
    restricciones, naturaleza combinatoria, efecto cascada).
 2. **Modelizar el dominio**: identificar y definir explícitamente
-   todas las entidades y relaciones que intervienen — carreras,
-   materias, planes, comisiones, horarios, aulas, sedes — y las
+   todas las entidades y relaciones que intervienen (carreras,
+   materias, planes, comisiones, horarios, aulas, sedes) y las
    reglas de negocio que las gobiernan.
 3. **Diseñar la solución**: traducir ese modelo conceptual a un
    modelo de datos, definir formalmente el problema de optimización
@@ -58,11 +100,11 @@ Se adopta como criterio general de composición el siguiente patrón:
   suficiente para que la línea argumental cierre por sí misma:
   contexto, definiciones formales, resultados clave, ejemplos
   ilustrativos.
-- **Los anexos** albergan el detalle técnico exhaustivo — desarrollo
+- **Los anexos** albergan el detalle técnico exhaustivo (desarrollo
   matemático completo, referencia de la base de datos, catálogo
-  detallado de restricciones e implementación, matrices de trazabilidad
-  — de manera que el lector interesado pueda profundizar sin que el
-  cuerpo pierda ritmo ni lector.
+  detallado de restricciones e implementación, matrices de trazabilidad)
+  de manera que el lector interesado pueda profundizar sin que el
+  cuerpo pierda ritmo.
 
 Este patrón se aplica de manera uniforme: cada capítulo técnico
 central del cuerpo tiene, cuando corresponde, un anexo hermano al que
@@ -76,12 +118,12 @@ Se propone la siguiente estructura de seis partes, doce capítulos y
 anexos. Los capítulos con `→` indican fuente principal ya escrita en
 el repositorio.
 
-### 3.1 Parte I — Planteo
+### 3.1 Parte I. Planteo
 
 #### Capítulo 1. Introducción
 
 - La FCEIA como organización.
-- Marco teórico organizacional: Mintzberg y Chiavenato — la facultad
+- Marco teórico organizacional: Mintzberg y Chiavenato, la facultad
   como burocracia profesional compleja.
 - Presentación coloquial del dominio del problema.
 - Idea controladora: el dominio como punto de partida.
@@ -108,21 +150,23 @@ el repositorio.
   entera, resolutores, ramificación y acotación. Bibliografía por
   confirmar (ver § 6).
 - 2.4 Herramientas conceptuales de combinatoria: principio del
-  palomar y teorema de Hall — se los presenta aquí como piezas
+  palomar y teorema de Hall. Se los presenta aquí como piezas
   teóricas y se los aplica más adelante en el diagnóstico.
 - → aún por redactar; usar como base el glosario y sección 6 de
   `1. Diseño/asignacion-aulas-LP.md`.
 
-### 3.2 Parte II — El problema
+### 3.2 Parte II. El problema
 
 #### Capítulo 3. La organización y su operatoria
 
-- 3.1 FCEIA en detalle: sedes (Pellegrini y Siberia), carreras,
+- 3.1 FCEIA en detalle: sedes (Pellegrini y CUR), carreras,
   volumen operativo.
-- 3.2 El proceso actual de asignación de aulas: quién lo ejecuta (la
-  coordinadora), cuándo (por cuatrimestre y en régimen dinámico), con
-  qué información (planillas, cronogramas, listas de comisiones,
-  inscripciones parciales).
+- 3.2 El proceso actual de asignación de aulas: quiénes lo ejecutan
+  (Direcciones de Escuelas, Área de Ingreso, Secretaría Académica,
+  Secretaría Técnica, Secretaría Estudiantil, Bedelías), cuándo
+  (por cuatrimestre y en régimen dinámico), con qué información
+  (planillas, cronogramas, listas de comisiones, inscripciones
+  parciales).
 - 3.3 Diagrama del proceso de negocio actual (BPMN informal o
   diagrama de flujo).
 - 3.4 Problemas operativos observados: aulas superpobladas, demoras,
@@ -135,8 +179,8 @@ el repositorio.
 
 #### Capítulo 4. Definición del problema
 
-- 4.1 Formulación coloquial: qué tiene que decidir la coordinadora y
-  bajo qué restricciones.
+- 4.1 Formulación coloquial: qué tiene que decidir la coordinación
+  académica y bajo qué restricciones.
 - 4.2 Formulación formal: problema de asignación de recursos bajo
   restricciones. Recursos = aulas; demanda = clases; restricciones =
   tipo de aula, capacidad, no doble asignación, sedes admisibles,
@@ -150,7 +194,7 @@ el repositorio.
 - → `0. Planteo/ante_proyecto.md`, `1. Diseño/asignacion-aulas-LP.md`
   § 1.1 y § 2.
 
-### 3.3 Parte III — Modelización del dominio
+### 3.3 Parte III. Modelización del dominio
 
 #### Capítulo 5. El modelo conceptual
 
@@ -161,7 +205,7 @@ el repositorio.
   (con versionado), Materia, Correlativa, Ciclo Lectivo, Dictado,
   Comisión, Horario semanal, Sede, Aula, Laboratorio compatible,
   Cronograma, Plan de Cursada.
-- 5.3 Relaciones y multiplicidades — con especial atención a las
+- 5.3 Relaciones y multiplicidades, con especial atención a las
   relaciones muchos-a-muchos que motivan entidades intermedias.
 - 5.4 Reglas de negocio e invariantes del dominio (jerarquía de
   virtualidad, regla de recursado, sede admisible por materia).
@@ -183,17 +227,17 @@ el repositorio.
   - Modelo de auditoría y snapshots (`LPRunDB`, `PlanValidationDB`,
     `ChangeLog`).
 - 6.4 El cuerpo se queda con el ER y las decisiones clave; el detalle
-  ficha-por-ficha se remite al **Anexo A — Referencia técnica de la
+  ficha-por-ficha se remite al **Anexo A. Referencia técnica de la
   base de datos**.
 - → `anexos/Anexo_Base_de_Datos.md`,
   `1. Diseño/modelo-planificacion-cursada.md`, `1. Diseño/orm.md`.
 
-### 3.4 Parte IV — La solución
+### 3.4 Parte IV. La solución
 
 #### Capítulo 7. Arquitectura de la solución
 
 - 7.1 Visión general del sistema y su relación con el flujo de
-  trabajo de la coordinadora.
+  trabajo de las áreas responsables.
 - 7.2 Stack tecnológico completo, presentado de una sola vez: Python
   como lenguaje base, Streamlit para la UI, SQLModel sobre SQLite
   para persistencia con validación de tipos, PuLP como interfaz al
@@ -214,8 +258,8 @@ el repositorio.
 Este es el capítulo técnico central del informe. Sigue una progresión
 de coloquial → formal, pero con **versión resumida en el cuerpo**: se
 presenta el modelo completo (conjuntos, variables, función objetivo,
-las diez restricciones y su lectura en prosa) y se dejan al **Anexo E
-— Desarrollo formal del programa lineal** las demostraciones,
+las diez restricciones y su lectura en prosa) y se dejan al **Anexo E,
+Desarrollo formal del programa lineal**, las demostraciones,
 alternativas rechazadas y el análisis fino de complejidad (por
 ejemplo, la justificación de por qué la formulación por grupos de
 simultaneidad domina a la formulación por pares).
@@ -264,7 +308,7 @@ simultaneidad domina a la formulación por pares).
 - → cuerpo: síntesis de `2. Desarrollo/VALIDACIONES.md`; el catálogo
   completo de validaciones queda en el mismo documento anexado.
 
-### 3.5 Parte V — Uso y resultados
+### 3.5 Parte V. Uso y resultados
 
 #### Capítulo 10. La herramienta en acción
 
@@ -289,7 +333,7 @@ simultaneidad domina a la formulación por pares).
 - 11.4 Cumplimiento de los objetivos del anteproyecto (recorrer los
   cinco objetivos específicos y verificar).
 
-### 3.6 Parte VI — Cierre
+### 3.6 Parte VI. Cierre
 
 #### Capítulo 12. Conclusiones
 
@@ -305,25 +349,25 @@ simultaneidad domina a la formulación por pares).
 
 ### 3.7 Anexos
 
-- **Anexo A — Referencia técnica de la base de datos.** Documento
+- **Anexo A. Referencia técnica de la base de datos.** Documento
   independiente ya escrito. Ubicación:
   `anexos/Anexo_Base_de_Datos.md`.
-- **Anexo B — Manual de usuario.** Consolidación de
+- **Anexo B. Manual de usuario.** Consolidación de
   `project/3. Manual de Usuario/` con revisión para poner al día los
   cambios acumulados desde su última edición (deprecación de clases
   puntuales, comisiones por carrera, etc.).
-- **Anexo C — Matriz de requerimientos.** Derivado de
+- **Anexo C. Matriz de requerimientos.** Derivado de
   `project/requerimientos.md`. Sirve como trazabilidad entre
   requerimientos y capítulos del informe.
-- **Anexo D (opcional) — Notas de diseño e historial.** Selección
+- **Anexo D (opcional). Notas de diseño e historial.** Selección
   de material de `2. Desarrollo/sesiones/` con las decisiones de
   diseño más relevantes.
-- **Anexo E — Desarrollo formal del programa lineal.**
+- **Anexo E. Desarrollo formal del programa lineal.**
   Documentación completa del modelo: derivación de restricciones,
   demostraciones, formulaciones alternativas descartadas, análisis
   de complejidad, catálogo de casos infactibles y sus diagnósticos.
-  Fuente: `2. Desarrollo/RESTRICCIONES_LP.md` +
-  `2. Desarrollo/ASIGNACION_IMPL.md` + partes de
+  Fuente: `2. Desarrollo/RESTRICCIONES_LP.md`,
+  `2. Desarrollo/ASIGNACION_IMPL.md` y partes de
   `1. Diseño/asignacion-aulas-LP.md` que no van al cuerpo.
 
 ---
@@ -371,7 +415,7 @@ material ya está escrito y con `∅` cuando falta redactar.
 | 9 | Validaciones | `VALIDACIONES.md` | → |
 | 10 | Herramienta en acción | `3. Manual de Usuario/`, `WORKFLOW.md`, capturas nuevas | ∅ (capturas) |
 | 11 | Análisis y discusión | corridas experimentales sobre datos reales | ∅ |
-| 12 | Conclusiones | — | ∅ |
+| 12 | Conclusiones | (síntesis del propio informe) | ∅ |
 
 ---
 
@@ -399,7 +443,7 @@ efectivamente produjo un artefacto útil.
 
 ## 7. Decisiones tomadas y pendientes
 
-### 7.1 Decisiones tomadas (v2)
+### 7.1 Decisiones tomadas
 
 1. **Patrón cuerpo-anexo (D1).** El cuerpo lleva la versión
    resumida; los desarrollos exhaustivos (matemáticos, de
@@ -417,14 +461,24 @@ efectivamente produjo un artefacto útil.
 4. **Diagramas por defecto (D4).** Política de generar diagramas
    siempre que aporten claridad; el autor decide caso por caso
    cuándo remover uno. Ver § 4.
+5. **Bibliografía de investigación de operaciones (D5).** Se adopta
+   como referencia canónica de IO el libro utilizado en la cátedra
+   Operativa 1 de la Escuela de Ingeniería Industrial de FCEIA-UNR
+   (Morán, disponible en `bibliografia/Operativa 1/`), complementado
+   por el material *Introducción a la Investigación Operativa* del
+   mismo curso. Para el capítulo 8 se puede reforzar puntualmente
+   con Winston o Hillier & Lieberman cuando haga falta una
+   referencia adicional. Para combinatoria (palomar, Hall) se toma
+   una referencia estándar de teoría de grafos, a confirmar cuando
+   se redacte la bibliografía final.
+6. **Encuadre según el formato I-32 de la cátedra (D6).** Los
+   "capítulos" del Desarrollo son subsecciones internas del punto 7
+   del instructivo *El informe escrito*. El informe global respeta
+   la estructura de diez puntos que fija la cátedra (ver § 0). El
+   prólogo y la síntesis inicial se redactan al final.
 
 ### 7.2 Decisiones pendientes
 
-1. **Bibliografía de investigación de operaciones (D5).** Falta
-   confirmar qué libro se toma como referencia canónica para IO en
-   el capítulo 2.3: los candidatos habituales son Winston
-   (*Operations Research: Applications and Algorithms*) y Hillier
-   & Lieberman (*Introduction to Operations Research*). Se
-   resolverá en una próxima iteración. Para combinatoria (palomar
-   / Hall) se propone Bondy & Murty (*Graph Theory with
-   Applications*), a confirmar también.
+Ninguna abierta en este momento. La próxima iteración se centra en
+completar los capítulos pendientes del Desarrollo y, ya avanzada la
+redacción, en escribir prólogo, síntesis inicial y conclusiones.

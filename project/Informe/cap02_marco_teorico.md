@@ -134,15 +134,16 @@ La FCEIA presenta diferenciación horizontal alta (decenas de
 carreras, cátedras y áreas administrativas), diferenciación vertical
 moderada (la jerarquía formal existe, pero la autoridad real está
 distribuida entre las cátedras) y dispersión espacial acotada a dos
-sedes (Pellegrini y Siberia). Encuadra, por lo tanto, en la categoría
+sedes (Pellegrini y el Centro Universitario Rosario). Encuadra, por
+lo tanto, en la categoría
 de **organización compleja**.
 
 La consecuencia práctica de esta clasificación es concreta: en una
 organización compleja, la fuente principal de dificultad operativa no
 es la longitud de la cadena de mando sino la **multiplicidad de
 actores, actividades y recursos que deben articularse en tiempo y
-espacio**. Es exactamente el tipo de dificultad que la coordinadora
-estudiantil enfrenta cada cuatrimestre.
+espacio**. Es exactamente el tipo de dificultad que la coordinación
+académica de la facultad enfrenta cada cuatrimestre.
 
 ### 2.1.3 Mintzberg: partes y mecanismos de coordinación
 
@@ -261,9 +262,10 @@ conceptos operativos que se aplicarán explícitamente en los capítulos
 - **Lenguaje ubicuo** (del inglés *ubiquitous language*): un
   vocabulario compartido entre experto del dominio y diseñador del
   sistema, que aparece consistentemente en las conversaciones, la
-  documentación y el código. Cuando la coordinadora dice "materia" y
-  el sistema tiene una tabla `MateriaDB`, y ambos significan lo mismo
-  y con los mismos atributos, hay lenguaje ubicuo.
+  documentación y el código. Cuando un responsable de la Secretaría
+  Académica dice "materia" y el sistema tiene una tabla `MateriaDB`,
+  y ambos significan lo mismo y con los mismos atributos, hay
+  lenguaje ubicuo.
 - **Entidad**: objeto del dominio con identidad propia que persiste
   a lo largo del tiempo aunque sus atributos cambien. Una comisión
   específica sigue siendo la misma aunque le cambien el aula o el
@@ -302,11 +304,12 @@ Concretamente, el paso produce:
   convierten en validaciones y restricciones que el sistema impone en
   cada operación.
 - **Un vocabulario ejecutable**: los nombres de tablas, clases y
-  funciones repiten los términos del lenguaje ubicuo. Cuando la
-  coordinadora dice "plan de cursada" y el código tiene un
-  `PlanificacionCursadaDB` con las mismas propiedades que ella espera,
-  la comunicación entre el experto del dominio y el sistema deja de
-  ser una traducción y pasa a ser una referencia directa.
+  funciones repiten los términos del lenguaje ubicuo. Cuando un
+  referente académico de la facultad dice "plan de cursada" y el
+  código tiene un `PlanificacionCursadaDB` con las mismas propiedades
+  que espera, la comunicación entre el experto del dominio y el
+  sistema deja de ser una traducción y pasa a ser una referencia
+  directa.
 
 A este resultado combinado (entidades, invariantes y vocabulario que
 viven en el software) lo llamaremos en lo que sigue el **modelo
@@ -470,11 +473,15 @@ aulas.
 
 ### 2.3.6 Bibliografía
 
-Los textos canónicos para investigación de operaciones son Winston
-(*Operations Research: Applications and Algorithms*) e Hillier &
-Lieberman (*Introduction to Operations Research*). La bibliografía
-concreta de esta sección queda pendiente de confirmación y se
-completa en la próxima iteración del informe.
+Como referencia canónica de investigación de operaciones para esta
+sección se toma el material utilizado en las cátedras de Operativa
+1 y Operativa 2 de la Escuela de Ingeniería Industrial (FCEIA-UNR),
+en particular el libro de Morán del que se derivan los capítulos
+correspondientes al planteo de la programación lineal, la
+programación entera y la ramificación y acotación, complementado
+por el material *Introducción a la Investigación Operativa* del
+mismo curso. La bibliografía completa se lista al final del
+informe.
 
 ## 2.4 Herramientas combinatorias y de teoría de grafos
 
@@ -712,8 +719,8 @@ dejado disponibles las definiciones y su relación mutua.
 
 Los resultados clásicos sobre grafos bipartitos, apareamientos y
 teorema de Hall se toman de la bibliografía estándar de teoría de
-grafos; la referencia concreta queda pendiente de confirmación (ver
-§ 2.3.6).
+grafos; la referencia concreta se detalla en la sección de
+bibliografía al final del informe.
 
 ## 2.5 Recapitulación y sinergias
 
@@ -812,7 +819,8 @@ organizacional y no un mero motor de optimización desconectado.
 
 Ninguna de estas piezas se usa aisladamente. En el capítulo 3 se
 aplica el instrumental de análisis de procesos para modelizar la
-operatoria actual de la coordinadora. En el capítulo 4 se combina el
+operatoria actual de la coordinación académica. En el capítulo 4
+se combina el
 diagnóstico organizacional con el vocabulario de programación lineal
 para dar la definición formal del problema. En los capítulos 5 y 6
 se aplica el marco de Evans para construir el modelo del dominio y

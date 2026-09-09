@@ -615,6 +615,36 @@ Esta regla es determinante en la definición del programa lineal
 partición teoría-laboratorio que satisfaga la carga declarada, el
 problema resulta infactible.
 
+### 5.5.7 Reglas de política institucional adicionales
+
+Además de las reglas anteriores, la operatoria de FCEIA impone
+políticas ligadas a la logística del alumno y del cronograma
+cuatrimestral. Se enuncian aquí como reglas del dominio para no
+perderlas de vista, indicando su estado de implementación:
+
+- **No superposición dentro del grupo curricular.** Para todo par
+  de materias del mismo (año, cuatrimestre, carrera), debe existir
+  al menos una combinación de comisiones cuyos horarios no se
+  superpongan. La invariante se enuncia sobre el plan de cursada
+  entero: se garantiza el progreso académico posible de un alumno
+  tipo. Implementada como validación en el flujo de generación del
+  plan (ver capítulo 9).
+- **Continuidad de sede entre bloques consecutivos.** Dos horarios
+  de la misma comisión programados en el mismo día con un gap
+  menor a un margen configurable (30 minutos por defecto) deben
+  dictarse en la misma sede. Implementada como restricción del
+  programa lineal (ver capítulo 8).
+- **Estabilidad de sede en primer año.** Los alumnos de primer año
+  de cualquier carrera no deberían cambiar de sede dentro de un
+  mismo día. **Planteada como política a implementar** en una
+  iteración futura; requiere consolidar operativamente la noción
+  de "cursada del alumno tipo de primer año" (ver §4.6.2).
+- **Flexibilidad por calendario de exámenes.** Durante los períodos
+  de exámenes debe ser posible generar variantes transitorias de
+  asignación sin descartar la asignación de base. **Fuera del
+  alcance del programa lineal** en la versión actual; se maneja
+  operativamente (ver §4.6.2).
+
 ## 5.6 Diagrama UML del dominio
 
 Con las entidades definidas y las reglas explicitadas, se puede
