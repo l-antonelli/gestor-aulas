@@ -83,72 +83,24 @@ def render_custom_carrera_page():
                                 except Exception as e:
                                     st.error(f"Error al cargar estado: {str(e)}")
                             
-                            # Sedes habilitadas para materias específicas (R10).
-                            from src.database.models import SedeDB as _SedeDB
-                            from src.services.carrera_sede_service import (
-                                get_sedes_de_carrera as _get_sedes_de_carrera,
-                                set_sedes_de_carrera as _set_sedes_de_carrera,
-                            )
-                            from sqlmodel import select as _select, col as _col
+                            # Sedes admisibles: se configuran ahora
+                            # a nivel de Grupo de Materias.
                             st.divider()
                             with st.container(border=True):
-                                st.markdown("**🏛️ Sedes habilitadas**")
-                                st.caption(
-                                    "Sedes donde se pueden dictar las "
-                                    "materias **específicas** de esta "
-                                    "carrera (las que no comparte con "
-                                    "otras). Al asignar aulas, el "
-                                    "sistema sólo va a considerar "
-                                    "aulas de estas sedes.\n\n"
-                                    "Si no seleccionás ninguna, se "
-                                    "asume que la carrera puede "
-                                    "dictarse en cualquier sede."
+                                st.markdown("**🏛️ Sedes admisibles**")
+                                st.info(
+                                    "La preferencia de sede ya no se "
+                                    "define acá — se resuelve por el "
+                                    "**Grupo de Materias** al que "
+                                    "pertenece cada materia (típicamente "
+                                    f"'Específicas de {carrera.nombre}' "
+                                    "para las materias exclusivas y grupos "
+                                    "propios como F, FB, FI, CE para las "
+                                    "comunes).\n\n"
+                                    "Ir a **Materias → 📦 Grupos de "
+                                    "materias** para editar el modo "
+                                    "(DURO / BLANDO) y la lista de sedes."
                                 )
-                                _sedes_db = list(session.exec(
-                                    _select(_SedeDB).order_by(
-                                        _col(_SedeDB.nombre),
-                                    )
-                                ).all())
-                                _opts_ids = [s.id for s in _sedes_db]
-                                _label_by_id = {
-                                    s.id: s.nombre for s in _sedes_db
-                                }
-                                _actuales = _get_sedes_de_carrera(
-                                    session, carrera.codigo,
-                                )
-                                _default = [
-                                    sid for sid in _opts_ids
-                                    if sid in _actuales
-                                ]
-                                _sel = st.multiselect(
-                                    "Sedes habilitadas",
-                                    options=_opts_ids,
-                                    default=_default,
-                                    format_func=lambda sid: str(
-                                        _label_by_id.get(sid) or sid
-                                    ),
-                                    key=(
-                                        f"carrera_sedes_{carrera.codigo}"
-                                    ),
-                                    label_visibility="collapsed",
-                                )
-                                if set(_sel) != _actuales:
-                                    if st.button(
-                                        "💾 Guardar cambios",
-                                        key=(
-                                            f"carrera_sedes_save_"
-                                            f"{carrera.codigo}"
-                                        ),
-                                        type="primary",
-                                    ):
-                                        _set_sedes_de_carrera(
-                                            session, carrera.codigo,
-                                            _sel,
-                                        )
-                                        st.success(
-                                            "Sedes actualizadas."
-                                        )
-                                        st.rerun()
 
                             # Botones de acción alineados a la
                             # derecha con ancho fijo.

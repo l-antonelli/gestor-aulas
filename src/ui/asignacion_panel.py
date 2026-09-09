@@ -529,6 +529,23 @@ def _render_config_form(
                     key=f"{key_ns}_margen_intersede",
                 )
 
+            forzar_misma_sede = st.toggle(
+                "Forzar misma sede por comisión",
+                value=False,
+                help=(
+                    "Cuando está activo, el asignador obliga a que "
+                    "todos los horarios de una misma comisión caigan "
+                    "en la misma sede. Evita comisiones fragmentadas "
+                    "entre sedes distintas — típicamente el profesor "
+                    "no viaja a mitad de semana.\n\n"
+                    "Introduce variables auxiliares por comisión × "
+                    "sede, así que aumenta el tamaño del modelo. "
+                    "Recomendado dejarlo apagado para diagnóstico "
+                    "estructural, y encendido en la corrida final."
+                ),
+                key=f"{key_ns}_forzar_misma_sede",
+            )
+
         # -----------------------------------------------------------------
         # Timeout + avanzado.
         # -----------------------------------------------------------------
@@ -611,6 +628,7 @@ def _render_config_form(
         timeout_seconds=int(timeout),
         respetar_ediciones_manuales=bool(respetar),
         activar_alpha=bool(activar_alpha),
+        forzar_misma_sede_por_comision=bool(forzar_misma_sede),
         fecha_desde=fecha_desde,
     )
 

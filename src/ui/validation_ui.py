@@ -1495,29 +1495,42 @@ def _render_detalle_por_materia(
                     _by_mat.setdefault(e.codigo_materia, set()).add(e.comision_id)
             _com_count_sched = {mc: len(s) for mc, s in _by_mat.items()}
 
-    # Construir filas
+    # Construir filas: UNA POR (materia, carrera, año, cuatri).
+    #
+    # Semántica anterior: tomábamos `_pes[0]` como representante único
+    # de la ubicación curricular. Consecuencia: una materia común en
+    # múltiples carreras se mostraba con las coordenadas de UNA sola
+    # carrera → filtrar por (carrera X, año, cuatri) hacía "desaparecer"
+    # apariciones legítimas en otras carreras (bug FB20/FB12).
+    #
+    # Semántica nueva: cada fila representa una **ubicación curricular**
+    # concreta. Una materia común aparece tantas veces como carreras
+    # la incluyan, cada una con su año/cuatri correspondiente. La
+    # métrica "Total materias" sigue contando materias únicas (no
+    # ubicaciones) para no inflar el número visible.
     _rows: list[dict] = []
+    from src.services.resolucion_jerarquica import resolve_virtual
     for _code in _all_codes:
         _m = _mat_map.get(_code)
         _pes = _pe_map.get(_code, [])
-        # Set de carreras a las que pertenece la materia (puede estar en
-        # varias). El display "carrera" muestra una representativa para
-        # la columna de la tabla; el filtro usa el set completo para
-        # detectar pertenencia.
+        # Set global de carreras (para filtros "Comunes"/"Específicas"
+        # y para el filtro de carrera cuando la materia es común).
         _carreras_set: set[str] = {
             _pe.carrera_codigo for _pe in _pes if _pe.carrera_codigo
         }
-        if not _carreras_set:
-            _carrera_display = "—"
-        elif len(_carreras_set) == 1:
-            _carrera_display = next(iter(_carreras_set))
-        else:
-            _carrera_display = (
-                f"{sorted(_carreras_set)[0]} (+{len(_carreras_set) - 1})"
-            )
-        _anio = _pes[0].anio_plan if _pes else None
-        _cuatri = (_pes[0].cuatrimestre_plan if _pes else None) or "—"
-        _optativa = any(bool(_pe.optativa) for _pe in _pes)
+        _n_carreras = len(_carreras_set)
+
+        _hsem = _m.horas_semanales if _m else None
+        _hlab = _m.horas_laboratorio if _m else None
+        _virtual_catalogo = bool(_m.virtual) if _m else False
+        _virtual_dictado = _dictado_virtual_por_materia.get(_code)
+        _virtual = resolve_virtual(
+            horario_virtual=None,
+            dictado_virtual=_virtual_dictado,
+            materia_virtual=_virtual_catalogo,
+        )
+        _periodo = _m.periodo if _m else "cuatrimestral"
+        _anual = _periodo == "anual"
 
         if source == "plan":
             _coms_de_m = _coms_por_mat.get(_code, [])
@@ -1528,32 +1541,12 @@ def _render_detalle_por_materia(
         else:  # schedule
             _n_coms = _com_count_sched.get(_code, 0)
             _n_horarios = _entry_count_sched.get(_code, 0)
-        _hsem = _m.horas_semanales if _m else None
-        _hlab = _m.horas_laboratorio if _m else None
-        # `_virtual_catalogo`: la materia es virtual de catalogo.
-        # `_virtual_dictado`: valor raw del dictado (Optional[bool]).
-        # `_virtual`: resuelto por jerarquia (dictado > materia).
-        # A nivel materia (sin horario) usamos horario_virtual=None.
-        from src.services.resolucion_jerarquica import resolve_virtual
-        _virtual_catalogo = bool(_m.virtual) if _m else False
-        _virtual_dictado = _dictado_virtual_por_materia.get(_code)
-        _virtual = resolve_virtual(
-            horario_virtual=None,
-            dictado_virtual=_virtual_dictado,
-            materia_virtual=_virtual_catalogo,
-        )
-        _periodo = _m.periodo if _m else "cuatrimestral"
-        _anual = _periodo == "anual"
-        _n_carreras = len(_carreras_set)
 
-        _data = {
+        _base_flags = {
             "codigo": _code,
             "nombre": _m.nombre if _m else "?",
-            "carrera": _carrera_display,
             "carreras_set": _carreras_set,
-            "anio": _anio,
-            "cuatri": _cuatri,
-            "optativa": _optativa,
+            "n_carreras": _n_carreras,
             "virtual": _virtual,
             "virtual_catalogo": _virtual_catalogo,
             "virtual_dictado": _virtual_dictado,
@@ -1561,7 +1554,6 @@ def _render_detalle_por_materia(
             "periodo": _periodo,
             "tiene_lab": _code in _labs_set,
             "horas_lab": _hlab,
-            "n_carreras": _n_carreras,
             "horas_semanales": _hsem,
             "n_comisiones": _n_coms,
             "n_horarios": _n_horarios,
@@ -1570,12 +1562,43 @@ def _render_detalle_por_materia(
             "tiene_conflicto": _code in _conf_pairs,
             "falta_horas": _hsem is None,
         }
-        _data["estado"] = _estado_de_materia(_data)
-        _rows.append(_data)
 
-    # Metricas
-    _n_total = len(_rows)
-    _n_ok = sum(1 for r in _rows if r["estado"] == "OK")
+        if _pes:
+            # Una fila por ubicación curricular.
+            for _pe in _pes:
+                _ubicacion = _pe.carrera_codigo or "—"
+                _data = dict(_base_flags)
+                _data.update({
+                    "carrera": _ubicacion,
+                    "anio": _pe.anio_plan,
+                    "cuatri": _pe.cuatrimestre_plan or "—",
+                    "optativa": bool(_pe.optativa),
+                    "ubicacion_id": (
+                        f"{_ubicacion}-{_pe.anio_plan}-"
+                        f"{_pe.cuatrimestre_plan}"
+                    ),
+                })
+                _data["estado"] = _estado_de_materia(_data)
+                _rows.append(_data)
+        else:
+            # Materia sin plan_estudio asociado: se muestra igual con
+            # placeholders para que el usuario vea que está sin ubicar.
+            _data = dict(_base_flags)
+            _data.update({
+                "carrera": "—",
+                "anio": None,
+                "cuatri": "—",
+                "optativa": False,
+                "ubicacion_id": f"—-{_code}",
+            })
+            _data["estado"] = _estado_de_materia(_data)
+            _rows.append(_data)
+
+    # Metricas: `_n_total` cuenta MATERIAS ÚNICAS (no filas).
+    _n_total = len({r["codigo"] for r in _rows})
+    _n_ok = len({
+        r["codigo"] for r in _rows if r["estado"] == "OK"
+    })
     _n_revision = _n_total - _n_ok
     _mt1, _mt2, _mt3 = st.columns(3)
     _mt1.metric("Total materias", _n_total)
@@ -1739,7 +1762,16 @@ def _render_detalle_por_materia(
         )
         return
 
-    st.caption(f"Mostrando {len(_filtered)} de {_n_total} materias.")
+    # Contamos materias únicas visibles vs total de materias únicas.
+    _n_mat_visibles = len({r["codigo"] for r in _filtered})
+    _extra = ""
+    if len(_filtered) != _n_mat_visibles:
+        _extra = (
+            f" · {len(_filtered)} filas (una por ubicación curricular)"
+        )
+    st.caption(
+        f"Mostrando {_n_mat_visibles} de {_n_total} materias{_extra}."
+    )
 
     # =========================================================================
     # Tabla "Resumen por carrera" — counts de status por carrera
@@ -1970,8 +2002,19 @@ def _render_detalle_por_materia(
         else:
             _lab_suffix = ""
 
+        # Sufijo de ubicación curricular. Se agrega sólo cuando la
+        # materia aparece en múltiples ubicaciones (materias comunes) —
+        # así el usuario ve claramente que es "la misma materia en otra
+        # carrera/año/cuatri" y no un duplicado.
+        _ubicacion_lbl = ""
+        if _r["n_carreras"] >= 2 and _r.get("carrera") and _r["carrera"] != "—":
+            _ubicacion_lbl = (
+                f" — [{_r['carrera']}"
+                f" · {_r['anio']}° {_r['cuatri']}]"
+                if _r.get("anio") else f" — [{_r['carrera']}]"
+            )
         _hdr = (
-            f"{_worst_icon} {_code} — "
+            f"{_worst_icon} {_code}{_ubicacion_lbl} — "
             f"{_r['nombre']} | {_r['n_comisiones']} com · "
             f"{_r['n_horarios']} clases · {_hsem_disp}{_lab_suffix}"
         )

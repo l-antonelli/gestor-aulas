@@ -121,10 +121,11 @@ def render_custom_materia_page():
         "que le corresponde en cada una."
     )
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📋 Lista de materias",
         "➕ Nueva materia",
         "🔍 Buscar",
+        "📦 Grupos de materias",
     ])
 
     with next(get_session()) as session:
@@ -517,6 +518,12 @@ def render_custom_materia_page():
 
                 except Exception as e:
                     st.error(f"Error en la búsqueda: {str(e)}")
+
+        with tab4:
+            from src.ui.grupo_materia_editor import (
+                render_grupos_materias_tab,
+            )
+            render_grupos_materias_tab(session)
 
 # Render the custom page
 render_custom_materia_page()

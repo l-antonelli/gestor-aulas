@@ -282,83 +282,90 @@ pero esas situaciones son mucho menos frecuentes.
 
 ---
 
-### Preferencia de sede: dura vs blanda, y dónde se define
+### Preferencia de sede: Grupos de Materias + modo DURO/BLANDO
 
-El manejo de sedes tiene **dos capas** que trabajan en conjunto —
-una dura que decide qué sede es **admisible** y una blanda que
-decide qué sede es **preferida**. Es la parte del modelo donde
-más confusión hay porque intervienen varios datos, así que la
-detallamos acá.
+El manejo de sedes se apoya en una única entidad — **el Grupo de
+Materias** — que define para un conjunto de materias qué sedes son
+admisibles y con qué criterio. Es el mismo lugar donde se
+configuran las duras (R10) y las blandas (R12) del LP.
 
-**Capa 1 — Sedes admisibles (R10, dura)**
+**Concepto**: cada `MateriaDB` pertenece a exactamente un
+`GrupoMateriaDB` (partición estricta). Cada grupo tiene:
 
-Determina en qué sedes puede caer un horario. Se instancia como
-una restricción dura del LP: si un aula no está en una sede
-admisible para el horario, no se crea la variable `x[h, a]` y por
-lo tanto es imposible que ese horario termine ahí.
+- Un nombre (`FB`, `F`, `FI`, `CE`, `Específicas de Electrónica`,
+  `Sin clasificar`, o cualquier nombre custom).
+- Un `modo` ∈ `{DURO, BLANDO}`.
+- Una **lista ordenada** de sedes.
 
-Las sedes admisibles se resuelven a nivel de **horario**
-combinando tres cosas:
+**Modo DURO** (restricción dura, R10):
 
-| Origen | Se edita en | Efecto |
-|---|---|---|
-| Sedes habilitadas de la carrera | 🎓 **Carreras → carrera → "Sedes habilitadas"** | Base: la materia sólo puede caer en aulas de estas sedes. Si vacío, no aplica R10 (todas admisibles). |
-| Sede default para comunes | 🏛️ **Aulas → Sedes → "Sede por defecto para materias comunes"** | Para materias que aparecen en 2+ carreras (comunes), esta sede sobreescribe la lista de la carrera. |
-| Override por comisión | 📅 **Cronogramas → editar comisión → "Restringir a una carrera"** | Reemplaza la lista de la carrera con las sedes habilitadas de OTRA carrera, sólo para esa comisión. |
-| Excepción por lab compatible | 🏛️ **Aulas → laboratorio → "Materias que usan este laboratorio"** | Aunque una aula esté fuera del set admisible, si está listada como lab compatible con la materia, prevalece y sí es admisible. |
+- Las sedes de la lista son las **únicas** admisibles para las
+  materias del grupo.
+- El orden no tiene semántica interna a nivel objetivo (todas las
+  sedes del set son equivalentes).
+- **Lista vacía** ⇒ fallback permisivo "todas las sedes admisibles"
+  (útil sólo para el grupo `Sin clasificar` durante la transición).
 
-Si después de todo esto un horario no tiene ninguna aula
-admisible, el LP es infactible (R1). El chequeo estructural lo
-reporta antes del solve.
+**Modo BLANDO** (preferencia blanda, R12):
 
-**Capa 2 — Sede preferida (R12, blanda)**
+- Todas las sedes de la lista son admisibles.
+- La **primera** sede es la **preferida** — el LP la elige gratis.
+- Las **alternativas** (resto de la lista) suman `λ_sede_pref` por
+  horario que caiga ahí (penalidad plana — todas las alternativas
+  cuestan lo mismo).
 
-Dentro del conjunto de sedes admisibles, hay una que es
-**preferida**. Es una preferencia con costo, no una restricción:
-el LP puede asignar aulas fuera de la sede preferida si le
-conviene por capacidad o para respetar R13.
+**Excepción de lab compatible** (siempre aplica, independiente del
+modo): un aula listada en `MateriaLaboratorioDB` para la materia se
+acepta aunque no esté en las sedes del grupo. La compatibilidad de
+laboratorio es una restricción física más fuerte que la preferencia
+curricular.
 
-La sede preferida se calcula automáticamente por
-`sede_preferida_para_horario` con esta regla:
+**Dónde se configuran los grupos**:
 
-1. Si la materia tiene laboratorios compatibles → sede del lab.
-2. Si hay varios labs en distintas sedes → intersección con las
-   sedes admisibles por carrera.
-3. Si no hay labs → primera sede admisible por orden alfabético.
-4. Si no hay ninguna restricción de sede → `None` (no hay
-   preferencia).
+**Materias → 📦 Grupos de materias**. La pestaña permite:
 
-**Cómo se traduce a costos en el objetivo**: por cada variable
-`x[h, a]` donde el aula está en una sede distinta a la preferida
-del horario, se suma `λ_sede_pref` al objetivo. Cuanto más alto
-`λ_sede_pref`, más fuerza la preferencia.
+- Editar el modo del grupo, la lista de sedes y el orden.
+- Crear grupos nuevos o borrar los que quedaron vacíos.
+- Reasignar materias entre grupos (filtro rápido "Sólo Sin
+  clasificar" para atacar el backlog).
 
-Parámetros:
+**Grupos bootstrapeados automáticamente** al inicializar la DB:
+
+- `Sin clasificar` — DURO con todas las sedes activas. Todas las
+  materias que la migración no logró clasificar caen acá y aparecen
+  con warning en la UI.
+- `FB` — DURO Pellegrini. Materias con código `FB*` (ciclo básico).
+- `FI` — DURO Pellegrini. Materias con código `FI*` (Inglés).
+- `CE` — DURO Pellegrini. Materias con código `CE*` (comunes lics/profs).
+- `F` — DURO Siberia. Materias con código `F*` (excluye `FB*`/`FI*`).
+- `Específicas de <Nombre Carrera>` — DURO con las sedes que estaba
+  configurada para la carrera en el modelo viejo. Se llena con las
+  materias exclusivas de esa carrera.
+
+**Regla mnemotécnica**: "R10 dice **dónde puede caer** (modo DURO);
+R12 dice **dónde debería preferir caer** (primera sede en modo
+BLANDO)". Ambas salen del mismo grupo.
+
+**Parámetros del LP**:
 
 | Parámetro | Default | Efecto | Se edita en |
 |---|---|---|---|
-| `lambda_sede_pref` | 5.0 | Peso del término blando de preferencia de sede. Con 0 se desactiva (todas las sedes admisibles quedan igual de deseables). | Panel del asignador → "⚖️ Ajuste al forecast" → "Peso de preferencia de sede (λ sede)". |
+| `lambda_sede_pref` | 5.0 | Peso del término blando de preferencia de sede. Con 0 desactiva (BLANDO se comporta como "cualquier sede vale sin costo"). | Panel del asignador → "Preferencia de sede" → "Peso de preferencia de sede (λ sede)". |
+| `forzar_misma_sede_por_comision` | False | Si ON, todos los horarios de una comisión caen en la misma sede (R14). | Panel del asignador → "Preferencia de sede" → toggle "Forzar misma sede por comisión". |
 
-**Regla mnemotécnica**: "R10 dice **dónde puede caer**, R12 dice
-**dónde debería preferir caer**". Los datos que alimentan R10
-(carreras, sedes por carrera, sedes default para comunes, labs
-compatibles) también determinan R12 automáticamente — no hay que
-configurar la sede preferida a mano.
+**Ejemplo: materia A5 (Informática Aplicada, Electrónica)**
 
-**Ejemplo: materia A5 (Informática Aplicada)**
+- A5 pertenece al grupo `Específicas de Ingeniería Electrónica`.
+- Modo DURO con sedes `[Siberia]`.
+- A5 también tiene lab compatible en Pellegrini
+  (`MateriaLaboratorioDB`).
 
-- Carrera de A5 = **A** (Electrónica).
-- Sedes habilitadas de A: **Siberia**.
-- Labs compatibles de A5: LAB-004, LAB-005 — ambos en **Pellegrini**.
-- Sedes admisibles para A5 (R10, dura): **{Siberia, Pellegrini}**
-  (Pellegrini se cuela porque tiene labs compatibles).
-- Sede preferida para A5 (R12, blanda): **Pellegrini** (regla 1:
-  vive el lab).
-
-Resultado: el LP intenta poner A5 en Pellegrini. Si Pellegrini se
-satura en esa franja, la manda a Siberia — que también es
-admisible — pagando `λ_sede_pref = 5` por el desplazamiento. Si no
-hubiera opciones en Siberia tampoco, el plan sería infactible (R1).
+Resultado: R10 admite aulas de Siberia + los labs compatibles en
+Pellegrini (por la excepción de lab). El LP arma solución
+usando cualquiera de esas aulas. Si se quisiera empujar toda A5 a
+Pellegrini como preferida, se pasaría el grupo a modo BLANDO con
+sedes `[Pellegrini, Siberia]` — Pellegrini gratis, Siberia
+suma `λ_sede_pref`.
 
 ---
 
@@ -423,9 +430,11 @@ Este es el mapa completo:
 | **R4** | No solapamiento por aula | Dos horarios que se solapan no pueden compartir aula. | Automática, se deriva de los horarios del cronograma. |
 | **R5** | Partición teoría/lab por comisión | La suma de duraciones de horarios de teoría y de laboratorio en una comisión coincide con las horas declaradas por la materia. | **Materias → editar → "Horas de teoría" y "Horas de laboratorio"**. |
 | **R6** | Consistencia tipo↔pool | Un horario con tipo indefinido cae en un aula del pool correcto (teóricas o labs compatibles). | Derivada, alimentada por R3. |
-| **R10** | Sedes admisibles | Un horario sólo puede caer en aulas de las sedes admisibles para su materia. | **Carreras → carrera → "Sedes habilitadas"** (define sedes por carrera) + **Aulas → Sedes → "Sede por defecto para materias comunes"** (para materias que aparecen en varias carreras) + **Cronogramas → editar comisión → "Restringir a una carrera"** (override por comisión). |
+| **R10** | Sedes admisibles (Grupos DURO) | Un horario sólo puede caer en aulas de las sedes del grupo de la materia, cuando el modo del grupo es DURO. | **Materias → 📦 Grupos de materias**: elegir modo DURO y la lista de sedes admisibles del grupo. En modo BLANDO R10 no filtra. |
 | **R11** | Pins manuales | El asignador respeta aulas fijadas a mano por el operador. | **Planes → Aulas → panel de asignación → toggle "Respetar ediciones manuales"** + el usuario marca cada aula como manual en el editor de horarios. |
 | **R13** | Sedes consecutivas por comisión | Dos horarios contiguos de una misma comisión (mismo día, gap corto) caen en la misma sede. | **Planes → Aulas → panel de asignación → "Margen mínimo entre sedes (minutos)"**. Con 0 se desactiva. |
+| **R13-camino** | Camino de cursada intersede factible (pre-check estructural) | Para cada `(carrera, año, cuatri)` existe al menos una combinación de comisiones que respete margen intersede. | Mismo `margen_min_intersede_minutos` que R13. Pre-check fuera del LP; aparece como bloqueo en el semáforo de factibilidad. |
+| **R14** | Misma sede por comisión (opcional) | Todos los horarios de una comisión caen en la misma sede. | **Planes → Aulas → panel de asignación → toggle "Forzar misma sede por comisión"**. |
 
 #### 🎯 Blandas (preferencias en la función objetivo)
 
@@ -433,7 +442,7 @@ Este es el mapa completo:
 |---|---|---|---|
 | **R7 over** | Evitar sobrecupo | Aulas donde los inscriptos esperados no rebalsan la capacidad. | **Planes → Aulas → panel de asignación → "Peso de sobre-ocupación (λ over)"** y **"Tolerancia de sobre-ocupación"**. Se alimenta también de Inscriptos (forecast) y de Aulas → capacidad. |
 | **R7 under** | Evitar aulas mucho más grandes que la demanda | Aulas ajustadas al forecast. | **Planes → Aulas → panel de asignación → "Peso de sub-utilización (λ under)"** y **"Tolerancia de sub-utilización"**. |
-| **R12** | Sede preferida por materia | Sede del lab compatible; si no hay lab, sede habilitada por la carrera. Sin bloquear alternativas. | **Planes → Aulas → panel de asignación → "Peso de preferencia de sede (λ sede)"**. Se alimenta indirectamente de R3 (labs compatibles), R10 (sedes de carrera) y el catálogo de aulas. Con λ = 0 se desactiva. |
+| **R12** | Sede preferida (Grupos BLANDO) | Primera sede del grupo BLANDO. Alternativas admisibles pero con costo. | Fuente de la preferencia: **Materias → 📦 Grupos de materias** (modo BLANDO + orden de sedes). Peso: **Planes → Aulas → panel de asignación → "Peso de preferencia de sede (λ sede)"**. Con λ = 0 se desactiva el término. |
 
 #### ¿Qué edito para arreglar cada síntoma?
 
@@ -665,42 +674,71 @@ Cuando `config.activar_alpha=True`:
 - **Tipo:** dura cuando el toggle está on.
 - **Parámetros:** `LPConfig.activar_alpha` (bool). No expuesto en UI.
 
-### R10 — Sedes admisibles por horario
-**Fuente:** `asignacion_aulas_service.py:339-388`.
+### R10 — Sedes admisibles por horario (Grupos de Materias)
+**Fuente:** `asignacion_aulas_service.py:build_inputs` (filtro sobre
+`compat`) + `grupo_materia_service.py:resolver_sedes_admisibles_por_materia`.
 
-Filtra `compat[(h, a)]` post-R3 según sede del aula:
+Filtra `compat[(h, a)]` post-R3 según la configuración del **Grupo de
+Materias** al que pertenece la materia del horario. Cada materia
+pertenece a un único grupo (partición estricta enforzada por schema
+y service). Cada grupo tiene:
 
-1. Se resuelve el conjunto de sedes admisibles del horario:
-   - Si la comisión tiene `carrera_asignada != None`, se toma
-     `sedes_admisibles_para_carrera(carrera_asignada)` (override).
-   - Si no, `sedes_admisibles_para_materia(materia)`.
-   - Si el resultado es `None` → sin restricción (cualquier sede).
-2. Para cada aula, si su `sede_id` no está en el conjunto y el
-   aula no está en `MateriaLaboratorioDB` para esa materia,
-   `compat[(h, a)] = False`.
+- `modo` ∈ `{DURO, BLANDO}`.
+- Lista **ordenada** de sedes `[s_0, s_1, ..., s_{n-1}]`.
 
-Excepción clave: **si el aula está en `MateriaLaboratorioDB` para la
-materia, prevalece sobre R10** (líneas 383-386). Un lab compatible
-puede recibir la materia aunque esté en una sede fuera del set
-admisible.
+**Regla del filtro R10 por horario `h` de materia `m`**:
 
-`sedes_admisibles_para_materia` (definida en
-`carrera_sede_service.py`) hoy devuelve:
+1. Se resuelve `(sedes, modo) = resolver_sedes_admisibles_por_materia(m)`
+   consultando el grupo de `m`.
+2. Filtro:
 
-- **Materias específicas** (aparecen en una sola carrera):
-  sedes habilitadas de esa carrera.
-- **Materias comunes** (2+ carreras): la sede default para
-  comunes (`SedeDB.es_default_comunes=True`) si existe; si no,
-  `None` (sin restricción).
+    ```
+    compat[h, a] = False   si   modo = DURO  ∧  sedes ≠ ∅
+                              ∧  aula_sede(a) ∉ set(sedes)
+                              ∧  a ∉ MateriaLaboratorioDB(m)
+    ```
 
-- **Tipo:** dura.
+3. **Modo `BLANDO`**: R10 **no filtra** — todas las sedes son
+   admisibles. La preferencia (primera de la lista) alimenta R12
+   con costo blando.
+4. **Modo `DURO` con lista vacía**: fallback permisivo (equivalente
+   a "todas las sedes admisibles"). Útil sólo para el grupo
+   "Sin clasificar" durante la transición.
+
+**Excepción de lab compatible** (preservada del modelo anterior):
+un aula en `MateriaLaboratorioDB` de la materia se acepta aunque su
+sede no esté en el set del grupo. Esto refleja que la compatibilidad
+de laboratorio es una restricción física más fuerte que la
+preferencia curricular.
+
+**`ComisionDB.carrera_asignada` es sólo etiqueta visual**: no
+interviene en la resolución. Antes tenía semántica de override
+(usar sedes de la carrera indicada en vez de la default de
+comunes); ahora la resolución depende exclusivamente de la materia.
+
+- **Tipo:** dura (sólo en modo DURO con lista no vacía).
 - **Parámetros:**
-  - `SedeDB.es_default_comunes` global.
-  - `CarreraSedeDB` (M:N carrera↔sede) por carrera.
-  - `ComisionDB.carrera_asignada` (override por comisión).
+  - `GrupoMateriaDB.modo` por grupo.
+  - `GrupoMateriaSedeDB(grupo_id, sede_id, orden)` — sedes ordenadas
+    del grupo.
+  - `MateriaDB.grupo_id` — pertenencia de la materia.
+- **Configuración UI:** **Materias → 📦 Grupos de materias**. Editar
+  el modo, agregar/reordenar/quitar sedes, o reasignar materias
+  entre grupos.
 - **Infactible si:** después de aplicar R10 un horario queda sin
-  aulas compatibles (`horarios_sin_aula_compatible` con
-  razón "R10").
+  aulas compatibles (`horarios_sin_aula_compatible` con razón
+  "R10 · sede del grupo <nombre>").
+
+**Bootstrap automático** (`_migrate_grupos_materia` en `connection.py`):
+
+- Grupo "Sin clasificar" (DURO con todas las sedes) — fallback.
+- Grupos por prefijo de código: `FB → Pellegrini`, `FI → Pellegrini`,
+  `CE → Pellegrini`, `F → Siberia` (excluye FB/FI).
+- Un grupo "Específicas de \<Carrera\>" por cada carrera, DURO con
+  las sedes que estaba en `CarreraSedeDB` para esa carrera.
+- Las materias se asignan al grupo que corresponda por prefijo o
+  por "materia exclusiva de una sola carrera". El resto cae en
+  "Sin clasificar".
 
 ### R13 — Sedes consecutivas por comisión (Fase 4, 2026-09-05)
 **Fuente:** `asignacion_aulas_service.py:817-871` (restricciones en
@@ -748,10 +786,9 @@ tiene pocos horarios por día así que el costo es despreciable.
   - Con `margen=60`: mismos 2 pares (no hay pares con gap 30-60).
   - Con `margen=0`: 0 pares (restricción off).
 
-### R12 — Preferencia blanda de sede (Fase 3, 2026-09-05)
-**Fuente:** `asignacion_aulas_service.py:565-585` (término en el
-objetivo) + `asignacion_aulas_helpers.py:sede_preferida_desde_sets`
-(regla de sede preferida).
+### R12 — Preferencia blanda de sede (Grupos BLANDO)
+**Fuente:** `asignacion_aulas_service.py:build_model` (término en el
+objetivo).
 
 Añade al objetivo un término blando:
 
@@ -759,15 +796,25 @@ Añade al objetivo un término blando:
 + λ_sede_pref · Σ_{(h, a) ∈ x, sede(a) ≠ sede_pref(h)} x[h, a]
 ```
 
-Para cada variable `x[h, a]`, si el aula está en una sede distinta
-a la preferida de `h`, se suma `λ_sede_pref` al costo. Horarios
-cuya sede preferida es `None` (materia común sin default para
-comunes) no aportan término.
+**Semántica de `sede_pref(h)`** en el modelo nuevo:
 
-La sede preferida se computa via
-`sede_preferida_para_horario`: lab-first (sede del lab
-compatible), sede de la carrera si no hay labs, `None` si no
-aplica ninguna restricción.
+- Sea `(sedes, modo) = resolver_sedes_admisibles_por_materia(m)`
+  del grupo de la materia de `h`.
+- Si `modo = BLANDO` y `sedes ≠ ∅` → `sede_pref(h) = sedes[0]`
+  (la primera de la lista ordenada).
+- En cualquier otro caso (`modo = DURO`, o lista vacía) →
+  `sede_pref(h) = None` (no aporta término al objetivo).
+
+En modo `DURO` **no hay preferencia interna**: todas las sedes del
+set son equivalentes a nivel objetivo. En modo `BLANDO` la primera
+es "gratis" y el resto suman `λ_sede_pref` por horario asignado a
+esa sede.
+
+La penalidad es **plana**: da igual si un horario cae en la 2da o
+en la 5ta sede alternativa — todas cuestan `λ_sede_pref`. Diseño
+consciente para evitar sobre-parametrizar; si más adelante se
+necesita ordenar por preferencia decreciente, se agrega
+`λ_sede_pref · orden(sede)`.
 
 - **Tipo:** blanda. Aparece en el objetivo, no como restricción.
 - **Parámetros de `LPConfig`:**
@@ -778,17 +825,103 @@ aplica ninguna restricción.
       desperdiciar 5 asientos, pero mejor que dejar 1 sin lugar).
     - `λ_under = 1.0` (subutilización es lo más permisivo).
   - `lambda_sede_pref = 0` desactiva el término (recupera
-    comportamiento previo a Fase 3).
+    comportamiento sin preferencia).
 - **Nunca vuelve el problema infactible** (sólo agrega un costo).
-- **Verificación empírica** (Plan v0, ciclo 2026-1C, 2026-09-05):
-  - Con `λ_sede_pref = 5.0`: 530 horarios en sede preferida,
-    16 en alternativa. Objetivo = 14 333.
-  - Con `λ_sede_pref = 0`: mismos 530/16 (misma solución óptima
-    en cantidad), objetivo = 14 253.
-  - Los 16 desplazados coinciden con casos donde la sede
-    preferida se satura y el LP encuentra aula en la alternativa.
-    Ese conjunto es la lista concreta que motiva Fase 4
-    (restricción de sedes consecutivas).
+
+### R14 — Forzar misma sede por comisión (opcional)
+**Fuente:** `asignacion_aulas_service.py:build_model` (bloque
+`R14_sum_`, `R14_link_`) + `LPConfig.forzar_misma_sede_por_comision`.
+
+Cuando el toggle está activo, todos los horarios de una misma
+comisión deben caer en aulas de la **misma sede**. Se introducen
+variables auxiliares `y[c, s] ∈ {0, 1}` con la interpretación
+"comisión `c` va a sede `s`":
+
+```
+∀ c ∈ C_active, Σ_s y[c, s] = 1                    (R14_sum)
+∀ h ∈ c, ∀ a ∈ compat(h),
+    x[h, a] ≤ y[c, sede(a)]                         (R14_link)
+```
+
+**Optimizaciones**:
+
+- Sólo se crean `y[c, s]` para sedes `s` con al menos una aula
+  candidata para algún horario de `c` (evita variables muertas).
+- Comisiones con un único horario tienen R14 trivial (satisfecha
+  por R1) → no se crean variables auxiliares.
+- Si el toggle está OFF, `y_vars = {}` y no se agrega ninguna
+  restricción.
+
+**Motivación**: los profesores generalmente no viajan entre sedes a
+mitad de semana. Sin R14, el LP podría fragmentar una comisión
+(una clase en Pellegrini, otra en Siberia) para minimizar
+`λ_sede_pref` — matemáticamente óptimo, operativamente inviable.
+
+**Impacto en tamaño del modelo**: con `|C_active| ≈ 500` y
+`|S| = 4`, agrega ≈ 2 000 variables binarias + 500 restricciones
+`R14_sum` + `Σ_c |horarios(c)| · |aulas_compat(c)|` restricciones
+`R14_link`. Manejable para el solver.
+
+- **Tipo:** dura, opcional.
+- **Parámetro de `LPConfig`:** `forzar_misma_sede_por_comision`
+  (bool, default `False`). Persistido en `details_json.restricciones_activas`.
+- **Configuración UI:** toggle en el panel del asignador,
+  bloque "Preferencia de sede".
+- **Infactible si:** ninguna sede tiene aulas compatibles para
+  todos los horarios de alguna comisión simultáneamente.
+
+### R13-camino — Camino de cursada intersede factible
+**Fuente:** `factibilidad_service.py:_add_bloqueos_camino_cursada`.
+**Pre-check estructural**, **NO aparece en el LP**. Corre antes de
+llamar al solver como parte de `check_factibilidad_estructural`.
+
+R13 (por-comisión) asegura que dos horarios contiguos de una misma
+comisión no queden en sedes incompatibles. Pero eso no basta:
+puede pasar que **individualmente** cada comisión respete R13 y
+sin embargo un alumno **no pueda combinar** una comisión por
+materia sin cruzarse.
+
+R13-camino cubre ese caso a nivel curricular:
+
+1. Agrupa materias por `(carrera, año, cuatri)` reusando el patrón
+   de `validations.py:354-410`. Skipping optativas. Incluye
+   Anuales del mismo carrera+año.
+2. Para cada grupo con ≥2 materias con comisiones:
+   - Enumera comisiones por materia.
+   - DFS backtracking buscando **al menos una** combinación (una
+     comisión por materia) tal que **todos** los pares del mismo
+     día con gap < margen tengan intersección no vacía de sedes
+     admisibles.
+3. Si ninguna combinación funciona → `Bloqueo(codigo_regla="R13-camino")`.
+4. Si el espacio de combinaciones excede `MAX_COMBINACIONES_CAMINO
+   = 10 000`, corta y reporta como `advertencia` (no bloqueante).
+
+**Semántica de sedes admisibles a nivel camino**: unión de duras y
+blandas del grupo (`DURO` con lista no vacía → set del grupo;
+`BLANDO` o vacía → "cualquier sede vale"). Modo BLANDO nunca
+bloquea camino porque siempre hay sede alternativa; sólo el DURO
+estrictamente disjunto entre dos materias puede bloquear.
+
+**Ejemplo canónico**: Electrónica 3° 1C tiene específicas en Siberia
+(DURO) + FB12 en Pellegrini (DURO). Si el cronograma coloca FB12 y
+una específica contigua sin margen suficiente → sin combinación
+factible → bloqueo.
+
+- **Tipo:** pre-check, no aparece como restricción del LP.
+- **Parámetros:**
+  - `margen_min_intersede_minutos` (compartido con R13 por-comisión).
+  - `MAX_COMBINACIONES_CAMINO = 10 000` (cap del backtracking).
+- **Ignora `ComisionDB.carrera_asignada`** — la resolución usa
+  siempre el grupo de la materia.
+
+**Alternativas si dispara**:
+
+1. Ampliar la lista de sedes del grupo de alguna de las materias
+   involucradas.
+2. Ajustar horarios del cronograma para separar contiguas
+   problemáticas.
+3. Bajar `margen_min_intersede_minutos` (si es realista).
+4. Activar R14 con estrategia de sedes distinta.
 
 ### R11 — Pins de ediciones manuales
 **Fuente:** `asignacion_aulas_service.py:589-606`.

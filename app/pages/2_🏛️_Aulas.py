@@ -478,7 +478,6 @@ def _render_tab_sedes(session) -> None:
         {
             "Sede": s.nombre,
             "Aulas": n_aulas_por_sede.get(s.id, 0),
-            "Default comunes": "🏛️ Sí" if s.es_default_comunes else "—",
         }
         for s in sedes
     ]
@@ -487,53 +486,12 @@ def _render_tab_sedes(session) -> None:
     else:
         st.info("No hay sedes todavía.")
 
-    # Configurar sede default para materias comunes.
-    if sedes:
-        from src.services.carrera_sede_service import (
-            get_sede_default_comunes,
-            set_sede_default_comunes,
-        )
-        with st.expander(
-            "🏛️ Sede por defecto para materias comunes",
-            expanded=False,
-        ):
-            st.caption(
-                "Las materias compartidas entre 2 o más carreras se "
-                "asignan exclusivamente a esta sede. Como mucho una "
-                "sede tiene este rol a la vez. Dejá '— ninguna —' "
-                "para que las materias comunes admitan cualquier sede."
-            )
-            actual = get_sede_default_comunes(session)
-            opciones = ["__NONE__"] + [s.id for s in sedes]
-            labels = {
-                "__NONE__": "— ninguna —",
-                **{s.id: s.nombre for s in sedes},
-            }
-            default_idx = (
-                opciones.index(actual.id) if actual is not None else 0
-            )
-            sel = st.selectbox(
-                "Sede por defecto para materias comunes",
-                options=opciones,
-                index=default_idx,
-                format_func=lambda x: labels[x],
-                key="sede_default_comunes_select",
-            )
-            actual_val = actual.id if actual is not None else "__NONE__"
-            if sel != actual_val:
-                if st.button(
-                    "Aplicar cambio",
-                    type="primary",
-                    key="sede_default_comunes_apply",
-                ):
-                    sede_arg = None if sel == "__NONE__" else sel
-                    set_sede_default_comunes(session, sede_arg)
-                    st.success(
-                        "Sede default actualizada."
-                        if sede_arg
-                        else "Sede default desactivada."
-                    )
-                    st.rerun()
+    st.info(
+        "**Configuración de sedes admisibles por materia**: se hace "
+        "por Grupo de Materias en **Materias → 📦 Grupos de materias**. "
+        "Cada grupo define su modo (DURO o BLANDO) y su lista de sedes, "
+        "y cada materia pertenece a exactamente un grupo."
+    )
 
     st.divider()
 

@@ -977,38 +977,53 @@ def _mapa_caption(
         )
     txt_vista = {
         "dura": (
-            "Vista **Dura**: sólo se cuentan los horarios que "
-            "NO pueden ir a otra sede. Si demanda > oferta, esos "
-            "horarios no se pueden mover — infactibilidad segura."
+            "Vista **Dura**: cuenta los horarios que sólo pueden caer "
+            "en esta sede (grupo DURO con una única sede admisible, "
+            "o materia con lab compatible sólo acá). "
+            "Fuente: configuración del grupo de materias "
+            "(**Materias → 📦 Grupos de materias**). "
+            "Si demanda > oferta acá, esos horarios no se pueden "
+            "reubicar — **infactibilidad segura** y el LP va a "
+            "romper con seguridad."
         ),
         "preferida": (
-            "Vista **Preferida**: 'plan feliz' — cada horario "
-            "cuenta una vez en su sede preferida (lab-first, "
-            "luego carrera)."
+            "Vista **Preferida**: cuenta los horarios cuya sede "
+            "preferida es ésta (primera sede del grupo BLANDO). "
+            "Fuente: modo BLANDO en **Materias → 📦 Grupos**. "
+            "Si demanda > oferta acá, el LP va a **desplazar** "
+            "algunos horarios a sedes alternativas — sube el término "
+            "`λ_sede_pref` del objetivo pero puede haber solución."
         ),
         "maxima": (
-            "Vista **Máxima**: cota superior — cada horario "
-            "cuenta en todas las sedes que podría aceptar. "
-            "Muestra el margen del asignador."
+            "Vista **Máxima**: cuenta cada horario en TODAS las "
+            "sedes donde podría caer (unión dura ∪ blanda ∪ labs "
+            "compatibles). Fuente: mismos grupos. "
+            "Muestra el **margen** que le queda al LP para "
+            "reubicar sin restricciones."
         ),
         "total": (
             "Vista **Total sin sede**: cuenta simultáneos "
-            "ignorando sede. Cota inferior global."
+            "ignorando qué sede podría recibirlos. Fuente: horarios "
+            "cargados y aulas totales del catálogo. "
+            "**Cota inferior global**: si demanda > oferta acá, el "
+            "plan no cabe ni redistribuyendo entre sedes."
         ),
     }.get(vista, "")
     txt_oferta = ""
     if categoria in ("peor", "laboratorio"):
         if oferta == "compatibles":
             txt_oferta = (
-                " · Oferta de labs = **sólo compatibles**. Detecta "
-                "infactibilidad estructural (pigeonhole + Hall) "
-                "cuando los labs disponibles no alcanzan para las "
-                "materias de la celda. ⚠️ marca casos Hall."
+                " · Oferta de labs = **sólo compatibles** con las "
+                "materias del pool. Detecta pigeonhole (más "
+                "materias que labs) + Hall (subconjunto Hall "
+                "atrapado en un pool chico). ⚠️ marca casos Hall. "
+                "Fuente: **Aulas → Ver detalle de laboratorio → "
+                "Materias que usan este laboratorio**."
             )
         else:
             txt_oferta = (
                 " · Oferta de labs = **todo el catálogo** (sin "
-                "filtrar compatibilidad)."
+                "filtrar por compatibilidad con materias)."
             )
     return (
         f"{txt_vista}{txt_oferta} · Verde ≤80% · "
@@ -3148,46 +3163,20 @@ def render_resultado(
     if heatmap_sede is None:
         heatmap_sede = details.get("heatmap_por_sede")
 
-    # Diagnóstico: filtramos horarios ahora-virtuales para que no
-    # aparezcan como "falta ese horario" tras cambios posteriores al
-    # último LP run.
-    diag = details.get("infeasibility_diagnosis")
-    iis = details.get("iis")
-    _virtuales_ahora = _get_horarios_virtuales_ahora(
-        session, run.plan_cursada_id,
-    )
-    diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
-
-    # Cuando la corrida fue óptima Y el diag persistido reporta
-    # advertencias, es probable que ese diag esté stale (armado con
-    # una versión anterior del código que contaba virtuales como
-    # demanda). Regeneramos en vivo desde build_inputs + diagnose
-    # para reflejar el estado actual sin falsos positivos.
-    if run.status == "optimal" and diag and (
-        diag.get("horarios_sin_aula_compatible")
-        or diag.get("franjas_saturadas")
-        or diag.get("saturacion_por_tipo")
-        or diag.get("hall_violators")
-    ):
-        try:
-            from src.services.asignacion_aulas_service import (
-                LPConfig, build_inputs, diagnose,
-            )
-            _inputs_live = build_inputs(session, run.plan_cursada_id, LPConfig())
-            _diag_live = diagnose(_inputs_live)
-            diag = {
-                "horarios_sin_aula_compatible":
-                    _diag_live.horarios_sin_aula_compatible,
-                "franjas_saturadas": _diag_live.franjas_saturadas,
-                "saturacion_por_tipo": _diag_live.saturacion_por_tipo,
-                "hall_violators": _diag_live.hall_violators,
-                "inventario_aulas": _diag_live.inventario_aulas,
-                "particion_problemas": _diag_live.particion_problemas,
-            }
-        except Exception:  # pragma: no cover
-            # Si algo falla en el recompute, seguimos con el diag
-            # filtrado antes: es peor no mostrar nada.
-            pass
+    # Diagnóstico: sólo tiene sentido cuando la corrida no fue óptima.
+    # En runs `optimal` el asignador encontró solución respetando
+    # todas las restricciones, así que cualquier "advertencia
+    # estructural" del snapshot es ruido stale. Sólo lo cargamos si
+    # `run.status != "optimal"`.
+    diag = None
+    iis = None
+    if run.status != "optimal":
+        diag = details.get("infeasibility_diagnosis")
+        iis = details.get("iis")
+        _virtuales_ahora = _get_horarios_virtuales_ahora(
+            session, run.plan_cursada_id,
+        )
+        diag = _filtrar_diag_virtuales(diag, _virtuales_ahora)
 
     # ======================================================
     # Este renderer se invoca dentro del expander "Gestión de
@@ -3299,19 +3288,11 @@ def render_resultado(
                 )
         return
 
-    # Advertencias estructurales — filtramos entries vacías post-filtro
-    # de virtuales para no mostrar el mensaje engañoso cuando el
-    # snapshot quedó obsoleto.
-    _sin_aula = diag.get("horarios_sin_aula_compatible") if diag else None
-    _franjas = diag.get("franjas_saturadas") if diag else None
-    _saturacion = diag.get("saturacion_por_tipo") if diag else None
-    _hall = diag.get("hall_violators") if diag else None
-    if diag and (_sin_aula or _franjas or _saturacion or _hall):
-        with st.expander(
-            "⚠️ Diagnóstico: advertencias estructurales detectadas",
-            expanded=False,
-        ):
-            _render_diagnostico_infactibilidad(diag, iis=iis)
+    # En runs óptimos NO se muestra diagnóstico. El semáforo
+    # pre-solve (bloque "Chequeo de factibilidad" en el panel del
+    # asignador) es el lugar único para chequear salud estructural
+    # antes de correr. El diagnóstico post-solve queda reservado
+    # exclusivamente a runs infactibles (bloque de arriba).
 
     # Ajustes avanzados (α) — sólo si aplica.
     alpha_diff = details.get("alpha_propuestos", [])
