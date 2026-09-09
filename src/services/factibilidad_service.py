@@ -621,6 +621,35 @@ def check_factibilidad_estructural(
                 ],
             ))
 
+    # =========================================================================
+    # 5. R13-camino · Camino de cursada intersede factible por grupo curricular.
+    # =========================================================================
+    # Verifica que, para cada (carrera, año, cuatri), exista al menos
+    # una combinación de comisiones (una por materia obligatoria) tal
+    # que todos los pares contiguos del mismo día respeten el margen
+    # intersede — considerando las sedes admisibles del grupo de cada
+    # materia (unión: dura ∪ blanda, ver `resolver_sedes_admisibles_por_materia`).
+    #
+    # Complementa R13 (que actúa por-comisión) capturando problemas
+    # que sólo emergen a nivel del "camino que cursa un alumno". Ej.:
+    # cada comisión de una materia común es factible por sí sola en
+    # Pellegrini, pero al combinarla con las específicas de Electrónica
+    # (en Siberia) ninguna combinación deja al alumno cursar sin
+    # traslado imposible.
+    _add_bloqueos_camino_cursada(
+        session=session,
+        plan=plan,
+        comisiones=comisiones,
+        horarios_por_comision_all={
+            cid: [h for h in horarios_db if h.comision_id == cid]
+            for cid in com_ids
+        },
+        margen_min_intersede_minutos=margen_min_intersede_minutos,
+        reporte=reporte,
+        mat_nombre=mat_nombre,
+        sede_nombre=sede_nombre,
+    )
+
     # -------------------------------------------------------------------------
     # Consolidar.
     # -------------------------------------------------------------------------
@@ -631,3 +660,328 @@ def check_factibilidad_estructural(
         )
 
     return reporte
+
+
+# =============================================================================
+# Chequeo camino de cursada (R13-camino)
+# =============================================================================
+
+
+# Cota superior de combinaciones a explorar por grupo (carrera, año,
+# cuatri). Si el producto de |comisiones| por materia excede este
+# valor, cortamos el backtracking y reportamos como advertencia (no
+# bloqueante) para no colgar la UI.
+MAX_COMBINACIONES_CAMINO = 10_000
+
+
+def _add_bloqueos_camino_cursada(
+    session: Session,
+    plan: PlanificacionCursadaDB,
+    comisiones: list[ComisionDB],
+    horarios_por_comision_all: dict[str, list[HorarioDB]],
+    margen_min_intersede_minutos: int,
+    reporte: ReporteFactibilidad,
+    mat_nombre: dict[str, str],
+    sede_nombre: dict[str, str],
+) -> None:
+    """Chequea R13-camino y agrega bloqueos/advertencias al reporte.
+
+    Reusa el patrón de `validar_conflictos_horarios_plan` (L354-410 de
+    ``validations.py``) para agrupar por (carrera, año, cuatri) y
+    enriquecer con anuales.
+    """
+    if margen_min_intersede_minutos <= 0:
+        return
+    if plan.ciclo_id is None:
+        return
+
+    from src.database.models import (
+        CicloDB,
+        CicloPlanVersionDB,
+        PlanEstudioDB,
+    )
+    from src.services.grupo_materia_service import (
+        resolver_sedes_admisibles_por_materia,
+    )
+
+    plan_version_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
+    ).all())
+    if not plan_version_ids:
+        return
+
+    ciclo = session.get(CicloDB, plan.ciclo_id)
+    if ciclo is None:
+        return
+    cuatri_ciclo = f"{ciclo.numero}C"
+
+    # Índice comisiones por materia dentro de este plan.
+    comisiones_por_materia: dict[str, list[str]] = {}
+    for c in comisiones:
+        comisiones_por_materia.setdefault(c.materia_codigo, []).append(c.id)
+
+    # Plan entries: (carrera, año, cuatri) → set[materia_codigo].
+    plan_entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))  # type: ignore[attr-defined]
+    ).all())
+
+    # Solo obligatorias (skip optativas).
+    grupos: dict[tuple[str, int, str], set[str]] = {}
+    for pe in plan_entries:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        if pe.optativa:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        grupos.setdefault(key, set()).add(pe.materia_codigo)
+
+    # Sólo grupos del cuatri del ciclo, enriquecidos con las anuales
+    # de la misma carrera+año.
+    grupos_enriquecidos: dict[tuple[str, int, str], set[str]] = {}
+    for (carrera, anio, cuatri), mats in grupos.items():
+        if cuatri != cuatri_ciclo:
+            continue
+        enriched = set(mats)
+        anual_key = (carrera, anio, "Anual")
+        if anual_key in grupos:
+            enriched |= grupos[anual_key]
+        grupos_enriquecidos[(carrera, anio, cuatri)] = enriched
+
+    if not grupos_enriquecidos:
+        return
+
+    # Cache: sedes admisibles por materia (unión dura ∪ blanda para
+    # este chequeo — cualquier sede del grupo cuenta como "posible
+    # ubicación" a nivel camino de cursada).
+    sedes_admis_materia: dict[str, Optional[set[str]]] = {}
+
+    def _sedes_de_materia(mc: str) -> Optional[set[str]]:
+        if mc in sedes_admis_materia:
+            return sedes_admis_materia[mc]
+        sedes_ord, modo = resolver_sedes_admisibles_por_materia(session, mc)
+        # DURO con lista no vacía → set restrictivo. En cualquier otro
+        # caso (DURO vacío, BLANDO) → None = "cualquier sede vale".
+        if modo == "DURO" and sedes_ord:
+            result: Optional[set[str]] = set(sedes_ord)
+        else:
+            result = None
+        sedes_admis_materia[mc] = result
+        return result
+
+    def _mins(t) -> int:
+        return t.hour * 60 + t.minute
+
+    # Para cada grupo, chequear factibilidad del camino.
+    for (carrera, anio, cuatri), mats_del_grupo in grupos_enriquecidos.items():
+        # Sólo materias con al menos una comisión en el plan.
+        materias_con_com = [
+            mc for mc in sorted(mats_del_grupo)
+            if mc in comisiones_por_materia
+        ]
+        if len(materias_con_com) < 2:
+            continue  # menos de 2 materias → nada que chequear
+
+        # Comisiones por materia (sólo las que tienen horarios).
+        opciones_por_materia: list[tuple[str, list[str]]] = []
+        for mc in materias_con_com:
+            cids = [
+                cid for cid in comisiones_por_materia[mc]
+                if horarios_por_comision_all.get(cid)
+            ]
+            if not cids:
+                continue
+            opciones_por_materia.append((mc, cids))
+
+        if len(opciones_por_materia) < 2:
+            continue
+
+        # Cota superior de combinaciones.
+        prod = 1
+        for _mc, cids in opciones_por_materia:
+            prod *= len(cids)
+            if prod > MAX_COMBINACIONES_CAMINO:
+                break
+        excede_cap = prod > MAX_COMBINACIONES_CAMINO
+
+        # Precomputar sedes admisibles por comisión.
+        sedes_por_com: dict[str, Optional[set[str]]] = {}
+        for mc_opt, cids in opciones_por_materia:
+            s_mat = _sedes_de_materia(mc_opt)
+            for cid in cids:
+                sedes_por_com[cid] = s_mat
+
+        # Precomputar pares de horarios con gap < margen entre dos
+        # comisiones distintas del mismo día. Para cada par (cid_i, cid_j)
+        # calculamos si son "compatibles" a nivel intersede (todos los
+        # pares del mismo día tienen sedes en común).
+        pair_compat: dict[tuple[str, str], tuple[bool, Optional[dict]]] = {}
+
+        def _par_es_compatible(
+            cid_a: str, cid_b: str,
+        ) -> tuple[bool, Optional[dict]]:
+            """True si toda pareja de horarios contiguos (mismo día,
+            gap < margen) entre cid_a y cid_b tiene sedes compatibles."""
+            key = (cid_a, cid_b) if cid_a < cid_b else (cid_b, cid_a)
+            if key in pair_compat:
+                return pair_compat[key]
+            hs_a = horarios_por_comision_all.get(cid_a, [])
+            hs_b = horarios_por_comision_all.get(cid_b, [])
+            sedes_a = sedes_por_com.get(cid_a)
+            sedes_b = sedes_por_com.get(cid_b)
+            # Si alguno es None (sin restricción), el par siempre cierra:
+            # cualquier sede a la que caiga uno, el otro puede acompañar.
+            if sedes_a is None or sedes_b is None:
+                pair_compat[key] = (True, None)
+                return pair_compat[key]
+            interseccion = sedes_a & sedes_b
+            # Si hay pares en riesgo (mismo día con gap chico), la
+            # intersección DEBE ser no vacía.
+            for h1 in hs_a:
+                for h2 in hs_b:
+                    if h1.dia != h2.dia:
+                        continue
+                    # gap: min(inicio de uno menos fin del otro) ≥ 0.
+                    f1 = _mins(h1.hora_fin)
+                    i1 = _mins(h1.hora_inicio)
+                    f2 = _mins(h2.hora_fin)
+                    i2 = _mins(h2.hora_inicio)
+                    if i2 >= f1:
+                        gap = i2 - f1
+                    elif i1 >= f2:
+                        gap = i1 - f2
+                    else:
+                        # Se solapan: no es problema de traslado sino
+                        # de cursada solapada (otra validación).
+                        continue
+                    if gap >= margen_min_intersede_minutos:
+                        continue
+                    # Par en riesgo: precisa intersección de sedes.
+                    if not interseccion:
+                        pair_compat[key] = (False, {
+                            "h1": h1, "h2": h2, "gap": gap,
+                            "sedes_a": sedes_a, "sedes_b": sedes_b,
+                        })
+                        return pair_compat[key]
+            pair_compat[key] = (True, None)
+            return pair_compat[key]
+
+        # Backtracking DFS. asignacion[k] = com_id elegido para
+        # opciones_por_materia[k].materia_codigo.
+        combinaciones_probadas = [0]
+        conflicto_ejemplo: dict = {}
+
+        def _dfs(k: int, elegidas: list[str]) -> bool:
+            if k == len(opciones_por_materia):
+                return True
+            if combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
+                return False
+            _mc, cids = opciones_por_materia[k]
+            for cid in cids:
+                combinaciones_probadas[0] += 1
+                if combinaciones_probadas[0] > MAX_COMBINACIONES_CAMINO:
+                    return False
+                # Chequear compatibilidad con todas las ya elegidas.
+                ok = True
+                for cid_prev in elegidas:
+                    compat_par, info = _par_es_compatible(cid_prev, cid)
+                    if not compat_par:
+                        ok = False
+                        # Guardar el último conflicto como ejemplo para
+                        # el reporte (aunque el DFS pruebe alternativas
+                        # después).
+                        if info is not None:
+                            conflicto_ejemplo["par"] = info
+                            conflicto_ejemplo["cid_prev"] = cid_prev
+                            conflicto_ejemplo["cid"] = cid
+                        break
+                if not ok:
+                    continue
+                elegidas.append(cid)
+                if _dfs(k + 1, elegidas):
+                    return True
+                elegidas.pop()
+            return False
+
+        factible = _dfs(0, [])
+
+        if factible:
+            continue
+
+        # Determinar si el DFS cortó por cap o por infactibilidad real.
+        if excede_cap or combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
+            reporte.advertencias.append(Bloqueo(
+                codigo_regla="R13-camino",
+                severidad="advertencia",
+                titulo=(
+                    f"Camino de cursada · {carrera} · Año {anio} · "
+                    f"{cuatri}: espacio de combinaciones excede "
+                    f"{MAX_COMBINACIONES_CAMINO}; no se pudo verificar "
+                    "factibilidad estructural completa."
+                ),
+                detalle=(
+                    f"- **Carrera**: `{carrera}`\n"
+                    f"- **Año**: {anio}\n"
+                    f"- **Cuatrimestre**: {cuatri}\n"
+                    f"- **Materias evaluadas**: {len(opciones_por_materia)}\n"
+                    "El producto de comisiones por materia supera el "
+                    "cap del backtracking. El LP puede resolverlo, "
+                    "pero no podemos garantizarlo desde el pre-check."
+                ),
+                entidades_a_revisar=[
+                    f"materia:{mc}" for mc, _ in opciones_por_materia
+                ],
+            ))
+            continue
+
+        # Bloqueo real.
+        detalle_lines = [
+            f"- **Carrera**: `{carrera}`",
+            f"- **Año**: {anio}",
+            f"- **Cuatrimestre**: {cuatri}",
+            f"- **Materias del ciclo**: {len(opciones_por_materia)}",
+        ]
+        if conflicto_ejemplo.get("par"):
+            info = conflicto_ejemplo["par"]
+            h1 = info["h1"]
+            h2 = info["h2"]
+            sa: set[str] = info["sedes_a"] or set()
+            sb: set[str] = info["sedes_b"] or set()
+            detalle_lines.extend([
+                "",
+                "**Ejemplo de conflicto irresoluble** "
+                "(entre dos comisiones que igualmente hay que combinar):",
+                f"- **Materia 1**: `{h1.codigo_materia}` "
+                f"({mat_nombre.get(h1.codigo_materia, '?')}) — "
+                f"{h1.dia} {h1.hora_inicio.strftime('%H:%M')}–"
+                f"{h1.hora_fin.strftime('%H:%M')}",
+                f"- **Materia 2**: `{h2.codigo_materia}` "
+                f"({mat_nombre.get(h2.codigo_materia, '?')}) — "
+                f"{h2.dia} {h2.hora_inicio.strftime('%H:%M')}–"
+                f"{h2.hora_fin.strftime('%H:%M')}",
+                f"- **Gap**: {info['gap']} minutos "
+                f"(< {margen_min_intersede_minutos} de margen)",
+                "- **Sedes admisibles M1**: "
+                + (", ".join(sede_nombre.get(s) or s for s in sorted(sa)) or "—"),
+                "- **Sedes admisibles M2**: "
+                + (", ".join(sede_nombre.get(s) or s for s in sorted(sb)) or "—"),
+                "",
+                "Ningún alumno del grupo puede cursar respetando el "
+                "margen. Alternativas: ampliar el grupo de sedes de "
+                "alguna de las materias, ajustar el cronograma, o bajar "
+                "el margen intersede.",
+            ])
+        reporte.bloqueos.append(Bloqueo(
+            codigo_regla="R13-camino",
+            severidad="bloqueante",
+            titulo=(
+                f"Camino de cursada · {carrera} · Año {anio} · "
+                f"{cuatri}: ninguna combinación de comisiones es "
+                "compatible con el margen intersede"
+            ),
+            detalle="\n".join(detalle_lines),
+            entidades_a_revisar=[
+                f"materia:{mc}" for mc, _ in opciones_por_materia
+            ],
+        ))

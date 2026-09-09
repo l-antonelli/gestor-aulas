@@ -99,6 +99,13 @@ class LPConfig:
     # distintas (además de la restricción dura). Reservado para
     # futuras iteraciones — hoy solo se cablea la infraestructura.
     lambda_intersede: float = 0.0
+    # R14 — Forzar misma sede para todos los horarios de una comisión.
+    # Cuando True, se introduce y[c, s] ∈ {0, 1} para cada comisión ×
+    # sede, con Σ_s y[c, s] = 1, y x[h, a] ≤ y[c, sede(a)] para todo
+    # horario h de c. Impide que una comisión se dicte fragmentada
+    # entre sedes (los profesores generalmente no viajan a mitad de
+    # semana). Default False para preservar comportamiento previo.
+    forzar_misma_sede_por_comision: bool = False
     # R5 completa (Fase 8.1): además de exigir que Σ dur·t == hlab,
     # exige que Σ dur·(1-t) == hteo. En este modo los horarios
     # virtuales se incluyen en el modelo (sin ocupar aula) para que
@@ -402,65 +409,59 @@ def build_inputs(
         for a in aulas:
             compat[(h.id, a.id)] = compute_compat(h, a, lab_aulas_m)
 
-    # R10 — Restriccion de sede por carrera. Se aplica como filtro
-    # adicional sobre `compat`: si el aula no esta en una sede admisible
-    # para el horario, se descarta el par.
+    # R10 — Restricción de sede vía Grupo de Materias.
     #
-    # La sede admisible se resuelve por HORARIO (no solo por materia)
-    # para soportar el override `ComisionDB.carrera_asignada` — usado
-    # cuando una comision de una materia comun se organiza pensada
-    # para alumnos de una carrera de otra sede (ej. Fisica III comision
-    # electronica en Siberia). Si la comisión del horario tiene el
-    # override, la sede se resuelve via esa carrera; si no, via la
-    # materia (regla habitual).
+    # Cada horario se resuelve al grupo de su materia
+    # (`resolver_sedes_admisibles_por_materia`). El grupo devuelve
+    # `(sedes_ordenadas, modo)`:
     #
-    # Excepcion: cuando el aula esta en MateriaLaboratorioDB para la
-    # materia, prevalece la compatibilidad de laboratorio sobre la
-    # restriccion de sede (un lab compatible se puede usar aunque no
-    # este en la sede default de la carrera/comunes).
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_carrera,
-        sedes_admisibles_para_materia,
+    #   - Modo DURO: `admisibles = set(sedes_ordenadas)`. El filtro se
+    #     aplica sobre `compat`. Lista vacía → fallback permisivo
+    #     "todas admisibles" (útil sólo para el grupo "Sin clasificar"
+    #     durante la transición).
+    #   - Modo BLANDO: no hay filtro (todas las sedes son admisibles).
+    #     La primera sede (`sedes_ordenadas[0]`) es la preferida y
+    #     alimenta R12 con un costo `λ_sede_pref` por horario asignado
+    #     a otra sede.
+    #
+    # `ComisionDB.carrera_asignada` queda como **etiqueta visual** y
+    # no interviene en la resolución (el grupo depende sólo de la
+    # materia). La regla histórica que hacía prevalecer un lab
+    # compatible sobre la sede de la carrera se preserva: cualquier aula
+    # que aparezca en `MateriaLaboratorioDB` de la materia se acepta
+    # aunque no esté en las sedes del grupo (excepción de compatibilidad
+    # de laboratorio).
+    from src.services.grupo_materia_service import (
+        resolver_sedes_admisibles_por_materia,
     )
     materias_unicas_sede = sorted({h.materia_codigo for h in horarios})
-    sedes_admisibles_por_materia: dict[str, set[str] | None] = {
-        mc: sedes_admisibles_para_materia(session, mc)
+    # Cache (materia_codigo -> (sedes_ordenadas, modo)).
+    grupo_por_materia: dict[str, tuple[list[str], str]] = {
+        mc: resolver_sedes_admisibles_por_materia(session, mc)
         for mc in materias_unicas_sede
     }
-    carreras_override_unicas = sorted(set(carrera_asignada_de_horario.values()))
-    sedes_admisibles_por_carrera_override: dict[str, set[str] | None] = {
-        cc: sedes_admisibles_para_carrera(session, cc)
-        for cc in carreras_override_unicas
-    }
-    # Sede preferida por horario (R12, Fase 3). Se calcula acá porque
-    # ya tenemos resueltas las sedes admisibles por horario (via override
-    # de comisión si aplica). Reutiliza la función pura de helpers.
-    from src.services.asignacion_aulas_helpers import (
-        sede_preferida_desde_sets,
-    )
     sede_preferida_por_horario: dict[str, str | None] = {}
     for h in horarios:
-        carrera_override = carrera_asignada_de_horario.get(h.id)
-        if carrera_override:
-            admisibles = sedes_admisibles_por_carrera_override.get(
-                carrera_override
-            )
+        sedes_ord, modo = grupo_por_materia.get(h.materia_codigo, ([], "DURO"))
+        # R12: preferida sólo si BLANDO y hay al menos una sede en la
+        # lista. En DURO no hay preferencia porque todas las sedes del
+        # set son equivalentes a nivel objetivo.
+        if modo == "BLANDO" and sedes_ord:
+            sede_preferida_por_horario[h.id] = sedes_ord[0]
         else:
-            admisibles = sedes_admisibles_por_materia.get(h.materia_codigo)
-        lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
-        sede_preferida_por_horario[h.id] = sede_preferida_desde_sets(
-            labs_de_materia=lab_aulas_m,
-            sedes_admisibles=admisibles,
-            aula_sede_id=aula_sede_id,
-        )
-        if admisibles is None:
-            # Sin restriccion de sede para este horario (fallback "todas").
+            sede_preferida_por_horario[h.id] = None
+        # R10: filtro sólo se aplica en modo DURO con lista no vacía.
+        # DURO con lista vacía = "todas admisibles" (fallback permisivo).
+        # BLANDO nunca filtra (todas admisibles con distinto costo).
+        if modo != "DURO" or not sedes_ord:
             continue
+        admisibles = set(sedes_ord)
+        lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas:
             if not compat[(h.id, a.id)]:
                 continue
             if a.id in lab_aulas_m:
-                # Lab compatible prevalece sobre restriccion de sede.
+                # Lab compatible prevalece sobre restricción de sede.
                 continue
             if aula_sede_id.get(a.id) not in admisibles:
                 compat[(h.id, a.id)] = False
@@ -944,10 +945,84 @@ def build_model(
                         f"R13_{h1_id}_{h2_id}_{s1}_{s2}",
                     )
 
+    # R14 — Forzar misma sede por comisión.
+    #
+    # Cuando `config.forzar_misma_sede_por_comision=True`, todos los
+    # horarios de una misma comisión deben caer en la misma sede. Se
+    # introduce y[c, s] ∈ {0,1} "comisión c va a sede s" con la
+    # restricción Σ_s y[c, s] = 1 y el vínculo:
+    #
+    #     x[h, a] ≤ y[c, sede(a)]    para todo h ∈ c, a ∈ compat(h)
+    #
+    # Sólo se crean variables y[c, s] para sedes que efectivamente
+    # tengan al menos una aula compatible con algún horario de c
+    # (evita variables muertas). Comisiones con un único horario NO
+    # necesitan la restricción (trivialmente satisfecha).
+    #
+    # Motivación: los profesores generalmente no viajan entre sedes a
+    # mitad de semana. Sin este toggle, el LP puede fragmentar una
+    # comisión (una clase en Pellegrini, otra en Siberia) para
+    # cumplir R13 o para minimizar `λ_sede_pref` — resultado técnicamente
+    # óptimo pero inaplicable en la práctica.
+    y_vars: dict[tuple[str, str], pulp.LpVariable] = {}
+    if config.forzar_misma_sede_por_comision and "R14" not in relax_set:
+        # Agrupar horarios activos (que toman aula) por comisión.
+        horarios_por_com: dict[str, list[str]] = {}
+        for h in inputs.horarios:
+            if h.id in inputs.no_ocupa_aula_ids:
+                continue
+            cid = inputs.comision_de_horario.get(h.id)
+            if cid is None:
+                continue
+            horarios_por_com.setdefault(cid, []).append(h.id)
+
+        for cid, hids in horarios_por_com.items():
+            if len(hids) < 2:
+                # Comisión con un único horario: R14 es trivial.
+                continue
+            # Sedes candidatas: unión de las sedes de las aulas
+            # compatibles con al menos uno de los horarios de c.
+            sedes_candidatas: set[str] = set()
+            for hid in hids:
+                for aid in aulas_por_horario.get(hid, []):
+                    sede = inputs.aula_sede_id.get(aid)
+                    if sede is not None:
+                        sedes_candidatas.add(sede)
+            if not sedes_candidatas:
+                continue
+            # Crear y[c, s] y restricción Σ_s y[c, s] = 1.
+            for s in sedes_candidatas:
+                y_vars[(cid, s)] = pulp.LpVariable(
+                    f"y_{cid}_{s}", cat=pulp.LpBinary,
+                )
+            prob += (
+                pulp.lpSum(y_vars[(cid, s)] for s in sedes_candidatas) == 1,
+                f"R14_sum_{cid}",
+            )
+            # Vínculo x[h, a] ≤ y[c, sede(a)].
+            for hid in hids:
+                for aid in aulas_por_horario.get(hid, []):
+                    sede_a = inputs.aula_sede_id.get(aid)
+                    if sede_a is None:
+                        continue
+                    if (cid, sede_a) not in y_vars:
+                        # Aula en sede sin candidatura (edge case): la
+                        # variable no existe → forzamos x=0.
+                        prob += (
+                            x[(hid, aid)] == 0,
+                            f"R14_forbid_{hid}_{aid}",
+                        )
+                        continue
+                    prob += (
+                        x[(hid, aid)] <= y_vars[(cid, sede_a)],
+                        f"R14_link_{hid}_{aid}",
+                    )
+
     return prob, {
         "x": x, "t": t, "alpha": alpha,
         "over": over_vars, "under": under_vars,
         "intersede_pares": intersede_pares,
+        "y_sede_comision": y_vars,
     }
 
 
@@ -1206,18 +1281,25 @@ def _build_details_json(
     from src.services.asignacion_aulas_helpers import (
         compute_heatmap_por_sede,
     )
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_materia,
+    from src.services.grupo_materia_service import (
+        resolver_sedes_admisibles_por_materia,
     )
     from src.database.models import AulaDB as _AulaDB
     from src.database.models import SedeDB as _SedeDB
     from sqlmodel import select as _select
-    # Pre-cargas necesarias para el heatmap por sede.
+    # Pre-cargas necesarias para el heatmap por sede. Traducción del
+    # modelo nuevo al viejo formato que espera `compute_heatmap_por_sede`:
+    # DURO con lista no vacía → set (restricción dura). BLANDO o vacía
+    # → None (todas admisibles a nivel dura; la preferencia BLANDO se
+    # refleja en la vista "preferida" del heatmap vía la sede-0).
     materias_unicas_sede = sorted({h.materia_codigo for h in inputs.horarios})
-    sedes_admis_por_mat: dict[str, set[str] | None] = {
-        mc: sedes_admisibles_para_materia(session, mc)
-        for mc in materias_unicas_sede
-    }
+    sedes_admis_por_mat: dict[str, set[str] | None] = {}
+    for mc in materias_unicas_sede:
+        sedes_ord, modo = resolver_sedes_admisibles_por_materia(session, mc)
+        if modo == "DURO" and sedes_ord:
+            sedes_admis_por_mat[mc] = set(sedes_ord)
+        else:
+            sedes_admis_por_mat[mc] = None
     aulas_db = list(session.exec(_select(_AulaDB)).all())
     aula_sede_id_map: dict[str, str] = {a.id: a.sede_id for a in aulas_db}
     sedes_db = list(session.exec(_select(_SedeDB)).all())
@@ -1369,6 +1451,8 @@ def persist_run(
             "respetar_ediciones_manuales":
                 config.respetar_ediciones_manuales,
             "timeout_seconds": config.timeout_seconds,
+            "forzar_misma_sede_por_comision":
+                config.forzar_misma_sede_por_comision,
         },
     }
 
@@ -2161,16 +2245,21 @@ def get_aulas_disponibles_para_horario(
     else:
         compat = list(aulas_db)
 
-    # Filtrado por sede (R10). El override vive en la comisión.
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_carrera,
-        sedes_admisibles_para_materia,
-    )
-    _com_override = comision.carrera_asignada if comision else None
-    if _com_override:
-        admisibles = sedes_admisibles_para_carrera(session, _com_override)
-    elif materia_codigo:
-        admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+    # Filtrado por sede (R10) via grupo de materias. `carrera_asignada`
+    # a nivel comisión quedó como etiqueta visual — la sede se resuelve
+    # exclusivamente por la materia. Sólo el modo DURO con lista no
+    # vacía filtra; BLANDO deja pasar todas las sedes (la preferencia
+    # se aplica en el objetivo del LP, no acá).
+    if materia_codigo:
+        from src.services.grupo_materia_service import (
+            resolver_sedes_admisibles_por_materia,
+        )
+        sedes_ord, modo = resolver_sedes_admisibles_por_materia(
+            session, materia_codigo,
+        )
+        admisibles: set[str] | None = (
+            set(sedes_ord) if (modo == "DURO" and sedes_ord) else None
+        )
     else:
         admisibles = None
     if admisibles is not None:
@@ -2388,16 +2477,19 @@ def get_aulas_todas_para_horario(
     else:
         compat = list(aulas_db)
 
-    # Filtrado por sede (R10).
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_carrera,
-        sedes_admisibles_para_materia,
-    )
-    _com_override = comision.carrera_asignada if comision else None
-    if _com_override:
-        admisibles = sedes_admisibles_para_carrera(session, _com_override)
-    elif materia_codigo:
-        admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+    # Filtrado por sede (R10) via grupo de materias. Sólo DURO no-vacío
+    # filtra; BLANDO acepta todas y sólo preferencia. `carrera_asignada`
+    # es etiqueta visual: no interviene.
+    if materia_codigo:
+        from src.services.grupo_materia_service import (
+            resolver_sedes_admisibles_por_materia,
+        )
+        sedes_ord, modo = resolver_sedes_admisibles_por_materia(
+            session, materia_codigo,
+        )
+        admisibles: set[str] | None = (
+            set(sedes_ord) if (modo == "DURO" and sedes_ord) else None
+        )
     else:
         admisibles = None
     if admisibles is not None:
@@ -2701,18 +2793,19 @@ def _check_compat_para_horario(
                 f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
                 "no admite clase teórica."
             )
-    # Sede admisible.
+    # Sede admisible (via grupo de materias).
     comision = session.get(ComisionDB, horario.comision_id)
     materia_codigo = comision.materia_codigo if comision else None
-    _com_override = comision.carrera_asignada if comision else None
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_carrera,
-        sedes_admisibles_para_materia,
-    )
-    if _com_override:
-        admisibles = sedes_admisibles_para_carrera(session, _com_override)
-    elif materia_codigo:
-        admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+    if materia_codigo:
+        from src.services.grupo_materia_service import (
+            resolver_sedes_admisibles_por_materia,
+        )
+        sedes_ord, modo = resolver_sedes_admisibles_por_materia(
+            session, materia_codigo,
+        )
+        admisibles: set[str] | None = (
+            set(sedes_ord) if (modo == "DURO" and sedes_ord) else None
+        )
     else:
         admisibles = None
     if admisibles is not None:
@@ -3252,18 +3345,19 @@ def preview_reasignacion_con_desplazamiento(
                     f"El aula '{aula.nombre}' es de tipo '{aula.tipo}' y "
                     "no admite clase teórica."
                 )
-        # Sede admisible.
+        # Sede admisible (via grupo de materias).
         comision = session.get(ComisionDB, horario.comision_id)
         materia_codigo = comision.materia_codigo if comision else None
-        _com_override = comision.carrera_asignada if comision else None
-        from src.services.carrera_sede_service import (
-            sedes_admisibles_para_carrera,
-            sedes_admisibles_para_materia,
-        )
-        if _com_override:
-            admisibles = sedes_admisibles_para_carrera(session, _com_override)
-        elif materia_codigo:
-            admisibles = sedes_admisibles_para_materia(session, materia_codigo)
+        if materia_codigo:
+            from src.services.grupo_materia_service import (
+                resolver_sedes_admisibles_por_materia,
+            )
+            sedes_ord, modo = resolver_sedes_admisibles_por_materia(
+                session, materia_codigo,
+            )
+            admisibles: set[str] | None = (
+                set(sedes_ord) if (modo == "DURO" and sedes_ord) else None
+            )
         else:
             admisibles = None
         if admisibles is not None:

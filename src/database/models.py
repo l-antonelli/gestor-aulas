@@ -182,6 +182,15 @@ class MateriaDB(SQLModel, table=True):
     # carrera (default). True/False fuerza el comportamiento para esta
     # materia, sin importar lo que diga la carrera.
     dicta_recursado: Optional[bool] = Field(default=None)
+    # Grupo de materias al que pertenece esta materia (partición estricta:
+    # cada materia pertenece a exactamente un grupo). Determina la config
+    # de sedes admisibles para el LP (R10/R12). Nullable a nivel schema
+    # porque SQLite no permite ADD COLUMN NOT NULL con FK; la validación
+    # de "siempre asignada" se hace en service layer, y la migración
+    # garantiza que todas las materias existentes queden asignadas.
+    grupo_id: Optional[str] = Field(
+        default=None, foreign_key="grupo_materia.id", index=True,
+    )
 
     # Relationships
     comisiones: list["ComisionDB"] = Relationship(back_populates="materia")
@@ -257,11 +266,10 @@ class SedeDB(SQLModel, table=True):
     para permitir referenciarla desde otras entidades. El nombre es único
     globalmente.
 
-    El flag ``es_default_comunes`` marca a la sede que recibe por default
-    todas las **materias comunes** (las que pertenecen a más de una
-    carrera). El servicio garantiza que como mucho UNA sede tenga este
-    flag en True a la vez (al activarlo en otra sede, el flag previo se
-    desactiva).
+    ``es_default_comunes`` está **deprecado**: reemplazado por
+    ``GrupoMateriaDB`` (los grupos definen qué sedes son admisibles para
+    cada conjunto de materias). Se conserva la columna como legacy
+    durante la transición pero no la leen ni el LP ni la UI.
     """
     __tablename__ = "sedes"
 
@@ -273,18 +281,60 @@ class SedeDB(SQLModel, table=True):
 class CarreraSedeDB(SQLModel, table=True):
     """Tabla M:N entre carreras y sedes habilitadas para sus materias.
 
-    Una materia *exclusiva* (que pertenece a una sola carrera) sólo puede
-    asignarse a aulas que estén en alguna de las sedes asociadas a esa
-    carrera vía esta tabla. Las materias *comunes* (≥2 carreras) ignoran
-    esta tabla y se rigen por ``SedeDB.es_default_comunes``.
-
-    Si una carrera no tiene ninguna fila en esta tabla, el LP asume "todas
-    las sedes" como fallback (ver R10 en asignacion-aulas-LP.md).
+    .. deprecated::
+        Reemplazada por ``GrupoMateriaDB`` + ``GrupoMateriaSedeDB``. La
+        preferencia de una carrera queda modelada por el grupo de sus
+        materias específicas (típicamente "Específicas de <Carrera>"). Se
+        conserva la tabla como legacy durante la transición pero no la
+        leen ni el LP ni la UI. Retiro trackeado por separado.
     """
     __tablename__ = "carrera_sede"
 
     carrera_codigo: str = Field(foreign_key="carreras.codigo", primary_key=True)
     sede_id: str = Field(foreign_key="sedes.id", primary_key=True)
+
+
+class GrupoMateriaDB(SQLModel, table=True):
+    """Grupo de materias con criterio común de asignación de sede.
+
+    Define, para un conjunto de materias, la lista de sedes admisibles y
+    el modo con el que el LP las evalúa:
+
+    - ``DURO``: las sedes de la lista son las únicas admisibles (R10). Si
+      la lista está vacía, fallback permisivo = "todas las sedes"
+      (útil sólo para el grupo "Sin clasificar" durante la transición).
+    - ``BLANDO``: todas las sedes de la lista son admisibles, pero la
+      primera (``orden=0``) es la preferida a nivel objetivo. Las
+      alternativas suman ``λ_sede_pref`` al costo por horario
+      desplazado (R12).
+
+    Cada ``MateriaDB`` pertenece a exactamente un grupo (partición
+    estricta enforzada en service layer). El grupo con
+    ``es_sin_clasificar=True`` es el fallback donde caen las materias que
+    no fueron asignadas a un grupo específico; sólo puede haber uno con
+    este flag en True (unicidad garantizada por el servicio).
+    """
+    __tablename__ = "grupo_materia"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    nombre: str = Field(min_length=1, unique=True, index=True)
+    modo: str = Field(default="DURO")  # "DURO" | "BLANDO"
+    es_sin_clasificar: bool = Field(default=False, index=True)
+
+
+class GrupoMateriaSedeDB(SQLModel, table=True):
+    """M:N ordenada entre ``GrupoMateriaDB`` y ``SedeDB``.
+
+    El campo ``orden`` define la posición de la sede dentro del grupo. Es
+    semánticamente significativo en modo ``BLANDO`` (0 = preferida,
+    resto = alternativas). En modo ``DURO`` la posición se conserva sólo
+    para display estable en la UI.
+    """
+    __tablename__ = "grupo_materia_sede"
+
+    grupo_id: str = Field(foreign_key="grupo_materia.id", primary_key=True)
+    sede_id: str = Field(foreign_key="sedes.id", primary_key=True)
+    orden: int = Field(default=0, ge=0)
 
 
 class AulaDB(SQLModel, table=True):
