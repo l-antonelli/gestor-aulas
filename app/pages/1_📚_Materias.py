@@ -91,6 +91,206 @@ def _render_laboratorios_editor(session, materia_codigo: str, key_prefix: str):
     else:
         st.caption(f"{len(current_set)} laboratorio(s) asociado(s). Sin cambios.")
 
+@st.dialog("Eliminar materia", width="large")
+def _dialog_eliminar_materia(materia_codigo: str) -> None:
+    """Popup modal para confirmar la eliminación de una materia.
+
+    Se abre con ``_dialog_eliminar_materia(codigo)`` desde el botón
+    🗑️ Eliminar del expander de la materia. Al cerrar (con Confirmar,
+    Cancelar, Archivar o presionando ESC), Streamlit devuelve el
+    control al render de fondo — que preserva filtros, página actual
+    y estado de los expanders porque no hubo `st.rerun()` en la vista
+    de fondo.
+    """
+    with next(get_session()) as _sess:
+        _materia_row = materia_service.get(_sess, materia_codigo)
+        _nombre_display = (
+            _materia_row.nombre if _materia_row else "?"
+        )
+        st.markdown(
+            f"### Eliminar materia: `{materia_codigo}` — "
+            f"{_nombre_display}"
+        )
+
+        impacto = materia_service.contar_impacto_borrado(
+            _sess, materia_codigo,
+        )
+        if not impacto.get("existe"):
+            st.error(
+                f"La materia '{materia_codigo}' ya no existe."
+            )
+            return
+
+        # --- Sugerencia de archivar si fue válida ---
+        _n_ih = impacto["inscripciones_historicas"]["n"]
+        _n_cl_ejec = impacto["clases"]["ejecutadas"]
+        _n_pe = impacto["planes_estudio"]["n"]
+        _fue_valida = (
+            _n_ih > 0 or _n_cl_ejec > 0 or _n_pe > 0
+        )
+        if (
+            _fue_valida
+            and _materia_row is not None
+            and _materia_row.active
+        ):
+            st.info(
+                "💡 **Esta materia fue válida en algún momento** "
+                "(aparece en planes de estudio, tiene inscripciones "
+                "históricas o clases ejecutadas). Si sólo querés que "
+                "deje de aparecer en cronogramas y filtros activos, "
+                "**conviene archivarla** en lugar de borrarla: "
+                "preserva el historial sin ocupar espacio en las "
+                "vistas activas.\n\n"
+                "El borrado se recomienda **sólo** para materias "
+                "creadas por error o comodines que nunca se usaron "
+                "en la práctica."
+            )
+            _c_arch, _c_seguir = st.columns([2, 1])
+            with _c_arch:
+                if st.button(
+                    "📦 Archivar en su lugar",
+                    type="primary",
+                    key=f"dlg_archive_{materia_codigo}",
+                    use_container_width=True,
+                    help=(
+                        "Marca la materia como inactiva "
+                        "(active=False). Se conserva el historial y "
+                        "deja de aparecer en filtros y cronogramas "
+                        "activos."
+                    ),
+                ):
+                    try:
+                        _mat_dom = materia_service.get(
+                            _sess, materia_codigo,
+                        )
+                        if _mat_dom is not None:
+                            _upd = _mat_dom.model_copy(
+                                update={"active": False},
+                            )
+                            materia_service.update(_sess, _upd)
+                            st.toast("📦 Materia archivada.")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al archivar: {e}")
+            with _c_seguir:
+                st.caption(
+                    "_(Si estás seguro que querés borrarla igual, "
+                    "seguí abajo.)_"
+                )
+            st.divider()
+
+        # --- Bullets con el impacto ---
+        _bullets: list[str] = []
+        _n_dic = impacto["dictados"]["n"]
+        if _n_dic:
+            _bullets.append(f"- **{_n_dic}** dictado(s)")
+        _n_com = impacto["comisiones"]["n"]
+        if _n_com:
+            _bullets.append(f"- **{_n_com}** comisión(es)")
+        _n_hor = impacto["horarios"]["n"]
+        if _n_hor:
+            _bullets.append(f"- **{_n_hor}** horario(s)")
+        _n_cl = impacto["clases"]["n"]
+        if _n_cl:
+            _extra = (
+                f" ({_n_cl_ejec} ya ejecutada(s))"
+                if _n_cl_ejec else ""
+            )
+            _bullets.append(
+                f"- **{_n_cl}** clase(s) generada(s){_extra}"
+            )
+        _carr = impacto["planes_estudio"]["carreras"]
+        if _n_pe:
+            _bullets.append(
+                f"- **{_n_pe}** vínculo(s) con planes de estudio "
+                f"({', '.join(_carr) if _carr else '—'})"
+            )
+        _n_lab = impacto["labs_compatibles"]["n"]
+        if _n_lab:
+            _bullets.append(
+                f"- **{_n_lab}** laboratorio(s) asociado(s)"
+            )
+        _n_cor = impacto["correlativas"]["n"]
+        if _n_cor:
+            _bullets.append(
+                f"- **{_n_cor}** correlativa(s) que referencian a "
+                "la materia"
+            )
+        if _n_ih:
+            _bullets.append(
+                f"- **{_n_ih}** registro(s) de inscripciones "
+                "históricas"
+            )
+        _n_fc = impacto["forecast_configs"]["n"]
+        if _n_fc:
+            _bullets.append(
+                f"- **{_n_fc}** configuración(es) de forecast"
+            )
+        _n_se = impacto["schedule_entries"]["n"]
+        if _n_se:
+            _bullets.append(
+                f"- **{_n_se}** entrada(s) en cronogramas cargados"
+            )
+
+        if _bullets:
+            st.warning(
+                "⚠️ Se van a eliminar en cascada las siguientes "
+                "entidades asociadas:\n\n"
+                + "\n".join(_bullets)
+            )
+            if _n_cl_ejec:
+                st.error(
+                    f"⚠️ **{_n_cl_ejec} clase(s) ya ejecutada(s)** "
+                    "también se van a borrar. Esto elimina el "
+                    "historial correspondiente. Considerá archivar "
+                    "la materia si necesitás preservar el registro."
+                )
+        else:
+            st.info(
+                "Esta materia no tiene entidades asociadas — se "
+                "borra sólo del catálogo."
+            )
+
+        # --- Detalle opcional ---
+        if _n_dic or _n_com:
+            with st.expander("🔍 Ver detalle", expanded=False):
+                if _n_dic:
+                    st.markdown("**Dictados a borrar:**")
+                    for cod in impacto["dictados"]["codigos"]:
+                        st.markdown(f"- `{cod}`")
+                if _n_com:
+                    st.markdown("**Comisiones a borrar:**")
+                    for d in impacto["comisiones"]["detalles"]:
+                        st.markdown(f"- {d}")
+
+        st.caption("**Esta acción no se puede deshacer.**")
+
+        # --- Acciones ---
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button(
+                "🗑️ Confirmar eliminación",
+                type="primary",
+                key=f"dlg_confirm_del_{materia_codigo}",
+                use_container_width=True,
+            ):
+                try:
+                    if materia_service.delete(_sess, materia_codigo):
+                        st.toast("✅ Materia eliminada.")
+                        st.rerun()
+                    else:
+                        st.error("No se pudo eliminar")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        with col_cancel:
+            if st.button(
+                "Cancelar",
+                key=f"dlg_cancel_del_{materia_codigo}",
+                use_container_width=True,
+            ):
+                st.rerun()
+
+
 # Initialize database
 init_db()
 
@@ -338,227 +538,6 @@ def render_custom_materia_page():
                         del st.session_state["edit_materia"]
                         st.rerun()
 
-                # --- Delete confirmation ---
-                elif "delete_materia" in st.session_state:
-                    materia_codigo = st.session_state["delete_materia"]
-                    _materia_row = materia_service.get(
-                        session, materia_codigo,
-                    )
-                    _nombre_display = (
-                        _materia_row.nombre if _materia_row else "?"
-                    )
-                    st.subheader(
-                        f"Eliminar Materia: {materia_codigo} — "
-                        f"{_nombre_display}"
-                    )
-
-                    impacto = materia_service.contar_impacto_borrado(
-                        session, materia_codigo,
-                    )
-                    if not impacto.get("existe"):
-                        st.error(
-                            f"La materia '{materia_codigo}' ya no existe."
-                        )
-                        del st.session_state["delete_materia"]
-                        st.rerun()
-
-                    # Sugerencia: si la materia fue válida alguna vez
-                    # (tiene inscripciones históricas, clases
-                    # ejecutadas o participó en un plan de estudio),
-                    # sugerir archivar antes de borrar. Sólo se
-                    # deberían borrar materias que se crearon mal o
-                    # de más (comodín / fantasma).
-                    _n_ih = impacto["inscripciones_historicas"]["n"]
-                    _n_cl_ejec = impacto["clases"]["ejecutadas"]
-                    _n_pe = impacto["planes_estudio"]["n"]
-                    _fue_valida = (
-                        _n_ih > 0 or _n_cl_ejec > 0 or _n_pe > 0
-                    )
-                    if (
-                        _fue_valida
-                        and _materia_row is not None
-                        and _materia_row.active
-                    ):
-                        st.info(
-                            "💡 **Esta materia fue válida en algún "
-                            "momento** (aparece en planes de estudio, "
-                            "tiene inscripciones históricas o clases "
-                            "ejecutadas). Si sólo querés que deje de "
-                            "aparecer en cronogramas y filtros "
-                            "activos, **conviene archivarla** en "
-                            "lugar de borrarla: preserva el historial "
-                            "sin ocupar espacio en las vistas activas.\n\n"
-                            "El borrado se recomienda **sólo** para "
-                            "materias creadas por error o comodines "
-                            "que nunca se usaron en la práctica "
-                            "(por ejemplo espacios curriculares "
-                            "flexibles que no interesan)."
-                        )
-                        _c_arch, _c_seguir = st.columns(2)
-                        with _c_arch:
-                            if st.button(
-                                "📦 Archivar en su lugar",
-                                type="primary",
-                                key=f"archive_instead_{materia_codigo}",
-                                use_container_width=True,
-                                help=(
-                                    "Marca la materia como inactiva "
-                                    "(active=False). Se conserva el "
-                                    "historial y deja de aparecer en "
-                                    "filtros y cronogramas activos."
-                                ),
-                            ):
-                                try:
-                                    _mat_dom = materia_service.get(
-                                        session, materia_codigo,
-                                    )
-                                    if _mat_dom is not None:
-                                        _upd = _mat_dom.model_copy(
-                                            update={"active": False},
-                                        )
-                                        materia_service.update(
-                                            session, _upd,
-                                        )
-                                        st.toast(
-                                            "📦 Materia archivada."
-                                        )
-                                        del st.session_state[
-                                            "delete_materia"
-                                        ]
-                                        st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al archivar: {e}")
-                        with _c_seguir:
-                            st.caption(
-                                "_(Si estás seguro que querés "
-                                "borrarla igual, seguí abajo.)_"
-                            )
-                        st.divider()
-
-                    # Bullets con el impacto.
-                    _bullets: list[str] = []
-                    _n_dic = impacto["dictados"]["n"]
-                    if _n_dic:
-                        _bullets.append(f"- **{_n_dic}** dictado(s)")
-                    _n_com = impacto["comisiones"]["n"]
-                    if _n_com:
-                        _bullets.append(f"- **{_n_com}** comisión(es)")
-                    _n_hor = impacto["horarios"]["n"]
-                    if _n_hor:
-                        _bullets.append(f"- **{_n_hor}** horario(s)")
-                    _n_cl = impacto["clases"]["n"]
-                    _n_cl_ejec = impacto["clases"]["ejecutadas"]
-                    if _n_cl:
-                        _extra = (
-                            f" ({_n_cl_ejec} ya ejecutada(s))"
-                            if _n_cl_ejec else ""
-                        )
-                        _bullets.append(
-                            f"- **{_n_cl}** clase(s) generada(s){_extra}"
-                        )
-                    _n_pe = impacto["planes_estudio"]["n"]
-                    _carr = impacto["planes_estudio"]["carreras"]
-                    if _n_pe:
-                        _bullets.append(
-                            f"- **{_n_pe}** vínculo(s) con planes de "
-                            f"estudio ({', '.join(_carr) if _carr else '—'})"
-                        )
-                    _n_lab = impacto["labs_compatibles"]["n"]
-                    if _n_lab:
-                        _bullets.append(
-                            f"- **{_n_lab}** laboratorio(s) asociado(s)"
-                        )
-                    _n_cor = impacto["correlativas"]["n"]
-                    if _n_cor:
-                        _bullets.append(
-                            f"- **{_n_cor}** correlativa(s) que "
-                            "referencian a la materia"
-                        )
-                    _n_ih = impacto["inscripciones_historicas"]["n"]
-                    if _n_ih:
-                        _bullets.append(
-                            f"- **{_n_ih}** registro(s) de "
-                            "inscripciones históricas"
-                        )
-                    _n_fc = impacto["forecast_configs"]["n"]
-                    if _n_fc:
-                        _bullets.append(
-                            f"- **{_n_fc}** configuración(es) de "
-                            "forecast"
-                        )
-                    _n_se = impacto["schedule_entries"]["n"]
-                    if _n_se:
-                        _bullets.append(
-                            f"- **{_n_se}** entrada(s) en cronogramas "
-                            "cargados"
-                        )
-
-                    if _bullets:
-                        st.warning(
-                            "⚠️ Se van a eliminar en cascada las "
-                            "siguientes entidades asociadas:\n\n"
-                            + "\n".join(_bullets)
-                        )
-                        # Advertencia extra si hay clases ejecutadas.
-                        if _n_cl_ejec:
-                            st.error(
-                                f"⚠️ **{_n_cl_ejec} clase(s) ya "
-                                "ejecutada(s)** también se van a "
-                                "borrar. Esto elimina el historial "
-                                "correspondiente. Considerá archivar "
-                                "la materia (`active=False`) en vez "
-                                "de eliminarla si necesitás preservar "
-                                "el registro."
-                            )
-                    else:
-                        st.info(
-                            "Esta materia no tiene entidades "
-                            "asociadas — se borra sólo del catálogo."
-                        )
-
-                    # Expander con detalle opcional.
-                    if _n_dic or _n_com:
-                        with st.expander(
-                            "🔍 Ver detalle",
-                            expanded=False,
-                        ):
-                            if _n_dic:
-                                st.markdown("**Dictados a borrar:**")
-                                for cod in impacto["dictados"]["codigos"]:
-                                    st.markdown(f"- `{cod}`")
-                            if _n_com:
-                                st.markdown("**Comisiones a borrar:**")
-                                for d in impacto["comisiones"]["detalles"]:
-                                    st.markdown(f"- {d}")
-
-                    st.caption(
-                        "**Esta acción no se puede deshacer.**"
-                    )
-
-                    col_confirm, col_cancel = st.columns(2)
-                    with col_confirm:
-                        if st.button(
-                            "🗑️ Confirmar eliminación",
-                            type="primary",
-                            use_container_width=True,
-                        ):
-                            try:
-                                if materia_service.delete(session, materia_codigo):
-                                    st.toast("✅ Materia eliminada.")
-                                    del st.session_state["delete_materia"]
-                                    st.rerun()
-                                else:
-                                    st.error("No se pudo eliminar")
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                    with col_cancel:
-                        if st.button(
-                            "Cancelar",
-                            use_container_width=True,
-                        ):
-                            del st.session_state["delete_materia"]
-                            st.rerun()
-
                 # --- Normal list view ---
                 else:
                     # -------------------------------------------------
@@ -753,10 +732,9 @@ def render_custom_materia_page():
                                         key=f"delete_{materia.codigo}",
                                         width="stretch",
                                     ):
-                                        st.session_state["delete_materia"] = (
-                                            materia.codigo
+                                        _dialog_eliminar_materia(
+                                            materia.codigo,
                                         )
-                                        st.rerun()
 
             except Exception as e:
                 st.error(f"Error al cargar materias: {e}")
