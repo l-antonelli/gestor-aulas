@@ -243,10 +243,14 @@ def _render_editor_grupo(
     carrera_codigo_by_nombre = {c.nombre: c.codigo for c in carreras_db}
 
     # -------------------------------------------------------------
-    # Metadata (nombre + carreras asociadas)
+    # Editor unificado en un solo contenedor con divisores internos.
+    # Metadata / DURO / BLANDO conviven en un mismo bloque para no
+    # dispersar visualmente. Acciones al pie sin container extra.
+    # El chequeo de consistencia queda debajo, en su propio bloque.
     # -------------------------------------------------------------
     with st.container(border=True):
         st.markdown(f"### Editar grupo: **{grupo.nombre}**")
+        # -- Metadata --
         nombre_edit = st.text_input(
             "Nombre",
             value=grupo.nombre,
@@ -279,10 +283,8 @@ def _render_editor_grupo(
             for n in carreras_seleccionadas_names
         ]
 
-    # -------------------------------------------------------------
-    # Sedes admisibles (modo DURO)
-    # -------------------------------------------------------------
-    with st.container(border=True):
+        st.divider()
+        # -- Sedes admisibles (modo DURO) --
         st.markdown("#### 🔒 Sedes admisibles (modo DURO)")
         st.caption(
             "Cuando el asignador corre este grupo en modo DURO, sólo "
@@ -304,10 +306,8 @@ def _render_editor_grupo(
             sede_id_by_nombre[n] for n in duras_edit_names
         ]
 
-    # -------------------------------------------------------------
-    # Sedes preferidas (modo BLANDO) — lista ordenada
-    # -------------------------------------------------------------
-    with st.container(border=True):
+        st.divider()
+        # -- Sedes preferidas (modo BLANDO) — lista ordenada --
         st.markdown("#### 🎯 Sedes preferidas (modo BLANDO)")
         st.caption(
             "Cuando el asignador corre este grupo en modo BLANDO, la "
@@ -400,10 +400,8 @@ def _render_editor_grupo(
         else:
             st.caption("Todas las sedes ya están en la lista.")
 
-    # -------------------------------------------------------------
-    # Acciones (guardar / descartar / borrar)
-    # -------------------------------------------------------------
-    with st.container(border=True):
+        st.divider()
+        # -- Acciones al pie --
         col_save, col_reset, col_delete = st.columns([2, 1, 1])
         with col_save:
             if st.button(
@@ -468,7 +466,7 @@ def _render_editor_grupo(
                     st.error(str(e))
 
     # -------------------------------------------------------------
-    # Chequeo de consistencia
+    # Chequeo de consistencia (fuera del editor unificado)
     # -------------------------------------------------------------
     _render_chequeo_consistencia(session, grupo, carreras_db)
 
@@ -601,10 +599,10 @@ def _render_reasignacion_materias(
     with st.container(border=True):
         st.markdown("### Reasignar materias")
         st.caption(
-            "Elegí en cada fila el grupo de destino y presioná "
-            "'Guardar cambios'. Los filtros permiten acotar la lista "
-            "rápido — sobre todo el filtro por ubicación curricular "
-            "y por atributos."
+            "Filtrá el conjunto de materias con los controles de abajo. "
+            "Después podés reasignar **todas las que coinciden** desde "
+            "el bloque **Acciones**, o **una por una** con el botón "
+            "'Reasignar' de cada fila."
         )
 
         # ---------------------------------------------------
@@ -643,11 +641,24 @@ def _render_reasignacion_materias(
 
             # 2. Atributos de la materia.
             with st.expander("🏷️ Atributos", expanded=False):
+                # Lista de grupos SIN el "Sin clasificar" (que aparece
+                # explícito arriba como opción "Sólo Sin clasificar") —
+                # así evitamos que "Sin clasificar" figure dos veces.
+                grupos_ordenados_para_filtro = sorted(
+                    (g for g in grupos if not g.es_sin_clasificar),
+                    key=lambda x: x.nombre,
+                )
                 sel_grupo_actual = st.selectbox(
                     "Grupo actual",
-                    options=["Todos", "Sólo Sin clasificar", "Sin grupo"]
-                    + [g.nombre for g in sorted(grupos, key=lambda x: x.nombre)],
+                    options=["Todos", "Sólo Sin clasificar"]
+                    + [g.nombre for g in grupos_ordenados_para_filtro],
                     key="filtro_grupo_actual",
+                    help=(
+                        "Filtra materias por el grupo al que están "
+                        "asignadas hoy. 'Sólo Sin clasificar' es el "
+                        "atajo para atacar el backlog de materias sin "
+                        "grupo real."
+                    ),
                 )
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
@@ -718,6 +729,14 @@ def _render_reasignacion_materias(
             f"**{len(materias_filtradas)} materia(s)** que coinciden."
         )
 
+        # ---------------------------------------------------
+        # Acciones masivas sobre el resultado filtrado
+        # ---------------------------------------------------
+        _render_acciones_masivas(session, materias_filtradas, grupos)
+
+        # ---------------------------------------------------
+        # Tabla (con botón Reasignar por fila)
+        # ---------------------------------------------------
         _render_tabla_reasignacion(session, materias_filtradas, grupos)
 
 
@@ -805,8 +824,6 @@ def _aplicar_filtros(
             ]
         except ValueError:
             all_materias = []
-    elif grupo_actual_filtro == "Sin grupo":
-        all_materias = [m for m in all_materias if not m.grupo_id]
     elif grupo_actual_filtro != "Todos":
         target = next(
             (g for g in grupos if g.nombre == grupo_actual_filtro), None,
@@ -876,20 +893,198 @@ def _aplicar_filtros(
     return all_materias
 
 
-def _render_tabla_reasignacion(
+def _render_acciones_masivas(
     session: Session,
+    materias_filtradas: list[MateriaDB],
+    grupos: list[GrupoMateriaDB],
+) -> None:
+    """Sección 'Acciones' para reasignar en batch todas las materias
+    filtradas a un grupo destino. Flujo de dos pasos: primer click
+    muestra un aviso de confirmación; segundo click aplica."""
+    with st.container(border=True):
+        st.markdown("**⚡ Acciones**")
+        st.caption(
+            "Aplicá el mismo grupo destino a **todas las materias "
+            "que coinciden con los filtros** en un solo click."
+        )
+        grupos_ord = sorted(
+            grupos,
+            key=lambda g: (
+                0 if g.es_sin_clasificar else 1, g.nombre.lower(),
+            ),
+        )
+        grupo_labels_by_id = {
+            g.id: (
+                f"⚠️ {g.nombre}"
+                if g.es_sin_clasificar
+                else f"📦 {g.nombre}"
+            )
+            for g in grupos_ord
+        }
+
+        col_dest, col_btn = st.columns([3, 2])
+        with col_dest:
+            destino_id = st.selectbox(
+                "Grupo destino",
+                options=[g.id for g in grupos_ord],
+                format_func=lambda gid: (
+                    grupo_labels_by_id.get(gid) or str(gid)
+                ),
+                key="acciones_masivas_destino",
+                label_visibility="collapsed",
+            )
+
+        confirm_key = "acciones_masivas_confirmando"
+        confirmando = st.session_state.get(confirm_key, False)
+
+        with col_btn:
+            label = (
+                f"⚠️ Confirmar ({len(materias_filtradas)})"
+                if confirmando else
+                f"🚀 Reasignar {len(materias_filtradas)} materia(s)"
+            )
+            btn_type = "primary" if confirmando else "secondary"
+            if st.button(
+                label,
+                type=btn_type,
+                key="acciones_masivas_btn",
+                use_container_width=True,
+                disabled=not destino_id or not materias_filtradas,
+            ):
+                if not confirmando:
+                    st.session_state[confirm_key] = True
+                    st.rerun()
+                else:
+                    _aplicar_reasignacion_masiva(
+                        session, materias_filtradas, destino_id,
+                    )
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
+
+        if confirmando:
+            destino = next(
+                (g for g in grupos_ord if g.id == destino_id), None,
+            )
+            destino_nombre = destino.nombre if destino else "?"
+            st.warning(
+                f"Vas a mover **{len(materias_filtradas)} materia(s)** "
+                f"al grupo **{destino_nombre}**. "
+                "Presioná de nuevo el botón para confirmar."
+            )
+            if st.button(
+                "↺ Cancelar",
+                key="acciones_masivas_cancel",
+            ):
+                st.session_state.pop(confirm_key, None)
+                st.rerun()
+
+
+def _aplicar_reasignacion_masiva(
+    session: Session,
+    materias: list[MateriaDB],
+    destino_grupo_id: str,
+) -> None:
+    """Aplica reasignación masiva y muestra toast con el resultado."""
+    n_ok = 0
+    n_skip = 0
+    errores: list[str] = []
+    for m in materias:
+        if m.grupo_id == destino_grupo_id:
+            n_skip += 1
+            continue
+        try:
+            asignar_materia_a_grupo(session, m.codigo, destino_grupo_id)
+            n_ok += 1
+        except ValueError as e:
+            errores.append(f"{m.codigo}: {e}")
+    if errores:
+        st.error(
+            f"{len(errores)} error(es): " + "; ".join(errores[:5])
+        )
+    if n_ok:
+        msg = f"{n_ok} materia(s) reasignada(s)."
+        if n_skip:
+            msg += f" ({n_skip} ya estaban en el destino.)"
+        st.toast(msg)
+    elif n_skip and not errores:
+        st.toast(
+            f"Todas las {n_skip} materia(s) ya estaban en el destino."
+        )
+
+
+@st.dialog("Reasignar materia a otro grupo")
+def _dialog_reasignar_materia(
+    materia_codigo: str,
+    materia_nombre: str,
+    grupo_actual_nombre: str | None,
+    grupos: list[GrupoMateriaDB],
+) -> None:
+    """Dialog puntual para reasignar una materia individual."""
+    st.markdown(f"**`{materia_codigo}`** — {materia_nombre}")
+    st.caption(
+        f"Grupo actual: **{grupo_actual_nombre or '—'}**. "
+        "Elegí el grupo destino:"
+    )
+    grupos_ord = sorted(
+        grupos,
+        key=lambda g: (
+            0 if g.es_sin_clasificar else 1, g.nombre.lower(),
+        ),
+    )
+    labels = [
+        (
+            f"⚠️ {g.nombre}"
+            if g.es_sin_clasificar else f"📦 {g.nombre}"
+        )
+        for g in grupos_ord
+    ]
+    destino_idx = st.selectbox(
+        "Grupo destino",
+        options=list(range(len(labels))),
+        format_func=lambda i: labels[i],
+        key=f"dialog_reasign_dest_{materia_codigo}",
+    )
+    destino_grupo = grupos_ord[destino_idx] if grupos_ord else None
+    c_ok, c_cancel = st.columns(2)
+    with c_ok:
+        if st.button(
+            "💾 Confirmar",
+            type="primary",
+            key=f"dialog_reasign_ok_{materia_codigo}",
+            use_container_width=True,
+            disabled=not destino_grupo,
+        ):
+            from src.database.connection import get_session
+            with next(get_session()) as _sess:
+                try:
+                    asignar_materia_a_grupo(
+                        _sess, materia_codigo, destino_grupo.id,  # type: ignore[union-attr]
+                    )
+                    st.toast(
+                        f"{materia_codigo} → "
+                        f"{destino_grupo.nombre}."  # type: ignore[union-attr]
+                    )
+                except ValueError as e:
+                    st.error(str(e))
+                    return
+            st.rerun()
+    with c_cancel:
+        if st.button(
+            "↺ Cancelar",
+            key=f"dialog_reasign_cancel_{materia_codigo}",
+            use_container_width=True,
+        ):
+            st.rerun()
+
+
+def _render_tabla_reasignacion(
+    session: Session,  # noqa: ARG001 (los botones abren un dialog con su propia session)
     materias: list[MateriaDB],
     grupos: list[GrupoMateriaDB],
 ) -> None:
-    """Renderiza la tabla + form de reasignación."""
+    """Tabla de materias filtradas con un botón 'Reasignar' por fila
+    que abre un dialog para elegir el grupo destino puntual."""
     grupo_id_to_grupo = {g.id: g for g in grupos}
-    grupo_nombres = [g.nombre for g in sorted(grupos, key=lambda x: x.nombre)]
-    grupo_nombre_to_id = {g.nombre: g.id for g in grupos}
-
-    pending_key = "materias_reasignacion_pending"
-    pending: dict[str, str] = st.session_state.setdefault(
-        pending_key, {}
-    )
 
     CAP_MOSTRAR = 200
     if len(materias) > CAP_MOSTRAR:
@@ -899,66 +1094,34 @@ def _render_tabla_reasignacion(
         )
     a_mostrar = materias[:CAP_MOSTRAR]
 
-    with st.form(key="form_reasignar_materias"):
-        h1, h2, h3, h4 = st.columns([1, 3, 2, 2])
+    with st.container(border=True):
+        h1, h2, h3, h4 = st.columns([1, 3, 2, 1])
         h1.markdown("**Código**")
         h2.markdown("**Nombre**")
         h3.markdown("**Grupo actual**")
-        h4.markdown("**Grupo nuevo**")
+        h4.markdown("**Acciones**")
 
         for m in a_mostrar:
-            c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
+            c1, c2, c3, c4 = st.columns([1, 3, 2, 1])
             c1.markdown(f"`{m.codigo}`")
             c2.write(m.nombre)
             gactual = (
                 grupo_id_to_grupo.get(m.grupo_id) if m.grupo_id else None
             )
-            gactual_nombre = gactual.nombre if gactual else "—"
-            c3.write(gactual_nombre)
-            default_idx = 0
-            if m.grupo_id and gactual:
-                try:
-                    default_idx = grupo_nombres.index(gactual.nombre)
-                except ValueError:
-                    default_idx = 0
-            nuevo = c4.selectbox(
-                f"grupo_{m.codigo}",
-                options=grupo_nombres,
-                index=default_idx,
-                key=f"reasign_{m.codigo}",
-                label_visibility="collapsed",
-            )
-            nuevo_id = grupo_nombre_to_id.get(nuevo)
-            if nuevo_id and nuevo_id != m.grupo_id:
-                pending[m.codigo] = nuevo_id
-            elif m.codigo in pending and nuevo_id == m.grupo_id:
-                pending.pop(m.codigo, None)
-
-        submit = st.form_submit_button(
-            f"💾 Guardar cambios ({len(pending)} pendiente(s))",
-            type="primary",
-            disabled=len(pending) == 0,
-        )
-        if submit and pending:
-            n_ok = 0
-            errores: list[str] = []
-            for materia_codigo, nuevo_gid in list(pending.items()):
-                try:
-                    asignar_materia_a_grupo(
-                        session, materia_codigo, nuevo_gid,
-                    )
-                    n_ok += 1
-                except ValueError as e:
-                    errores.append(f"{materia_codigo}: {e}")
-            if errores:
-                st.error(
-                    f"{len(errores)} error(es): "
-                    + "; ".join(errores[:5])
+            c3.write(gactual.nombre if gactual else "—")
+            if c4.button(
+                "🔀 Reasignar",
+                key=f"reasign_btn_{m.codigo}",
+                use_container_width=True,
+            ):
+                _dialog_reasignar_materia(
+                    materia_codigo=m.codigo,
+                    materia_nombre=m.nombre,
+                    grupo_actual_nombre=(
+                        gactual.nombre if gactual else None
+                    ),
+                    grupos=grupos,
                 )
-            if n_ok:
-                st.success(f"{n_ok} materia(s) reasignada(s).")
-            st.session_state[pending_key] = {}
-            st.rerun()
 
 
 # =============================================================================

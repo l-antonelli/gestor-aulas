@@ -217,6 +217,56 @@ def render_custom_materia_page():
                                     else (True if _rec_choice == _rec_options[1] else False)
                                 )
 
+                                # Selector de Grupo de materias.
+                                # La materia siempre pertenece a un grupo
+                                # (partición estricta). Mostrar el actual
+                                # como default y permitir moverla a otro.
+                                from src.services.grupo_materia_service import (
+                                    asignar_materia_a_grupo as _asignar_mat_grupo,
+                                    list_grupos as _list_grupos_ui,
+                                )
+                                _grupos_ui = sorted(
+                                    _list_grupos_ui(session),
+                                    key=lambda g: (
+                                        0 if g.es_sin_clasificar else 1,
+                                        g.nombre.lower(),
+                                    ),
+                                )
+                                _grupo_labels = [
+                                    (
+                                        f"⚠️ {g.nombre}"
+                                        if g.es_sin_clasificar
+                                        else f"📦 {g.nombre}"
+                                    )
+                                    for g in _grupos_ui
+                                ]
+                                _existing_grupo_id = getattr(
+                                    existing_materia, "grupo_id", None,
+                                )
+                                _grupo_idx_default = 0
+                                for _i, _g in enumerate(_grupos_ui):
+                                    if _g.id == _existing_grupo_id:
+                                        _grupo_idx_default = _i
+                                        break
+                                _grupo_choice_idx = st.selectbox(
+                                    "Grupo de materias",
+                                    options=list(range(len(_grupo_labels))),
+                                    format_func=lambda i: _grupo_labels[i],
+                                    index=_grupo_idx_default,
+                                    key=f"edit_{materia_codigo}_grupo",
+                                    help=(
+                                        "Determina qué sedes son admisibles "
+                                        "para esta materia (R10 / R12 del "
+                                        "asignador). La configuración de "
+                                        "cada grupo se edita en la "
+                                        "pestaña 'Grupos de materias'."
+                                    ),
+                                )
+                                _grupo_id_elegido = (
+                                    _grupos_ui[_grupo_choice_idx].id
+                                    if _grupos_ui else None
+                                )
+
                                 col_submit, col_cancel = st.columns(2)
                                 with col_submit:
                                     submitted = st.form_submit_button("Guardar", type="primary")
@@ -247,6 +297,16 @@ def render_custom_materia_page():
                                             try:
                                                 updated = materia_service.update(session, Materia(**form_data))
                                                 if updated:
+                                                    # Reasignar grupo si cambió.
+                                                    if (
+                                                        _grupo_id_elegido
+                                                        and _grupo_id_elegido != _existing_grupo_id
+                                                    ):
+                                                        _asignar_mat_grupo(
+                                                            session,
+                                                            materia_codigo,
+                                                            _grupo_id_elegido,
+                                                        )
                                                     st.success("Materia actualizada")
                                                     del st.session_state["edit_materia"]
                                                     st.rerun()

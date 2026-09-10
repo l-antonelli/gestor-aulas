@@ -52,7 +52,58 @@ class MateriaFormRenderer:
                 exclude_fields=all_exclude,
                 custom_labels=custom_labels,
             )
-            
+
+            # Selector de Grupo de materias. La materia siempre
+            # pertenece a un grupo (partición estricta). Default: el
+            # grupo 'Sin clasificar' para que la creación sea rápida.
+            from src.services.grupo_materia_service import (
+                get_grupo_sin_clasificar as _get_sc,
+                list_grupos as _list_grupos_form,
+            )
+            _grupos_form = sorted(
+                _list_grupos_form(session),
+                key=lambda g: (
+                    0 if g.es_sin_clasificar else 1,
+                    g.nombre.lower(),
+                ),
+            )
+            _grupo_labels_form = [
+                (
+                    f"⚠️ {g.nombre}"
+                    if g.es_sin_clasificar
+                    else f"📦 {g.nombre}"
+                )
+                for g in _grupos_form
+            ]
+            try:
+                _sc_default = _get_sc(session)
+                _default_grupo_idx = next(
+                    (
+                        i for i, g in enumerate(_grupos_form)
+                        if g.id == _sc_default.id
+                    ),
+                    0,
+                )
+            except ValueError:
+                _default_grupo_idx = 0
+            _grupo_choice_idx_new = st.selectbox(
+                "Grupo de materias",
+                options=list(range(len(_grupo_labels_form))),
+                format_func=lambda i: _grupo_labels_form[i],
+                index=_default_grupo_idx,
+                key=f"{form_key}_grupo",
+                help=(
+                    "Grupo al que se asigna la materia (define sus "
+                    "sedes admisibles). Por default cae en 'Sin "
+                    "clasificar' y luego se puede reasignar desde la "
+                    "pestaña 'Grupos de materias'."
+                ),
+            )
+            _grupo_id_nuevo = (
+                _grupos_form[_grupo_choice_idx_new].id
+                if _grupos_form else None
+            )
+
             # Add carrera selection with year/semester using data_editor
             st.markdown("### Asignación de Carreras")
             st.caption("Debe asignar al menos una carrera especificando año y cuatrimestre")
@@ -205,6 +256,10 @@ class MateriaFormRenderer:
 
                 # Add carreras with details to form data
                 form_data["carrera_details"] = carrera_details
+                # Grupo elegido: se procesa post-create en
+                # `create_materia_with_carreras` para asignar la
+                # materia al grupo correspondiente.
+                form_data["_grupo_id_asignar"] = _grupo_id_nuevo
                 return form_data
         
         return None
@@ -336,12 +391,29 @@ class MateriaFormRenderer:
         try:
             # Extract carrera details from form data
             carrera_details = form_data.pop("carrera_details", [])
+            # Extract grupo elegido (asignación tras crear).
+            grupo_id_asignar = form_data.pop("_grupo_id_asignar", None)
 
             # Create materia instance
             materia = Materia(**form_data)
 
             # Create materia in database
             created_materia = materia_service.create(session, materia)
+
+            # Asignar al grupo elegido. Si el user no eligió, cae en
+            # el grupo 'Sin clasificar' vía resolver_grupo_de_materia
+            # cuando el LP corra por primera vez.
+            if created_materia and grupo_id_asignar:
+                from src.services.grupo_materia_service import (
+                    asignar_materia_a_grupo as _asig,
+                )
+                try:
+                    _asig(session, created_materia.codigo, grupo_id_asignar)
+                except ValueError:
+                    # Grupo desapareció entre form y submit — no
+                    # bloquea la creación de la materia. Cae en
+                    # Sin clasificar al primer acceso.
+                    pass
 
             # Set carrera associations with year/semester
             for detail in carrera_details:
