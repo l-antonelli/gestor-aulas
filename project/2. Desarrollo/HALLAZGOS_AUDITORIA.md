@@ -60,6 +60,7 @@ Convenciones:
 | H34 | 🟡 | ui-engañosa | El historial "Por entidad" tiene el limit hardcodeado a 50 sin indicador de "hay más" |
 | H35 | 🟡 | bug | Inscriptos: la sección "Asociar" del panel "Sin matchear" suma silenciosamente al valor previo del destino sin warning |
 | H36 | 🟡 | dx-hueco | Comisiones template quedan vivas con `schedule_id` a un ID inexistente si el cronograma se borra (no aparecen en listados pero siguen en la DB) |
+| H37 | 🔴 | bug | `MateriaDB.active=False` no se propaga: LP, factibilidad, dictados y `create_plan_version` incluyen materias inactivas en planes activos sin validación ni warning |
 
 ---
 
@@ -818,6 +819,136 @@ decisión)
 - **PQ07**: ¿por qué el override de recursado en la materia es un
   selectbox de 3 estados en vez de checkbox tri-state? Es
   funcionalmente correcto pero puede confundir.
+
+---
+
+## H37 — `MateriaDB.active=False` no se propaga a los flujos de negocio 🔴
+
+> Fecha del hallazgo: 2026-09-10.
+> Origen: auditoría dedicada tras el rediseño de grupos de materias y
+> la introducción de `PlanCarreraVersionDB.active`. Se detectó que el
+> flag `MateriaDB.active` opera hoy sólo como marca visual en la UI
+> de la lista de materias, y no participa de ninguna validación de
+> negocio ni de los flujos que consumen planes de estudio.
+
+### Regla de negocio a validar
+
+> "Lógicamente no debería haber una materia inactiva en el **plan
+> activo** de ninguna carrera. Las materias inactivas pueden aparecer
+> en planes inactivos (versiones históricas)."
+
+### Mapa del uso actual de `MateriaDB.active`
+
+Filtrado por `MateriaDB.active` — únicamente en la capa de UI:
+
+- `src/ui/materia_filters.py` — filtro de la grilla de materias con
+  opciones "Todas / Sólo activas / Sólo archivadas".
+- `app/pages/2_🏛️_Aulas.py:321` — dropdown de materias compatibles
+  con un laboratorio filtra por `active=True`.
+- `app/pages/6_📅_Cronogramas.py:53` — carga masiva inicial de
+  materias filtra por `active=True`.
+
+**Ningún filtro** en el service layer: ni en `dictado_service`, ni en
+`plan_validation_service`, ni en `cronograma_validation_service`, ni
+en `asignacion_aulas_service`, ni en `factibilidad_service`, ni en
+`grupo_materia_service`.
+
+### Violaciones potenciales identificadas
+
+1. **`PlanEstudioDB` en plan activo con materias inactivas**. No hay
+   constraint ni validación en `crud_services.MateriaService` que
+   impida agregar una materia inactiva a un plan activo, ni al
+   archivar una materia que ya está en un plan activo.
+2. **`create_plan_version()`** (`src/services/crud_services.py:1241+`)
+   copia todas las entradas de `PlanEstudioDB` de la versión fuente
+   sin filtrar por `active`. Una versión "limpia" hereda materias
+   archivadas.
+3. **LP** (`asignacion_aulas_service.build_inputs`) consume todas las
+   materias del plan sin filtrar. Si el plan del ciclo contiene una
+   materia inactiva, el LP le asigna aulas.
+4. **Factibilidad estructural** (`factibilidad_service.py`) y
+   **camino de cursada** (`_add_bloqueos_camino_cursada`) tampoco
+   filtran. Materias inactivas pueden inflar el pool de
+   combinaciones y generar warnings falsos o bloqueos espurios.
+5. **`sync_dictados_para_ciclo`** (`dictado_service.py:459+`) genera
+   y rastrea dictados para materias inactivas del plan.
+6. **Chequeo de consistencia por grupo**
+   (`grupo_materia_service.chequear_consistencia_grupo`) no
+   distingue materias activas vs inactivas al listar faltantes de
+   una carrera. Puede reportar warnings falsos por materias que
+   fueron archivadas pero siguen en el plan activo.
+
+### Propuestas priorizadas
+
+**🔴 Bloqueantes**
+
+1. **Función de validación global**: nueva
+   `chequear_consistencia_materias_activas(session)` en un módulo
+   `chequeo_consistencia_service.py`. Reporta:
+   - Materias inactivas presentes en algún plan activo (bug).
+   - Materias sin `grupo_id` (partición estricta rota).
+   - Materias inactivas sin grupo (info).
+   - Planes huérfanos.
+   Renderizada como semáforo en un panel "📋 Auditoría" en el
+   módulo Carreras o Planes.
+2. **Validación al archivar materia**: nuevo
+   `archivar_materia(session, materia_codigo)` que **bloquea** el
+   archivo si la materia está en un plan activo (opción A del
+   subagente). Alternativa B: limpieza automática de
+   `PlanEstudioDB` en planes activos. Preferimos A por ser más
+   explícita.
+3. **Filtrar `create_plan_version`**: al copiar desde una versión
+   previa, filtrar por `MateriaDB.active=True` y registrar las
+   materias descartadas en el log de cambio.
+
+**🟡 Importantes**
+
+4. **Validación al editar `PlanEstudioDB`**: dropdown de materias
+   filtrado por `active=True` al agregar materia a un plan
+   activo. Rechazo explícito en service layer.
+5. **Warning en LP y factibilidad**: cuando el plan del ciclo
+   contiene materias inactivas, agregar entrada a
+   `LPInputs.warnings` (no bloquear todavía — la propagación al
+   modelo se hace en Fase 2 con toggle explícito).
+
+**🟢 Opcionales**
+
+6. **Sync de dictados**: filtrar materias inactivas al calcular
+   el set de dictados a mantener para un ciclo.
+
+### Decisión sobre política de archivo
+
+Al archivar una materia que está en un plan activo, se considera
+más robusto **bloquear** la operación (opción A) que limpiar
+automáticamente el `PlanEstudioDB`. Esto obliga a que el usuario
+decida conscientemente qué plan sigue teniendo la materia, y evita
+borrados silenciosos. Cuando la materia está sólo en planes
+inactivos (versiones históricas), el archivo se permite sin
+observaciones porque se preserva el registro histórico.
+
+### Cómo retomar este hallazgo
+
+Ver también el TODO al final de este documento (sección
+**"TODOs priorizados para próximas sesiones"**). La implementación
+sugerida es en 3 tandas:
+
+1. Panel de auditoría + validación al archivar (bloqueantes 1 y 2).
+2. Filtrado en `create_plan_version` + validación al editar plan
+   (bloqueante 3 e importante 4).
+3. Warning en LP/factibilidad + sync de dictados (importantes 5 y
+   opcional 6).
+
+---
+
+## TODOs priorizados para próximas sesiones
+
+Backlog explícito para retomar sin necesidad de reconstruir el
+contexto. Cada ítem referencia el hallazgo que lo motiva.
+
+- [ ] **H37 · Materias inactivas** — implementar panel de auditoría
+  + validación al archivar + filtro en `create_plan_version` +
+  warning en LP/factibilidad. Ver detalle arriba y el reporte
+  original del subagente en la sesión del 2026-09-10.
 
 ---
 
