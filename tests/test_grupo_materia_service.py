@@ -379,7 +379,7 @@ class TestChequeoConsistencia:
     def test_sin_carreras_asociadas_devuelve_warning(self, session):
         _seed_sedes(session)
         g = create_grupo(session, "G", sedes_duras=["S1"])
-        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, warnings = chequear_consistencia_grupo(session, g.id)
         assert faltantes == []
         assert any("carreras asociadas" in w for w in warnings)
 
@@ -393,7 +393,7 @@ class TestChequeoConsistencia:
         g = create_grupo(
             session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
         )
-        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, warnings = chequear_consistencia_grupo(session, g.id)
         assert faltantes == []
         assert any(
             "no tiene ninguna versión de plan cargada" in w
@@ -410,7 +410,7 @@ class TestChequeoConsistencia:
         g = create_grupo(
             session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
         )
-        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, warnings = chequear_consistencia_grupo(session, g.id)
         # El fallback encuentra MA1 como exclusiva de A.
         assert {f.codigo for f in faltantes} == {"MA1"}
         # Warning explícito de que se está usando fallback.
@@ -429,7 +429,7 @@ class TestChequeoConsistencia:
         g_otro = create_grupo(session, "G_OTRO", sedes_duras=["S2"])
         asignar_materia_a_grupo(session, "MA1", g.id)
         asignar_materia_a_grupo(session, "MA2", g_otro.id)
-        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, warnings = chequear_consistencia_grupo(session, g.id)
         codigos_faltantes = {f.codigo for f in faltantes}
         # MA1 ya está en G → no faltante.
         # MA2 está en otro grupo → faltante.
@@ -447,7 +447,7 @@ class TestChequeoConsistencia:
         g = create_grupo(
             session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
         )
-        faltantes, _ = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, _ = chequear_consistencia_grupo(session, g.id)
         assert faltantes == []
 
     def test_multiples_carreras_asociadas(self, session):
@@ -460,9 +460,65 @@ class TestChequeoConsistencia:
             session, "G", sedes_duras=["S1"],
             carreras_asociadas=["A", "F"],
         )
-        faltantes, _ = chequear_consistencia_grupo(session, g.id)
+        faltantes, _ajenas, _ = chequear_consistencia_grupo(session, g.id)
         codigos = {f.codigo for f in faltantes}
         assert codigos == {"MA", "MF"}
+
+    def test_detecta_materia_ajena_con_sugerencia_univoca(self, session):
+        """MA está en el grupo G (asociado a A), pero en el plan
+        vigente sólo aparece en B (no A). Además, existe otro grupo
+        asociado a B → sugerencia unívoca de destino."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", [], activo=True)
+        self._seed_plan(session, "B", ["MA"], activo=True, plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        # Grupo destino sugerido.
+        g_b = create_grupo(
+            session, "G_B", sedes_duras=["S2"], carreras_asociadas=["B"],
+        )
+        # MA está en el grupo G "por error".
+        asignar_materia_a_grupo(session, "MA", g.id)
+
+        faltantes, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert faltantes == []
+        assert len(ajenas) == 1
+        assert ajenas[0].codigo == "MA"
+        assert ajenas[0].carreras_donde_aparece == ["B"]
+        assert ajenas[0].sugerencia_grupo_id == g_b.id
+        assert ajenas[0].sugerencia_grupo_nombre == "G_B"
+
+    def test_ajena_sin_sugerencia_cuando_hay_ambiguedad(self, session):
+        """MA aparece en el plan de B y de C, dos carreras distintas
+        y no asociadas al grupo → carreras_donde_aparece tiene 2 items,
+        sin sugerencia unívoca."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", [], activo=True)
+        self._seed_plan(session, "B", ["MA"], activo=True, plan_id="pv-B")
+        self._seed_plan(session, "C", ["MA"], activo=True, plan_id="pv-C")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        asignar_materia_a_grupo(session, "MA", g.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert len(ajenas) == 1
+        assert set(ajenas[0].carreras_donde_aparece) == {"B", "C"}
+        assert ajenas[0].sugerencia_grupo_id is None
+
+    def test_no_reporta_ajena_si_aparece_tambien_en_asociada(self, session):
+        """MA está en el grupo G (asociado a A) y aparece en el plan
+        de A y también de B. No es ajena porque aparece en carrera
+        asociada."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA"], activo=True)
+        self._seed_plan(session, "B", ["MA"], activo=True, plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        asignar_materia_a_grupo(session, "MA", g.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert ajenas == []
 
 
 class TestPlanActivo:

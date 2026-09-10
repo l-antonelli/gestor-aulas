@@ -58,7 +58,9 @@ class ConfigGrupo:
 @dataclass
 class MateriaFaltante:
     """Materia detectada por ``chequear_consistencia_grupo`` como
-    candidata a agregarse al grupo."""
+    candidata a agregarse al grupo: aparece en el plan vigente de al
+    menos una carrera asociada y **no aparece** en el plan vigente de
+    ninguna carrera no asociada."""
     codigo: str
     nombre: str
     carrera_codigo: str
@@ -66,6 +68,29 @@ class MateriaFaltante:
     cuatri: Optional[str]
     grupo_actual_id: Optional[str]
     grupo_actual_nombre: Optional[str]
+
+
+@dataclass
+class MateriaAjena:
+    """Materia que está en el grupo pero aparece en el plan vigente
+    de al menos una carrera **no asociada** al grupo, y **no aparece**
+    en el plan vigente de ninguna carrera asociada.
+
+    Semánticamente indica un error de clasificación: la materia
+    probablemente pertenece a otro grupo (transversal como FB/CE/FI,
+    o específicas de otra carrera).
+    """
+    codigo: str
+    nombre: str
+    # Carreras (no asociadas al grupo) donde SÍ aparece la materia
+    # en su plan vigente. Da pistas al operador sobre a qué grupo
+    # correspondería.
+    carreras_donde_aparece: list[str]
+    # Sugerencia de grupo destino, si es unívoca (aparece en el
+    # plan de una única carrera, y esa carrera tiene un grupo
+    # asociado que la contendría). None si no hay sugerencia clara.
+    sugerencia_grupo_id: Optional[str]
+    sugerencia_grupo_nombre: Optional[str]
 
 
 # =============================================================================
@@ -590,21 +615,23 @@ def set_plan_activo(
 def chequear_consistencia_grupo(
     session: Session,
     grupo_id: str,
-) -> tuple[list[MateriaFaltante], list[str]]:
-    """Chequea si el grupo tiene todas las materias exclusivas de sus
-    carreras asociadas.
+) -> tuple[list[MateriaFaltante], list["MateriaAjena"], list[str]]:
+    """Chequea la consistencia bidireccional del grupo contra los
+    planes vigentes de sus carreras asociadas.
 
-    Para cada carrera asociada:
+    Devuelve ``(faltantes, ajenas, warnings)``:
 
-    1. Toma el plan activo.
-    2. Toma las materias del plan.
-    3. Filtra: materias que pertenecen **exclusivamente** al plan
-       activo de esa carrera (no aparecen en el plan activo de
-       ninguna otra carrera).
-    4. Excluye las que ya están en el grupo.
-
-    Devuelve ``(faltantes, warnings)`` donde ``warnings`` son mensajes
-    útiles para la UI (por ej. "la carrera X no tiene plan activo").
+    - **faltantes**: materias que corresponderían al grupo pero
+      están en otro (o sin grupo). Detectadas por: aparecen en el
+      plan vigente de una carrera asociada, no aparecen en planes
+      vigentes de carreras no asociadas, y no están ya en el grupo.
+    - **ajenas**: materias que están en el grupo pero probablemente
+      no deberían — no aparecen en el plan vigente de ninguna
+      carrera asociada, y sí aparecen en el plan vigente de al
+      menos una carrera no asociada. Sugerencia de destino cuando
+      es unívoca.
+    - **warnings**: mensajes útiles para la UI (por ej. "la carrera
+      X no tiene plan activo, se usa fallback").
     """
     grupo = get_grupo(session, grupo_id)
     carreras_asociadas = list(session.exec(
@@ -619,7 +646,7 @@ def chequear_consistencia_grupo(
             "El grupo no tiene carreras asociadas. "
             "Asocialo a al menos una para poder chequear consistencia."
         )
-        return ([], warnings)
+        return ([], [], warnings)
 
     # Política global: usar el plan **vigente** (activo o, en su
     # defecto, el más reciente) — mismo criterio que aplican los
@@ -640,7 +667,7 @@ def chequear_consistencia_grupo(
             )
 
     if not planes_vigentes:
-        return ([], warnings)
+        return ([], [], warnings)
 
     # Índice: materia_codigo → set de carreras del grupo que la tienen
     # en su plan vigente.
@@ -715,7 +742,87 @@ def chequear_consistencia_grupo(
             continue
         vistas.add(m.codigo)
         dedup.append(m)
-    return (dedup, warnings)
+
+    # -----------------------------------------------------------------
+    # Materias AJENAS: están asignadas al grupo pero:
+    #   1. NO aparecen en el plan vigente de ninguna carrera asociada.
+    #   2. SÍ aparecen en el plan vigente de al menos una carrera no
+    #      asociada.
+    # Semánticamente indican que la materia está mal clasificada.
+    # -----------------------------------------------------------------
+    # Índice: materia_codigo → lista de carreras no asociadas donde
+    # aparece en el plan vigente. Reusa la query de arriba enriquecida
+    # con el detalle por carrera.
+    materia_a_carreras_no_asociadas: dict[str, list[str]] = {}
+    for cod in carreras_no_asociadas:
+        pv = get_plan_vigente(session, cod)
+        if pv is None:
+            continue
+        mcodigos = list(session.exec(
+            select(PlanEstudioDB.materia_codigo).where(
+                PlanEstudioDB.plan_version_id == pv.id,
+            )
+        ).all())
+        for mc in mcodigos:
+            materia_a_carreras_no_asociadas.setdefault(mc, []).append(cod)
+
+    # Set de materias del grupo asociadas: aparecen en plan vigente
+    # de al menos una carrera asociada.
+    materias_en_asociadas: set[str] = set()
+    for mat_map in materias_por_carrera_grupo.values():
+        materias_en_asociadas.update(mat_map.keys())
+
+    # Materias actualmente en el grupo (sin importar plan).
+    materias_del_grupo = list(session.exec(
+        select(MateriaDB).where(MateriaDB.grupo_id == grupo_id)
+    ).all())
+
+    ajenas: list[MateriaAjena] = []
+    for m in materias_del_grupo:
+        # Si aparece en plan vigente de una carrera asociada → OK.
+        if m.codigo in materias_en_asociadas:
+            continue
+        carreras_donde_aparece = materia_a_carreras_no_asociadas.get(
+            m.codigo, [],
+        )
+        if not carreras_donde_aparece:
+            # No aparece en ningún plan vigente. Puede ser una materia
+            # optativa, archivada o desconectada. No la marcamos como
+            # ajena para no confundir: quedará al criterio del operador.
+            continue
+
+        # Sugerencia de grupo destino cuando es unívoco: sólo aparece
+        # en el plan de una única carrera y esa carrera tiene un
+        # grupo asociado que la aceptaría (por asociación explícita).
+        sugerencia_id: Optional[str] = None
+        sugerencia_nombre: Optional[str] = None
+        if len(carreras_donde_aparece) == 1:
+            unica = carreras_donde_aparece[0]
+            candidatos = list(session.exec(
+                select(GrupoMateriaCarreraDB.grupo_id).where(
+                    GrupoMateriaCarreraDB.carrera_codigo == unica,
+                )
+            ).all())
+            # Filtrar el grupo actual y el propio grupo del chequeo.
+            candidatos = [
+                gid for gid in candidatos if gid != grupo_id
+            ]
+            if len(candidatos) == 1:
+                g_dest = session.get(GrupoMateriaDB, candidatos[0])
+                if g_dest is not None:
+                    sugerencia_id = g_dest.id
+                    sugerencia_nombre = g_dest.nombre
+
+        ajenas.append(MateriaAjena(
+            codigo=m.codigo,
+            nombre=m.nombre,
+            carreras_donde_aparece=sorted(carreras_donde_aparece),
+            sugerencia_grupo_id=sugerencia_id,
+            sugerencia_grupo_nombre=sugerencia_nombre,
+        ))
+    ajenas.sort(key=lambda x: x.codigo)
+
+    return (dedup, ajenas, warnings)
 
 
 # =============================================================================

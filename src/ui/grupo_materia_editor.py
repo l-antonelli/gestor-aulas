@@ -537,15 +537,24 @@ def _render_chequeo_consistencia(
     grupo: GrupoMateriaDB,
     carreras_db: list[CarreraDB],  # noqa: ARG001 (reservado para futuros contextos)
 ) -> None:
-    """Panel que muestra faltantes según carreras asociadas + planes
-    activos, y permite agregarlas de a una."""
+    """Panel que muestra dos secciones tras correr el chequeo:
+
+    - **Faltantes**: materias exclusivas de las carreras asociadas
+      que todavía no están en el grupo. Botón ➕ para agregarlas.
+    - **Ajenas**: materias del grupo que aparecen en el plan
+      vigente de una carrera NO asociada y no en las asociadas.
+      Botón ➡️ que sugiere mover al grupo asociado a esa carrera
+      cuando la sugerencia es unívoca.
+    """
     with st.container(border=True):
         st.markdown("#### 🔍 Chequeo de consistencia")
         st.caption(
-            "Compara las materias del grupo con las materias exclusivas "
-            "de las carreras asociadas en sus **planes activos**. "
-            "Sirve para detectar qué materias 'de la carrera' todavía "
-            "no fueron agregadas al grupo."
+            "Compara las materias del grupo con las materias que "
+            "aparecen en el **plan vigente** de las carreras "
+            "asociadas. Detecta dos tipos de inconsistencia: "
+            "**faltantes** (materias de la carrera que no están "
+            "acá) y **ajenas** (materias que están acá pero "
+            "aparecen en el plan de otras carreras)."
         )
 
         run_key = f"consist_run_{grupo.id}"
@@ -555,7 +564,7 @@ def _render_chequeo_consistencia(
             key=run_key,
             disabled=False,
         ):
-            faltantes, warnings = chequear_consistencia_grupo(
+            faltantes, ajenas, warnings = chequear_consistencia_grupo(
                 session, grupo.id,
             )
             st.session_state[result_key] = {
@@ -571,6 +580,20 @@ def _render_chequeo_consistencia(
                     }
                     for f in faltantes
                 ],
+                "ajenas": [
+                    {
+                        "codigo": a.codigo,
+                        "nombre": a.nombre,
+                        "carreras_donde_aparece": (
+                            a.carreras_donde_aparece
+                        ),
+                        "sugerencia_grupo_id": a.sugerencia_grupo_id,
+                        "sugerencia_grupo_nombre": (
+                            a.sugerencia_grupo_nombre
+                        ),
+                    }
+                    for a in ajenas
+                ],
                 "warnings": warnings,
             }
             st.rerun()
@@ -578,9 +601,9 @@ def _render_chequeo_consistencia(
         result = st.session_state.get(result_key)
         if result is None:
             st.caption(
-                "_Corré el chequeo para ver las materias exclusivas "
-                "de las carreras asociadas que aún no están en este "
-                "grupo._"
+                "_Corré el chequeo para revisar la consistencia del "
+                "grupo con los planes vigentes de las carreras "
+                "asociadas._"
             )
             return
 
@@ -588,55 +611,118 @@ def _render_chequeo_consistencia(
             st.info(w)
 
         faltantes_list = result["faltantes"]
-        if not faltantes_list:
+        ajenas_list = result.get("ajenas", [])
+
+        if not faltantes_list and not ajenas_list:
             st.success(
-                "Todas las materias exclusivas de las carreras "
-                "asociadas ya están en este grupo. 🎉"
+                "El grupo está consistente: todas las materias "
+                "exclusivas de las carreras asociadas están acá y "
+                "no hay materias ajenas. 🎉"
             )
             return
 
-        st.warning(
-            f"Se detectaron **{len(faltantes_list)} materia(s)** que "
-            "corresponderían a este grupo pero están en otro lado."
-        )
-        for i, item in enumerate(faltantes_list):
-            row = st.container()
-            cols = row.columns([1, 3, 2, 2, 1])
-            cols[0].markdown(f"`{item['codigo']}`")
-            cols[1].write(item["nombre"])
-            cols[2].caption(
-                f"Carrera: **{item['carrera']}** · "
-                f"Año {item['anio']} {item['cuatri']}"
-                if item["anio"] else f"Carrera: **{item['carrera']}**"
+        # --- Sección: Faltantes ------------------------------------
+        if faltantes_list:
+            st.warning(
+                f"➕ **{len(faltantes_list)} materia(s) faltante(s)**: "
+                "corresponderían a este grupo pero están en otro."
             )
-            cols[3].caption(
-                f"Ahora en: **{item['grupo_actual_nombre']}**"
-                if item["grupo_actual_nombre"] else
-                "_Sin grupo actual_"
+            for i, item in enumerate(faltantes_list):
+                row = st.container()
+                cols = row.columns([1, 3, 2, 2, 1])
+                cols[0].markdown(f"`{item['codigo']}`")
+                cols[1].write(item["nombre"])
+                cols[2].caption(
+                    f"Carrera: **{item['carrera']}** · "
+                    f"Año {item['anio']} {item['cuatri']}"
+                    if item["anio"] else
+                    f"Carrera: **{item['carrera']}**"
+                )
+                cols[3].caption(
+                    f"Ahora en: **{item['grupo_actual_nombre']}**"
+                    if item["grupo_actual_nombre"] else
+                    "_Sin grupo actual_"
+                )
+                if cols[4].button(
+                    "➕",
+                    key=(
+                        f"add_faltante_{grupo.id}_{item['codigo']}_{i}"
+                    ),
+                    help=(
+                        f"Agregar {item['codigo']} a este grupo "
+                        f"({grupo.nombre})"
+                    ),
+                ):
+                    try:
+                        asignar_materia_a_grupo(
+                            session, item["codigo"], grupo.id,
+                        )
+                        st.toast(
+                            f"{item['codigo']} agregada a "
+                            f"{grupo.nombre}."
+                        )
+                        st.session_state[result_key]["faltantes"] = [
+                            f for f in faltantes_list
+                            if f["codigo"] != item["codigo"]
+                        ]
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+
+        # --- Sección: Ajenas ---------------------------------------
+        if ajenas_list:
+            if faltantes_list:
+                st.divider()
+            st.warning(
+                f"⚠️ **{len(ajenas_list)} materia(s) ajena(s)**: "
+                "están en este grupo pero aparecen en el plan de "
+                "carreras **no asociadas**. Verificá si "
+                "corresponden a este grupo o conviene moverlas."
             )
-            if cols[4].button(
-                "➕",
-                key=f"add_faltante_{grupo.id}_{item['codigo']}_{i}",
-                help=(
-                    f"Agregar {item['codigo']} a este grupo "
-                    f"({grupo.nombre})"
-                ),
-            ):
-                try:
-                    asignar_materia_a_grupo(
-                        session, item["codigo"], grupo.id,
+            for i, item in enumerate(ajenas_list):
+                row = st.container()
+                cols = row.columns([1, 3, 3, 2])
+                cols[0].markdown(f"`{item['codigo']}`")
+                cols[1].write(item["nombre"])
+                _carr_txt = ", ".join(item["carreras_donde_aparece"])
+                cols[2].caption(
+                    f"Aparece en plan de: **{_carr_txt}**"
+                )
+                # Si hay sugerencia unívoca, botón directo para mover.
+                sug_id = item.get("sugerencia_grupo_id")
+                sug_nom = item.get("sugerencia_grupo_nombre")
+                if sug_id and sug_nom:
+                    if cols[3].button(
+                        f"➡️ Mover a {sug_nom[:16]}"
+                        f"{'…' if len(sug_nom) > 16 else ''}",
+                        key=(
+                            f"move_ajena_{grupo.id}_"
+                            f"{item['codigo']}_{i}"
+                        ),
+                        help=(
+                            f"Mover {item['codigo']} al grupo "
+                            f"'{sug_nom}' (asociado a la carrera "
+                            f"donde aparece)."
+                        ),
+                    ):
+                        try:
+                            asignar_materia_a_grupo(
+                                session, item["codigo"], sug_id,
+                            )
+                            st.toast(
+                                f"{item['codigo']} → {sug_nom}."
+                            )
+                            st.session_state[result_key]["ajenas"] = [
+                                a for a in ajenas_list
+                                if a["codigo"] != item["codigo"]
+                            ]
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+                else:
+                    cols[3].caption(
+                        "_Sin sugerencia unívoca_"
                     )
-                    st.toast(
-                        f"{item['codigo']} agregada a {grupo.nombre}."
-                    )
-                    # Actualizar el cache del resultado sacando este.
-                    st.session_state[result_key]["faltantes"] = [
-                        f for f in faltantes_list
-                        if f["codigo"] != item["codigo"]
-                    ]
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
 
 
 # =============================================================================
