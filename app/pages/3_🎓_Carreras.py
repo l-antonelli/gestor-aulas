@@ -3,6 +3,8 @@
 Requirements: 7.1, 7.2, 7.4, 7.5, 8.1
 """
 
+from typing import Optional
+
 import streamlit as st
 from sqlmodel import Session, select
 
@@ -23,22 +25,30 @@ st.set_page_config(page_title="Carreras", page_icon="🎓", layout="wide")
 
 
 def _render_plan_activo_y_grupos(
-    session: Session, carrera,
-) -> None:
+    session: Session,
+    carrera,
+    *,
+    editando: bool = False,
+) -> Optional[str]:
     """Renderiza dos bloques con borde para cada carrera:
 
-    1. **Plan de estudio activo**: lista todas las versiones del plan
-       de la carrera, permite marcar cuál está activa (radio + botón
-       Guardar). Solo puede haber uno activo por carrera.
-    2. **Grupos de materias asociados**: lista los grupos que tienen
-       a esta carrera en su asociación M:N, con link a Materias →
-       Grupos para editar.
+    1. **Plan de estudio activo**: en modo read-only muestra el nombre
+       del plan activo (o "(Ninguna)"). En modo edición aparece el
+       selectbox habilitado.
+    2. **Grupos de materias asociados**: siempre read-only (la
+       asociación se maneja desde Materias → 📦 Grupos).
+
+    Devuelve el ``plan_version_id`` seleccionado en el selectbox
+    cuando está en modo edición, o ``None`` si no está editando o el
+    usuario eligió "(Ninguna)". El caller (``_render_carrera_edit_inline``)
+    lo usa para aplicar el cambio al hacer Guardar.
     """
     from src.services.grupo_materia_service import (
         get_plan_activo,
         list_grupos_de_carrera,
-        set_plan_activo,
     )
+
+    plan_id_seleccionado: Optional[str] = None
 
     # --- Plan activo ------------------------------------------
     with st.container(border=True):
@@ -65,77 +75,43 @@ def _render_plan_activo_y_grupos(
             )
         else:
             activa = get_plan_activo(session, carrera.codigo)
-            opciones = ["(Ninguna)"] + [
-                f"{v.nombre} — {v.fecha_creacion}"
-                for v in versiones
-            ]
-            id_por_opcion = ["__NONE__"] + [v.id for v in versiones]
-            default_idx = 0
-            if activa is not None:
-                for i, v in enumerate(versiones):
-                    if v.id == activa.id:
-                        default_idx = i + 1
-                        break
-
-            # Modo edición: selectbox deshabilitado hasta que se
-            # apriete 'Editar'. Al guardar o cancelar vuelve a
-            # deshabilitado.
-            edit_key = f"plan_activo_editando_{carrera.codigo}"
-            editando = st.session_state.get(edit_key, False)
-
-            col_select, col_actions = st.columns([4, 2])
-            with col_select:
+            if not editando:
+                # Modo read-only: mostrar sólo el plan activo actual
+                # (similar al listado de grupos de abajo).
+                if activa is not None:
+                    st.markdown(
+                        f"- 📄 **{activa.nombre}** — {activa.fecha_creacion}"
+                    )
+                else:
+                    st.caption(
+                        "_(Ninguna versión marcada como activa. Los "
+                        "filtros globales van a caer al plan más "
+                        "reciente como fallback.)_"
+                    )
+            else:
+                # Modo edición: selectbox habilitado. La aplicación
+                # del cambio se hace desde el bloque de edición de la
+                # carrera, no acá.
+                opciones = ["(Ninguna)"] + [
+                    f"{v.nombre} — {v.fecha_creacion}"
+                    for v in versiones
+                ]
+                id_por_opcion = ["__NONE__"] + [v.id for v in versiones]
+                default_idx = 0
+                if activa is not None:
+                    for i, v in enumerate(versiones):
+                        if v.id == activa.id:
+                            default_idx = i + 1
+                            break
                 sel_idx = st.selectbox(
                     "Versión activa",
                     options=list(range(len(opciones))),
                     format_func=lambda i: opciones[i],
                     index=default_idx,
                     key=f"plan_activo_sel_{carrera.codigo}",
-                    disabled=not editando,
                     label_visibility="collapsed",
                 )
-            sel_id = id_por_opcion[sel_idx]
-            actual_id = activa.id if activa is not None else "__NONE__"
-
-            with col_actions:
-                if not editando:
-                    if st.button(
-                        "✏️ Editar",
-                        key=f"edit_plan_activo_{carrera.codigo}",
-                        use_container_width=True,
-                    ):
-                        st.session_state[edit_key] = True
-                        st.rerun()
-                else:
-                    c_save, c_cancel = st.columns(2)
-                    with c_save:
-                        if st.button(
-                            "💾",
-                            key=f"save_plan_activo_{carrera.codigo}",
-                            type="primary",
-                            use_container_width=True,
-                            help="Guardar cambio de plan activo",
-                            disabled=(sel_id == actual_id),
-                        ):
-                            try:
-                                set_plan_activo(
-                                    session, carrera.codigo,
-                                    None if sel_id == "__NONE__" else sel_id,
-                                )
-                                st.session_state.pop(edit_key, None)
-                                st.toast("Plan activo actualizado.")
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e))
-                    with c_cancel:
-                        if st.button(
-                            "✕",
-                            key=f"cancel_plan_activo_{carrera.codigo}",
-                            use_container_width=True,
-                            help="Cancelar",
-                        ):
-                            st.session_state.pop(edit_key, None)
-                            st.rerun()
+                plan_id_seleccionado = id_por_opcion[sel_idx]
 
     # --- Grupos de materias asociados -------------------------
     with st.container(border=True):
@@ -163,6 +139,8 @@ def _render_plan_activo_y_grupos(
         st.caption(
             "_Editá las asociaciones desde Materias → 📦 Grupos de materias._"
         )
+
+    return plan_id_seleccionado
 
 
 def _render_carrera_readonly(session: Session, carrera) -> None:
@@ -253,6 +231,16 @@ def _render_carrera_edit_inline(
             custom_labels=custom_labels,
             default_values=default_values,
         )
+
+        st.divider()
+        # Sección de plan activo + grupos también dentro del form. El
+        # selectbox aparece habilitado (editando=True); el guardado
+        # aplica al mismo tiempo que los cambios de datos generales.
+        plan_id_seleccionado = _render_plan_activo_y_grupos(
+            session, existing_carrera, editando=True,
+        )
+
+        st.divider()
         col_submit, col_cancel = st.columns(2)
         with col_submit:
             submitted = st.form_submit_button(
@@ -283,12 +271,41 @@ def _render_carrera_edit_inline(
                     updated_carrera = carrera_service.update(
                         session, carrera_actualizada,
                     )
-                    if updated_carrera:
+                    if not updated_carrera:
+                        st.error("❌ No se pudo actualizar la carrera")
+                    else:
+                        # Aplicar cambio de plan activo si el usuario
+                        # eligió una versión distinta a la actual.
+                        from src.services.grupo_materia_service import (
+                            get_plan_activo,
+                            set_plan_activo,
+                        )
+                        activa_now = get_plan_activo(
+                            session, carrera_codigo,
+                        )
+                        actual_id = (
+                            activa_now.id if activa_now else "__NONE__"
+                        )
+                        if (
+                            plan_id_seleccionado is not None
+                            and plan_id_seleccionado != actual_id
+                        ):
+                            try:
+                                set_plan_activo(
+                                    session,
+                                    carrera_codigo,
+                                    None
+                                    if plan_id_seleccionado == "__NONE__"
+                                    else plan_id_seleccionado,
+                                )
+                            except ValueError as e:
+                                st.error(
+                                    f"Datos guardados pero no se pudo "
+                                    f"aplicar el plan activo: {e}"
+                                )
                         st.toast("✅ Carrera actualizada.")
                         st.session_state.pop("edit_carrera", None)
                         st.rerun()
-                    else:
-                        st.error("❌ No se pudo actualizar la carrera")
                 except Exception as e:
                     st.error(f"❌ Error al actualizar: {str(e)}")
 
