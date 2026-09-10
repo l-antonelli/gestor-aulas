@@ -100,97 +100,128 @@ def render_grupos_materias_tab(session: Session) -> None:
             "para que la migración inicial lo cree."
         )
 
-    col_lista, col_editor = st.columns([2, 3], gap="large")
-
-    with col_lista:
-        _render_lista_grupos(session, grupos, counts, sedes_db)
-
-    with col_editor:
-        _render_editor_grupo(session, sedes_db, carreras_db)
+    # Layout vertical: selector arriba (compacto), editor abajo
+    # (full-width). Elimina la disparidad de alturas del layout de
+    # dos columnas cuando hay muchos grupos y el editor es más corto.
+    _render_selector_grupo(session, grupos, counts, sedes_db)
+    _render_editor_grupo(session, sedes_db, carreras_db)
 
     st.divider()
     _render_reasignacion_materias(session, grupos, sedes_db)
 
 
 # =============================================================================
-# Lista de grupos (izquierda)
+# Selector de grupo (arriba, compacto)
 # =============================================================================
 
 
-def _render_lista_grupos(
+def _render_selector_grupo(
     session: Session,
     grupos: list[GrupoMateriaDB],
     counts: dict[str, int],
     sedes_db: list[SedeDB],
 ) -> None:
+    """Panel superior compacto: dropdown para elegir grupo activo + botón
+    para crear uno nuevo. Reemplaza la vista de lista lateral para no
+    generar disparidad de alturas contra el editor."""
     with st.container(border=True):
-        st.markdown("### Lista de grupos")
-
-        # Sin clasificar primero (fallback), después alfabético.
+        # Sin clasificar primero, resto alfabético.
         def _sort_key(g: GrupoMateriaDB) -> tuple[int, str]:
             return (0 if g.es_sin_clasificar else 1, g.nombre.lower())
 
         grupos_ord = sorted(grupos, key=_sort_key)
-        labels = []
-        for g in grupos_ord:
-            prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
-            n = counts.get(g.id, 0)
-            labels.append(f"{prefix}{g.nombre} · {n} materia(s)")
-
-        seleccionado = st.session_state.get("grupo_materia_seleccionado")
-        default_idx = 0
-        if seleccionado:
-            for i, g in enumerate(grupos_ord):
-                if g.id == seleccionado:
-                    default_idx = i
-                    break
-
-        if labels:
-            elegido = st.radio(
-                "Grupos existentes",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                index=default_idx,
-                key="grupo_materia_radio",
-                label_visibility="collapsed",
-            )
-            st.session_state["grupo_materia_seleccionado"] = (
-                grupos_ord[elegido].id
+        if not grupos_ord:
+            st.info(
+                "No hay grupos cargados. Creá uno con el botón de abajo."
             )
         else:
-            st.info("No hay grupos cargados.")
+            labels = []
+            for g in grupos_ord:
+                prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
+                n = counts.get(g.id, 0)
+                labels.append(f"{prefix}{g.nombre} · {n} materia(s)")
 
-        st.divider()
-        with st.expander("➕ Crear grupo nuevo", expanded=False):
+            seleccionado = st.session_state.get(
+                "grupo_materia_seleccionado",
+            )
+            default_idx = 0
+            if seleccionado:
+                for i, g in enumerate(grupos_ord):
+                    if g.id == seleccionado:
+                        default_idx = i
+                        break
+
+            col_select, col_new = st.columns([5, 1])
+            with col_select:
+                elegido = st.selectbox(
+                    "Grupo activo",
+                    options=list(range(len(labels))),
+                    format_func=lambda i: labels[i],
+                    index=default_idx,
+                    key="grupo_materia_selector",
+                    label_visibility="collapsed",
+                )
+                st.session_state["grupo_materia_seleccionado"] = (
+                    grupos_ord[elegido].id
+                )
+            with col_new:
+                if st.button(
+                    "➕ Nuevo",
+                    key="btn_crear_grupo_toggle",
+                    use_container_width=True,
+                ):
+                    st.session_state["mostrar_crear_grupo"] = (
+                        not st.session_state.get(
+                            "mostrar_crear_grupo", False,
+                        )
+                    )
+                    st.rerun()
+
+        if st.session_state.get("mostrar_crear_grupo"):
+            st.divider()
             with st.form(key="crear_grupo_form", clear_on_submit=True):
+                st.markdown("**Crear grupo nuevo**")
                 nuevo_nombre = st.text_input(
                     "Nombre del grupo",
                     placeholder="Ej: Optativas de Sistemas",
                 )
                 sede_names = [s.nombre for s in sedes_db]
                 sede_ids_map = {s.nombre: s.id for s in sedes_db}
-                nuevas_duras = st.multiselect(
-                    "Sedes admisibles (modo DURO)",
-                    options=sede_names,
-                    help=(
-                        "Cuando el asignador corre en modo DURO para "
-                        "este grupo, sólo se admiten aulas de estas "
-                        "sedes. Podés dejarlo vacío y llenarlo después."
-                    ),
-                )
-                nuevas_blandas = st.multiselect(
-                    "Sedes preferidas (modo BLANDO)",
-                    options=sede_names,
-                    help=(
-                        "Cuando el asignador corre en modo BLANDO, la "
-                        "primera sede es la preferida y las siguientes "
-                        "son alternativas con costo. Podés reordenar "
-                        "después."
-                    ),
-                )
-                submitted = st.form_submit_button(
-                    "Crear grupo", type="primary",
-                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    nuevas_duras = st.multiselect(
+                        "Sedes admisibles (modo DURO)",
+                        options=sede_names,
+                        help=(
+                            "Cuando el asignador corre en modo DURO para "
+                            "este grupo, sólo se admiten aulas de estas "
+                            "sedes. Podés dejarlo vacío y llenarlo después."
+                        ),
+                    )
+                with c2:
+                    nuevas_blandas = st.multiselect(
+                        "Sedes preferidas (modo BLANDO)",
+                        options=sede_names,
+                        help=(
+                            "Cuando el asignador corre en modo BLANDO, la "
+                            "primera sede es la preferida y las siguientes "
+                            "son alternativas con costo. Podés reordenar "
+                            "después."
+                        ),
+                    )
+                col_ok, col_cancel = st.columns(2)
+                with col_ok:
+                    submitted = st.form_submit_button(
+                        "Crear grupo", type="primary",
+                        use_container_width=True,
+                    )
+                with col_cancel:
+                    cancel = st.form_submit_button(
+                        "Cancelar", use_container_width=True,
+                    )
+                if cancel:
+                    st.session_state.pop("mostrar_crear_grupo", None)
+                    st.rerun()
                 if submitted:
                     if not nuevo_nombre.strip():
                         st.error("El nombre no puede quedar vacío.")
@@ -207,6 +238,9 @@ def _render_lista_grupos(
                                 ],
                             )
                             st.success(f"Grupo '{nuevo_nombre}' creado.")
+                            st.session_state.pop(
+                                "mostrar_crear_grupo", None,
+                            )
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))

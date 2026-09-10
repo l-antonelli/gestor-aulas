@@ -121,10 +121,9 @@ def render_custom_materia_page():
         "que le corresponde en cada una."
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "📋 Lista de materias",
         "➕ Nueva materia",
-        "🔍 Buscar",
         "📦 Grupos de materias",
     ])
 
@@ -369,19 +368,268 @@ def render_custom_materia_page():
 
                 # --- Normal list view ---
                 else:
-                    # Search filter
-                    search = st.text_input("Filtrar por codigo o nombre", key="materias_filter")
+                    # -------------------------------------------------
+                    # Filtros
+                    # -------------------------------------------------
+                    import unicodedata as _uc
+                    from src.database.models import (
+                        CarreraDB as _CarreraDB,
+                        PlanEstudioDB as _PlanEstudioDB,
+                    )
+                    from src.services.grupo_materia_service import (
+                        list_grupos as _list_grupos_lst,
+                        get_plan_activo as _get_plan_activo,
+                    )
 
-                    display_materias = materias
-                    if search:
-                        sl = search.lower()
+                    def _norm(t: str) -> str:
+                        nfkd = _uc.normalize("NFKD", t)
+                        return "".join(
+                            c for c in nfkd if not _uc.combining(c)
+                        ).lower()
+
+                    with st.container(border=True):
+                        st.markdown("**🔎 Filtros**")
+
+                        # Búsqueda por código/nombre (tolerante a acentos).
+                        search = st.text_input(
+                            "Buscar por código o nombre",
+                            key="materias_filter",
+                            placeholder="Ej: F14, algebra, matemática…",
+                            help=(
+                                "La búsqueda ignora mayúsculas y "
+                                "acentos: 'fisica' matchea 'Física'."
+                            ),
+                        )
+
+                        # Ubicación curricular (plan activo).
+                        with st.expander(
+                            "📍 Ubicación curricular",
+                            expanded=False,
+                        ):
+                            st.caption(
+                                "Filtra por dónde aparecen las materias "
+                                "en el **plan activo** de cada carrera."
+                            )
+                            _carreras_lst = list(session.exec(
+                                select(_CarreraDB).order_by(  # type: ignore[arg-type]
+                                    _CarreraDB.nombre,
+                                )
+                            ).all())
+                            sel_carr = st.multiselect(
+                                "Carrera(s)",
+                                options=[c.nombre for c in _carreras_lst],
+                                key="materias_lst_filtro_carrera",
+                            )
+                            _cy, _cc = st.columns(2)
+                            with _cy:
+                                sel_anio = st.multiselect(
+                                    "Año(s)",
+                                    options=list(range(1, 7)),
+                                    key="materias_lst_filtro_anio",
+                                )
+                            with _cc:
+                                sel_cuatri = st.multiselect(
+                                    "Cuatri",
+                                    options=["1C", "2C", "Anual"],
+                                    key="materias_lst_filtro_cuatri",
+                                )
+
+                        # Atributos.
+                        with st.expander("🏷️ Atributos", expanded=False):
+                            _grupos_lst = sorted(
+                                _list_grupos_lst(session),
+                                key=lambda g: (
+                                    0 if g.es_sin_clasificar else 1,
+                                    g.nombre.lower(),
+                                ),
+                            )
+                            sel_grupo_nombre = st.selectbox(
+                                "Grupo",
+                                options=["Todos"] + [
+                                    g.nombre for g in _grupos_lst
+                                ],
+                                key="materias_lst_filtro_grupo",
+                            )
+                            _c_a1, _c_a2 = st.columns(2)
+                            with _c_a1:
+                                sel_optativa = st.selectbox(
+                                    "Optativa",
+                                    options=[
+                                        "Todas",
+                                        "Sólo optativas",
+                                        "Sólo obligatorias",
+                                    ],
+                                    key="materias_lst_filtro_opt",
+                                )
+                                sel_virtual = st.selectbox(
+                                    "Virtual",
+                                    options=[
+                                        "Todas",
+                                        "Sólo virtuales",
+                                        "Sólo presenciales",
+                                    ],
+                                    key="materias_lst_filtro_virt",
+                                )
+                            with _c_a2:
+                                sel_activa = st.selectbox(
+                                    "Vigencia",
+                                    options=[
+                                        "Todas",
+                                        "Sólo activas",
+                                        "Sólo archivadas",
+                                    ],
+                                    key="materias_lst_filtro_activa",
+                                )
+                                sel_periodo = st.selectbox(
+                                    "Período",
+                                    options=[
+                                        "Todos",
+                                        "Cuatrimestral",
+                                        "Anual",
+                                    ],
+                                    key="materias_lst_filtro_periodo",
+                                )
+
+                    # -------------------------------------------------
+                    # Aplicar filtros
+                    # -------------------------------------------------
+                    display_materias = list(materias)
+
+                    if search.strip():
+                        _t = _norm(search.strip())
                         display_materias = [
-                            m for m in materias
-                            if sl in m.codigo.lower() or sl in m.nombre.lower()
+                            m for m in display_materias
+                            if _t in _norm(m.codigo)
+                            or _t in _norm(m.nombre)
                         ]
-                        st.caption(f"{len(display_materias)} de {len(materias)} materias")
 
-                    for materia in display_materias:
+                    if sel_carr or sel_anio or sel_cuatri:
+                        # Si hay filtros de ubicación, sólo pasan las
+                        # materias que aparecen en el plan activo de
+                        # las carreras elegidas (o de cualquier carrera
+                        # si no se eligió ninguna) con el año/cuatri.
+                        _cods_carr = (
+                            [
+                                c.codigo for c in _carreras_lst
+                                if c.nombre in sel_carr
+                            ]
+                            if sel_carr else
+                            [c.codigo for c in _carreras_lst]
+                        )
+                        _plan_ids = []
+                        for _cc in _cods_carr:
+                            _pv = _get_plan_activo(session, _cc)
+                            if _pv is not None:
+                                _plan_ids.append(_pv.id)
+                        if _plan_ids:
+                            _pes = list(session.exec(
+                                select(_PlanEstudioDB).where(
+                                    _PlanEstudioDB.plan_version_id.in_(  # type: ignore[attr-defined]
+                                        _plan_ids,
+                                    ),
+                                )
+                            ).all())
+                            _codigos_ok: set[str] = set()
+                            for _pe in _pes:
+                                if sel_anio and _pe.anio_plan not in sel_anio:
+                                    continue
+                                if sel_cuatri and _pe.cuatrimestre_plan not in sel_cuatri:
+                                    continue
+                                _codigos_ok.add(_pe.materia_codigo)
+                            display_materias = [
+                                m for m in display_materias
+                                if m.codigo in _codigos_ok
+                            ]
+                        else:
+                            display_materias = []
+
+                    if sel_grupo_nombre != "Todos":
+                        _target = next(
+                            (g for g in _grupos_lst if g.nombre == sel_grupo_nombre),
+                            None,
+                        )
+                        if _target:
+                            display_materias = [
+                                m for m in display_materias
+                                if m.grupo_id == _target.id
+                            ]
+                        else:
+                            display_materias = []
+
+                    if sel_optativa == "Sólo optativas":
+                        display_materias = [
+                            m for m in display_materias if m.optativa
+                        ]
+                    elif sel_optativa == "Sólo obligatorias":
+                        display_materias = [
+                            m for m in display_materias if not m.optativa
+                        ]
+
+                    if sel_virtual == "Sólo virtuales":
+                        display_materias = [
+                            m for m in display_materias if m.virtual
+                        ]
+                    elif sel_virtual == "Sólo presenciales":
+                        display_materias = [
+                            m for m in display_materias if not m.virtual
+                        ]
+
+                    if sel_activa == "Sólo activas":
+                        display_materias = [
+                            m for m in display_materias if m.active
+                        ]
+                    elif sel_activa == "Sólo archivadas":
+                        display_materias = [
+                            m for m in display_materias if not m.active
+                        ]
+
+                    if sel_periodo == "Cuatrimestral":
+                        display_materias = [
+                            m for m in display_materias
+                            if m.periodo == "cuatrimestral"
+                        ]
+                    elif sel_periodo == "Anual":
+                        display_materias = [
+                            m for m in display_materias
+                            if m.periodo == "anual"
+                        ]
+
+                    # -------------------------------------------------
+                    # Paginación
+                    # -------------------------------------------------
+                    st.caption(
+                        f"**{len(display_materias)}** de "
+                        f"**{len(materias)}** materia(s) que coinciden."
+                    )
+
+                    if not display_materias:
+                        st.info(
+                            "Ninguna materia coincide con los filtros."
+                        )
+                        return
+
+                    PAGE_SIZE = 20
+                    n_pages = max(
+                        1,
+                        (len(display_materias) + PAGE_SIZE - 1) // PAGE_SIZE,
+                    )
+                    _pcol1, _pcol2, _pcol3 = st.columns([1, 1, 3])
+                    with _pcol1:
+                        page = st.number_input(
+                            f"Página (de {n_pages})",
+                            min_value=1, max_value=n_pages, step=1,
+                            key="materias_lst_page",
+                            label_visibility="collapsed",
+                        )
+                    with _pcol2:
+                        st.caption(
+                            f"Página {int(page)} / {n_pages}"
+                        )
+                    start = (int(page) - 1) * PAGE_SIZE
+                    end = start + PAGE_SIZE
+                    _display_page = display_materias[start:end]
+
+                    for materia in _display_page:
                         with st.expander(f"{materia.codigo} — {materia.nombre}"):
                             col1, col2 = st.columns(2)
 
@@ -534,52 +782,6 @@ def render_custom_materia_page():
                     st.rerun()
         
         with tab3:
-            st.subheader("Buscar materia")
-            st.caption(
-                "Ingresá el código o parte del nombre. La búsqueda "
-                "no distingue mayúsculas."
-            )
-            search_term = st.text_input(
-                "Buscar",
-                placeholder="Ej: F14, algebra, programación…",
-                label_visibility="collapsed",
-            )
-            
-            if search_term:
-                try:
-                    # Traemos TODAS las materias (no limitamos a 100 como
-                    # hace `get_all` por default). El buscador tiene que
-                    # ver el catálogo entero.
-                    _term = search_term.strip().lower()
-                    all_materias_db = list(session.exec(select(MateriaDB)).all())
-                    filtered_materias = [
-                        m for m in all_materias_db
-                        if _term in m.codigo.lower()
-                        or _term in m.nombre.lower()
-                    ]
-
-                    if filtered_materias:
-                        st.write(
-                            f"Encontradas {len(filtered_materias)} "
-                            f"materia(s):"
-                        )
-                        for materia in sorted(
-                            filtered_materias, key=lambda m: m.codigo
-                        ):
-                            _badge = " · 🚫 archivada" if not materia.active else ""
-                            st.write(
-                                f"📚 **{materia.codigo}** — {materia.nombre}{_badge}"
-                            )
-                    else:
-                        st.info(
-                            "No se encontraron materias que coincidan "
-                            "con la búsqueda."
-                        )
-
-                except Exception as e:
-                    st.error(f"Error en la búsqueda: {str(e)}")
-
-        with tab4:
             from src.ui.grupo_materia_editor import (
                 render_grupos_materias_tab,
             )
