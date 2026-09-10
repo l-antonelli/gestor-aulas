@@ -45,15 +45,22 @@ from src.services.grupo_materia_service import (
 class MateriaFiltros:
     """Estado del filtro. Se construye desde `render_materia_filtros`
     y se aplica con `aplicar_materia_filtros`. Todos los campos con
-    default vacío / 'Todos' significan "sin filtrar por este eje"."""
-    busqueda: str = ""
+    default vacío / 'Todos' significan "sin filtrar por este eje".
+
+    ``busqueda_codigo`` y ``busqueda_nombre`` son campos separados
+    porque un solo campo mezclado genera falsos positivos (buscar
+    ``EL`` como código matchea todas las materias con la sílaba
+    "el" en el nombre)."""
+    busqueda_codigo: str = ""
+    busqueda_nombre: str = ""
     carreras: list[str] = field(default_factory=list)  # nombres
     anios: list[int] = field(default_factory=list)
     cuatris: list[str] = field(default_factory=list)
     grupo_nombre: str = "Todos"
-    # "Todas" | "Sólo Sin clasificar" es un preset extra sólo para
-    # pantallas de reasignación; por default no lo exponemos.
-    grupo_scope: str = "Todos"  # "Todos" | "Sólo Sin clasificar"
+    # "Todos" | "Sólo Sin clasificar" — atajo al backlog de materias
+    # sin grupo real. Se muestra siempre desde 2026-09-10 (antes era
+    # opcional vía `incluir_grupo_scope`).
+    grupo_scope: str = "Todos"
     optativa: str = "Todas"     # "Todas" | "Sólo optativas" | "Sólo obligatorias"
     virtual: str = "Todas"      # "Todas" | "Sólo virtuales" | "Sólo presenciales"
     vigencia: str = "Todas"     # "Todas" | "Sólo activas" | "Sólo archivadas"
@@ -78,12 +85,19 @@ def render_materia_filtros(
     key_ns: str,
     incluir_vigencia: bool = True,
     incluir_lab: bool = False,
-    incluir_grupo_scope: bool = False,
+    incluir_grupo_scope: bool = True,  # noqa: ARG001 (compat retro; siempre True)
     ubicacion_default_expanded: bool = False,
     atributos_default_expanded: bool = False,
+    filtros_default_expanded: bool = False,
 ) -> MateriaFiltros:
-    """Renderiza la sección Filtros (dentro de un container bordeado)
-    y devuelve el estado ``MateriaFiltros`` con las selecciones.
+    """Renderiza la sección Filtros como un único ``st.expander`` con
+    todos los sub-controles adentro, y devuelve el estado
+    ``MateriaFiltros`` con las selecciones.
+
+    El expander externo se llama "🔎 Filtros" y agrupa: dos búsquedas
+    (código y nombre por separado), ubicación curricular, atributos.
+    El caller decide si envolver la salida en un contenedor bordeado
+    (típicamente lo hace junto con la lista/tabla que sigue debajo).
 
     Args:
         session: sesión SQLModel.
@@ -93,19 +107,49 @@ def render_materia_filtros(
             (activas / archivadas). Útil en Lista, poco relevante en
             Reasignar.
         incluir_lab: si True, agrega el filtro de laboratorios.
-        incluir_grupo_scope: si True, agrega un selector previo al
-            selector de grupo con las opciones "Todos" / "Sólo Sin
-            clasificar". Se usa en Reasignar como atajo al backlog.
-        ubicacion_default_expanded: si True, el expander de ubicación
-            arranca abierto.
+        incluir_grupo_scope: se conserva por compatibilidad con call
+            sites viejos, pero el selector "Grupo" siempre incluye
+            "Sólo Sin clasificar" desde 2026-09-10.
+        ubicacion_default_expanded: si True, el sub-expander de
+            ubicación arranca abierto.
         atributos_default_expanded: idem para atributos.
+        filtros_default_expanded: si True, el expander externo
+            arranca abierto (útil cuando el usuario acaba de llegar
+            a la pantalla con un filtro pre-cargado).
     """
     result = MateriaFiltros()
 
-    with st.container(border=True):
-        st.markdown("**🔎 Filtros**")
+    with st.expander(
+        "🔎 Filtros",
+        expanded=filtros_default_expanded,
+    ):
+        # --- Búsquedas: código y nombre separados ---
+        _c_cod, _c_nom = st.columns(2)
+        with _c_cod:
+            result.busqueda_codigo = st.text_input(
+                "Código",
+                key=f"{key_ns}_search_codigo",
+                placeholder="Ej: EL, F14, FB01…",
+                help=(
+                    "Coincidencia parcial sobre el código exacto. "
+                    "Ignora mayúsculas y acentos. 'EL' matchea "
+                    "'EL01', 'EL05'... pero NO materias con 'el' en "
+                    "el nombre."
+                ),
+            )
+        with _c_nom:
+            result.busqueda_nombre = st.text_input(
+                "Nombre",
+                key=f"{key_ns}_search_nombre",
+                placeholder="Ej: algebra, matemática…",
+                help=(
+                    "Búsqueda por texto en el nombre de la materia. "
+                    "Ignora mayúsculas y acentos: 'fisica' matchea "
+                    "'Física'."
+                ),
+            )
 
-        # Ubicación curricular.
+        # --- Ubicación curricular ---
         with st.expander(
             "📍 Ubicación curricular",
             expanded=ubicacion_default_expanded,
@@ -138,43 +182,41 @@ def render_materia_filtros(
                     key=f"{key_ns}_ubic_cuatri",
                 )
 
-        # Atributos.
+        # --- Atributos ---
         with st.expander(
             "🏷️ Atributos",
             expanded=atributos_default_expanded,
         ):
+            # Grupo: incluye siempre "Sólo Sin clasificar" como atajo
+            # al backlog + un item por cada grupo real. "Sin clasificar"
+            # NO aparece en la lista de grupos concretos porque el
+            # atajo de arriba lo cubre.
             grupos_lst = sorted(
                 (g for g in list_grupos(session) if not g.es_sin_clasificar),
                 key=lambda g: g.nombre.lower(),
             )
-            if incluir_grupo_scope:
-                scope_opts = ["Todos", "Sólo Sin clasificar"]
-                result.grupo_scope = st.selectbox(
-                    "Grupo actual (atajo)",
-                    options=scope_opts,
-                    key=f"{key_ns}_atr_grupo_scope",
-                    help=(
-                        "Atajo al backlog de materias sin grupo real. "
-                        "Al elegir uno de estos presets, el selector "
-                        "'Grupo' de abajo queda desactivado."
-                    ),
-                )
-            grupo_disabled = (
-                incluir_grupo_scope and result.grupo_scope != "Todos"
+            grupo_options = (
+                ["Todos", "Sólo Sin clasificar"]
+                + [g.nombre for g in grupos_lst]
             )
-            result.grupo_nombre = st.selectbox(
+            _grupo_sel = st.selectbox(
                 "Grupo",
-                options=["Todos"] + [g.nombre for g in grupos_lst],
+                options=grupo_options,
                 key=f"{key_ns}_atr_grupo",
-                disabled=grupo_disabled,
                 help=(
-                    "Filtrá por el grupo de materias asignado a cada "
-                    "materia. Excluye 'Sin clasificar' (usá el "
-                    "selector de arriba si lo necesitás)."
-                    if incluir_grupo_scope else
-                    "Filtrá por el grupo de materias asignado a cada materia."
+                    "Filtrá por el grupo de materias asignado. Usá "
+                    "**Sólo Sin clasificar** para trabajar sobre el "
+                    "backlog de materias que todavía no fueron "
+                    "agrupadas."
                 ),
             )
+            if _grupo_sel == "Sólo Sin clasificar":
+                result.grupo_scope = "Sólo Sin clasificar"
+                result.grupo_nombre = "Todos"
+            else:
+                result.grupo_scope = "Todos"
+                result.grupo_nombre = _grupo_sel
+
             _ca1, _ca2 = st.columns(2)
             with _ca1:
                 result.optativa = st.selectbox(
@@ -216,17 +258,6 @@ def render_materia_filtros(
                     key=f"{key_ns}_atr_lab",
                 )
 
-        # Búsqueda por código o nombre.
-        result.busqueda = st.text_input(
-            "🔍 Buscar por código o nombre",
-            key=f"{key_ns}_search",
-            placeholder="Ej: F14, algebra, matemática…",
-            help=(
-                "La búsqueda ignora mayúsculas y acentos. "
-                "Escribí 'fisica' y encuentra 'Física'."
-            ),
-        )
-
     return result
 
 
@@ -240,13 +271,18 @@ def aplicar_materia_filtros(
     se puede pasar ya ordenada; el orden se preserva."""
     result = list(materias)
 
-    # --- Búsqueda ---
-    if filtros.busqueda.strip():
-        term = _normalizar(filtros.busqueda.strip())
+    # --- Búsqueda por código (partial match, tolerante a acentos) ---
+    if filtros.busqueda_codigo.strip():
+        term = _normalizar(filtros.busqueda_codigo.strip())
         result = [
-            m for m in result
-            if term in _normalizar(m.codigo)
-            or term in _normalizar(m.nombre)
+            m for m in result if term in _normalizar(m.codigo)
+        ]
+
+    # --- Búsqueda por nombre (partial match, tolerante a acentos) ---
+    if filtros.busqueda_nombre.strip():
+        term = _normalizar(filtros.busqueda_nombre.strip())
+        result = [
+            m for m in result if term in _normalizar(m.nombre)
         ]
 
     # --- Ubicación curricular ---

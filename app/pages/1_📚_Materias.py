@@ -562,7 +562,9 @@ def render_custom_materia_page():
                 # --- Normal list view ---
                 else:
                     # -------------------------------------------------
-                    # Filtros — reutiliza el componente compartido.
+                    # Filtros + Lista, agrupados en un único
+                    # contenedor bordeado. Filtros vive como expander
+                    # colapsable arriba; la lista paginada abajo.
                     # -------------------------------------------------
                     from src.database.models import MateriaDB as _MDB
                     from src.ui.materia_filters import (
@@ -570,195 +572,191 @@ def render_custom_materia_page():
                         render_materia_filtros,
                     )
 
-                    filtros = render_materia_filtros(
-                        session,
-                        key_ns="materias_lst",
-                        incluir_vigencia=True,
-                        incluir_lab=False,
-                        incluir_grupo_scope=False,
-                    )
-
-                    # Pasamos la lista completa (no la limitada por
-                    # get_all) y filtramos con el componente compartido.
-                    all_materias_db = list(session.exec(
-                        select(_MDB).order_by(_MDB.codigo)  # type: ignore[arg-type]
-                    ).all())
-                    # `materias` (dominio) se usa después para editar,
-                    # pero para filtrar/mostrar podemos ir con MateriaDB
-                    # directamente porque el componente compartido opera
-                    # sobre MateriaDB. Los expanders de abajo esperan
-                    # dominio Materia pero el subset de atributos que
-                    # muestran (codigo, nombre, periodo, cupo, etc.) es
-                    # equivalente. Para no cambiar el resto del render,
-                    # mapeamos el filtro a códigos y filtramos `materias`.
-                    filtradas_db = aplicar_materia_filtros(
-                        session, all_materias_db, filtros,
-                    )
-                    codigos_ok = {m.codigo for m in filtradas_db}
-                    display_materias = [
-                        m for m in materias if m.codigo in codigos_ok
-                    ]
-
-                    # -------------------------------------------------
-                    # Paginación
-                    # -------------------------------------------------
-                    st.caption(
-                        f"**{len(display_materias)}** de "
-                        f"**{len(materias)}** materia(s) que coinciden."
-                    )
-
-                    if not display_materias:
-                        st.info(
-                            "Ninguna materia coincide con los filtros."
+                    with st.container(border=True):
+                        filtros = render_materia_filtros(
+                            session,
+                            key_ns="materias_lst",
+                            incluir_vigencia=True,
+                            incluir_lab=False,
                         )
-                        return
 
-                    PAGE_SIZE = 20
-                    n_pages = max(
-                        1,
-                        (len(display_materias) + PAGE_SIZE - 1) // PAGE_SIZE,
-                    )
-                    _pcol1, _pcol2, _pcol3 = st.columns([1, 1, 3])
-                    with _pcol1:
-                        page = st.number_input(
-                            f"Página (de {n_pages})",
-                            min_value=1, max_value=n_pages, step=1,
-                            key="materias_lst_page",
-                            label_visibility="collapsed",
+                        # Pasamos la lista completa y filtramos con el
+                        # componente compartido. `materias` (dominio)
+                        # se usa después para editar; mapeamos el
+                        # filtro a códigos y filtramos `materias`.
+                        all_materias_db = list(session.exec(
+                            select(_MDB).order_by(_MDB.codigo)  # type: ignore[arg-type]
+                        ).all())
+                        filtradas_db = aplicar_materia_filtros(
+                            session, all_materias_db, filtros,
                         )
-                    with _pcol2:
+                        codigos_ok = {m.codigo for m in filtradas_db}
+                        display_materias = [
+                            m for m in materias if m.codigo in codigos_ok
+                        ]
+
+                        # ---------------------------------------------
+                        # Resultados + paginación
+                        # ---------------------------------------------
                         st.caption(
-                            f"Página {int(page)} / {n_pages}"
+                            f"**{len(display_materias)}** de "
+                            f"**{len(materias)}** materia(s) coinciden."
                         )
-                    start = (int(page) - 1) * PAGE_SIZE
-                    end = start + PAGE_SIZE
-                    _display_page = display_materias[start:end]
 
-                    for materia in _display_page:
-                        with st.expander(f"{materia.codigo} — {materia.nombre}"):
-                            col1, col2 = st.columns(2)
-
-                            with col1:
-                                st.write(f"**Codigo:** {materia.codigo}")
-                                st.write(f"**Nombre:** {materia.nombre}")
-                                st.write(f"**Periodo:** {materia.periodo}")
-                                st.write(f"**Horas/Semana:** {materia.horas_semanales or '-'}")
-                                _ht = getattr(materia, "horas_teoria", None)
-                                _hl = getattr(materia, "horas_laboratorio", None)
-                                if _ht or _hl:
-                                    st.write(f"**Hs Teoría/Lab:** {_ht or 0} / {_hl or 0}")
-
-                            with col2:
-                                st.write(f"**Cupo:** {materia.cupo or '-'}")
-                                st.write(f"**Virtual:** {'Si' if materia.virtual else 'No'}")
-                                st.write(f"**Optativa:** {'Si' if materia.optativa else 'No'}")
-                                try:
-                                    from src.database.models import (
-                                        CarreraDB, PlanEstudioDB,
-                                    )
-                                    # Ubicaciones curriculares:
-                                    # tuplas (carrera, año, cuatri)
-                                    # donde la materia figura en
-                                    # PlanEstudioDB. Una materia
-                                    # común tiene ≥ 2 carreras
-                                    # distintas.
-                                    pe_rows = list(session.exec(
-                                        select(PlanEstudioDB).where(
-                                            PlanEstudioDB.materia_codigo == materia.codigo,
-                                        )
-                                    ).all())
-                                    if pe_rows:
-                                        car_codes = sorted({
-                                            pe.carrera_codigo for pe in pe_rows
-                                        })
-                                        car_map = {
-                                            c.codigo: c.nombre for c in session.exec(
-                                                select(CarreraDB).where(
-                                                    col(CarreraDB.codigo).in_(car_codes),
-                                                )
-                                            ).all()
-                                        }
-                                        es_comun = len(car_codes) >= 2
-                                        _badge = "🔗 Común" if es_comun else "🎯 Específica"
-                                        _resumen = ", ".join(car_codes)
-                                        st.write(
-                                            f"**{_badge}** ({_resumen})"
-                                        )
-                                        # Dedup por (carrera, anio, cuatri)
-                                        _seen: set[tuple[str, int | None, str | None]] = set()
-                                        _ubis: list[tuple[str, int | None, str | None]] = []
-                                        for pe in pe_rows:
-                                            k = (
-                                                pe.carrera_codigo,
-                                                pe.anio_plan,
-                                                pe.cuatrimestre_plan,
-                                            )
-                                            if k in _seen:
-                                                continue
-                                            _seen.add(k)
-                                            _ubis.append(k)
-                                        # Orden legible: carrera, año, cuatri.
-                                        _ubis.sort(
-                                            key=lambda t: (
-                                                t[0], t[1] or 99, t[2] or "",
-                                            )
-                                        )
-                                        st.caption(
-                                            "**Ubicaciones curriculares:**"
-                                        )
-                                        for cc, anio, cuatri in _ubis:
-                                            _nom = car_map.get(cc, cc)
-                                            _anio_txt = (
-                                                f"{anio}º"
-                                                if anio is not None else "—"
-                                            )
-                                            _cuatri_txt = cuatri or "—"
-                                            st.caption(
-                                                f"· **{cc}** {_anio_txt} · "
-                                                f"{_cuatri_txt} — {_nom}"
-                                            )
-                                    else:
-                                        st.caption("Sin carreras asignadas")
-                                except Exception:
-                                    pass
-                                try:
-                                    _n_labs = len(list(session.exec(
-                                        select(MateriaLaboratorioDB.aula_id)
-                                        .where(MateriaLaboratorioDB.materia_codigo == materia.codigo)
-                                    ).all()))
-                                    if _n_labs:
-                                        st.write(f"**Laboratorios compatibles:** {_n_labs}")
-                                except Exception:
-                                    pass
-
-                            # Botones de acción alineados a la
-                            # derecha con ancho fijo, para que no
-                            # bailen entre materias con distinta
-                            # cantidad de datos arriba.
-                            st.markdown("")  # separador visual
-                            _spacer, col_edit, col_delete = st.columns(
-                                [3, 1, 1],
+                        if not display_materias:
+                            st.info(
+                                "Ninguna materia coincide con los filtros."
                             )
-                            with col_edit:
-                                if st.button(
-                                    "✏️ Editar",
-                                    key=f"edit_{materia.codigo}",
-                                    width="stretch",
-                                ):
-                                    st.session_state["edit_materia"] = (
-                                        materia.codigo
-                                    )
-                                    st.rerun()
-                            with col_delete:
-                                if st.button(
-                                    "🗑️ Eliminar",
-                                    key=f"delete_{materia.codigo}",
-                                    width="stretch",
-                                ):
-                                    st.session_state["delete_materia"] = (
-                                        materia.codigo
-                                    )
-                                    st.rerun()
+                            return
+
+                        PAGE_SIZE = 20
+                        n_pages = max(
+                            1,
+                            (
+                                len(display_materias) + PAGE_SIZE - 1
+                            ) // PAGE_SIZE,
+                        )
+                        _pcol1, _pcol2, _pcol3 = st.columns([1, 1, 3])
+                        with _pcol1:
+                            page = st.number_input(
+                                f"Página (de {n_pages})",
+                                min_value=1, max_value=n_pages, step=1,
+                                key="materias_lst_page",
+                                label_visibility="collapsed",
+                            )
+                        with _pcol2:
+                            st.caption(
+                                f"Página {int(page)} / {n_pages}"
+                            )
+                        start = (int(page) - 1) * PAGE_SIZE
+                        end = start + PAGE_SIZE
+                        _display_page = display_materias[start:end]
+
+                        for materia in _display_page:
+                            with st.expander(f"{materia.codigo} — {materia.nombre}"):
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.write(f"**Codigo:** {materia.codigo}")
+                                    st.write(f"**Nombre:** {materia.nombre}")
+                                    st.write(f"**Periodo:** {materia.periodo}")
+                                    st.write(f"**Horas/Semana:** {materia.horas_semanales or '-'}")
+                                    _ht = getattr(materia, "horas_teoria", None)
+                                    _hl = getattr(materia, "horas_laboratorio", None)
+                                    if _ht or _hl:
+                                        st.write(f"**Hs Teoría/Lab:** {_ht or 0} / {_hl or 0}")
+
+                                with col2:
+                                    st.write(f"**Cupo:** {materia.cupo or '-'}")
+                                    st.write(f"**Virtual:** {'Si' if materia.virtual else 'No'}")
+                                    st.write(f"**Optativa:** {'Si' if materia.optativa else 'No'}")
+                                    try:
+                                        from src.database.models import (
+                                            CarreraDB, PlanEstudioDB,
+                                        )
+                                        # Ubicaciones curriculares:
+                                        # tuplas (carrera, año, cuatri)
+                                        # donde la materia figura en
+                                        # PlanEstudioDB. Una materia
+                                        # común tiene ≥ 2 carreras
+                                        # distintas.
+                                        pe_rows = list(session.exec(
+                                            select(PlanEstudioDB).where(
+                                                PlanEstudioDB.materia_codigo == materia.codigo,
+                                            )
+                                        ).all())
+                                        if pe_rows:
+                                            car_codes = sorted({
+                                                pe.carrera_codigo for pe in pe_rows
+                                            })
+                                            car_map = {
+                                                c.codigo: c.nombre for c in session.exec(
+                                                    select(CarreraDB).where(
+                                                        col(CarreraDB.codigo).in_(car_codes),
+                                                    )
+                                                ).all()
+                                            }
+                                            es_comun = len(car_codes) >= 2
+                                            _badge = "🔗 Común" if es_comun else "🎯 Específica"
+                                            _resumen = ", ".join(car_codes)
+                                            st.write(
+                                                f"**{_badge}** ({_resumen})"
+                                            )
+                                            # Dedup por (carrera, anio, cuatri)
+                                            _seen: set[tuple[str, int | None, str | None]] = set()
+                                            _ubis: list[tuple[str, int | None, str | None]] = []
+                                            for pe in pe_rows:
+                                                k = (
+                                                    pe.carrera_codigo,
+                                                    pe.anio_plan,
+                                                    pe.cuatrimestre_plan,
+                                                )
+                                                if k in _seen:
+                                                    continue
+                                                _seen.add(k)
+                                                _ubis.append(k)
+                                            # Orden legible: carrera, año, cuatri.
+                                            _ubis.sort(
+                                                key=lambda t: (
+                                                    t[0], t[1] or 99, t[2] or "",
+                                                )
+                                            )
+                                            st.caption(
+                                                "**Ubicaciones curriculares:**"
+                                            )
+                                            for cc, anio, cuatri in _ubis:
+                                                _nom = car_map.get(cc, cc)
+                                                _anio_txt = (
+                                                    f"{anio}º"
+                                                    if anio is not None else "—"
+                                                )
+                                                _cuatri_txt = cuatri or "—"
+                                                st.caption(
+                                                    f"· **{cc}** {_anio_txt} · "
+                                                    f"{_cuatri_txt} — {_nom}"
+                                                )
+                                        else:
+                                            st.caption("Sin carreras asignadas")
+                                    except Exception:
+                                        pass
+                                    try:
+                                        _n_labs = len(list(session.exec(
+                                            select(MateriaLaboratorioDB.aula_id)
+                                            .where(MateriaLaboratorioDB.materia_codigo == materia.codigo)
+                                        ).all()))
+                                        if _n_labs:
+                                            st.write(f"**Laboratorios compatibles:** {_n_labs}")
+                                    except Exception:
+                                        pass
+
+                                # Botones de acción alineados a la
+                                # derecha con ancho fijo, para que no
+                                # bailen entre materias con distinta
+                                # cantidad de datos arriba.
+                                st.markdown("")  # separador visual
+                                _spacer, col_edit, col_delete = st.columns(
+                                    [3, 1, 1],
+                                )
+                                with col_edit:
+                                    if st.button(
+                                        "✏️ Editar",
+                                        key=f"edit_{materia.codigo}",
+                                        width="stretch",
+                                    ):
+                                        st.session_state["edit_materia"] = (
+                                            materia.codigo
+                                        )
+                                        st.rerun()
+                                with col_delete:
+                                    if st.button(
+                                        "🗑️ Eliminar",
+                                        key=f"delete_{materia.codigo}",
+                                        width="stretch",
+                                    ):
+                                        st.session_state["delete_materia"] = (
+                                            materia.codigo
+                                        )
+                                        st.rerun()
 
             except Exception as e:
                 st.error(f"Error al cargar materias: {e}")
