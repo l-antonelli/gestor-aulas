@@ -119,6 +119,7 @@ def create_grupo(
     sedes_blandas_ordenadas: Optional[list[str]] = None,
     carreras_asociadas: Optional[list[str]] = None,
     es_sin_clasificar: bool = False,
+    descripcion: str = "",
 ) -> GrupoMateriaDB:
     """Crea un grupo con las dos configuraciones de sede + carreras
     asociadas.
@@ -134,7 +135,9 @@ def create_grupo(
         _validar_unico_sin_clasificar(session, excluir_id=None)
 
     grupo = GrupoMateriaDB(
-        nombre=nombre, es_sin_clasificar=es_sin_clasificar,
+        nombre=nombre,
+        descripcion=descripcion,
+        es_sin_clasificar=es_sin_clasificar,
     )
     session.add(grupo)
     session.flush()
@@ -160,6 +163,7 @@ def update_grupo(
     sedes_duras: Optional[list[str]] = None,
     sedes_blandas_ordenadas: Optional[list[str]] = None,
     carreras_asociadas: Optional[list[str]] = None,
+    descripcion: Optional[str] = None,
 ) -> None:
     """Actualiza el grupo. Los args con ``None`` se ignoran (dejan la
     configuración previa intacta); los que se pasan (aunque sean
@@ -171,6 +175,10 @@ def update_grupo(
         if otro is not None and otro.id != grupo.id:
             raise ValueError(f"Ya existe otro grupo con nombre '{nombre}'.")
         grupo.nombre = nombre
+        session.add(grupo)
+
+    if descripcion is not None and descripcion != grupo.descripcion:
+        grupo.descripcion = descripcion
         session.add(grupo)
 
     if sedes_duras is not None or sedes_blandas_ordenadas is not None:

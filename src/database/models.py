@@ -340,6 +340,7 @@ class GrupoMateriaDB(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     nombre: str = Field(min_length=1, unique=True, index=True)
+    descripcion: str = Field(default="")
     es_sin_clasificar: bool = Field(default=False, index=True)
 
 

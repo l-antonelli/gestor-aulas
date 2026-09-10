@@ -148,6 +148,12 @@ def _run_migrations(eng):
         # los planes existentes; el usuario marca cuál es activo.
         "ALTER TABLE plan_carrera_version ADD COLUMN active BOOLEAN NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_plan_carrera_version_active ON plan_carrera_version (active)",
+        # Descripción libre del grupo de materias (2026-09-10).
+        # Se llena vacío ("") para todos los grupos existentes; el
+        # usuario la edita desde la UI. Sirve para documentar el
+        # criterio: por qué existe el grupo, cuándo agregarle o
+        # sacarle materias, etc.
+        "ALTER TABLE grupo_materia ADD COLUMN descripcion VARCHAR NOT NULL DEFAULT ''",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -1105,8 +1111,9 @@ def _migrate_grupos_materia(eng):
         else:
             grupo_sin_clasificar_id = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO grupo_materia "
+                "(id, nombre, descripcion, es_sin_clasificar) "
+                "VALUES (?, ?, '', ?)",
                 (grupo_sin_clasificar_id, "Sin clasificar", 1),
             )
             for orden, sede_id in enumerate(sede_ids_todas):
@@ -1156,8 +1163,9 @@ def _migrate_grupos_materia(eng):
                 continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO grupo_materia "
+                "(id, nombre, descripcion, es_sin_clasificar) "
+                "VALUES (?, ?, '', ?)",
                 (gid, nombre, 0),
             )
             for orden, sid in enumerate(sede_ids):
@@ -1185,8 +1193,9 @@ def _migrate_grupos_materia(eng):
                 continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO grupo_materia "
+                "(id, nombre, descripcion, es_sin_clasificar) "
+                "VALUES (?, ?, '', ?)",
                 (gid, gname, 0),
             )
             # Sedes: las de la carrera si tiene, sino lista vacía.

@@ -182,6 +182,15 @@ def _render_selector_grupo(
                     "Nombre del grupo",
                     placeholder="Ej: Optativas de Sistemas",
                 )
+                nueva_descripcion = st.text_area(
+                    "Descripción",
+                    placeholder=(
+                        "Explicá brevemente qué materias agrupa y "
+                        "con qué criterio agregarle o sacarle "
+                        "materias. Opcional."
+                    ),
+                    height=80,
+                )
                 sede_names = [s.nombre for s in sedes_db]
                 sede_ids_map = {s.nombre: s.id for s in sedes_db}
                 c1, c2 = st.columns(2)
@@ -227,6 +236,9 @@ def _render_selector_grupo(
                             create_grupo(
                                 session,
                                 nuevo_nombre.strip(),
+                                descripcion=(
+                                    (nueva_descripcion or "").strip()
+                                ),
                                 sedes_duras=[
                                     sede_ids_map[n] for n in nuevas_duras
                                 ],
@@ -291,6 +303,23 @@ def _render_editor_grupo(
                 "El grupo 'Sin clasificar' no puede renombrarse."
                 if grupo.es_sin_clasificar else None
             ),
+        )
+        descripcion_edit = st.text_area(
+            "Descripción",
+            value=grupo.descripcion or "",
+            key=f"grupo_desc_{grupo.id}",
+            placeholder=(
+                "Explicá brevemente qué materias agrupa, por qué "
+                "existe el grupo, y con qué criterio agregarle o "
+                "sacarle materias. Ej.: 'Ciclo básico común a "
+                "todas las ingenierías; se dicta en Pellegrini.'"
+            ),
+            help=(
+                "Texto libre para documentar el criterio del grupo. "
+                "Aparece como caption cuando alguien lo consulta "
+                "sin entrar a editar."
+            ),
+            height=100,
         )
         carrera_names_actuales = [
             carrera_nombre_by_codigo.get(c, c)
@@ -450,6 +479,7 @@ def _render_editor_grupo(
                         session,
                         grupo.id,
                         nombre=nombre_final,
+                        descripcion=(descripcion_edit or "").strip(),
                         sedes_duras=duras_edit_ids,
                         sedes_blandas_ordenadas=blandas_local,
                         carreras_asociadas=carreras_seleccionadas,
