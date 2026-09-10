@@ -481,6 +481,60 @@ def get_plan_activo(
     ).first()
 
 
+def list_grupos_de_carrera(
+    session: Session, carrera_codigo: str,
+) -> list[GrupoMateriaDB]:
+    """Devuelve los grupos asociados a una carrera (M:N vía
+    ``GrupoMateriaCarreraDB``). Ordenados por nombre."""
+    rows = list(session.exec(
+        select(GrupoMateriaCarreraDB.grupo_id).where(
+            GrupoMateriaCarreraDB.carrera_codigo == carrera_codigo,
+        )
+    ).all())
+    if not rows:
+        return []
+    grupos = list(session.exec(
+        select(GrupoMateriaDB).where(
+            GrupoMateriaDB.id.in_(rows),  # type: ignore[attr-defined]
+        )
+    ).all())
+    return sorted(grupos, key=lambda g: g.nombre.lower())
+
+
+def set_plan_activo(
+    session: Session,
+    carrera_codigo: str,
+    plan_version_id: Optional[str],
+) -> None:
+    """Marca ``plan_version_id`` como la versión activa de la carrera.
+
+    Garantiza unicidad: baja el flag ``active`` en todas las otras
+    versiones de la misma carrera. Si ``plan_version_id`` es ``None``,
+    deja a la carrera sin plan activo.
+
+    Levanta ``ValueError`` si el ``plan_version_id`` provisto no
+    existe o no pertenece a la carrera indicada.
+    """
+    versiones = list(session.exec(
+        select(PlanCarreraVersionDB).where(
+            PlanCarreraVersionDB.carrera_codigo == carrera_codigo,
+        )
+    ).all())
+    if plan_version_id is not None:
+        target = next(
+            (v for v in versiones if v.id == plan_version_id), None,
+        )
+        if target is None:
+            raise ValueError(
+                f"El plan '{plan_version_id}' no existe para la carrera "
+                f"'{carrera_codigo}'."
+            )
+    for v in versiones:
+        v.active = (v.id == plan_version_id)
+        session.add(v)
+    session.commit()
+
+
 def chequear_consistencia_grupo(
     session: Session,
     grupo_id: str,

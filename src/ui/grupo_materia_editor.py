@@ -31,9 +31,6 @@ from src.database.models import (
     GrupoMateriaDB,
     GrupoMateriaSedeDB,
     MateriaDB,
-    MateriaLaboratorioDB,
-    PlanCarreraVersionDB,
-    PlanEstudioDB,
     SedeDB,
 )
 from src.services.grupo_materia_service import (
@@ -639,117 +636,25 @@ def _render_reasignacion_materias(
             "'Reasignar' de cada fila."
         )
 
-        # ---------------------------------------------------
-        # Filtros
-        # ---------------------------------------------------
-        with st.container(border=True):
-            st.markdown("**🔎 Filtros**")
+        from src.ui.materia_filters import (
+            aplicar_materia_filtros,
+            render_materia_filtros,
+        )
 
-            # 1. Ubicación curricular (carrera + año + cuatri).
-            with st.expander("📍 Ubicación curricular", expanded=True):
-                st.caption(
-                    "Filtra por dónde aparecen las materias en el "
-                    "**plan activo** de cada carrera. Si no hay plan "
-                    "activo para alguna, esa carrera se ignora."
-                )
-                carreras_db = list(session.exec(select(CarreraDB)).all())
-                carrera_names = sorted(c.nombre for c in carreras_db)
-                sel_carrera = st.multiselect(
-                    "Carrera(s)",
-                    options=carrera_names,
-                    key="filtro_ubic_carrera",
-                )
-                col_y, col_c = st.columns(2)
-                with col_y:
-                    sel_anio = st.multiselect(
-                        "Año(s)",
-                        options=list(range(1, 7)),
-                        key="filtro_ubic_anio",
-                    )
-                with col_c:
-                    sel_cuatri = st.multiselect(
-                        "Cuatri",
-                        options=["1C", "2C", "Anual"],
-                        key="filtro_ubic_cuatri",
-                    )
+        filtros = render_materia_filtros(
+            session,
+            key_ns="reasignar",
+            incluir_vigencia=False,
+            incluir_lab=True,
+            incluir_grupo_scope=True,
+            ubicacion_default_expanded=True,
+        )
 
-            # 2. Atributos de la materia.
-            with st.expander("🏷️ Atributos", expanded=False):
-                # Lista de grupos SIN el "Sin clasificar" (que aparece
-                # explícito arriba como opción "Sólo Sin clasificar") —
-                # así evitamos que "Sin clasificar" figure dos veces.
-                grupos_ordenados_para_filtro = sorted(
-                    (g for g in grupos if not g.es_sin_clasificar),
-                    key=lambda x: x.nombre,
-                )
-                sel_grupo_actual = st.selectbox(
-                    "Grupo actual",
-                    options=["Todos", "Sólo Sin clasificar"]
-                    + [g.nombre for g in grupos_ordenados_para_filtro],
-                    key="filtro_grupo_actual",
-                    help=(
-                        "Filtra materias por el grupo al que están "
-                        "asignadas hoy. 'Sólo Sin clasificar' es el "
-                        "atajo para atacar el backlog de materias sin "
-                        "grupo real."
-                    ),
-                )
-                col_a1, col_a2 = st.columns(2)
-                with col_a1:
-                    filtro_optativa = st.selectbox(
-                        "Optativa",
-                        options=["Todas", "Sólo optativas", "Sólo obligatorias"],
-                        key="filtro_optativa",
-                    )
-                    filtro_virtual = st.selectbox(
-                        "Virtual",
-                        options=["Todas", "Sólo virtuales", "Sólo presenciales"],
-                        key="filtro_virtual",
-                    )
-                with col_a2:
-                    filtro_lab = st.selectbox(
-                        "Laboratorio",
-                        options=[
-                            "Todas",
-                            "Con horas de lab",
-                            "Sin horas de lab",
-                            "Con lab compatible",
-                            "Sin lab compatible",
-                        ],
-                        key="filtro_lab",
-                    )
-                    filtro_periodo = st.selectbox(
-                        "Período",
-                        options=["Todos", "Cuatrimestral", "Anual"],
-                        key="filtro_periodo",
-                    )
-
-            # 3. Búsqueda por código/nombre.
-            busqueda = st.text_input(
-                "🔍 Buscar por código o nombre",
-                key="filtro_busqueda",
-                placeholder="Ej: F14, algebra, matemática...",
-                help=(
-                    "La búsqueda ignora mayúsculas y acentos. "
-                    "Escribí 'fisica' y encuentra 'Física'."
-                ),
-            )
-
-        # ---------------------------------------------------
-        # Query materias con los filtros aplicados
-        # ---------------------------------------------------
-        materias_filtradas = _aplicar_filtros(
-            session=session,
-            grupos=grupos,
-            sel_carrera_names=sel_carrera,
-            sel_anio=sel_anio,
-            sel_cuatri=sel_cuatri,
-            grupo_actual_filtro=sel_grupo_actual,
-            filtro_optativa=filtro_optativa,
-            filtro_virtual=filtro_virtual,
-            filtro_lab=filtro_lab,
-            filtro_periodo=filtro_periodo,
-            busqueda=busqueda,
+        all_materias = list(session.exec(
+            select(MateriaDB).order_by(MateriaDB.codigo)  # type: ignore[arg-type]
+        ).all())
+        materias_filtradas = aplicar_materia_filtros(
+            session, all_materias, filtros,
         )
 
         if not materias_filtradas:
@@ -763,168 +668,9 @@ def _render_reasignacion_materias(
             f"**{len(materias_filtradas)} materia(s)** que coinciden."
         )
 
-        # ---------------------------------------------------
-        # Acciones masivas sobre el resultado filtrado
-        # ---------------------------------------------------
+        # Acciones masivas + tabla con Reasignar por fila.
         _render_acciones_masivas(session, materias_filtradas, grupos)
-
-        # ---------------------------------------------------
-        # Tabla (con botón Reasignar por fila)
-        # ---------------------------------------------------
         _render_tabla_reasignacion(session, materias_filtradas, grupos)
-
-
-def _aplicar_filtros(
-    *,
-    session: Session,
-    grupos: list[GrupoMateriaDB],
-    sel_carrera_names: list[str],
-    sel_anio: list[int],
-    sel_cuatri: list[str],
-    grupo_actual_filtro: str,
-    filtro_optativa: str,
-    filtro_virtual: str,
-    filtro_lab: str,
-    filtro_periodo: str,
-    busqueda: str,
-) -> list[MateriaDB]:
-    """Aplica todos los filtros a la lista de materias y devuelve el
-    resultado ordenado por código."""
-    # Base: todas las materias.
-    all_materias = list(session.exec(
-        select(MateriaDB).order_by(MateriaDB.codigo)  # type: ignore[arg-type]
-    ).all())
-
-    # Filtro 1: ubicación curricular (usa plan activo de la carrera).
-    if sel_carrera_names:
-        carreras_db = list(session.exec(select(CarreraDB)).all())
-        codigos_carrera = [
-            c.codigo for c in carreras_db if c.nombre in sel_carrera_names
-        ]
-        # Recolectar plan_version_id activos de cada carrera.
-        plan_ids_activos: list[str] = []
-        for cod in codigos_carrera:
-            pv = get_plan_activo(session, cod)
-            if pv is not None:
-                plan_ids_activos.append(pv.id)
-        if not plan_ids_activos:
-            return []  # ninguna carrera con plan activo → nada matchea
-        pe_entries = list(session.exec(
-            select(PlanEstudioDB).where(
-                PlanEstudioDB.plan_version_id.in_(plan_ids_activos),  # type: ignore[attr-defined]
-            )
-        ).all())
-        codigos_ok: set[str] = set()
-        for pe in pe_entries:
-            if sel_anio and pe.anio_plan not in sel_anio:
-                continue
-            if sel_cuatri and pe.cuatrimestre_plan not in sel_cuatri:
-                continue
-            codigos_ok.add(pe.materia_codigo)
-        all_materias = [
-            m for m in all_materias if m.codigo in codigos_ok
-        ]
-    elif sel_anio or sel_cuatri:
-        # Sin carrera pero con año/cuatri: usa plan activo de todas
-        # las carreras.
-        pes_all = list(session.exec(select(PlanEstudioDB)).all())
-        # Índice plan_id → active
-        planes_activos_ids = {
-            pv.id
-            for pv in session.exec(
-                select(PlanCarreraVersionDB)
-            ).all()
-            if pv.active
-        }
-        codigos_ok = set()
-        for pe in pes_all:
-            if pe.plan_version_id not in planes_activos_ids:
-                continue
-            if sel_anio and pe.anio_plan not in sel_anio:
-                continue
-            if sel_cuatri and pe.cuatrimestre_plan not in sel_cuatri:
-                continue
-            codigos_ok.add(pe.materia_codigo)
-        all_materias = [
-            m for m in all_materias if m.codigo in codigos_ok
-        ]
-
-    # Filtro 2: grupo actual.
-    if grupo_actual_filtro == "Sólo Sin clasificar":
-        try:
-            sc = get_grupo_sin_clasificar(session)
-            all_materias = [
-                m for m in all_materias if m.grupo_id == sc.id
-            ]
-        except ValueError:
-            all_materias = []
-    elif grupo_actual_filtro != "Todos":
-        target = next(
-            (g for g in grupos if g.nombre == grupo_actual_filtro), None,
-        )
-        if target:
-            all_materias = [
-                m for m in all_materias if m.grupo_id == target.id
-            ]
-        else:
-            all_materias = []
-
-    # Filtro 3: optativa.
-    if filtro_optativa == "Sólo optativas":
-        all_materias = [m for m in all_materias if m.optativa]
-    elif filtro_optativa == "Sólo obligatorias":
-        all_materias = [m for m in all_materias if not m.optativa]
-
-    # Filtro 4: virtual.
-    if filtro_virtual == "Sólo virtuales":
-        all_materias = [m for m in all_materias if m.virtual]
-    elif filtro_virtual == "Sólo presenciales":
-        all_materias = [m for m in all_materias if not m.virtual]
-
-    # Filtro 5: laboratorio.
-    if filtro_lab in ("Con lab compatible", "Sin lab compatible"):
-        lab_pairs = list(session.exec(
-            select(MateriaLaboratorioDB.materia_codigo)
-        ).all())
-        materias_con_lab = set(lab_pairs)
-        if filtro_lab == "Con lab compatible":
-            all_materias = [
-                m for m in all_materias if m.codigo in materias_con_lab
-            ]
-        else:
-            all_materias = [
-                m for m in all_materias
-                if m.codigo not in materias_con_lab
-            ]
-    elif filtro_lab == "Con horas de lab":
-        all_materias = [
-            m for m in all_materias
-            if (m.horas_laboratorio or 0) > 0
-        ]
-    elif filtro_lab == "Sin horas de lab":
-        all_materias = [
-            m for m in all_materias
-            if (m.horas_laboratorio or 0) == 0
-        ]
-
-    # Filtro 6: período.
-    if filtro_periodo == "Cuatrimestral":
-        all_materias = [
-            m for m in all_materias if m.periodo == "cuatrimestral"
-        ]
-    elif filtro_periodo == "Anual":
-        all_materias = [m for m in all_materias if m.periodo == "anual"]
-
-    # Filtro 7: búsqueda por código/nombre (tolerante a acentos).
-    if busqueda.strip():
-        term = _normalizar(busqueda.strip())
-        all_materias = [
-            m for m in all_materias
-            if term in _normalizar(m.codigo)
-            or term in _normalizar(m.nombre)
-        ]
-
-    return all_materias
 
 
 def _render_acciones_masivas(

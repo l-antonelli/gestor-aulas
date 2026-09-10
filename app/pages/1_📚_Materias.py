@@ -369,230 +369,42 @@ def render_custom_materia_page():
                 # --- Normal list view ---
                 else:
                     # -------------------------------------------------
-                    # Filtros
+                    # Filtros — reutiliza el componente compartido.
                     # -------------------------------------------------
-                    import unicodedata as _uc
-                    from src.database.models import (
-                        CarreraDB as _CarreraDB,
-                        PlanEstudioDB as _PlanEstudioDB,
-                    )
-                    from src.services.grupo_materia_service import (
-                        list_grupos as _list_grupos_lst,
-                        get_plan_activo as _get_plan_activo,
+                    from src.database.models import MateriaDB as _MDB
+                    from src.ui.materia_filters import (
+                        aplicar_materia_filtros,
+                        render_materia_filtros,
                     )
 
-                    def _norm(t: str) -> str:
-                        nfkd = _uc.normalize("NFKD", t)
-                        return "".join(
-                            c for c in nfkd if not _uc.combining(c)
-                        ).lower()
+                    filtros = render_materia_filtros(
+                        session,
+                        key_ns="materias_lst",
+                        incluir_vigencia=True,
+                        incluir_lab=False,
+                        incluir_grupo_scope=False,
+                    )
 
-                    with st.container(border=True):
-                        st.markdown("**🔎 Filtros**")
-
-                        # Búsqueda por código/nombre (tolerante a acentos).
-                        search = st.text_input(
-                            "Buscar por código o nombre",
-                            key="materias_filter",
-                            placeholder="Ej: F14, algebra, matemática…",
-                            help=(
-                                "La búsqueda ignora mayúsculas y "
-                                "acentos: 'fisica' matchea 'Física'."
-                            ),
-                        )
-
-                        # Ubicación curricular (plan activo).
-                        with st.expander(
-                            "📍 Ubicación curricular",
-                            expanded=False,
-                        ):
-                            st.caption(
-                                "Filtra por dónde aparecen las materias "
-                                "en el **plan activo** de cada carrera."
-                            )
-                            _carreras_lst = list(session.exec(
-                                select(_CarreraDB).order_by(  # type: ignore[arg-type]
-                                    _CarreraDB.nombre,
-                                )
-                            ).all())
-                            sel_carr = st.multiselect(
-                                "Carrera(s)",
-                                options=[c.nombre for c in _carreras_lst],
-                                key="materias_lst_filtro_carrera",
-                            )
-                            _cy, _cc = st.columns(2)
-                            with _cy:
-                                sel_anio = st.multiselect(
-                                    "Año(s)",
-                                    options=list(range(1, 7)),
-                                    key="materias_lst_filtro_anio",
-                                )
-                            with _cc:
-                                sel_cuatri = st.multiselect(
-                                    "Cuatri",
-                                    options=["1C", "2C", "Anual"],
-                                    key="materias_lst_filtro_cuatri",
-                                )
-
-                        # Atributos.
-                        with st.expander("🏷️ Atributos", expanded=False):
-                            _grupos_lst = sorted(
-                                _list_grupos_lst(session),
-                                key=lambda g: (
-                                    0 if g.es_sin_clasificar else 1,
-                                    g.nombre.lower(),
-                                ),
-                            )
-                            sel_grupo_nombre = st.selectbox(
-                                "Grupo",
-                                options=["Todos"] + [
-                                    g.nombre for g in _grupos_lst
-                                ],
-                                key="materias_lst_filtro_grupo",
-                            )
-                            _c_a1, _c_a2 = st.columns(2)
-                            with _c_a1:
-                                sel_optativa = st.selectbox(
-                                    "Optativa",
-                                    options=[
-                                        "Todas",
-                                        "Sólo optativas",
-                                        "Sólo obligatorias",
-                                    ],
-                                    key="materias_lst_filtro_opt",
-                                )
-                                sel_virtual = st.selectbox(
-                                    "Virtual",
-                                    options=[
-                                        "Todas",
-                                        "Sólo virtuales",
-                                        "Sólo presenciales",
-                                    ],
-                                    key="materias_lst_filtro_virt",
-                                )
-                            with _c_a2:
-                                sel_activa = st.selectbox(
-                                    "Vigencia",
-                                    options=[
-                                        "Todas",
-                                        "Sólo activas",
-                                        "Sólo archivadas",
-                                    ],
-                                    key="materias_lst_filtro_activa",
-                                )
-                                sel_periodo = st.selectbox(
-                                    "Período",
-                                    options=[
-                                        "Todos",
-                                        "Cuatrimestral",
-                                        "Anual",
-                                    ],
-                                    key="materias_lst_filtro_periodo",
-                                )
-
-                    # -------------------------------------------------
-                    # Aplicar filtros
-                    # -------------------------------------------------
-                    display_materias = list(materias)
-
-                    if search.strip():
-                        _t = _norm(search.strip())
-                        display_materias = [
-                            m for m in display_materias
-                            if _t in _norm(m.codigo)
-                            or _t in _norm(m.nombre)
-                        ]
-
-                    if sel_carr or sel_anio or sel_cuatri:
-                        # Si hay filtros de ubicación, sólo pasan las
-                        # materias que aparecen en el plan activo de
-                        # las carreras elegidas (o de cualquier carrera
-                        # si no se eligió ninguna) con el año/cuatri.
-                        _cods_carr = (
-                            [
-                                c.codigo for c in _carreras_lst
-                                if c.nombre in sel_carr
-                            ]
-                            if sel_carr else
-                            [c.codigo for c in _carreras_lst]
-                        )
-                        _plan_ids = []
-                        for _cc in _cods_carr:
-                            _pv = _get_plan_activo(session, _cc)
-                            if _pv is not None:
-                                _plan_ids.append(_pv.id)
-                        if _plan_ids:
-                            _pes = list(session.exec(
-                                select(_PlanEstudioDB).where(
-                                    _PlanEstudioDB.plan_version_id.in_(  # type: ignore[attr-defined]
-                                        _plan_ids,
-                                    ),
-                                )
-                            ).all())
-                            _codigos_ok: set[str] = set()
-                            for _pe in _pes:
-                                if sel_anio and _pe.anio_plan not in sel_anio:
-                                    continue
-                                if sel_cuatri and _pe.cuatrimestre_plan not in sel_cuatri:
-                                    continue
-                                _codigos_ok.add(_pe.materia_codigo)
-                            display_materias = [
-                                m for m in display_materias
-                                if m.codigo in _codigos_ok
-                            ]
-                        else:
-                            display_materias = []
-
-                    if sel_grupo_nombre != "Todos":
-                        _target = next(
-                            (g for g in _grupos_lst if g.nombre == sel_grupo_nombre),
-                            None,
-                        )
-                        if _target:
-                            display_materias = [
-                                m for m in display_materias
-                                if m.grupo_id == _target.id
-                            ]
-                        else:
-                            display_materias = []
-
-                    if sel_optativa == "Sólo optativas":
-                        display_materias = [
-                            m for m in display_materias if m.optativa
-                        ]
-                    elif sel_optativa == "Sólo obligatorias":
-                        display_materias = [
-                            m for m in display_materias if not m.optativa
-                        ]
-
-                    if sel_virtual == "Sólo virtuales":
-                        display_materias = [
-                            m for m in display_materias if m.virtual
-                        ]
-                    elif sel_virtual == "Sólo presenciales":
-                        display_materias = [
-                            m for m in display_materias if not m.virtual
-                        ]
-
-                    if sel_activa == "Sólo activas":
-                        display_materias = [
-                            m for m in display_materias if m.active
-                        ]
-                    elif sel_activa == "Sólo archivadas":
-                        display_materias = [
-                            m for m in display_materias if not m.active
-                        ]
-
-                    if sel_periodo == "Cuatrimestral":
-                        display_materias = [
-                            m for m in display_materias
-                            if m.periodo == "cuatrimestral"
-                        ]
-                    elif sel_periodo == "Anual":
-                        display_materias = [
-                            m for m in display_materias
-                            if m.periodo == "anual"
-                        ]
+                    # Pasamos la lista completa (no la limitada por
+                    # get_all) y filtramos con el componente compartido.
+                    all_materias_db = list(session.exec(
+                        select(_MDB).order_by(_MDB.codigo)  # type: ignore[arg-type]
+                    ).all())
+                    # `materias` (dominio) se usa después para editar,
+                    # pero para filtrar/mostrar podemos ir con MateriaDB
+                    # directamente porque el componente compartido opera
+                    # sobre MateriaDB. Los expanders de abajo esperan
+                    # dominio Materia pero el subset de atributos que
+                    # muestran (codigo, nombre, periodo, cupo, etc.) es
+                    # equivalente. Para no cambiar el resto del render,
+                    # mapeamos el filtro a códigos y filtramos `materias`.
+                    filtradas_db = aplicar_materia_filtros(
+                        session, all_materias_db, filtros,
+                    )
+                    codigos_ok = {m.codigo for m in filtradas_db}
+                    display_materias = [
+                        m for m in materias if m.codigo in codigos_ok
+                    ]
 
                     # -------------------------------------------------
                     # Paginación

@@ -4,7 +4,10 @@ Requirements: 7.1, 7.2, 7.4, 7.5, 8.1
 """
 
 import streamlit as st
+from sqlmodel import Session, select
+
 from src.database.connection import get_session, init_db
+from src.database.models import PlanCarreraVersionDB
 from src.services.crud_services import carrera_service, materia_service
 from src.domain.problem.carrera import Carrera
 from src.ui.carrera_status_widget import CarreraStatusWidget
@@ -17,6 +20,114 @@ import src.services.relationship_definitions  # noqa: F401
 init_db()
 
 st.set_page_config(page_title="Carreras", page_icon="🎓", layout="wide")
+
+
+def _render_plan_activo_y_grupos(
+    session: Session, carrera,
+) -> None:
+    """Renderiza dos bloques con borde para cada carrera:
+
+    1. **Plan de estudio activo**: lista todas las versiones del plan
+       de la carrera, permite marcar cuál está activa (radio + botón
+       Guardar). Solo puede haber uno activo por carrera.
+    2. **Grupos de materias asociados**: lista los grupos que tienen
+       a esta carrera en su asociación M:N, con link a Materias →
+       Grupos para editar.
+    """
+    from src.services.grupo_materia_service import (
+        get_plan_activo,
+        list_grupos_de_carrera,
+        set_plan_activo,
+    )
+
+    # --- Plan activo ------------------------------------------
+    with st.container(border=True):
+        st.markdown("**📄 Plan de estudio activo**")
+        st.caption(
+            "El **plan activo** es la versión vigente de la carrera. "
+            "Los filtros por ubicación curricular y los chequeos de "
+            "consistencia por grupo lo usan como referencia. Los "
+            "planes inactivos se conservan para poder seguir "
+            "referenciando ciclos de años anteriores."
+        )
+        versiones = list(session.exec(
+            select(PlanCarreraVersionDB).where(
+                PlanCarreraVersionDB.carrera_codigo == carrera.codigo,
+            ).order_by(
+                PlanCarreraVersionDB.fecha_creacion.desc(),  # type: ignore[attr-defined]
+            )
+        ).all())
+        if not versiones:
+            st.info(
+                "Esta carrera todavía no tiene versiones de plan "
+                "creadas. Se crean automáticamente cuando se carga "
+                "un plan de estudio para esta carrera."
+            )
+        else:
+            activa = get_plan_activo(session, carrera.codigo)
+            opciones = ["(Ninguna)"] + [
+                f"{v.nombre} — {v.fecha_creacion}"
+                for v in versiones
+            ]
+            id_por_opcion = ["__NONE__"] + [v.id for v in versiones]
+            default_idx = 0
+            if activa is not None:
+                for i, v in enumerate(versiones):
+                    if v.id == activa.id:
+                        default_idx = i + 1
+                        break
+            sel_idx = st.radio(
+                "Versión activa",
+                options=list(range(len(opciones))),
+                format_func=lambda i: opciones[i],
+                index=default_idx,
+                key=f"plan_activo_{carrera.codigo}",
+                label_visibility="collapsed",
+            )
+            sel_id = id_por_opcion[sel_idx]
+            actual_id = activa.id if activa is not None else "__NONE__"
+            if sel_id != actual_id:
+                if st.button(
+                    "💾 Guardar cambio de plan activo",
+                    key=f"save_plan_activo_{carrera.codigo}",
+                    type="primary",
+                ):
+                    try:
+                        set_plan_activo(
+                            session, carrera.codigo,
+                            None if sel_id == "__NONE__" else sel_id,
+                        )
+                        st.success("Plan activo actualizado.")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+
+    # --- Grupos de materias asociados -------------------------
+    with st.container(border=True):
+        st.markdown("**📦 Grupos de materias asociados**")
+        grupos_asoc = list_grupos_de_carrera(session, carrera.codigo)
+        if not grupos_asoc:
+            st.caption(
+                "Ningún grupo tiene a esta carrera asociada. "
+                "La asociación se maneja desde **Materias → 📦 "
+                "Grupos de materias** en el campo 'Carreras asociadas' "
+                "de cada grupo."
+            )
+        else:
+            st.caption(
+                "Grupos que declaran a esta carrera como asociada. Se "
+                "usan para el chequeo de consistencia (comparan las "
+                "materias del grupo con las exclusivas de esta carrera "
+                "en su plan activo)."
+            )
+            for g in grupos_asoc:
+                st.markdown(
+                    f"- 📦 **{g.nombre}**"
+                    + (" · ⚠️ Sin clasificar" if g.es_sin_clasificar else "")
+                )
+        st.caption(
+            "_Editá las asociaciones desde Materias → 📦 Grupos de materias._"
+        )
 
 
 def render_custom_carrera_page():
@@ -83,24 +194,14 @@ def render_custom_carrera_page():
                                 except Exception as e:
                                     st.error(f"Error al cargar estado: {str(e)}")
                             
-                            # Sedes admisibles: se configuran ahora
-                            # a nivel de Grupo de Materias.
+                            # Plan activo de la carrera + grupos
+                            # asociados. La config de sedes admisibles
+                            # se resuelve por Grupo de Materias (ver
+                            # Materias → 📦 Grupos).
                             st.divider()
-                            with st.container(border=True):
-                                st.markdown("**🏛️ Sedes admisibles**")
-                                st.info(
-                                    "La preferencia de sede ya no se "
-                                    "define acá — se resuelve por el "
-                                    "**Grupo de Materias** al que "
-                                    "pertenece cada materia (típicamente "
-                                    f"'Específicas de {carrera.nombre}' "
-                                    "para las materias exclusivas y grupos "
-                                    "propios como F, FB, FI, CE para las "
-                                    "comunes).\n\n"
-                                    "Ir a **Materias → 📦 Grupos de "
-                                    "materias** para editar el modo "
-                                    "(DURO / BLANDO) y la lista de sedes."
-                                )
+                            _render_plan_activo_y_grupos(
+                                session, carrera,
+                            )
 
                             # Botones de acción alineados a la
                             # derecha con ancho fijo.

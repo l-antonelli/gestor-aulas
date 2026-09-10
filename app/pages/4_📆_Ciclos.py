@@ -147,17 +147,32 @@ with tab_ciclos:
                 all_versions.append(v)
 
     version_options = {v.id: f"{v.carrera_codigo} - {v.nombre}" for v in all_versions}
-    # Default: latest version per carrera
-    latest_by_carrera = {}
+    # Default: versión **activa** de cada carrera. Si la carrera no
+    # tiene versión marcada como activa, cae en la versión más reciente
+    # (fallback histórico). Los ciclos ya creados conservan las
+    # versiones con las que se armaron aunque después se marque otra
+    # como activa — esto sólo afecta la preselección de un ciclo nuevo.
+    active_by_carrera: dict[str, str] = {}
+    latest_by_carrera: dict[str, str] = {}
     for v in all_versions:
+        if v.active:
+            active_by_carrera[v.carrera_codigo] = v.id
+        # Latest fallback.
         if v.carrera_codigo not in latest_by_carrera:
             latest_by_carrera[v.carrera_codigo] = v.id
         else:
-            # Keep the one with later fecha_creacion
-            existing = next(vv for vv in all_versions if vv.id == latest_by_carrera[v.carrera_codigo])
+            existing = next(
+                vv for vv in all_versions
+                if vv.id == latest_by_carrera[v.carrera_codigo]
+            )
             if v.fecha_creacion >= existing.fecha_creacion:
                 latest_by_carrera[v.carrera_codigo] = v.id
-    default_version_ids = list(latest_by_carrera.values())
+    default_version_ids: list[str] = []
+    for c in all_carreras:
+        if c.codigo in active_by_carrera:
+            default_version_ids.append(active_by_carrera[c.codigo])
+        elif c.codigo in latest_by_carrera:
+            default_version_ids.append(latest_by_carrera[c.codigo])
 
     with st.form("create_ciclo"):
         col1, col2 = st.columns(2)
