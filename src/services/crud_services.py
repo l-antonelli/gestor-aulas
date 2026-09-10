@@ -539,6 +539,198 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             id_field="codigo"
         )
 
+    def contar_impacto_borrado(
+        self, session: Session, entity_id: str,
+    ) -> dict:
+        """Devuelve un dict con conteos y detalle de todas las
+        entidades que se van a borrar en cascada si se elimina la
+        materia. Sirve para renderizar un diálogo de confirmación
+        informativo antes de aplicar el borrado.
+
+        Estructura:
+
+        ```
+        {
+            "existe": bool,
+            "dictados": {"n": int, "codigos": [str]},
+            "comisiones": {"n": int, "detalles": [str]},
+            "horarios": {"n": int},
+            "clases": {"n": int, "ejecutadas": int},
+            "planes_estudio": {"n": int, "carreras": [str]},
+            "labs_compatibles": {"n": int},
+            "correlativas": {"n": int},
+            "inscripciones_historicas": {"n": int},
+            "forecast_configs": {"n": int},
+            "schedule_entries": {"n": int},
+        }
+        ```
+
+        El caller renderiza los conteos y opcionalmente muestra los
+        detalles en un expander.
+        """
+        from sqlmodel import select as _select
+        from src.database.models import (
+            ClaseDB, ComisionDB, CorrelativaDB, DictadoDB,
+            HorarioDB, InscripcionHistoricaDB,
+            MateriaForecastConfigDB, MateriaLaboratorioDB,
+            PlanEstudioDB, ScheduleEntryDB,
+        )
+
+        if self.crud.get(session, entity_id) is None:
+            return {"existe": False}
+
+        # --- Dictados ---
+        dictados = list(session.exec(
+            _select(DictadoDB).where(
+                DictadoDB.materia_codigo == entity_id,
+            )
+        ).all())
+        dict_ids = [d.id for d in dictados]
+
+        # --- Comisiones ---
+        comisiones = list(session.exec(
+            _select(ComisionDB).where(
+                ComisionDB.materia_codigo == entity_id,
+            )
+        ).all())
+        com_ids = [c.id for c in comisiones]
+
+        # --- Horarios (por comisión y por codigo_materia) ---
+        n_horarios_por_com = 0
+        if com_ids:
+            n_horarios_por_com = len(list(session.exec(
+                _select(HorarioDB.id).where(
+                    HorarioDB.comision_id.in_(com_ids),  # type: ignore[attr-defined]
+                )
+            ).all()))
+        n_horarios_por_mat = len(list(session.exec(
+            _select(HorarioDB.id).where(
+                HorarioDB.codigo_materia == entity_id,
+            )
+        ).all()))
+        # Union para evitar contar dos veces el mismo id.
+        h_ids_por_com: set[str] = set()
+        h_ids_por_mat: set[str] = set()
+        if com_ids:
+            h_ids_por_com = {
+                r for r in session.exec(
+                    _select(HorarioDB.id).where(
+                        HorarioDB.comision_id.in_(com_ids),  # type: ignore[attr-defined]
+                    )
+                ).all()
+            }
+        h_ids_por_mat = {
+            r for r in session.exec(
+                _select(HorarioDB.id).where(
+                    HorarioDB.codigo_materia == entity_id,
+                )
+            ).all()
+        }
+        n_horarios = len(h_ids_por_com | h_ids_por_mat)
+
+        # --- Clases (por comisión y por dictado) ---
+        clases_ids: set[str] = set()
+        clases_ejecutadas = 0
+        if com_ids:
+            for c in session.exec(
+                _select(ClaseDB).where(
+                    ClaseDB.comision_id.in_(com_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                clases_ids.add(c.id)
+                if c.executed:
+                    clases_ejecutadas += 1
+        if dict_ids:
+            for c in session.exec(
+                _select(ClaseDB).where(
+                    ClaseDB.dictado_id.in_(dict_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                if c.id in clases_ids:
+                    continue
+                clases_ids.add(c.id)
+                if c.executed:
+                    clases_ejecutadas += 1
+
+        # --- Planes de estudio (link M:N con carreras) ---
+        pe_rows = list(session.exec(
+            _select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == entity_id,
+            )
+        ).all())
+        carreras_afectadas = sorted({pe.carrera_codigo for pe in pe_rows})
+
+        # --- Labs compatibles ---
+        n_labs = len(list(session.exec(
+            _select(MateriaLaboratorioDB).where(
+                MateriaLaboratorioDB.materia_codigo == entity_id,
+            )
+        ).all()))
+
+        # --- Correlativas (como origen o como correlativa) ---
+        n_corr_como_origen = len(list(session.exec(
+            _select(CorrelativaDB).where(
+                CorrelativaDB.materia_codigo == entity_id,
+            )
+        ).all()))
+        n_corr_como_referida = len(list(session.exec(
+            _select(CorrelativaDB).where(
+                CorrelativaDB.materia_correlativa_codigo == entity_id,
+            )
+        ).all()))
+        n_corr = n_corr_como_origen + n_corr_como_referida
+
+        # --- Inscripciones históricas ---
+        n_insc = len(list(session.exec(
+            _select(InscripcionHistoricaDB).where(
+                InscripcionHistoricaDB.materia_codigo == entity_id,
+            )
+        ).all()))
+
+        # --- Forecast configs ---
+        n_fc = len(list(session.exec(
+            _select(MateriaForecastConfigDB).where(
+                MateriaForecastConfigDB.materia_codigo == entity_id,
+            )
+        ).all()))
+
+        # --- Schedule entries ---
+        n_se = len(list(session.exec(
+            _select(ScheduleEntryDB).where(
+                ScheduleEntryDB.codigo_materia == entity_id,
+            )
+        ).all()))
+
+        return {
+            "existe": True,
+            "dictados": {
+                "n": len(dictados),
+                "codigos": [
+                    d.dictado_codigo or d.id for d in dictados
+                ],
+            },
+            "comisiones": {
+                "n": len(comisiones),
+                "detalles": [
+                    f"{c.nombre} (n° {c.numero})" for c in comisiones
+                ],
+            },
+            "horarios": {"n": n_horarios},
+            "clases": {
+                "n": len(clases_ids),
+                "ejecutadas": clases_ejecutadas,
+            },
+            "planes_estudio": {
+                "n": len(pe_rows),
+                "carreras": carreras_afectadas,
+            },
+            "labs_compatibles": {"n": n_labs},
+            "correlativas": {"n": n_corr},
+            "inscripciones_historicas": {"n": n_insc},
+            "forecast_configs": {"n": n_fc},
+            "schedule_entries": {"n": n_se},
+        }
+
     def delete(self, session: Session, entity_id: str) -> bool:
         """Borra una materia con **cascada explícita** de todas las
         entidades que la referencian por FK.
