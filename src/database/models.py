@@ -31,7 +31,19 @@ class ConfiguracionHoraria(SQLModel, table=True):
 # =============================================================================
 
 class PlanCarreraVersionDB(SQLModel, table=True):
-    """Version de un plan de estudios para una carrera."""
+    """Version de un plan de estudios para una carrera.
+
+    El flag ``active`` marca la versión "vigente" de la carrera. Como
+    máximo una versión por carrera puede estar activa a la vez (el
+    servicio garantiza la unicidad). Las configuraciones globales del
+    sistema (filtros de ubicación curricular, chequeos de
+    consistencia por grupo, etc.) usan la versión activa para
+    resolver "qué materias corresponden hoy a cada carrera-año-cuatri".
+
+    Las versiones inactivas se conservan para poder seguir corriendo
+    ciclos de años anteriores (cada ciclo referencia sus
+    versiones via ``CicloPlanVersionDB``).
+    """
     __tablename__ = "plan_carrera_version"
 
     id: str = Field(primary_key=True)  # UUID
@@ -39,6 +51,7 @@ class PlanCarreraVersionDB(SQLModel, table=True):
     nombre: str  # e.g., "Plan Original", "Plan 2025"
     descripcion: str = Field(default="")
     fecha_creacion: date
+    active: bool = Field(default=False, index=True)
 
 
 class CicloPlanVersionDB(SQLModel, table=True):
@@ -295,46 +308,82 @@ class CarreraSedeDB(SQLModel, table=True):
 
 
 class GrupoMateriaDB(SQLModel, table=True):
-    """Grupo de materias con criterio común de asignación de sede.
+    """Grupo de materias con **dos configuraciones de sede** convivientes.
 
-    Define, para un conjunto de materias, la lista de sedes admisibles y
-    el modo con el que el LP las evalúa:
+    Cada grupo define, para su conjunto de materias:
 
-    - ``DURO``: las sedes de la lista son las únicas admisibles (R10). Si
-      la lista está vacía, fallback permisivo = "todas las sedes"
-      (útil sólo para el grupo "Sin clasificar" durante la transición).
-    - ``BLANDO``: todas las sedes de la lista son admisibles, pero la
-      primera (``orden=0``) es la preferida a nivel objetivo. Las
-      alternativas suman ``λ_sede_pref`` al costo por horario
-      desplazado (R12).
+    - **Set DURO** — sedes admisibles cuando el LP corre con modo DURO
+      para ese grupo. Las materias del grupo sólo se asignan a aulas
+      de este set. Si el set está vacío, fallback permisivo (todas
+      admisibles).
+    - **Lista BLANDA ordenada** — sedes preferidas cuando el LP corre
+      con modo BLANDO. La primera es la preferida (cost 0), el resto
+      son alternativas (suman ``λ_sede_pref``). Sin filtro por sede.
+
+    La **elección del modo por-grupo** se hace en el panel del
+    asignador (``LPConfig.modos_por_grupo``). Los grupos declaran las
+    dos configs, el LP elige cuál usar en cada corrida.
 
     Cada ``MateriaDB`` pertenece a exactamente un grupo (partición
     estricta enforzada en service layer). El grupo con
-    ``es_sin_clasificar=True`` es el fallback donde caen las materias que
-    no fueron asignadas a un grupo específico; sólo puede haber uno con
-    este flag en True (unicidad garantizada por el servicio).
+    ``es_sin_clasificar=True`` es el fallback donde caen las materias
+    que no fueron asignadas a un grupo específico; sólo puede haber
+    uno con este flag en True.
+
+    ``GrupoMateriaCarreraDB`` (M:N grupo↔carrera) asocia carreras al
+    grupo. La asociación se usa **sólo para el chequeo de
+    consistencia** (verificar que todas las materias exclusivas de
+    una carrera estén en algún grupo asociado). No dispara sync
+    automático.
     """
     __tablename__ = "grupo_materia"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     nombre: str = Field(min_length=1, unique=True, index=True)
-    modo: str = Field(default="DURO")  # "DURO" | "BLANDO"
     es_sin_clasificar: bool = Field(default=False, index=True)
 
 
 class GrupoMateriaSedeDB(SQLModel, table=True):
-    """M:N ordenada entre ``GrupoMateriaDB`` y ``SedeDB``.
+    """M:N entre ``GrupoMateriaDB`` y ``SedeDB``, con **tipo y orden**.
 
-    El campo ``orden`` define la posición de la sede dentro del grupo. Es
-    semánticamente significativo en modo ``BLANDO`` (0 = preferida,
-    resto = alternativas). En modo ``DURO`` la posición se conserva sólo
-    para display estable en la UI.
+    Cada fila declara "esta sede pertenece al set del grupo, con este
+    tipo":
+
+    - ``tipo = "DURO"``: la sede es admisible cuando el LP corre en
+      modo DURO para el grupo. El ``orden`` se conserva para
+      estabilidad visual pero no tiene semántica.
+    - ``tipo = "BLANDO"``: la sede pertenece a la lista blanda
+      ordenada. El ``orden`` es semántico (0 = preferida). Sedes con
+      ``orden`` mayor son alternativas con costo ``λ_sede_pref``.
+
+    Una misma sede puede aparecer con ambos tipos (DURO y BLANDO)
+    para el mismo grupo — son configuraciones independientes.
     """
     __tablename__ = "grupo_materia_sede"
 
     grupo_id: str = Field(foreign_key="grupo_materia.id", primary_key=True)
     sede_id: str = Field(foreign_key="sedes.id", primary_key=True)
+    # ``tipo`` es parte de la PK compuesta para permitir que una sede
+    # aparezca en ambos sets (DURO y BLANDO) del mismo grupo.
+    tipo: str = Field(primary_key=True, default="DURO")  # "DURO" | "BLANDO"
     orden: int = Field(default=0, ge=0)
+
+
+class GrupoMateriaCarreraDB(SQLModel, table=True):
+    """M:N entre ``GrupoMateriaDB`` y ``CarreraDB``.
+
+    Asocia un grupo con las carreras a las que "pertenece" a efectos
+    del chequeo de consistencia: para cada carrera asociada, se
+    puede verificar si las materias exclusivas de esa carrera en su
+    plan activo están todas en el grupo. La asociación no afecta al
+    LP ni a la resolución de sedes.
+    """
+    __tablename__ = "grupo_materia_carrera"
+
+    grupo_id: str = Field(foreign_key="grupo_materia.id", primary_key=True)
+    carrera_codigo: str = Field(
+        foreign_key="carreras.codigo", primary_key=True,
+    )
 
 
 class AulaDB(SQLModel, table=True):

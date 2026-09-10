@@ -189,8 +189,8 @@ class TestCaminoCursadaBloqueo:
         Ambas Lunes contiguas (M1 8-10, M2 10-12, gap=0 < 30 margen).
         Cada una con 1 comisión → sin alternativas → bloqueo."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -217,8 +217,8 @@ class TestCaminoCursadaBloqueo:
         contigua a M1 (bloquea) y otra con margen suficiente. El DFS
         debería encontrar la combinación viable."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL2", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB2", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL2", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB2", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -251,8 +251,8 @@ class TestCaminoCursadaBloqueo:
         """Aunque sedes disjuntas, si el gap es >= margen no hay
         problema de traslado."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL3", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB3", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL3", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB3", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -281,8 +281,8 @@ class TestGruposPermisivos:
         de las materias tiene "cualquier sede", el par nunca genera
         conflicto."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL4", "DURO", [ctx["pel"]])
-        g_libre = create_grupo(session, "G_LIBRE", "DURO", [])
+        g_pel = create_grupo(session, "G_PEL4", sedes_duras=[ctx["pel"]])
+        g_libre = create_grupo(session, "G_LIBRE", sedes_duras=[])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -301,9 +301,10 @@ class TestGruposPermisivos:
         """BLANDO acepta todas las sedes (dura ∪ blanda), no restringe
         a nivel camino."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel_duro = create_grupo(session, "G_PEL5", "DURO", [ctx["pel"]])
+        g_pel_duro = create_grupo(session, "G_PEL5", sedes_duras=[ctx["pel"]])
         g_blando = create_grupo(
-            session, "G_BLND", "BLANDO", [ctx["pel"], ctx["sib"]],
+            session, "G_BLND",
+            sedes_blandas_ordenadas=[ctx["pel"], ctx["sib"]],
         )
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel_duro.id,
@@ -328,8 +329,8 @@ class TestOptativasIgnoradas:
         """Una materia optativa en el mismo grupo curricular no se
         cuenta en el chequeo (aun si sus sedes disjuntas)."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL6", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB6", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL6", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB6", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -357,8 +358,8 @@ class TestCarreraAsignadaIgnorada:
         # 2da carrera para poder setear carrera_asignada.
         session.add(CarreraDB(codigo="B", nombre="Carrera B"))
         session.commit()
-        g_pel = create_grupo(session, "G_PEL7", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB7", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL7", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB7", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -394,8 +395,8 @@ class TestCapExcedido:
             fs_mod, "MAX_COMBINACIONES_CAMINO", 3, raising=True,
         )
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL8", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB8", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL8", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB8", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -444,7 +445,7 @@ class TestGruposNoRelevantes:
         """Con una sola materia en (carrera, año, cuatri), no hay
         pares → no aplica R13-camino."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL9", "DURO", [ctx["pel"]])
+        g_pel = create_grupo(session, "G_PEL9", sedes_duras=[ctx["pel"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )
@@ -458,8 +459,8 @@ class TestGruposNoRelevantes:
         """Materias en cuatrimestre distinto al ciclo (1C vs 2C) no
         entran al chequeo."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL10", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB10", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL10", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB10", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "2C", g_pel.id,
         )
@@ -478,8 +479,8 @@ class TestGruposNoRelevantes:
         """Materias Anuales entran al grupo del ciclo — si están en
         Anual y hay otra en 1C con sedes disjuntas, se bloquea."""
         ctx = _seed_ciclo_y_carrera(session)
-        g_pel = create_grupo(session, "G_PEL11", "DURO", [ctx["pel"]])
-        g_sib = create_grupo(session, "G_SIB11", "DURO", [ctx["sib"]])
+        g_pel = create_grupo(session, "G_PEL11", sedes_duras=[ctx["pel"]])
+        g_sib = create_grupo(session, "G_SIB11", sedes_duras=[ctx["sib"]])
         _add_materia_al_plan(
             session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
         )

@@ -547,6 +547,11 @@ def _render_config_form(
             )
 
         # -----------------------------------------------------------------
+        # Modo por-grupo (DURO / BLANDO)
+        # -----------------------------------------------------------------
+        modos_por_grupo = _render_modos_por_grupo(session, key_ns)
+
+        # -----------------------------------------------------------------
         # Timeout + avanzado.
         # -----------------------------------------------------------------
         with st.container(border=True):
@@ -629,8 +634,72 @@ def _render_config_form(
         respetar_ediciones_manuales=bool(respetar),
         activar_alpha=bool(activar_alpha),
         forzar_misma_sede_por_comision=bool(forzar_misma_sede),
+        modos_por_grupo=modos_por_grupo,
         fecha_desde=fecha_desde,
     )
+
+
+def _render_modos_por_grupo(
+    session: Session, key_ns: str,
+) -> dict[str, str]:
+    """Renderiza la sección "Modo por grupo de materias" con un radio
+    DURO/BLANDO por cada ``GrupoMateriaDB``.
+
+    Cada grupo declara AMBAS configuraciones (set DURO y lista BLANDA);
+    acá elegimos cuál usa el LP en la corrida. Muestra a la izquierda
+    el nombre del grupo + cantidad de materias, a la derecha el radio.
+    Estado se persiste en ``st.session_state`` bajo la key
+    ``{key_ns}_modo_grupo_{grupo_id}`` para sobrevivir al rerun.
+
+    Devuelve ``{grupo_id: "DURO" | "BLANDO"}`` con las selecciones
+    para pasar a ``LPConfig.modos_por_grupo``.
+    """
+    from src.services.grupo_materia_service import (
+        contar_materias_por_grupo,
+        list_grupos,
+    )
+
+    grupos = list_grupos(session)
+    counts = contar_materias_por_grupo(session)
+    if not grupos:
+        return {}
+
+    # Ordenar: Sin clasificar primero, resto alfabético.
+    def _sort_key(g):
+        return (0 if g.es_sin_clasificar else 1, g.nombre.lower())
+
+    grupos_ord = sorted(grupos, key=_sort_key)
+
+    with st.container(border=True):
+        st.markdown("**🧭 Modo por grupo de materias**")
+        st.caption(
+            "Cada grupo declara AMBAS configuraciones de sede (set "
+            "DURO y lista BLANDA) en **Materias → 📦 Grupos**. Acá "
+            "elegís cuál usa el asignador para cada grupo en esta "
+            "corrida. **DURO**: filtra por el set duro del grupo (si "
+            "está vacío, deja pasar todas). **BLANDO**: no filtra, "
+            "usa la primera sede como preferida (R12)."
+        )
+        resultado: dict[str, str] = {}
+        for g in grupos_ord:
+            state_key = f"{key_ns}_modo_grupo_{g.id}"
+            cols = st.columns([3, 2])
+            with cols[0]:
+                prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
+                n = counts.get(g.id, 0)
+                st.markdown(
+                    f"{prefix}**{g.nombre}** · {n} materia(s)"
+                )
+            with cols[1]:
+                modo = st.radio(
+                    f"Modo {g.nombre}",
+                    options=["DURO", "BLANDO"],
+                    horizontal=True,
+                    key=state_key,
+                    label_visibility="collapsed",
+                )
+                resultado[g.id] = modo
+        return resultado
 
 
 # =============================================================================

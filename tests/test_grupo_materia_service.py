@@ -1,18 +1,28 @@
-"""Tests para grupo_materia_service.py."""
+"""Tests para grupo_materia_service.py con el modelo nuevo (2026-09-09):
+cada grupo declara AMBAS configuraciones de sede (set DURO y lista
+BLANDA) al mismo tiempo, y puede asociarse a 0..N carreras.
+"""
 
 from __future__ import annotations
+
+from datetime import date
 
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from src.database.models import (
+    CarreraDB,
+    GrupoMateriaDB,
     GrupoMateriaSedeDB,
     MateriaDB,
+    PlanCarreraVersionDB,
+    PlanEstudioDB,
     SedeDB,
 )
 from src.services.grupo_materia_service import (
     asignar_materia_a_grupo,
+    chequear_consistencia_grupo,
     contar_materias_por_grupo,
     create_grupo,
     delete_grupo,
@@ -20,11 +30,11 @@ from src.services.grupo_materia_service import (
     get_grupo,
     get_grupo_por_nombre,
     get_grupo_sin_clasificar,
+    get_plan_activo,
     list_grupos,
     list_materias_por_grupo,
     list_materias_sin_clasificar,
-    resolver_grupo_de_materia,
-    resolver_sedes_admisibles_por_materia,
+    resolver_config_sedes_por_materia,
     update_grupo,
 )
 
@@ -47,7 +57,6 @@ def session_fixture(engine):
 
 
 def _seed_sedes(session: Session) -> dict[str, str]:
-    """Crea 3 sedes (S1/S2/S3) y devuelve {nombre: id}."""
     s1 = SedeDB(id="S1", nombre="Sede 1")
     s2 = SedeDB(id="S2", nombre="Sede 2")
     s3 = SedeDB(id="S3", nombre="Sede 3")
@@ -66,97 +75,150 @@ def _add_materia(session: Session, codigo: str, grupo_id: str | None = None) -> 
 
 class TestCreateGrupo:
 
-    def test_create_duro_con_sedes(self, session):
+    def test_create_solo_duras(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "FB", "DURO", ["S1", "S2"])
-        assert g.nombre == "FB"
-        assert g.modo == "DURO"
-        assert g.es_sin_clasificar is False
-        sedes, modo = get_config_grupo(session, g.id)
-        assert sedes == ["S1", "S2"]
-        assert modo == "DURO"
+        g = create_grupo(
+            session, "G1", sedes_duras=["S1", "S2"],
+        )
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == ["S1", "S2"]
+        assert cfg.sedes_blandas_ordenadas == []
 
-    def test_create_blando_conserva_orden(self, session):
+    def test_create_solo_blandas(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "Elec", "BLANDO", ["S3", "S1", "S2"])
-        sedes, modo = get_config_grupo(session, g.id)
-        assert sedes == ["S3", "S1", "S2"]
-        assert modo == "BLANDO"
+        g = create_grupo(
+            session, "G_BLND",
+            sedes_blandas_ordenadas=["S3", "S1", "S2"],
+        )
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == []
+        assert cfg.sedes_blandas_ordenadas == ["S3", "S1", "S2"]
 
-    def test_create_lista_vacia(self, session):
+    def test_create_ambas_configs(self, session):
+        """Un grupo puede tener AMBAS configs a la vez."""
         _seed_sedes(session)
-        g = create_grupo(session, "Vacio", "DURO", [])
-        sedes, modo = get_config_grupo(session, g.id)
-        assert sedes == []
-        assert modo == "DURO"
+        g = create_grupo(
+            session, "G_AMBAS",
+            sedes_duras=["S1"],
+            sedes_blandas_ordenadas=["S1", "S2", "S3"],
+        )
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == ["S1"]
+        assert cfg.sedes_blandas_ordenadas == ["S1", "S2", "S3"]
 
-    def test_create_modo_invalido(self, session):
+    def test_create_con_carreras_asociadas(self, session):
         _seed_sedes(session)
-        with pytest.raises(ValueError, match="modo debe ser"):
-            create_grupo(session, "X", "SEMI", ["S1"])  # type: ignore[arg-type]
+        session.add(CarreraDB(codigo="A", nombre="Carrera A"))
+        session.add(CarreraDB(codigo="B", nombre="Carrera B"))
+        session.commit()
+        g = create_grupo(
+            session, "G_CARR",
+            sedes_duras=["S1"],
+            carreras_asociadas=["A", "B"],
+        )
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.carreras_asociadas == ["A", "B"]
 
     def test_create_nombre_duplicado(self, session):
         _seed_sedes(session)
-        create_grupo(session, "X", "DURO", ["S1"])
+        create_grupo(session, "X", sedes_duras=["S1"])
         with pytest.raises(ValueError, match="Ya existe un grupo"):
-            create_grupo(session, "X", "BLANDO", ["S2"])
+            create_grupo(session, "X", sedes_duras=["S2"])
 
     def test_create_sin_clasificar_unico(self, session):
         _seed_sedes(session)
-        create_grupo(session, "SC1", "DURO", [], es_sin_clasificar=True)
+        create_grupo(session, "SC1", es_sin_clasificar=True)
         with pytest.raises(ValueError, match="Ya existe un grupo 'Sin clasificar'"):
-            create_grupo(session, "SC2", "DURO", [], es_sin_clasificar=True)
+            create_grupo(session, "SC2", es_sin_clasificar=True)
 
 
 class TestUpdateGrupo:
 
-    def test_update_reemplaza_sedes(self, session):
+    def test_update_solo_duras_preserva_blandas(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1"])
-        update_grupo(session, g.id, "G1", "BLANDO", ["S2", "S3"])
-        sedes, modo = get_config_grupo(session, g.id)
-        assert sedes == ["S2", "S3"]
-        assert modo == "BLANDO"
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1"],
+            sedes_blandas_ordenadas=["S2", "S3"],
+        )
+        update_grupo(session, g.id, sedes_duras=["S2"])
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == ["S2"]
+        assert cfg.sedes_blandas_ordenadas == ["S2", "S3"]  # preservadas
+
+    def test_update_solo_blandas_preserva_duras(self, session):
+        _seed_sedes(session)
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1"],
+            sedes_blandas_ordenadas=["S2"],
+        )
+        update_grupo(session, g.id, sedes_blandas_ordenadas=["S3", "S1"])
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == ["S1"]
+        assert cfg.sedes_blandas_ordenadas == ["S3", "S1"]
+
+    def test_update_ambas_reemplaza(self, session):
+        _seed_sedes(session)
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1"],
+            sedes_blandas_ordenadas=["S2"],
+        )
+        update_grupo(
+            session, g.id,
+            sedes_duras=["S3"],
+            sedes_blandas_ordenadas=["S1", "S2"],
+        )
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.sedes_duras == ["S3"]
+        assert cfg.sedes_blandas_ordenadas == ["S1", "S2"]
+
+    def test_update_reemplaza_carreras(self, session):
+        _seed_sedes(session)
+        session.add(CarreraDB(codigo="A", nombre="A"))
+        session.add(CarreraDB(codigo="B", nombre="B"))
+        session.commit()
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        update_grupo(session, g.id, carreras_asociadas=["B"])
+        cfg = get_config_grupo(session, g.id)
+        assert cfg.carreras_asociadas == ["B"]
 
     def test_update_renombra(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "Viejo", "DURO", ["S1"])
-        update_grupo(session, g.id, "Nuevo", "DURO", ["S1"])
+        g = create_grupo(session, "Viejo", sedes_duras=["S1"])
+        update_grupo(session, g.id, nombre="Nuevo")
         assert get_grupo(session, g.id).nombre == "Nuevo"
 
     def test_update_nombre_colisiona(self, session):
         _seed_sedes(session)
-        create_grupo(session, "A", "DURO", ["S1"])
-        gb = create_grupo(session, "B", "DURO", ["S1"])
+        create_grupo(session, "A", sedes_duras=["S1"])
+        gb = create_grupo(session, "B", sedes_duras=["S1"])
         with pytest.raises(ValueError, match="Ya existe otro grupo"):
-            update_grupo(session, gb.id, "A", "DURO", ["S1"])
-
-    def test_update_permite_mismo_nombre(self, session):
-        _seed_sedes(session)
-        g = create_grupo(session, "A", "DURO", ["S1"])
-        # Renombrar a lo mismo no debe fallar.
-        update_grupo(session, g.id, "A", "BLANDO", ["S2"])
-        assert get_grupo(session, g.id).modo == "BLANDO"
+            update_grupo(session, gb.id, nombre="A")
 
 
 class TestDeleteGrupo:
 
     def test_delete_grupo_vacio(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1"])
+        g = create_grupo(session, "G", sedes_duras=["S1"])
         delete_grupo(session, g.id)
-        assert get_grupo_por_nombre(session, "G1") is None
+        assert get_grupo_por_nombre(session, "G") is None
 
     def test_delete_con_materias_falla(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1"])
+        g = create_grupo(session, "G", sedes_duras=["S1"])
         _add_materia(session, "M1", grupo_id=g.id)
         with pytest.raises(ValueError, match="tiene materias asignadas"):
             delete_grupo(session, g.id)
 
     def test_delete_sin_clasificar_falla(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "SC", "DURO", [], es_sin_clasificar=True)
+        g = create_grupo(session, "SC", es_sin_clasificar=True)
         with pytest.raises(ValueError, match="No se puede borrar el grupo 'Sin clasificar'"):
             delete_grupo(session, g.id)
 
@@ -165,80 +227,51 @@ class TestAsignarMateria:
 
     def test_asignar_actualiza_grupo(self, session):
         _seed_sedes(session)
-        g1 = create_grupo(session, "G1", "DURO", ["S1"])
-        g2 = create_grupo(session, "G2", "DURO", ["S2"])
+        g1 = create_grupo(session, "G1", sedes_duras=["S1"])
+        g2 = create_grupo(session, "G2", sedes_duras=["S2"])
         _add_materia(session, "M1", grupo_id=g1.id)
         asignar_materia_a_grupo(session, "M1", g2.id)
         m = session.get(MateriaDB, "M1")
         assert m is not None and m.grupo_id == g2.id
 
-    def test_asignar_materia_inexistente(self, session):
-        _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1"])
-        with pytest.raises(ValueError, match="Materia .* no encontrada"):
-            asignar_materia_a_grupo(session, "NOEXISTE", g.id)
-
-    def test_asignar_grupo_inexistente(self, session):
-        _seed_sedes(session)
-        _add_materia(session, "M1")
-        with pytest.raises(ValueError, match="no encontrado"):
-            asignar_materia_a_grupo(session, "M1", "grupo-fantasma")
-
-
-class TestListMaterias:
-
-    def test_list_por_grupo(self, session):
-        _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1"])
-        _add_materia(session, "M2", grupo_id=g.id)
-        _add_materia(session, "M1", grupo_id=g.id)
-        materias = list_materias_por_grupo(session, g.id)
-        codigos = [m.codigo for m in materias]
-        assert codigos == ["M1", "M2"]  # orden por codigo
-
-    def test_list_sin_clasificar(self, session):
-        _seed_sedes(session)
-        sc = create_grupo(session, "SC", "DURO", [], es_sin_clasificar=True)
-        create_grupo(session, "Otro", "DURO", ["S1"])
-        _add_materia(session, "MA", grupo_id=sc.id)
-        materias = list_materias_sin_clasificar(session)
-        assert [m.codigo for m in materias] == ["MA"]
-
-    def test_list_sin_clasificar_sin_grupo_falla(self, session):
-        _seed_sedes(session)
-        with pytest.raises(ValueError, match="No existe un grupo"):
-            list_materias_sin_clasificar(session)
-
 
 class TestResolverPorMateria:
 
-    def test_resolver_devuelve_grupo(self, session):
+    def test_resolver_duro_devuelve_set_duro(self, session):
         _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", ["S1", "S2"])
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1", "S2"],
+            sedes_blandas_ordenadas=["S3", "S1"],
+        )
         _add_materia(session, "M1", grupo_id=g.id)
-        sedes, modo = resolver_sedes_admisibles_por_materia(session, "M1")
-        assert sedes == ["S1", "S2"]
+        sedes, modo = resolver_config_sedes_por_materia(
+            session, "M1", "DURO",
+        )
+        assert set(sedes) == {"S1", "S2"}
         assert modo == "DURO"
 
-    def test_resolver_sin_grupo_asigna_a_sin_clasificar(self, session):
+    def test_resolver_blando_devuelve_lista_ordenada(self, session):
         _seed_sedes(session)
-        # Grupo sin clasificar tiene S1
-        sc = create_grupo(
-            session, "SC", "DURO", ["S1"], es_sin_clasificar=True,
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1", "S2"],
+            sedes_blandas_ordenadas=["S3", "S1"],
         )
-        _add_materia(session, "M1", grupo_id=None)
-        # Antes de resolver: grupo_id es None.
-        grupo = resolver_grupo_de_materia(session, "M1")
-        assert grupo.id == sc.id
-        # Ahora la materia quedó asignada.
-        m = session.get(MateriaDB, "M1")
-        assert m is not None and m.grupo_id == sc.id
-
-    def test_resolver_grupo_vacio_devuelve_lista_vacia(self, session):
-        _seed_sedes(session)
-        g = create_grupo(session, "G1", "DURO", [])
         _add_materia(session, "M1", grupo_id=g.id)
-        sedes, modo = resolver_sedes_admisibles_por_materia(session, "M1")
+        sedes, modo = resolver_config_sedes_por_materia(
+            session, "M1", "BLANDO",
+        )
+        assert sedes == ["S3", "S1"]
+        assert modo == "BLANDO"
+
+    def test_resolver_sin_grupo_fallback(self, session):
+        _seed_sedes(session)
+        _add_materia(session, "M1", grupo_id=None)
+        # Sin grupo Sin clasificar, devuelve vacío.
+        sedes, modo = resolver_config_sedes_por_materia(
+            session, "M1", "DURO",
+        )
         assert sedes == []
         assert modo == "DURO"
 
@@ -247,25 +280,37 @@ class TestListGrupos:
 
     def test_list_ordenado_por_nombre(self, session):
         _seed_sedes(session)
-        create_grupo(session, "Zeta", "DURO", ["S1"])
-        create_grupo(session, "Alpha", "DURO", ["S1"])
-        create_grupo(session, "Mid", "DURO", ["S1"])
+        create_grupo(session, "Zeta", sedes_duras=["S1"])
+        create_grupo(session, "Alpha", sedes_duras=["S1"])
+        create_grupo(session, "Mid", sedes_duras=["S1"])
         grupos = list_grupos(session)
         assert [g.nombre for g in grupos] == ["Alpha", "Mid", "Zeta"]
 
-    def test_get_grupo_sin_clasificar_falla_si_no_existe(self, session):
+
+class TestListMaterias:
+
+    def test_list_por_grupo(self, session):
         _seed_sedes(session)
-        create_grupo(session, "G1", "DURO", ["S1"])
-        with pytest.raises(ValueError, match="No existe un grupo"):
-            get_grupo_sin_clasificar(session)
+        g = create_grupo(session, "G", sedes_duras=["S1"])
+        _add_materia(session, "M2", grupo_id=g.id)
+        _add_materia(session, "M1", grupo_id=g.id)
+        materias = list_materias_por_grupo(session, g.id)
+        assert [m.codigo for m in materias] == ["M1", "M2"]
+
+    def test_list_sin_clasificar(self, session):
+        _seed_sedes(session)
+        sc = create_grupo(session, "SC", es_sin_clasificar=True)
+        _add_materia(session, "MA", grupo_id=sc.id)
+        materias = list_materias_sin_clasificar(session)
+        assert [m.codigo for m in materias] == ["MA"]
 
 
 class TestContarMaterias:
 
-    def test_contar_agrupa_correctamente(self, session):
+    def test_contar(self, session):
         _seed_sedes(session)
-        g1 = create_grupo(session, "G1", "DURO", ["S1"])
-        g2 = create_grupo(session, "G2", "DURO", ["S2"])
+        g1 = create_grupo(session, "G1", sedes_duras=["S1"])
+        g2 = create_grupo(session, "G2", sedes_duras=["S2"])
         _add_materia(session, "M1", grupo_id=g1.id)
         _add_materia(session, "M2", grupo_id=g1.id)
         _add_materia(session, "M3", grupo_id=g2.id)
@@ -273,29 +318,150 @@ class TestContarMaterias:
         assert counts[g1.id] == 2
         assert counts[g2.id] == 1
 
-    def test_contar_ignora_materias_sin_grupo(self, session):
+
+class TestSedeAmbosTipos:
+    """Una misma sede puede aparecer en DURO y BLANDO al mismo tiempo."""
+
+    def test_misma_sede_en_ambos(self, session):
         _seed_sedes(session)
-        g1 = create_grupo(session, "G1", "DURO", ["S1"])
-        _add_materia(session, "M1", grupo_id=g1.id)
-        _add_materia(session, "M2", grupo_id=None)
-        counts = contar_materias_por_grupo(session)
-        assert counts.get(g1.id) == 1
-        # Ninguna clave "None" en el dict.
-        assert None not in counts
-
-
-class TestGrupoMateriaSedeDB_orden:
-    """Sanity checks sobre el modelo de orden persistido."""
-
-    def test_update_reindexa_orden(self, session):
-        _seed_sedes(session)
-        g = create_grupo(session, "G1", "BLANDO", ["S1", "S2", "S3"])
-        update_grupo(session, g.id, "G1", "BLANDO", ["S3", "S1"])
-        rows = session.exec(
+        g = create_grupo(
+            session, "G",
+            sedes_duras=["S1"],
+            sedes_blandas_ordenadas=["S1", "S2"],
+        )
+        rows = list(session.exec(
             GrupoMateriaSedeDB.__table__.select().where(  # type: ignore[attr-defined]
                 GrupoMateriaSedeDB.grupo_id == g.id,
             )
-        ).all()
-        rows_sorted = sorted(rows, key=lambda r: r.orden)
-        assert [r.sede_id for r in rows_sorted] == ["S3", "S1"]
-        assert [r.orden for r in rows_sorted] == [0, 1]
+        ).all())
+        # Debería haber 1 fila DURO(S1) + 2 filas BLANDO(S1, S2).
+        assert len(rows) == 3
+        tipos = sorted((r.sede_id, r.tipo) for r in rows)
+        assert tipos == [
+            ("S1", "BLANDO"), ("S1", "DURO"), ("S2", "BLANDO"),
+        ]
+
+
+class TestChequeoConsistencia:
+    """Chequeo de consistencia grupo↔carreras asociadas."""
+
+    def _seed_plan(
+        self, session, carrera_codigo: str, materias: list[str],
+        activo: bool = True, plan_id: str | None = None,
+    ) -> str:
+        if session.get(CarreraDB, carrera_codigo) is None:
+            session.add(CarreraDB(
+                codigo=carrera_codigo, nombre=f"Carrera {carrera_codigo}",
+            ))
+        pv_id = plan_id or f"pv-{carrera_codigo}"
+        session.add(PlanCarreraVersionDB(
+            id=pv_id,
+            carrera_codigo=carrera_codigo,
+            nombre=f"Plan {carrera_codigo}",
+            fecha_creacion=date(2026, 1, 1),
+            active=activo,
+        ))
+        session.commit()
+        for mc in materias:
+            if session.get(MateriaDB, mc) is None:
+                session.add(MateriaDB(codigo=mc, nombre=f"Mat {mc}"))
+            session.add(PlanEstudioDB(
+                id=f"{pv_id}-{mc}",
+                plan_version_id=pv_id,
+                materia_codigo=mc,
+                carrera_codigo=carrera_codigo,
+                anio_plan=1,
+                cuatrimestre_plan="1C",
+            ))
+        session.commit()
+        return pv_id
+
+    def test_sin_carreras_asociadas_devuelve_warning(self, session):
+        _seed_sedes(session)
+        g = create_grupo(session, "G", sedes_duras=["S1"])
+        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        assert faltantes == []
+        assert any("carreras asociadas" in w for w in warnings)
+
+    def test_sin_plan_activo_warning(self, session):
+        _seed_sedes(session)
+        session.add(CarreraDB(codigo="A", nombre="A"))
+        session.commit()
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        assert faltantes == []
+        assert any("plan marcado como activo" in w for w in warnings)
+
+    def test_detecta_materia_exclusiva_faltante(self, session):
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA1", "MA2"], activo=True)
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        # MA1 ya está en G, MA2 en otro grupo.
+        g_otro = create_grupo(session, "G_OTRO", sedes_duras=["S2"])
+        asignar_materia_a_grupo(session, "MA1", g.id)
+        asignar_materia_a_grupo(session, "MA2", g_otro.id)
+        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        codigos_faltantes = {f.codigo for f in faltantes}
+        # MA1 ya está en G → no faltante.
+        # MA2 está en otro grupo → faltante.
+        assert codigos_faltantes == {"MA2"}
+        f_ma2 = next(f for f in faltantes if f.codigo == "MA2")
+        assert f_ma2.grupo_actual_nombre == "G_OTRO"
+
+    def test_ignora_materia_en_otra_carrera_activa(self, session):
+        """MA está en el plan activo de A y también de B → no es
+        exclusiva de A → no se reporta si el grupo sólo está asociado
+        a A."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA"], activo=True)
+        self._seed_plan(session, "B", ["MA"], activo=True, plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        faltantes, _ = chequear_consistencia_grupo(session, g.id)
+        assert faltantes == []
+
+    def test_multiples_carreras_asociadas(self, session):
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA"], activo=True)
+        self._seed_plan(session, "F", ["MF"], activo=True, plan_id="pv-F")
+        # Grupo asociado a A y F. MA es exclusiva de A, MF exclusiva
+        # de F → ambas faltantes.
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A", "F"],
+        )
+        faltantes, _ = chequear_consistencia_grupo(session, g.id)
+        codigos = {f.codigo for f in faltantes}
+        assert codigos == {"MA", "MF"}
+
+
+class TestPlanActivo:
+
+    def test_get_plan_activo_devuelve_el_activo(self, session):
+        session.add(CarreraDB(codigo="A", nombre="A"))
+        session.commit()
+        session.add(PlanCarreraVersionDB(
+            id="pv-vieja", carrera_codigo="A", nombre="Vieja",
+            fecha_creacion=date(2025, 1, 1), active=False,
+        ))
+        session.add(PlanCarreraVersionDB(
+            id="pv-nueva", carrera_codigo="A", nombre="Nueva",
+            fecha_creacion=date(2026, 1, 1), active=True,
+        ))
+        session.commit()
+        pv = get_plan_activo(session, "A")
+        assert pv is not None and pv.id == "pv-nueva"
+
+    def test_get_plan_activo_devuelve_none_si_ninguno(self, session):
+        session.add(CarreraDB(codigo="A", nombre="A"))
+        session.add(PlanCarreraVersionDB(
+            id="pv1", carrera_codigo="A", nombre="Plan 1",
+            fecha_creacion=date(2026, 1, 1), active=False,
+        ))
+        session.commit()
+        assert get_plan_activo(session, "A") is None

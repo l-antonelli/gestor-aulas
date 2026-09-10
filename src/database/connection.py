@@ -139,6 +139,15 @@ def _run_migrations(eng):
         # "siempre asignada" se hace en service layer.
         "ALTER TABLE materias ADD COLUMN grupo_id VARCHAR DEFAULT NULL",
         "CREATE INDEX IF NOT EXISTS ix_materias_grupo_id ON materias (grupo_id)",
+        # Rediseño 2026-09-09: cada grupo declara AMBAS configuraciones
+        # (set DURO y lista BLANDA). El modo por-grupo se elige en el
+        # panel del asignador. Ver `_migrate_grupo_materia_schema_v2`.
+        "ALTER TABLE grupo_materia_sede ADD COLUMN tipo VARCHAR DEFAULT 'DURO'",
+        # Plan de carrera activo — bandera para elegir la versión
+        # vigente de un plan por carrera. Se llena a False para todos
+        # los planes existentes; el usuario marca cuál es activo.
+        "ALTER TABLE plan_carrera_version ADD COLUMN active BOOLEAN NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS ix_plan_carrera_version_active ON plan_carrera_version (active)",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -224,6 +233,15 @@ def _run_migrations(eng):
     # Reemplaza a `CarreraSedeDB` + `SedeDB.es_default_comunes` en la
     # resolución de sedes admisibles del LP (R10/R12). Idempotente.
     _migrate_grupos_materia(eng)
+
+    # Rediseño schema grupos (2026-09-09): cada grupo declara AMBAS
+    # configuraciones (set DURO y lista BLANDA); el modo por-grupo se
+    # elige en el panel del asignador. La migración:
+    #  - Baja la columna `modo` de `grupo_materia` (SQLite requiere
+    #    recreación de tabla).
+    #  - Auto-asocia grupos "Específicas de <Carrera>" a la carrera
+    #    correspondiente en la nueva tabla `grupo_materia_carrera`.
+    _migrate_grupo_materia_schema_v2(eng)
 
 
 def _migrate_schedules_nullable_ciclo(eng):
@@ -1080,42 +1098,45 @@ def _migrate_grupos_materia(eng):
         sede_siberia = sede_por_nombre.get("Siberia")
 
         # ---- 1. Grupo "Sin clasificar" ---------------------------------
+        # Sedes registradas como set DURO (fallback permisivo con todas
+        # las sedes) — la migración inicial no puebla el set BLANDO.
         if existente_sin_clasificar:
             grupo_sin_clasificar_id = existente_sin_clasificar[0]
         else:
             grupo_sin_clasificar_id = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, modo, es_sin_clasificar) "
-                "VALUES (?, ?, ?, ?)",
-                (grupo_sin_clasificar_id, "Sin clasificar", "DURO", 1),
+                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
+                "VALUES (?, ?, ?)",
+                (grupo_sin_clasificar_id, "Sin clasificar", 1),
             )
             for orden, sede_id in enumerate(sede_ids_todas):
                 conn.exec_driver_sql(
-                    "INSERT INTO grupo_materia_sede (grupo_id, sede_id, orden) "
-                    "VALUES (?, ?, ?)",
-                    (grupo_sin_clasificar_id, sede_id, orden),
+                    "INSERT INTO grupo_materia_sede "
+                    "(grupo_id, sede_id, tipo, orden) "
+                    "VALUES (?, ?, ?, ?)",
+                    (grupo_sin_clasificar_id, sede_id, "DURO", orden),
                 )
 
         # ---- 2. Grupos base por prefijo --------------------------------
-        # (nombre, modo, [sede_id]) — lista puede quedar vacía si no
-        # existe la sede referenciada.
-        grupos_base_config: list[tuple[str, str, list[str]]] = []
+        # (nombre, [sede_id]) — lista puede quedar vacía si no existe
+        # la sede referenciada. Cada sede se registra como DURO.
+        grupos_base_config: list[tuple[str, list[str]]] = []
         if sede_pellegrini:
-            grupos_base_config.append(("FB", "DURO", [sede_pellegrini]))
-            grupos_base_config.append(("FI", "DURO", [sede_pellegrini]))
-            grupos_base_config.append(("CE", "DURO", [sede_pellegrini]))
+            grupos_base_config.append(("FB", [sede_pellegrini]))
+            grupos_base_config.append(("FI", [sede_pellegrini]))
+            grupos_base_config.append(("CE", [sede_pellegrini]))
         else:
-            grupos_base_config.append(("FB", "DURO", []))
-            grupos_base_config.append(("FI", "DURO", []))
-            grupos_base_config.append(("CE", "DURO", []))
+            grupos_base_config.append(("FB", []))
+            grupos_base_config.append(("FI", []))
+            grupos_base_config.append(("CE", []))
             logger.warning(
                 "_migrate_grupos_materia: sede 'Pellegrini' no encontrada; "
                 "grupos FB/FI/CE quedan con lista de sedes vacía"
             )
         if sede_siberia:
-            grupos_base_config.append(("F", "DURO", [sede_siberia]))
+            grupos_base_config.append(("F", [sede_siberia]))
         else:
-            grupos_base_config.append(("F", "DURO", []))
+            grupos_base_config.append(("F", []))
             logger.warning(
                 "_migrate_grupos_materia: sede 'Siberia' no encontrada; "
                 "grupo F queda con lista de sedes vacía"
@@ -1125,7 +1146,7 @@ def _migrate_grupos_materia(eng):
             "Sin clasificar": grupo_sin_clasificar_id
         }
 
-        for nombre, modo, sede_ids in grupos_base_config:
+        for nombre, sede_ids in grupos_base_config:
             existente = conn.exec_driver_sql(
                 "SELECT id FROM grupo_materia WHERE nombre = ? LIMIT 1",
                 (nombre,),
@@ -1135,15 +1156,16 @@ def _migrate_grupos_materia(eng):
                 continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, modo, es_sin_clasificar) "
-                "VALUES (?, ?, ?, ?)",
-                (gid, nombre, modo, 0),
+                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
+                "VALUES (?, ?, ?)",
+                (gid, nombre, 0),
             )
             for orden, sid in enumerate(sede_ids):
                 conn.exec_driver_sql(
-                    "INSERT INTO grupo_materia_sede (grupo_id, sede_id, orden) "
-                    "VALUES (?, ?, ?)",
-                    (gid, sid, orden),
+                    "INSERT INTO grupo_materia_sede "
+                    "(grupo_id, sede_id, tipo, orden) "
+                    "VALUES (?, ?, ?, ?)",
+                    (gid, sid, "DURO", orden),
                 )
             grupo_id_por_nombre[nombre] = gid
 
@@ -1163,9 +1185,9 @@ def _migrate_grupos_materia(eng):
                 continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
-                "INSERT INTO grupo_materia (id, nombre, modo, es_sin_clasificar) "
-                "VALUES (?, ?, ?, ?)",
-                (gid, gname, "DURO", 0),
+                "INSERT INTO grupo_materia (id, nombre, es_sin_clasificar) "
+                "VALUES (?, ?, ?)",
+                (gid, gname, 0),
             )
             # Sedes: las de la carrera si tiene, sino lista vacía.
             sedes_carrera = conn.exec_driver_sql(
@@ -1174,9 +1196,10 @@ def _migrate_grupos_materia(eng):
             ).fetchall()
             for orden, (sid,) in enumerate(sedes_carrera):
                 conn.exec_driver_sql(
-                    "INSERT INTO grupo_materia_sede (grupo_id, sede_id, orden) "
-                    "VALUES (?, ?, ?)",
-                    (gid, sid, orden),
+                    "INSERT INTO grupo_materia_sede "
+                    "(grupo_id, sede_id, tipo, orden) "
+                    "VALUES (?, ?, ?, ?)",
+                    (gid, sid, "DURO", orden),
                 )
             grupo_id_por_carrera[cod] = gid
 
@@ -1230,6 +1253,111 @@ def _migrate_grupos_materia(eng):
             "_migrate_grupos_materia: asignadas %d materias a %d grupos",
             len(materias_sin_grupo), len(n_por_grupo),
         )
+
+
+def _migrate_grupo_materia_schema_v2(eng):
+    """Rediseño del schema de grupos (2026-09-09).
+
+    Cambios:
+
+    1. ``grupo_materia.modo`` desaparece: cada grupo declara AMBAS
+       configuraciones (set DURO y lista BLANDA). El modo por-grupo
+       se elige en el panel del asignador.
+    2. ``grupo_materia_sede.tipo`` — se agregó en ``_run_migrations``.
+       Filas existentes quedan como ``DURO`` por default (preservan
+       comportamiento previo del grupo que era todo DURO).
+    3. Nueva tabla ``grupo_materia_carrera``: los grupos "Específicas
+       de <Carrera>" se auto-asocian a esa carrera. Los transversales
+       (F/FB/FI/CE) no se auto-asocian.
+
+    Idempotente: si la columna ``modo`` no existe, no hace nada; si
+    las asociaciones ya están creadas, no las duplica.
+    """
+    with eng.connect() as conn:
+        # ¿Existe la tabla `grupo_materia`? En DBs pre-refactor no.
+        rows = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='grupo_materia'"
+        ).fetchone()
+        if not rows:
+            return
+
+        # ¿Sigue existiendo la columna `modo`? Si sí, hay que recrear.
+        cols_grupo = conn.exec_driver_sql(
+            "PRAGMA table_info(grupo_materia)"
+        ).fetchall()
+        col_names = {r[1] for r in cols_grupo}
+        if "modo" in col_names:
+            logger.info(
+                "Migrating grupo_materia: dropping `modo` column "
+                "(now per-run via LPConfig.modos_por_grupo)"
+            )
+            conn.exec_driver_sql("""
+                CREATE TABLE grupo_materia_tmp (
+                    id VARCHAR NOT NULL PRIMARY KEY,
+                    nombre VARCHAR NOT NULL UNIQUE,
+                    es_sin_clasificar BOOLEAN NOT NULL DEFAULT 0
+                )
+            """)
+            conn.exec_driver_sql("""
+                INSERT INTO grupo_materia_tmp (id, nombre, es_sin_clasificar)
+                SELECT id, nombre, es_sin_clasificar FROM grupo_materia
+            """)
+            conn.exec_driver_sql("DROP TABLE grupo_materia")
+            conn.exec_driver_sql(
+                "ALTER TABLE grupo_materia_tmp RENAME TO grupo_materia"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_grupo_materia_nombre "
+                "ON grupo_materia (nombre)"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_grupo_materia_es_sin_clasificar "
+                "ON grupo_materia (es_sin_clasificar)"
+            )
+            conn.commit()
+
+        # Auto-asociación de grupos "Específicas de <Nombre>" a la
+        # carrera correspondiente en `grupo_materia_carrera`.
+        # Precondición: la tabla `grupo_materia_carrera` debe existir
+        # (la crea `SQLModel.metadata.create_all()`).
+        tabla_carrera = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='grupo_materia_carrera'"
+        ).fetchone()
+        if not tabla_carrera:
+            return
+
+        grupos = conn.exec_driver_sql(
+            "SELECT id, nombre FROM grupo_materia "
+            "WHERE nombre LIKE 'Específicas de %'"
+        ).fetchall()
+        carreras = conn.exec_driver_sql(
+            "SELECT codigo, nombre FROM carreras"
+        ).fetchall()
+        nombre_a_codigo = {nombre: codigo for codigo, nombre in carreras}
+
+        for grupo_id, grupo_nombre in grupos:
+            # Nombre del grupo = "Específicas de <Nombre Carrera>".
+            car_nombre = grupo_nombre.replace("Específicas de ", "", 1)
+            cod = nombre_a_codigo.get(car_nombre)
+            if cod is None:
+                continue
+            # Idempotencia: si ya está asociado, no lo dupliquemos.
+            existente = conn.exec_driver_sql(
+                "SELECT 1 FROM grupo_materia_carrera "
+                "WHERE grupo_id = ? AND carrera_codigo = ? LIMIT 1",
+                (grupo_id, cod),
+            ).fetchone()
+            if existente:
+                continue
+            conn.exec_driver_sql(
+                "INSERT INTO grupo_materia_carrera (grupo_id, carrera_codigo) "
+                "VALUES (?, ?)",
+                (grupo_id, cod),
+            )
+        conn.commit()
 
 
 def _seed_default_sede_if_empty(conn):

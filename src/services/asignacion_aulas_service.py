@@ -106,6 +106,12 @@ class LPConfig:
     # entre sedes (los profesores generalmente no viajan a mitad de
     # semana). Default False para preservar comportamiento previo.
     forzar_misma_sede_por_comision: bool = False
+    # Modo por-grupo de materias (DURO / BLANDO). Cada grupo declara
+    # AMBAS configuraciones de sede (set DURO y lista BLANDA); este
+    # dict elige qué modo usar en esta corrida para cada grupo.
+    # ``{grupo_id: "DURO" | "BLANDO"}``. Si un grupo no aparece en el
+    # dict, se asume ``DURO`` como default seguro (más restrictivo).
+    modos_por_grupo: dict[str, str] = field(default_factory=dict)
     # R5 completa (Fase 8.1): además de exigir que Σ dur·t == hlab,
     # exige que Σ dur·(1-t) == hteo. En este modo los horarios
     # virtuales se incluyen en el modelo (sin ocupar aula) para que
@@ -432,17 +438,32 @@ def build_inputs(
     # aunque no esté en las sedes del grupo (excepción de compatibilidad
     # de laboratorio).
     from src.services.grupo_materia_service import (
-        resolver_sedes_admisibles_por_materia,
+        resolver_config_sedes_por_materia,
+        resolver_grupo_de_materia,
     )
     materias_unicas_sede = sorted({h.materia_codigo for h in horarios})
-    # Cache (materia_codigo -> (sedes_ordenadas, modo)).
-    grupo_por_materia: dict[str, tuple[list[str], str]] = {
-        mc: resolver_sedes_admisibles_por_materia(session, mc)
-        for mc in materias_unicas_sede
-    }
+    # Cache materia_codigo -> (grupo_id, modo_efectivo, sedes_del_modo).
+    #
+    # El modo efectivo se lee de ``config.modos_por_grupo`` (default
+    # "DURO" para grupos que no aparecen en el dict). Con ese modo
+    # consultamos las sedes que aplican al grupo (set DURO o lista
+    # BLANDA ordenada).
+    grupo_por_materia: dict[str, tuple[Optional[str], str, list[str]]] = {}
+    for mc in materias_unicas_sede:
+        grupo = resolver_grupo_de_materia(session, mc)
+        grupo_id = grupo.id if grupo is not None else None
+        modo = (
+            config.modos_por_grupo.get(grupo_id, "DURO")
+            if grupo_id else "DURO"
+        )
+        sedes_ord, _ = resolver_config_sedes_por_materia(session, mc, modo)  # type: ignore[arg-type]
+        grupo_por_materia[mc] = (grupo_id, modo, sedes_ord)
+
     sede_preferida_por_horario: dict[str, str | None] = {}
     for h in horarios:
-        sedes_ord, modo = grupo_por_materia.get(h.materia_codigo, ([], "DURO"))
+        _gid, modo, sedes_ord = grupo_por_materia.get(
+            h.materia_codigo, (None, "DURO", []),
+        )
         # R12: preferida sólo si BLANDO y hay al menos una sede en la
         # lista. En DURO no hay preferencia porque todas las sedes del
         # set son equivalentes a nivel objetivo.
@@ -1453,6 +1474,7 @@ def persist_run(
             "timeout_seconds": config.timeout_seconds,
             "forzar_misma_sede_por_comision":
                 config.forzar_misma_sede_por_comision,
+            "modos_por_grupo": dict(config.modos_por_grupo),
         },
     }
 

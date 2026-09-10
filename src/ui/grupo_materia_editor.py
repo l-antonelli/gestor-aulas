@@ -1,43 +1,54 @@
 """Editor de grupos de materias (Streamlit).
 
-Componente reutilizable montado desde la pestaña "📦 Grupos de materias"
-del módulo Materias. Cubre:
+Cada grupo declara AMBAS configuraciones de sede (set DURO y lista
+BLANDA) simultáneamente. La elección del modo por-grupo se hace en el
+panel del asignador (LP), no acá. Este editor sólo maneja qué sedes
+componen cada set y qué carreras están asociadas al grupo para el
+chequeo de consistencia.
 
-- Lista de grupos con conteo de materias asignadas.
-- Editor del grupo seleccionado: nombre, modo (DURO / BLANDO), lista
-  ordenada de sedes (con ↑ / ↓ para reordenar).
-- Reasignación de materias entre grupos (filtro rápido "Sólo Sin
-  clasificar", filtro por grupo actual).
-- Crear grupo nuevo / borrar grupo (deshabilitado si tiene materias
-  asignadas o es el grupo Sin clasificar).
+Estructura:
 
-La partición estricta ("cada materia pertenece a exactamente un
-grupo") se enforza en `asignar_materia_a_grupo` del servicio y en el
-UI: la reasignación siempre elige un `grupo_id` del catálogo, no se
-puede dejar en None.
+1. Lista de grupos (izquierda) con conteo de materias y warnings.
+2. Editor del grupo activo (derecha) en contenedores diferenciados:
+   nombre, carreras asociadas, sedes DURO (multiselect), sedes BLANDA
+   (lista ordenada con ↑ / ↓ / ✕).
+3. Botón "Chequear consistencia" que compara materias exclusivas de
+   las carreras asociadas contra las que hay en el grupo.
+4. Panel de reasignación con filtros robustos (ubicación curricular,
+   atributos, búsqueda por código/nombre con normalización de acentos).
 """
 
 from __future__ import annotations
+
+import unicodedata
 
 import streamlit as st
 from sqlmodel import Session, select
 
 from src.database.models import (
+    CarreraDB,
+    GrupoMateriaCarreraDB,
     GrupoMateriaDB,
     GrupoMateriaSedeDB,
     MateriaDB,
+    MateriaLaboratorioDB,
+    PlanCarreraVersionDB,
+    PlanEstudioDB,
     SedeDB,
 )
 from src.services.grupo_materia_service import (
     asignar_materia_a_grupo,
+    chequear_consistencia_grupo,
     contar_materias_por_grupo,
     create_grupo,
     delete_grupo,
     get_config_grupo,
     get_grupo,
     get_grupo_sin_clasificar,
+    get_plan_activo,
     list_grupos,
     list_materias_por_grupo,
+    list_materias_sin_clasificar,
     update_grupo,
 )
 
@@ -51,13 +62,13 @@ def render_grupos_materias_tab(session: Session) -> None:
     """Renderiza el contenido completo de la pestaña Grupos de materias."""
     st.subheader("📦 Grupos de materias")
     st.caption(
-        "Un grupo agrupa materias que comparten un mismo criterio de "
-        "sedes admisibles. Cada materia pertenece a un único grupo. "
-        "El asignador (LP) usa esta configuración para las restricciones "
-        "R10 (sedes duras) y R12 (preferencia blanda). Los grupos base "
-        "(F, FB, FI, CE, Específicas de <Carrera>, Sin clasificar) se "
-        "crean automáticamente al arrancar la aplicación; podés editarlos "
-        "o crear nuevos manualmente."
+        "Un **grupo** agrupa materias que comparten un mismo criterio "
+        "de sedes admisibles. Cada materia pertenece a un único grupo. "
+        "Cada grupo declara **dos configuraciones** al mismo tiempo: un "
+        "**set duro** (sedes admisibles cuando el asignador corre en "
+        "modo DURO) y una **lista ordenada blanda** (sedes preferidas "
+        "cuando el asignador corre en modo BLANDO). La elección del "
+        "modo por-grupo se hace en el panel del asignador."
     )
 
     sedes_db = list(session.exec(select(SedeDB)).all())
@@ -68,44 +79,41 @@ def render_grupos_materias_tab(session: Session) -> None:
         )
         return
 
+    carreras_db = list(session.exec(select(CarreraDB)).all())
     grupos = list_grupos(session)
     counts = contar_materias_por_grupo(session)
 
-    # Warning si hay materias en "Sin clasificar" — vale la pena
-    # empujar al usuario a revisarlas.
+    # Warning global si "Sin clasificar" tiene materias.
     try:
         sc = get_grupo_sin_clasificar(session)
         n_sc = counts.get(sc.id, 0)
         if n_sc > 0:
             st.warning(
                 f"⚠️ Hay **{n_sc} materia(s)** en el grupo "
-                f"**Sin clasificar**. Reasignalas al grupo correcto para "
-                "que el asignador tenga la restricción de sede bien "
-                "definida.",
+                f"**Sin clasificar**. Reasignalas al grupo correcto "
+                "para que el asignador tenga la restricción de sede "
+                "bien definida."
             )
     except ValueError:
-        # No debería pasar en runtime porque la migración lo crea, pero
-        # no queremos que la UI explote si falta.
         st.warning(
-            "El grupo 'Sin clasificar' no existe. Reiniciá la app para "
-            "que la migración inicial lo cree."
+            "El grupo 'Sin clasificar' no existe. Reiniciá la app "
+            "para que la migración inicial lo cree."
         )
 
-    # Columnas: lista de grupos a la izquierda, editor a la derecha.
-    col_lista, col_editor = st.columns([1, 2])
+    col_lista, col_editor = st.columns([2, 3], gap="large")
 
     with col_lista:
         _render_lista_grupos(session, grupos, counts, sedes_db)
 
     with col_editor:
-        _render_editor_grupo(session, sedes_db)
+        _render_editor_grupo(session, sedes_db, carreras_db)
 
     st.divider()
-    _render_reasignacion_materias(session, grupos, counts)
+    _render_reasignacion_materias(session, grupos, sedes_db)
 
 
 # =============================================================================
-# Lista de grupos + creación / borrado
+# Lista de grupos (izquierda)
 # =============================================================================
 
 
@@ -115,391 +123,798 @@ def _render_lista_grupos(
     counts: dict[str, int],
     sedes_db: list[SedeDB],
 ) -> None:
-    """Panel izquierdo con la lista de grupos y controles de crear /
-    borrar."""
-    st.markdown("### Lista de grupos")
+    with st.container(border=True):
+        st.markdown("### Lista de grupos")
 
-    # Ordenar: primero "Sin clasificar" (fallback), después alfabético.
-    def _sort_key(g: GrupoMateriaDB) -> tuple[int, str]:
-        return (0 if g.es_sin_clasificar else 1, g.nombre.lower())
+        # Sin clasificar primero (fallback), después alfabético.
+        def _sort_key(g: GrupoMateriaDB) -> tuple[int, str]:
+            return (0 if g.es_sin_clasificar else 1, g.nombre.lower())
 
-    grupos_ordenados = sorted(grupos, key=_sort_key)
-    labels = []
-    for g in grupos_ordenados:
-        prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
-        n = counts.get(g.id, 0)
-        labels.append(f"{prefix}{g.nombre} · {n} materia(s) · {g.modo}")
+        grupos_ord = sorted(grupos, key=_sort_key)
+        labels = []
+        for g in grupos_ord:
+            prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
+            n = counts.get(g.id, 0)
+            labels.append(f"{prefix}{g.nombre} · {n} materia(s)")
 
-    seleccionado = st.session_state.get("grupo_materia_seleccionado")
-    default_idx = 0
-    if seleccionado:
-        for i, g in enumerate(grupos_ordenados):
-            if g.id == seleccionado:
-                default_idx = i
-                break
+        seleccionado = st.session_state.get("grupo_materia_seleccionado")
+        default_idx = 0
+        if seleccionado:
+            for i, g in enumerate(grupos_ord):
+                if g.id == seleccionado:
+                    default_idx = i
+                    break
 
-    if labels:
-        elegido = st.radio(
-            "Grupos existentes",
-            options=list(range(len(labels))),
-            format_func=lambda i: labels[i],
-            index=default_idx,
-            key="grupo_materia_radio",
-            label_visibility="collapsed",
-        )
-        st.session_state["grupo_materia_seleccionado"] = (
-            grupos_ordenados[elegido].id
-        )
-    else:
-        st.info("No hay grupos cargados.")
-
-    st.divider()
-
-    # ---- Crear grupo nuevo ---------------------------------------------
-    with st.expander("➕ Crear grupo nuevo", expanded=False):
-        with st.form(key="crear_grupo_form"):
-            nuevo_nombre = st.text_input(
-                "Nombre del grupo",
-                placeholder="Ej: Optativas de Sistemas",
+        if labels:
+            elegido = st.radio(
+                "Grupos existentes",
+                options=list(range(len(labels))),
+                format_func=lambda i: labels[i],
+                index=default_idx,
+                key="grupo_materia_radio",
+                label_visibility="collapsed",
             )
-            nuevo_modo = st.radio(
-                "Modo",
-                options=["DURO", "BLANDO"],
-                horizontal=True,
-                help=(
-                    "DURO: sólo se admiten las sedes de la lista. "
-                    "BLANDO: cualquier sede admite, pero la primera "
-                    "es preferida a nivel objetivo."
-                ),
+            st.session_state["grupo_materia_seleccionado"] = (
+                grupos_ord[elegido].id
             )
-            sede_names = [s.nombre for s in sedes_db]
-            sede_ids_map = {s.nombre: s.id for s in sedes_db}
-            nuevas_sedes = st.multiselect(
-                "Sedes admisibles",
-                options=sede_names,
-                help=(
-                    "El orden importa sólo en BLANDO (0 = preferida)."
-                ),
-            )
-            submitted = st.form_submit_button(
-                "Crear grupo", type="primary",
-            )
-            if submitted:
-                if not nuevo_nombre.strip():
-                    st.error("El nombre no puede quedar vacío.")
-                else:
-                    try:
-                        create_grupo(
-                            session,
-                            nuevo_nombre.strip(),
-                            nuevo_modo,  # type: ignore[arg-type]
-                            [sede_ids_map[n] for n in nuevas_sedes],
-                        )
-                        st.success(f"Grupo '{nuevo_nombre}' creado.")
-                        st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
+        else:
+            st.info("No hay grupos cargados.")
+
+        st.divider()
+        with st.expander("➕ Crear grupo nuevo", expanded=False):
+            with st.form(key="crear_grupo_form", clear_on_submit=True):
+                nuevo_nombre = st.text_input(
+                    "Nombre del grupo",
+                    placeholder="Ej: Optativas de Sistemas",
+                )
+                sede_names = [s.nombre for s in sedes_db]
+                sede_ids_map = {s.nombre: s.id for s in sedes_db}
+                nuevas_duras = st.multiselect(
+                    "Sedes admisibles (modo DURO)",
+                    options=sede_names,
+                    help=(
+                        "Cuando el asignador corre en modo DURO para "
+                        "este grupo, sólo se admiten aulas de estas "
+                        "sedes. Podés dejarlo vacío y llenarlo después."
+                    ),
+                )
+                nuevas_blandas = st.multiselect(
+                    "Sedes preferidas (modo BLANDO)",
+                    options=sede_names,
+                    help=(
+                        "Cuando el asignador corre en modo BLANDO, la "
+                        "primera sede es la preferida y las siguientes "
+                        "son alternativas con costo. Podés reordenar "
+                        "después."
+                    ),
+                )
+                submitted = st.form_submit_button(
+                    "Crear grupo", type="primary",
+                )
+                if submitted:
+                    if not nuevo_nombre.strip():
+                        st.error("El nombre no puede quedar vacío.")
+                    else:
+                        try:
+                            create_grupo(
+                                session,
+                                nuevo_nombre.strip(),
+                                sedes_duras=[
+                                    sede_ids_map[n] for n in nuevas_duras
+                                ],
+                                sedes_blandas_ordenadas=[
+                                    sede_ids_map[n] for n in nuevas_blandas
+                                ],
+                            )
+                            st.success(f"Grupo '{nuevo_nombre}' creado.")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
 
 
 # =============================================================================
-# Editor del grupo seleccionado
+# Editor del grupo activo (derecha)
 # =============================================================================
 
 
 def _render_editor_grupo(
-    session: Session, sedes_db: list[SedeDB],
+    session: Session,
+    sedes_db: list[SedeDB],
+    carreras_db: list[CarreraDB],
 ) -> None:
-    """Panel derecho: editor del grupo que esté activo."""
-    st.markdown("### Editar grupo")
     grupo_id = st.session_state.get("grupo_materia_seleccionado")
     if not grupo_id:
-        st.info("Seleccioná un grupo de la lista para editarlo.")
+        with st.container(border=True):
+            st.info("Seleccioná un grupo de la lista para editarlo.")
         return
 
     try:
         grupo = get_grupo(session, grupo_id)
     except ValueError:
-        st.error("El grupo ya no existe.")
+        with st.container(border=True):
+            st.error("El grupo ya no existe.")
         st.session_state.pop("grupo_materia_seleccionado", None)
         return
 
-    sedes_ordenadas_actual, modo_actual = get_config_grupo(session, grupo.id)
+    cfg = get_config_grupo(session, grupo.id)
     sede_nombre_by_id = {s.id: s.nombre for s in sedes_db}
     sede_id_by_nombre = {s.nombre: s.id for s in sedes_db}
+    carrera_nombre_by_codigo = {c.codigo: c.nombre for c in carreras_db}
+    carrera_codigo_by_nombre = {c.nombre: c.codigo for c in carreras_db}
 
-    # --- Editor de metadata ---------------------------------------------
-    nombre_edit = st.text_input(
-        "Nombre",
-        value=grupo.nombre,
-        disabled=grupo.es_sin_clasificar,
-        key=f"grupo_nombre_{grupo.id}",
-        help=(
-            "El grupo 'Sin clasificar' no puede renombrarse — es el "
-            "fallback del sistema." if grupo.es_sin_clasificar else None
-        ),
-    )
-    modo_edit = st.radio(
-        "Modo",
-        options=["DURO", "BLANDO"],
-        index=0 if modo_actual == "DURO" else 1,
-        horizontal=True,
-        key=f"grupo_modo_{grupo.id}",
-        help=(
-            "DURO: sólo se admiten las sedes de la lista. "
-            "BLANDO: cualquier sede admite, pero la primera es "
-            "preferida a nivel objetivo (R12 del LP)."
-        ),
-    )
-
-    # --- Lista ordenada de sedes con ↑ / ↓ ------------------------------
-    st.markdown("**Sedes admisibles (orden)**")
-    st.caption(
-        "En modo BLANDO, el orden es semántico: la primera es la sede "
-        "preferida, las siguientes son alternativas con costo. En modo "
-        "DURO, todas son equivalentes; el orden se conserva para "
-        "estabilidad visual."
-    )
-
-    # Estado local del orden (session_state por grupo).
-    order_key = f"grupo_orden_{grupo.id}"
-    if (
-        order_key not in st.session_state
-        or st.session_state.get(f"{order_key}_source") != grupo.id
-    ):
-        st.session_state[order_key] = list(sedes_ordenadas_actual)
-        st.session_state[f"{order_key}_source"] = grupo.id
-    orden_local: list[str] = list(st.session_state[order_key])
-
-    # Filtrar sedes que quedaron huérfanas (por borrado de sede).
-    orden_local = [s for s in orden_local if s in sede_nombre_by_id]
-
-    for i, sede_id in enumerate(orden_local):
-        row = st.container()
-        cols = row.columns([5, 1, 1, 1])
-        cols[0].markdown(
-            f"**{i + 1}. {sede_nombre_by_id.get(sede_id, sede_id)}**"
+    # -------------------------------------------------------------
+    # Metadata (nombre + carreras asociadas)
+    # -------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown(f"### Editar grupo: **{grupo.nombre}**")
+        nombre_edit = st.text_input(
+            "Nombre",
+            value=grupo.nombre,
+            disabled=grupo.es_sin_clasificar,
+            key=f"grupo_nombre_{grupo.id}",
+            help=(
+                "El grupo 'Sin clasificar' no puede renombrarse."
+                if grupo.es_sin_clasificar else None
+            ),
         )
-        # ↑
-        if cols[1].button(
-            "↑", key=f"up_{grupo.id}_{sede_id}",
-            disabled=(i == 0),
-            help="Mover hacia arriba",
-        ):
-            orden_local[i - 1], orden_local[i] = (
-                orden_local[i], orden_local[i - 1]
-            )
-            st.session_state[order_key] = orden_local
-            st.rerun()
-        # ↓
-        if cols[2].button(
-            "↓", key=f"dn_{grupo.id}_{sede_id}",
-            disabled=(i == len(orden_local) - 1),
-            help="Mover hacia abajo",
-        ):
-            orden_local[i], orden_local[i + 1] = (
-                orden_local[i + 1], orden_local[i]
-            )
-            st.session_state[order_key] = orden_local
-            st.rerun()
-        # ✕
-        if cols[3].button(
-            "✕", key=f"rm_{grupo.id}_{sede_id}",
-            help="Quitar del grupo",
-        ):
-            orden_local.remove(sede_id)
-            st.session_state[order_key] = orden_local
-            st.rerun()
+        carrera_names_actuales = [
+            carrera_nombre_by_codigo.get(c, c)
+            for c in cfg.carreras_asociadas
+        ]
+        carreras_seleccionadas_names = st.multiselect(
+            "Carreras asociadas",
+            options=[c.nombre for c in carreras_db],
+            default=carrera_names_actuales,
+            key=f"grupo_carreras_{grupo.id}",
+            help=(
+                "Carreras a las que 'pertenece' este grupo, para el "
+                "chequeo de consistencia. No dispara sync automático — "
+                "sirve para que el botón 'Chequear consistencia' pueda "
+                "listar las materias exclusivas de estas carreras que "
+                "todavía no están acá."
+            ),
+        )
+        carreras_seleccionadas = [
+            carrera_codigo_by_nombre[n]
+            for n in carreras_seleccionadas_names
+        ]
 
-    # Agregar sede.
-    sedes_no_incluidas = [
-        s for s in sedes_db if s.id not in orden_local
-    ]
-    if sedes_no_incluidas:
-        add_col1, add_col2 = st.columns([3, 1])
-        with add_col1:
-            add_choice = st.selectbox(
-                "Agregar sede al grupo",
-                options=[s.nombre for s in sedes_no_incluidas],
-                key=f"add_{grupo.id}",
-                label_visibility="collapsed",
+    # -------------------------------------------------------------
+    # Sedes admisibles (modo DURO)
+    # -------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("#### 🔒 Sedes admisibles (modo DURO)")
+        st.caption(
+            "Cuando el asignador corre este grupo en modo DURO, sólo "
+            "se admiten aulas en estas sedes. El orden no tiene "
+            "semántica. Lista vacía = fallback permisivo (todas "
+            "admisibles)."
+        )
+        duras_actuales_names = [
+            sede_nombre_by_id.get(s, s) for s in cfg.sedes_duras
+        ]
+        duras_edit_names = st.multiselect(
+            "Sedes en el set DURO",
+            options=[s.nombre for s in sedes_db],
+            default=duras_actuales_names,
+            key=f"grupo_duras_{grupo.id}",
+            label_visibility="collapsed",
+        )
+        duras_edit_ids = [
+            sede_id_by_nombre[n] for n in duras_edit_names
+        ]
+
+    # -------------------------------------------------------------
+    # Sedes preferidas (modo BLANDO) — lista ordenada
+    # -------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("#### 🎯 Sedes preferidas (modo BLANDO)")
+        st.caption(
+            "Cuando el asignador corre este grupo en modo BLANDO, la "
+            "**primera** sede es la preferida (cost 0), las **siguientes** "
+            "son alternativas con costo `λ_sede_pref` por horario "
+            "desplazado. Reordenalas con ↑ / ↓."
+        )
+        blandas_order_key = f"grupo_blandas_orden_{grupo.id}"
+        blandas_source_key = f"{blandas_order_key}_source"
+        if (
+            blandas_order_key not in st.session_state
+            or st.session_state.get(blandas_source_key) != grupo.id
+        ):
+            st.session_state[blandas_order_key] = list(
+                cfg.sedes_blandas_ordenadas
             )
-        with add_col2:
-            if st.button("Agregar", key=f"add_btn_{grupo.id}"):
-                orden_local.append(sede_id_by_nombre[add_choice])
-                st.session_state[order_key] = orden_local
+            st.session_state[blandas_source_key] = grupo.id
+        blandas_local: list[str] = list(
+            st.session_state[blandas_order_key]
+        )
+        blandas_local = [
+            s for s in blandas_local if s in sede_nombre_by_id
+        ]
+
+        if not blandas_local:
+            st.caption(
+                "_(Lista vacía — el modo BLANDO no aplica R12 para este "
+                "grupo.)_"
+            )
+
+        for i, sede_id in enumerate(blandas_local):
+            row_cols = st.columns([5, 1, 1, 1])
+            etiqueta_pref = " · 🎯 preferida" if i == 0 else ""
+            row_cols[0].markdown(
+                f"**{i + 1}. {sede_nombre_by_id.get(sede_id, sede_id)}**"
+                f"{etiqueta_pref}"
+            )
+            if row_cols[1].button(
+                "↑", key=f"blup_{grupo.id}_{sede_id}",
+                disabled=(i == 0),
+                help="Mover hacia arriba",
+            ):
+                blandas_local[i - 1], blandas_local[i] = (
+                    blandas_local[i], blandas_local[i - 1]
+                )
+                st.session_state[blandas_order_key] = blandas_local
                 st.rerun()
-    else:
-        st.caption("Todas las sedes ya están en el grupo.")
+            if row_cols[2].button(
+                "↓", key=f"bldn_{grupo.id}_{sede_id}",
+                disabled=(i == len(blandas_local) - 1),
+                help="Mover hacia abajo",
+            ):
+                blandas_local[i], blandas_local[i + 1] = (
+                    blandas_local[i + 1], blandas_local[i]
+                )
+                st.session_state[blandas_order_key] = blandas_local
+                st.rerun()
+            if row_cols[3].button(
+                "✕", key=f"blrm_{grupo.id}_{sede_id}",
+                help="Quitar de la lista blanda",
+            ):
+                blandas_local.remove(sede_id)
+                st.session_state[blandas_order_key] = blandas_local
+                st.rerun()
 
-    # Preview.
-    if orden_local:
-        st.info(
-            "**Vista previa · sedes admisibles resultantes**: "
-            + " → ".join(
-                sede_nombre_by_id.get(s, s) for s in orden_local
+        # Agregar sede blanda.
+        sedes_no_incluidas = [
+            s for s in sedes_db if s.id not in blandas_local
+        ]
+        if sedes_no_incluidas:
+            add_col1, add_col2 = st.columns([3, 1])
+            with add_col1:
+                add_choice = st.selectbox(
+                    "Agregar sede a la lista blanda",
+                    options=[s.nombre for s in sedes_no_incluidas],
+                    key=f"blad_{grupo.id}",
+                    label_visibility="collapsed",
+                )
+            with add_col2:
+                if st.button(
+                    "Agregar",
+                    key=f"blad_btn_{grupo.id}",
+                    use_container_width=True,
+                ):
+                    blandas_local.append(
+                        sede_id_by_nombre[add_choice]
+                    )
+                    st.session_state[blandas_order_key] = blandas_local
+                    st.rerun()
+        else:
+            st.caption("Todas las sedes ya están en la lista.")
+
+    # -------------------------------------------------------------
+    # Acciones (guardar / descartar / borrar)
+    # -------------------------------------------------------------
+    with st.container(border=True):
+        col_save, col_reset, col_delete = st.columns([2, 1, 1])
+        with col_save:
+            if st.button(
+                "💾 Guardar cambios",
+                type="primary",
+                key=f"save_{grupo.id}",
+                use_container_width=True,
+            ):
+                try:
+                    nombre_final = (
+                        (nombre_edit or grupo.nombre).strip()
+                        or grupo.nombre
+                    )
+                    update_grupo(
+                        session,
+                        grupo.id,
+                        nombre=nombre_final,
+                        sedes_duras=duras_edit_ids,
+                        sedes_blandas_ordenadas=blandas_local,
+                        carreras_asociadas=carreras_seleccionadas,
+                    )
+                    st.success("Cambios guardados.")
+                    st.session_state.pop(blandas_order_key, None)
+                    st.session_state.pop(blandas_source_key, None)
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+        with col_reset:
+            if st.button(
+                "↺ Descartar",
+                key=f"reset_{grupo.id}",
+                use_container_width=True,
+            ):
+                st.session_state.pop(blandas_order_key, None)
+                st.session_state.pop(blandas_source_key, None)
+                st.rerun()
+        with col_delete:
+            tiene_materias = _grupo_tiene_materias(session, grupo.id)
+            disabled = grupo.es_sin_clasificar or tiene_materias
+            delete_help = (
+                "El grupo 'Sin clasificar' no se puede borrar."
+                if grupo.es_sin_clasificar else (
+                    "Tiene materias asignadas — reasignalas primero."
+                    if tiene_materias else "Borrar este grupo."
+                )
             )
-            + (
-                f" (preferida en BLANDO: **"
-                f"{sede_nombre_by_id.get(orden_local[0], orden_local[0])}**)"
-                if modo_edit == "BLANDO" and orden_local else ""
-            )
+            if st.button(
+                "🗑️ Borrar",
+                disabled=disabled,
+                help=delete_help,
+                key=f"del_{grupo.id}",
+                use_container_width=True,
+            ):
+                try:
+                    delete_grupo(session, grupo.id)
+                    st.success(f"Grupo '{grupo.nombre}' borrado.")
+                    st.session_state.pop(
+                        "grupo_materia_seleccionado", None,
+                    )
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+
+    # -------------------------------------------------------------
+    # Chequeo de consistencia
+    # -------------------------------------------------------------
+    _render_chequeo_consistencia(session, grupo, carreras_db)
+
+
+def _render_chequeo_consistencia(
+    session: Session,
+    grupo: GrupoMateriaDB,
+    carreras_db: list[CarreraDB],  # noqa: ARG001 (reservado para futuros contextos)
+) -> None:
+    """Panel que muestra faltantes según carreras asociadas + planes
+    activos, y permite agregarlas de a una."""
+    with st.container(border=True):
+        st.markdown("#### 🔍 Chequeo de consistencia")
+        st.caption(
+            "Compara las materias del grupo con las materias exclusivas "
+            "de las carreras asociadas en sus **planes activos**. "
+            "Sirve para detectar qué materias 'de la carrera' todavía "
+            "no fueron agregadas al grupo."
         )
-    else:
+
+        run_key = f"consist_run_{grupo.id}"
+        result_key = f"consist_result_{grupo.id}"
+        if st.button(
+            "🔍 Chequear consistencia",
+            key=run_key,
+            disabled=False,
+        ):
+            faltantes, warnings = chequear_consistencia_grupo(
+                session, grupo.id,
+            )
+            st.session_state[result_key] = {
+                "faltantes": [
+                    {
+                        "codigo": f.codigo,
+                        "nombre": f.nombre,
+                        "carrera": f.carrera_codigo,
+                        "anio": f.anio,
+                        "cuatri": f.cuatri,
+                        "grupo_actual_id": f.grupo_actual_id,
+                        "grupo_actual_nombre": f.grupo_actual_nombre,
+                    }
+                    for f in faltantes
+                ],
+                "warnings": warnings,
+            }
+            st.rerun()
+
+        result = st.session_state.get(result_key)
+        if result is None:
+            st.caption(
+                "_Corré el chequeo para ver las materias exclusivas "
+                "de las carreras asociadas que aún no están en este "
+                "grupo._"
+            )
+            return
+
+        for w in result["warnings"]:
+            st.info(w)
+
+        faltantes_list = result["faltantes"]
+        if not faltantes_list:
+            st.success(
+                "Todas las materias exclusivas de las carreras "
+                "asociadas ya están en este grupo. 🎉"
+            )
+            return
+
         st.warning(
-            "Lista vacía. En modo DURO significa 'todas las sedes "
-            "admisibles' (fallback permisivo). En modo BLANDO no hay "
-            "sede preferida — el LP no aplica R12 para materias de "
-            "este grupo."
+            f"Se detectaron **{len(faltantes_list)} materia(s)** que "
+            "corresponderían a este grupo pero están en otro lado."
         )
-
-    # --- Guardar / borrar -----------------------------------------------
-    st.divider()
-    col_save, col_reset, col_delete = st.columns([2, 1, 1])
-    with col_save:
-        if st.button(
-            "💾 Guardar cambios", type="primary",
-            key=f"save_{grupo.id}",
-        ):
-            try:
-                nombre_final = (
-                    (nombre_edit or grupo.nombre).strip()
-                    or grupo.nombre
-                )
-                update_grupo(
-                    session,
-                    grupo.id,
-                    nombre_final,
-                    modo_edit,  # type: ignore[arg-type]
-                    orden_local,
-                )
-                st.success("Cambios guardados.")
-                # Limpiar cache local.
-                st.session_state.pop(order_key, None)
-                st.session_state.pop(f"{order_key}_source", None)
-                st.rerun()
-            except ValueError as e:
-                st.error(str(e))
-    with col_reset:
-        if st.button(
-            "↺ Descartar", key=f"reset_{grupo.id}",
-        ):
-            st.session_state.pop(order_key, None)
-            st.session_state.pop(f"{order_key}_source", None)
-            st.rerun()
-    with col_delete:
-        tiene_materias = _grupo_tiene_materias(session, grupo.id)
-        disabled = grupo.es_sin_clasificar or tiene_materias
-        delete_help = (
-            "El grupo 'Sin clasificar' no se puede borrar."
-            if grupo.es_sin_clasificar else (
-                "El grupo tiene materias asignadas — reasignalas primero."
-                if tiene_materias else "Borrar este grupo."
+        for i, item in enumerate(faltantes_list):
+            row = st.container()
+            cols = row.columns([1, 3, 2, 2, 1])
+            cols[0].markdown(f"`{item['codigo']}`")
+            cols[1].write(item["nombre"])
+            cols[2].caption(
+                f"Carrera: **{item['carrera']}** · "
+                f"Año {item['anio']} {item['cuatri']}"
+                if item["anio"] else f"Carrera: **{item['carrera']}**"
             )
-        )
-        if st.button(
-            "🗑️ Borrar",
-            disabled=disabled,
-            help=delete_help,
-            key=f"del_{grupo.id}",
-        ):
-            try:
-                delete_grupo(session, grupo.id)
-                st.success(f"Grupo '{grupo.nombre}' borrado.")
-                st.session_state.pop("grupo_materia_seleccionado", None)
-                st.rerun()
-            except ValueError as e:
-                st.error(str(e))
+            cols[3].caption(
+                f"Ahora en: **{item['grupo_actual_nombre']}**"
+                if item["grupo_actual_nombre"] else
+                "_Sin grupo actual_"
+            )
+            if cols[4].button(
+                "➕",
+                key=f"add_faltante_{grupo.id}_{item['codigo']}_{i}",
+                help=(
+                    f"Agregar {item['codigo']} a este grupo "
+                    f"({grupo.nombre})"
+                ),
+            ):
+                try:
+                    asignar_materia_a_grupo(
+                        session, item["codigo"], grupo.id,
+                    )
+                    st.toast(
+                        f"{item['codigo']} agregada a {grupo.nombre}."
+                    )
+                    # Actualizar el cache del resultado sacando este.
+                    st.session_state[result_key]["faltantes"] = [
+                        f for f in faltantes_list
+                        if f["codigo"] != item["codigo"]
+                    ]
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
 
 
 # =============================================================================
-# Reasignación de materias
+# Reasignación de materias con filtros robustos
 # =============================================================================
+
+
+def _normalizar(texto: str) -> str:
+    """Normaliza (lower + saca acentos) para búsqueda tolerante."""
+    nfkd = unicodedata.normalize("NFKD", texto)
+    return "".join(
+        c for c in nfkd if not unicodedata.combining(c)
+    ).lower()
 
 
 def _render_reasignacion_materias(
     session: Session,
     grupos: list[GrupoMateriaDB],
-    counts: dict[str, int],  # noqa: ARG001 (reservado para futuros contadores)
+    sedes_db: list[SedeDB],  # noqa: ARG001
 ) -> None:
-    """Panel inferior con la tabla de materias y su grupo actual —
-    permite reasignar en batch."""
-    st.markdown("### Reasignar materias")
-
-    grupo_id_to_grupo = {g.id: g for g in grupos}
-
-    # Filtros.
-    col_f1, col_f2 = st.columns([1, 2])
-    with col_f1:
-        filtro_scope = st.selectbox(
-            "Filtro rápido",
-            options=[
-                "Todas",
-                "Sólo Sin clasificar",
-                "Por grupo actual…",
-            ],
-            key="filtro_materias_reasignar",
+    with st.container(border=True):
+        st.markdown("### Reasignar materias")
+        st.caption(
+            "Elegí en cada fila el grupo de destino y presioná "
+            "'Guardar cambios'. Los filtros permiten acotar la lista "
+            "rápido — sobre todo el filtro por ubicación curricular "
+            "y por atributos."
         )
-    grupo_actual_filtro: str | None = None
-    if filtro_scope == "Por grupo actual…":
-        with col_f2:
-            grupo_nombre_choice = st.selectbox(
-                "Grupo",
-                options=[g.nombre for g in grupos],
-                key="filtro_grupo_actual",
-            )
-            for g in grupos:
-                if g.nombre == grupo_nombre_choice:
-                    grupo_actual_filtro = g.id
-                    break
 
-    # Query materias según el filtro.
-    if filtro_scope == "Sólo Sin clasificar":
+        # ---------------------------------------------------
+        # Filtros
+        # ---------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**🔎 Filtros**")
+
+            # 1. Ubicación curricular (carrera + año + cuatri).
+            with st.expander("📍 Ubicación curricular", expanded=True):
+                st.caption(
+                    "Filtra por dónde aparecen las materias en el "
+                    "**plan activo** de cada carrera. Si no hay plan "
+                    "activo para alguna, esa carrera se ignora."
+                )
+                carreras_db = list(session.exec(select(CarreraDB)).all())
+                carrera_names = sorted(c.nombre for c in carreras_db)
+                sel_carrera = st.multiselect(
+                    "Carrera(s)",
+                    options=carrera_names,
+                    key="filtro_ubic_carrera",
+                )
+                col_y, col_c = st.columns(2)
+                with col_y:
+                    sel_anio = st.multiselect(
+                        "Año(s)",
+                        options=list(range(1, 7)),
+                        key="filtro_ubic_anio",
+                    )
+                with col_c:
+                    sel_cuatri = st.multiselect(
+                        "Cuatri",
+                        options=["1C", "2C", "Anual"],
+                        key="filtro_ubic_cuatri",
+                    )
+
+            # 2. Atributos de la materia.
+            with st.expander("🏷️ Atributos", expanded=False):
+                sel_grupo_actual = st.selectbox(
+                    "Grupo actual",
+                    options=["Todos", "Sólo Sin clasificar", "Sin grupo"]
+                    + [g.nombre for g in sorted(grupos, key=lambda x: x.nombre)],
+                    key="filtro_grupo_actual",
+                )
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    filtro_optativa = st.selectbox(
+                        "Optativa",
+                        options=["Todas", "Sólo optativas", "Sólo obligatorias"],
+                        key="filtro_optativa",
+                    )
+                    filtro_virtual = st.selectbox(
+                        "Virtual",
+                        options=["Todas", "Sólo virtuales", "Sólo presenciales"],
+                        key="filtro_virtual",
+                    )
+                with col_a2:
+                    filtro_lab = st.selectbox(
+                        "Laboratorio",
+                        options=[
+                            "Todas",
+                            "Con horas de lab",
+                            "Sin horas de lab",
+                            "Con lab compatible",
+                            "Sin lab compatible",
+                        ],
+                        key="filtro_lab",
+                    )
+                    filtro_periodo = st.selectbox(
+                        "Período",
+                        options=["Todos", "Cuatrimestral", "Anual"],
+                        key="filtro_periodo",
+                    )
+
+            # 3. Búsqueda por código/nombre.
+            busqueda = st.text_input(
+                "🔍 Buscar por código o nombre",
+                key="filtro_busqueda",
+                placeholder="Ej: F14, algebra, matemática...",
+                help=(
+                    "La búsqueda ignora mayúsculas y acentos. "
+                    "Escribí 'fisica' y encuentra 'Física'."
+                ),
+            )
+
+        # ---------------------------------------------------
+        # Query materias con los filtros aplicados
+        # ---------------------------------------------------
+        materias_filtradas = _aplicar_filtros(
+            session=session,
+            grupos=grupos,
+            sel_carrera_names=sel_carrera,
+            sel_anio=sel_anio,
+            sel_cuatri=sel_cuatri,
+            grupo_actual_filtro=sel_grupo_actual,
+            filtro_optativa=filtro_optativa,
+            filtro_virtual=filtro_virtual,
+            filtro_lab=filtro_lab,
+            filtro_periodo=filtro_periodo,
+            busqueda=busqueda,
+        )
+
+        if not materias_filtradas:
+            st.info(
+                "Ninguna materia coincide con los filtros. Ajustá los "
+                "criterios."
+            )
+            return
+
+        st.caption(
+            f"**{len(materias_filtradas)} materia(s)** que coinciden."
+        )
+
+        _render_tabla_reasignacion(session, materias_filtradas, grupos)
+
+
+def _aplicar_filtros(
+    *,
+    session: Session,
+    grupos: list[GrupoMateriaDB],
+    sel_carrera_names: list[str],
+    sel_anio: list[int],
+    sel_cuatri: list[str],
+    grupo_actual_filtro: str,
+    filtro_optativa: str,
+    filtro_virtual: str,
+    filtro_lab: str,
+    filtro_periodo: str,
+    busqueda: str,
+) -> list[MateriaDB]:
+    """Aplica todos los filtros a la lista de materias y devuelve el
+    resultado ordenado por código."""
+    # Base: todas las materias.
+    all_materias = list(session.exec(
+        select(MateriaDB).order_by(MateriaDB.codigo)  # type: ignore[arg-type]
+    ).all())
+
+    # Filtro 1: ubicación curricular (usa plan activo de la carrera).
+    if sel_carrera_names:
+        carreras_db = list(session.exec(select(CarreraDB)).all())
+        codigos_carrera = [
+            c.codigo for c in carreras_db if c.nombre in sel_carrera_names
+        ]
+        # Recolectar plan_version_id activos de cada carrera.
+        plan_ids_activos: list[str] = []
+        for cod in codigos_carrera:
+            pv = get_plan_activo(session, cod)
+            if pv is not None:
+                plan_ids_activos.append(pv.id)
+        if not plan_ids_activos:
+            return []  # ninguna carrera con plan activo → nada matchea
+        pe_entries = list(session.exec(
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.plan_version_id.in_(plan_ids_activos),  # type: ignore[attr-defined]
+            )
+        ).all())
+        codigos_ok: set[str] = set()
+        for pe in pe_entries:
+            if sel_anio and pe.anio_plan not in sel_anio:
+                continue
+            if sel_cuatri and pe.cuatrimestre_plan not in sel_cuatri:
+                continue
+            codigos_ok.add(pe.materia_codigo)
+        all_materias = [
+            m for m in all_materias if m.codigo in codigos_ok
+        ]
+    elif sel_anio or sel_cuatri:
+        # Sin carrera pero con año/cuatri: usa plan activo de todas
+        # las carreras.
+        pes_all = list(session.exec(select(PlanEstudioDB)).all())
+        # Índice plan_id → active
+        planes_activos_ids = {
+            pv.id
+            for pv in session.exec(
+                select(PlanCarreraVersionDB)
+            ).all()
+            if pv.active
+        }
+        codigos_ok = set()
+        for pe in pes_all:
+            if pe.plan_version_id not in planes_activos_ids:
+                continue
+            if sel_anio and pe.anio_plan not in sel_anio:
+                continue
+            if sel_cuatri and pe.cuatrimestre_plan not in sel_cuatri:
+                continue
+            codigos_ok.add(pe.materia_codigo)
+        all_materias = [
+            m for m in all_materias if m.codigo in codigos_ok
+        ]
+
+    # Filtro 2: grupo actual.
+    if grupo_actual_filtro == "Sólo Sin clasificar":
         try:
             sc = get_grupo_sin_clasificar(session)
-            materias = list_materias_por_grupo(session, sc.id)
+            all_materias = [
+                m for m in all_materias if m.grupo_id == sc.id
+            ]
         except ValueError:
-            materias = []
-    elif filtro_scope == "Por grupo actual…" and grupo_actual_filtro:
-        materias = list_materias_por_grupo(session, grupo_actual_filtro)
-    else:
-        materias = list(session.exec(
-            select(MateriaDB).order_by(MateriaDB.codigo)  # type: ignore[arg-type]
+            all_materias = []
+    elif grupo_actual_filtro == "Sin grupo":
+        all_materias = [m for m in all_materias if not m.grupo_id]
+    elif grupo_actual_filtro != "Todos":
+        target = next(
+            (g for g in grupos if g.nombre == grupo_actual_filtro), None,
+        )
+        if target:
+            all_materias = [
+                m for m in all_materias if m.grupo_id == target.id
+            ]
+        else:
+            all_materias = []
+
+    # Filtro 3: optativa.
+    if filtro_optativa == "Sólo optativas":
+        all_materias = [m for m in all_materias if m.optativa]
+    elif filtro_optativa == "Sólo obligatorias":
+        all_materias = [m for m in all_materias if not m.optativa]
+
+    # Filtro 4: virtual.
+    if filtro_virtual == "Sólo virtuales":
+        all_materias = [m for m in all_materias if m.virtual]
+    elif filtro_virtual == "Sólo presenciales":
+        all_materias = [m for m in all_materias if not m.virtual]
+
+    # Filtro 5: laboratorio.
+    if filtro_lab in ("Con lab compatible", "Sin lab compatible"):
+        lab_pairs = list(session.exec(
+            select(MateriaLaboratorioDB.materia_codigo)
         ).all())
+        materias_con_lab = set(lab_pairs)
+        if filtro_lab == "Con lab compatible":
+            all_materias = [
+                m for m in all_materias if m.codigo in materias_con_lab
+            ]
+        else:
+            all_materias = [
+                m for m in all_materias
+                if m.codigo not in materias_con_lab
+            ]
+    elif filtro_lab == "Con horas de lab":
+        all_materias = [
+            m for m in all_materias
+            if (m.horas_laboratorio or 0) > 0
+        ]
+    elif filtro_lab == "Sin horas de lab":
+        all_materias = [
+            m for m in all_materias
+            if (m.horas_laboratorio or 0) == 0
+        ]
 
-    if not materias:
-        st.info("No hay materias que coincidan con el filtro.")
-        return
+    # Filtro 6: período.
+    if filtro_periodo == "Cuatrimestral":
+        all_materias = [
+            m for m in all_materias if m.periodo == "cuatrimestral"
+        ]
+    elif filtro_periodo == "Anual":
+        all_materias = [m for m in all_materias if m.periodo == "anual"]
 
-    st.caption(
-        f"{len(materias)} materia(s) a mostrar. Elegí el grupo de destino "
-        "en la columna 'Grupo nuevo' y presioná 'Guardar cambios'."
-    )
+    # Filtro 7: búsqueda por código/nombre (tolerante a acentos).
+    if busqueda.strip():
+        term = _normalizar(busqueda.strip())
+        all_materias = [
+            m for m in all_materias
+            if term in _normalizar(m.codigo)
+            or term in _normalizar(m.nombre)
+        ]
 
-    grupo_nombres = [g.nombre for g in grupos]
+    return all_materias
+
+
+def _render_tabla_reasignacion(
+    session: Session,
+    materias: list[MateriaDB],
+    grupos: list[GrupoMateriaDB],
+) -> None:
+    """Renderiza la tabla + form de reasignación."""
+    grupo_id_to_grupo = {g.id: g for g in grupos}
+    grupo_nombres = [g.nombre for g in sorted(grupos, key=lambda x: x.nombre)]
     grupo_nombre_to_id = {g.nombre: g.id for g in grupos}
 
-    # Cache de cambios pendientes en session_state.
     pending_key = "materias_reasignacion_pending"
-    pending: dict[str, str] = st.session_state.setdefault(pending_key, {})
+    pending: dict[str, str] = st.session_state.setdefault(
+        pending_key, {}
+    )
+
+    CAP_MOSTRAR = 200
+    if len(materias) > CAP_MOSTRAR:
+        st.caption(
+            f"Mostrando las primeras {CAP_MOSTRAR} de {len(materias)}. "
+            "Aplicá más filtros para acotar."
+        )
+    a_mostrar = materias[:CAP_MOSTRAR]
 
     with st.form(key="form_reasignar_materias"):
-        # Header.
         h1, h2, h3, h4 = st.columns([1, 3, 2, 2])
         h1.markdown("**Código**")
         h2.markdown("**Nombre**")
         h3.markdown("**Grupo actual**")
         h4.markdown("**Grupo nuevo**")
 
-        for m in materias[:200]:  # cota para no romper el render
+        for m in a_mostrar:
             c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
-            c1.write(f"`{m.codigo}`")
+            c1.markdown(f"`{m.codigo}`")
             c2.write(m.nombre)
             gactual = (
                 grupo_id_to_grupo.get(m.grupo_id) if m.grupo_id else None
             )
             gactual_nombre = gactual.nombre if gactual else "—"
             c3.write(gactual_nombre)
-            # Selectbox.
             default_idx = 0
             if m.grupo_id and gactual:
                 try:
@@ -519,12 +934,6 @@ def _render_reasignacion_materias(
             elif m.codigo in pending and nuevo_id == m.grupo_id:
                 pending.pop(m.codigo, None)
 
-        if len(materias) > 200:
-            st.caption(
-                f"Mostrando las primeras 200 de {len(materias)}. Usá "
-                "el filtro para acotar."
-            )
-
         submit = st.form_submit_button(
             f"💾 Guardar cambios ({len(pending)} pendiente(s))",
             type="primary",
@@ -533,7 +942,7 @@ def _render_reasignacion_materias(
         if submit and pending:
             n_ok = 0
             errores: list[str] = []
-            for materia_codigo, nuevo_gid in pending.items():
+            for materia_codigo, nuevo_gid in list(pending.items()):
                 try:
                     asignar_materia_a_grupo(
                         session, materia_codigo, nuevo_gid,
@@ -564,6 +973,14 @@ def _grupo_tiene_materias(session: Session, grupo_id: str) -> bool:
     return row is not None
 
 
-# NOTE: no exponemos `GrupoMateriaSedeDB` en la API pública del módulo —
-# la tabla se manipula sólo a través del servicio.
-_ = GrupoMateriaSedeDB  # noqa: F841
+# Referencia explícita para que el linter no marque el import como
+# no usado (usamos GrupoMateriaSedeDB / GrupoMateriaCarreraDB sólo
+# indirectamente vía el servicio).
+_ = (GrupoMateriaSedeDB, GrupoMateriaCarreraDB)
+
+
+# NOTE: list_materias_por_grupo y list_materias_sin_clasificar se
+# importan para dejarlos disponibles a call sites externos y evitar
+# regressions si alguien los usaba desde otro módulo. También se
+# consultan indirectamente vía chequear_consistencia_grupo del servicio.
+_ = (list_materias_por_grupo, list_materias_sin_clasificar)

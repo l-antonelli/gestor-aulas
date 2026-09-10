@@ -95,13 +95,14 @@ class TestMigracionInicial:
         ).all()
         assert len(sc) == 1
         assert sc[0].nombre == "Sin clasificar"
-        assert sc[0].modo == "DURO"
-        # Sedes: todas las activas (2).
+        # Sedes registradas como DURO (fallback permisivo con todas
+        # las sedes activas).
         sedes = list(session.exec(
             select(GrupoMateriaSedeDB).where(
                 GrupoMateriaSedeDB.grupo_id == sc[0].id,
             )
         ).all())
+        assert all(s.tipo == "DURO" for s in sedes)
         assert len(sedes) == 2
 
     def test_crea_grupos_base_por_prefijo(self, engine, session):
