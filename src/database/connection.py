@@ -249,6 +249,13 @@ def _run_migrations(eng):
     #    correspondiente en la nueva tabla `grupo_materia_carrera`.
     _migrate_grupo_materia_schema_v2(eng)
 
+    # Fix 2026-09-10: en bases creadas antes del rediseño la PK de
+    # `grupo_materia_sede` era (grupo_id, sede_id). Cambiarla a
+    # (grupo_id, sede_id, tipo) requiere recrear la tabla porque
+    # SQLite no permite ALTER PRIMARY KEY. Idempotente: sólo actúa
+    # si detecta la PK vieja.
+    _migrate_grupo_materia_sede_pk(eng)
+
 
 def _migrate_schedules_nullable_ciclo(eng):
     """Recreate schedules table so ciclo_id allows NULL.
@@ -1366,6 +1373,83 @@ def _migrate_grupo_materia_schema_v2(eng):
                 "VALUES (?, ?)",
                 (grupo_id, cod),
             )
+        conn.commit()
+
+
+def _migrate_grupo_materia_sede_pk(eng):
+    """Recrea ``grupo_materia_sede`` para que la PK incluya la
+    columna ``tipo``.
+
+    En bases creadas antes del rediseño 2026-09-09, la tabla se creó
+    con ``PRIMARY KEY (grupo_id, sede_id)``. Cuando el rediseño
+    agregó la columna ``tipo`` para permitir que una sede aparezca
+    en el mismo grupo con DURO y BLANDO simultáneamente, la
+    migración usó ``ALTER TABLE ADD COLUMN``. Pero SQLite no permite
+    modificar la PK con ``ALTER``: la constraint UNIQUE quedó sobre
+    ``(grupo_id, sede_id)``, así que insertar la misma sede con dos
+    tipos distintos rompe con ``IntegrityError``.
+
+    Esta migración detecta el caso y recrea la tabla con la PK
+    correcta ``(grupo_id, sede_id, tipo)``, preservando los datos.
+    Idempotente: si la PK ya es la correcta, no hace nada.
+    """
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "PRAGMA table_info(grupo_materia_sede)"
+        ).fetchall()
+        if not rows:
+            return
+        col_names = {r[1] for r in rows}
+        if "tipo" not in col_names:
+            # Todavía no se agregó `tipo` — otra migración anterior
+            # se encarga (`_run_migrations` con el ADD COLUMN).
+            return
+        # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk).
+        # `pk` > 0 indica que la columna es parte de la PK, y el
+        # valor es el orden dentro de la PK.
+        pk_cols = sorted(
+            (r for r in rows if r[5] > 0), key=lambda r: r[5],
+        )
+        pk_names = tuple(c[1] for c in pk_cols)
+        if pk_names == ("grupo_id", "sede_id", "tipo"):
+            return  # ya migrada
+        if pk_names not in (("grupo_id", "sede_id"), tuple()):
+            logger.warning(
+                "grupo_materia_sede tiene PK inesperada %r; "
+                "skip migración de PK",
+                pk_names,
+            )
+            return
+
+        logger.info(
+            "Recreating grupo_materia_sede con PK "
+            "(grupo_id, sede_id, tipo)"
+        )
+        conn.exec_driver_sql("""
+            CREATE TABLE grupo_materia_sede_tmp (
+                grupo_id VARCHAR NOT NULL,
+                sede_id VARCHAR NOT NULL,
+                tipo VARCHAR NOT NULL DEFAULT 'DURO',
+                orden INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (grupo_id, sede_id, tipo),
+                FOREIGN KEY (grupo_id) REFERENCES grupo_materia (id),
+                FOREIGN KEY (sede_id) REFERENCES sedes (id)
+            )
+        """)
+        # `COALESCE(tipo, 'DURO')` porque algunas filas antiguas
+        # pueden tener tipo=NULL (el DEFAULT sólo se aplicó a filas
+        # nuevas después del ALTER).
+        conn.exec_driver_sql("""
+            INSERT INTO grupo_materia_sede_tmp
+                (grupo_id, sede_id, tipo, orden)
+            SELECT grupo_id, sede_id, COALESCE(tipo, 'DURO'), orden
+            FROM grupo_materia_sede
+        """)
+        conn.exec_driver_sql("DROP TABLE grupo_materia_sede")
+        conn.exec_driver_sql(
+            "ALTER TABLE grupo_materia_sede_tmp "
+            "RENAME TO grupo_materia_sede"
+        )
         conn.commit()
 
 
