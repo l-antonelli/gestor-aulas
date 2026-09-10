@@ -76,31 +76,66 @@ def _render_plan_activo_y_grupos(
                     if v.id == activa.id:
                         default_idx = i + 1
                         break
-            sel_idx = st.radio(
-                "Versión activa",
-                options=list(range(len(opciones))),
-                format_func=lambda i: opciones[i],
-                index=default_idx,
-                key=f"plan_activo_{carrera.codigo}",
-                label_visibility="collapsed",
-            )
+
+            # Modo edición: selectbox deshabilitado hasta que se
+            # apriete 'Editar'. Al guardar o cancelar vuelve a
+            # deshabilitado.
+            edit_key = f"plan_activo_editando_{carrera.codigo}"
+            editando = st.session_state.get(edit_key, False)
+
+            col_select, col_actions = st.columns([4, 2])
+            with col_select:
+                sel_idx = st.selectbox(
+                    "Versión activa",
+                    options=list(range(len(opciones))),
+                    format_func=lambda i: opciones[i],
+                    index=default_idx,
+                    key=f"plan_activo_sel_{carrera.codigo}",
+                    disabled=not editando,
+                    label_visibility="collapsed",
+                )
             sel_id = id_por_opcion[sel_idx]
             actual_id = activa.id if activa is not None else "__NONE__"
-            if sel_id != actual_id:
-                if st.button(
-                    "💾 Guardar cambio de plan activo",
-                    key=f"save_plan_activo_{carrera.codigo}",
-                    type="primary",
-                ):
-                    try:
-                        set_plan_activo(
-                            session, carrera.codigo,
-                            None if sel_id == "__NONE__" else sel_id,
-                        )
-                        st.success("Plan activo actualizado.")
+
+            with col_actions:
+                if not editando:
+                    if st.button(
+                        "✏️ Editar",
+                        key=f"edit_plan_activo_{carrera.codigo}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[edit_key] = True
                         st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
+                else:
+                    c_save, c_cancel = st.columns(2)
+                    with c_save:
+                        if st.button(
+                            "💾",
+                            key=f"save_plan_activo_{carrera.codigo}",
+                            type="primary",
+                            use_container_width=True,
+                            help="Guardar cambio de plan activo",
+                            disabled=(sel_id == actual_id),
+                        ):
+                            try:
+                                set_plan_activo(
+                                    session, carrera.codigo,
+                                    None if sel_id == "__NONE__" else sel_id,
+                                )
+                                st.session_state.pop(edit_key, None)
+                                st.toast("Plan activo actualizado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+                    with c_cancel:
+                        if st.button(
+                            "✕",
+                            key=f"cancel_plan_activo_{carrera.codigo}",
+                            use_container_width=True,
+                            help="Cancelar",
+                        ):
+                            st.session_state.pop(edit_key, None)
+                            st.rerun()
 
     # --- Grupos de materias asociados -------------------------
     with st.container(border=True):
@@ -128,6 +163,134 @@ def _render_plan_activo_y_grupos(
         st.caption(
             "_Editá las asociaciones desde Materias → 📦 Grupos de materias._"
         )
+
+
+def _render_carrera_readonly(session: Session, carrera) -> None:
+    """Vista read-only de la carrera dentro de su expander: dos columnas
+    con datos + plan activo + grupos + botones Editar/Eliminar."""
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**Código:** {carrera.codigo}")
+        st.write(f"**Nombre:** {carrera.nombre}")
+        st.write(f"**Título Otorgado:** {carrera.titulo_otorgado}")
+    with col2:
+        st.write(f"**Duración:** {carrera.duracion_anios} años")
+        cantidad_text = (
+            str(carrera.cantidad_materias)
+            if carrera.cantidad_materias else "No definida"
+        )
+        st.write(f"**Cantidad de Materias:** {cantidad_text}")
+        dicta_text = "Si" if carrera.dicta_recursado else "No"
+        st.write(f"**Dicta recursado:** {dicta_text}")
+        try:
+            CarreraStatusWidget.render_inline_status(session, carrera.codigo)
+        except Exception as e:
+            st.error(f"Error al cargar estado: {str(e)}")
+
+    st.divider()
+    _render_plan_activo_y_grupos(session, carrera)
+
+    st.markdown("")
+    _spacer, col_edit, col_delete = st.columns([3, 1, 1])
+    with col_edit:
+        if st.button(
+            "✏️ Editar",
+            key=f"edit_{carrera.codigo}",
+            use_container_width=True,
+        ):
+            st.session_state["edit_carrera"] = carrera.codigo
+            st.rerun()
+    with col_delete:
+        if st.button(
+            "🗑️ Eliminar",
+            key=f"delete_{carrera.codigo}",
+            use_container_width=True,
+        ):
+            st.session_state["delete_carrera"] = carrera.codigo
+            st.rerun()
+
+
+def _render_carrera_edit_inline(
+    session: Session,
+    carrera_codigo: str,
+    custom_labels: dict[str, str],
+) -> None:
+    """Formulario de edición renderizado DENTRO del expander de la
+    carrera (reemplaza el bloque legacy al fondo de la página)."""
+    try:
+        existing_carrera = carrera_service.get(session, carrera_codigo)
+        if existing_carrera is None:
+            st.error(
+                f"Carrera con código '{carrera_codigo}' no encontrada"
+            )
+            st.session_state.pop("edit_carrera", None)
+            st.rerun()
+            return
+    except Exception as e:
+        st.error(f"Error al cargar carrera: {str(e)}")
+        st.session_state.pop("edit_carrera", None)
+        st.rerun()
+        return
+
+    default_values = (
+        existing_carrera.model_dump()
+        if hasattr(existing_carrera, "model_dump")
+        else dict(existing_carrera)
+    )
+
+    st.markdown(f"**✏️ Editar carrera `{carrera_codigo}`**")
+    with st.form(key=f"edit_carrera_{carrera_codigo}_form"):
+        st.text_input(
+            "Código",
+            value=carrera_codigo,
+            disabled=True,
+            key=f"edit_{carrera_codigo}_codigo_display",
+        )
+        form_data = FormInputRenderer.render_form_input(
+            model=Carrera,
+            key=f"edit_{carrera_codigo}_input",
+            exclude_fields=["codigo"],
+            custom_labels=custom_labels,
+            default_values=default_values,
+        )
+        col_submit, col_cancel = st.columns(2)
+        with col_submit:
+            submitted = st.form_submit_button(
+                "💾 Guardar cambios",
+                type="primary",
+                use_container_width=True,
+            )
+        with col_cancel:
+            cancelled = st.form_submit_button(
+                "✕ Cancelar",
+                use_container_width=True,
+            )
+
+        if cancelled:
+            st.session_state.pop("edit_carrera", None)
+            st.rerun()
+
+        if submitted:
+            form_data["codigo"] = carrera_codigo
+            is_valid, errors = FormInputRenderer.validate_form_data(
+                form_data, Carrera,
+            )
+            if not is_valid:
+                FormInputRenderer.display_validation_errors(errors)
+            else:
+                try:
+                    carrera_actualizada = Carrera(**form_data)
+                    updated_carrera = carrera_service.update(
+                        session, carrera_actualizada,
+                    )
+                    if updated_carrera:
+                        st.toast("✅ Carrera actualizada.")
+                        st.session_state.pop("edit_carrera", None)
+                        st.rerun()
+                    else:
+                        st.error("❌ No se pudo actualizar la carrera")
+                except Exception as e:
+                    st.error(f"❌ Error al actualizar: {str(e)}")
 
 
 def render_custom_carrera_page():
@@ -173,140 +336,31 @@ def render_custom_carrera_page():
                 else:
                     # Display carreras
                     for carrera in carreras:
-                        with st.expander(f"🎓 {carrera.codigo} - {carrera.nombre}"):
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                st.write(f"**Código:** {carrera.codigo}")
-                                st.write(f"**Nombre:** {carrera.nombre}")
-                                st.write(f"**Título Otorgado:** {carrera.titulo_otorgado}")
-                            
-                            with col2:
-                                st.write(f"**Duración:** {carrera.duracion_anios} años")
-                                cantidad_text = str(carrera.cantidad_materias) if carrera.cantidad_materias else "No definida"
-                                st.write(f"**Cantidad de Materias:** {cantidad_text}")
-                                dicta_text = "Si" if carrera.dicta_recursado else "No"
-                                st.write(f"**Dicta recursado:** {dicta_text}")
-                                
-                                # Show completeness status
-                                try:
-                                    CarreraStatusWidget.render_inline_status(session, carrera.codigo)
-                                except Exception as e:
-                                    st.error(f"Error al cargar estado: {str(e)}")
-                            
-                            # Plan activo de la carrera + grupos
-                            # asociados. La config de sedes admisibles
-                            # se resuelve por Grupo de Materias (ver
-                            # Materias → 📦 Grupos).
-                            st.divider()
-                            _render_plan_activo_y_grupos(
-                                session, carrera,
-                            )
-
-                            # Botones de acción alineados a la
-                            # derecha con ancho fijo.
-                            st.markdown("")
-                            _spacer, col_edit, col_delete = st.columns(
-                                [3, 1, 1],
-                            )
-                            with col_edit:
-                                if st.button(
-                                    "✏️ Editar",
-                                    key=f"edit_{carrera.codigo}",
-                                    width="stretch",
-                                ):
-                                    st.session_state["edit_carrera"] = (
-                                        carrera.codigo
-                                    )
-                                    st.rerun()
-                            with col_delete:
-                                if st.button(
-                                    "🗑️ Eliminar",
-                                    key=f"delete_{carrera.codigo}",
-                                    width="stretch",
-                                ):
-                                    st.session_state[
-                                        "delete_carrera"
-                                    ] = carrera.codigo
-                                    st.rerun()
-                    
-                    # Handle edit action
-                    if "edit_carrera" in st.session_state:
-                        carrera_codigo = st.session_state["edit_carrera"]
-                        st.subheader(f"Editar Carrera: {carrera_codigo}")
-                        
-                        # Get existing carrera
-                        try:
-                            existing_carrera = carrera_service.get(session, carrera_codigo)
-                            if existing_carrera is None:
-                                st.error(f"Carrera con código '{carrera_codigo}' no encontrada")
-                                del st.session_state["edit_carrera"]
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al cargar carrera: {str(e)}")
-                            del st.session_state["edit_carrera"]
-                            st.rerun()
-                        
-                        # Extract default values
-                        if hasattr(existing_carrera, "model_dump"):
-                            default_values = existing_carrera.model_dump()
-                        else:
-                            default_values = dict(existing_carrera)
-                        
-                        # Render edit form
-                        with st.form(key=f"edit_carrera_{carrera_codigo}_form"):
-                            # Show codigo as read-only
-                            st.text_input(
-                                "Código",
-                                value=carrera_codigo,
-                                disabled=True,
-                                key=f"edit_{carrera_codigo}_codigo_display",
-                            )
-                            
-                            # Render other fields
-                            form_data = FormInputRenderer.render_form_input(
-                                model=Carrera,
-                                key=f"edit_{carrera_codigo}_input",
-                                exclude_fields=["codigo"],
-                                custom_labels=custom_labels,
-                                default_values=default_values,
-                            )
-                            
-                            col_submit, col_cancel = st.columns(2)
-                            
-                            with col_submit:
-                                submitted = st.form_submit_button("💾 Guardar Cambios", type="primary")
-                            
-                            with col_cancel:
-                                cancelled = st.form_submit_button("❌ Cancelar")
-                            
-                            if cancelled:
-                                del st.session_state["edit_carrera"]
-                                st.rerun()
-                            
-                            if submitted:
-                                # Add back the codigo field
-                                form_data["codigo"] = carrera_codigo
-                                
-                                # Validate form data
-                                is_valid, errors = FormInputRenderer.validate_form_data(form_data, Carrera)
-                                
-                                if not is_valid:
-                                    FormInputRenderer.display_validation_errors(errors)
-                                else:
-                                    try:
-                                        # Create carrera instance and update
-                                        carrera = Carrera(**form_data)
-                                        updated_carrera = carrera_service.update(session, carrera)
-                                        
-                                        if updated_carrera:
-                                            st.success("✅ Carrera actualizada exitosamente")
-                                            del st.session_state["edit_carrera"]
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ No se pudo actualizar la carrera")
-                                    except Exception as e:
-                                        st.error(f"❌ Error al actualizar: {str(e)}")
+                        _en_edicion = (
+                            st.session_state.get("edit_carrera")
+                            == carrera.codigo
+                        )
+                        _titulo_expander = (
+                            f"🎓 {carrera.codigo} - {carrera.nombre}"
+                            + (" · ✏️ editando" if _en_edicion else "")
+                        )
+                        with st.expander(
+                            _titulo_expander,
+                            expanded=_en_edicion,
+                        ):
+                            if _en_edicion:
+                                _render_carrera_edit_inline(
+                                    session, carrera.codigo, custom_labels,
+                                )
+                            else:
+                                _render_carrera_readonly(
+                                    session, carrera,
+                                )
+                    # NOTE: se retiró el bloque "Editar Carrera" al fondo
+                    # de la página — la edición ahora vive dentro del
+                    # expander de cada carrera. La condición
+                    # ``st.session_state.get("edit_carrera")`` la maneja
+                    # `_render_carrera_edit_inline`.
                     
                     # Handle delete action
                     if "delete_carrera" in st.session_state:
