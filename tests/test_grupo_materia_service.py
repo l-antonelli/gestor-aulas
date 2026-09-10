@@ -450,19 +450,31 @@ class TestChequeoConsistencia:
         faltantes, _ajenas, _ = chequear_consistencia_grupo(session, g.id)
         assert faltantes == []
 
-    def test_multiples_carreras_asociadas(self, session):
+    def test_multiples_carreras_asociadas_regimen_transversal(
+        self, session,
+    ):
+        """Grupo con 2 carreras asociadas (A, F). Régimen transversal:
+        una materia es faltante sólo si aparece en el plan de AMBAS
+        (o más) carreras asociadas.
+
+        Aca preparamos: MComun en A y F (aparece en 2 asociadas → sí
+        faltante), MSoloA sólo en A (1 asociada → NO faltante), MSoloF
+        sólo en F (1 asociada → NO faltante)."""
         _seed_sedes(session)
-        self._seed_plan(session, "A", ["MA"], activo=True)
-        self._seed_plan(session, "F", ["MF"], activo=True, plan_id="pv-F")
-        # Grupo asociado a A y F. MA es exclusiva de A, MF exclusiva
-        # de F → ambas faltantes.
+        self._seed_plan(
+            session, "A", ["MComun", "MSoloA"], activo=True,
+        )
+        self._seed_plan(
+            session, "F", ["MComun", "MSoloF"], activo=True,
+            plan_id="pv-F",
+        )
         g = create_grupo(
             session, "G", sedes_duras=["S1"],
             carreras_asociadas=["A", "F"],
         )
         faltantes, _ajenas, _ = chequear_consistencia_grupo(session, g.id)
         codigos = {f.codigo for f in faltantes}
-        assert codigos == {"MA", "MF"}
+        assert codigos == {"MComun"}
 
     def test_detecta_materia_ajena_con_sugerencia_univoca(self, session):
         """MA está en el grupo G (asociado a A), pero en el plan
@@ -506,10 +518,13 @@ class TestChequeoConsistencia:
         assert set(ajenas[0].carreras_donde_aparece) == {"B", "C"}
         assert ajenas[0].sugerencia_grupo_id is None
 
-    def test_no_reporta_ajena_si_aparece_tambien_en_asociada(self, session):
-        """MA está en el grupo G (asociado a A) y aparece en el plan
-        de A y también de B. No es ajena porque aparece en carrera
-        asociada."""
+    def test_por_carrera_ajena_si_aparece_ademas_en_no_asociada(
+        self, session,
+    ):
+        """Régimen por-carrera: grupo asociado a A. Si MA está en el
+        grupo pero aparece en el plan de A **y** de B, ya no es
+        exclusiva de A → se reporta como ajena (probablemente
+        pertenezca a un grupo transversal común a A y B)."""
         _seed_sedes(session)
         self._seed_plan(session, "A", ["MA"], activo=True)
         self._seed_plan(session, "B", ["MA"], activo=True, plan_id="pv-B")
@@ -518,7 +533,148 @@ class TestChequeoConsistencia:
         )
         asignar_materia_a_grupo(session, "MA", g.id)
         _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert len(ajenas) == 1
+        assert ajenas[0].codigo == "MA"
+        assert ajenas[0].carreras_donde_aparece == ["B"]
+
+    def test_por_carrera_no_ajena_si_exclusiva_de_asociada(self, session):
+        """Régimen por-carrera: grupo asociado a A. Si MA está en el
+        grupo y aparece SÓLO en el plan de A → NO es ajena (bien
+        clasificada)."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA"], activo=True)
+        self._seed_plan(session, "B", [], activo=True, plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        asignar_materia_a_grupo(session, "MA", g.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
         assert ajenas == []
+
+
+class TestChequeoConsistenciaTransversal:
+    """Régimen para grupos con 2+ carreras asociadas (transversales
+    tipo FB, FI, CE). Régimen distinto al de grupos por-carrera:
+
+    - Faltante = aparece en el plan vigente de ≥ 2 carreras asociadas
+      y no está en el grupo.
+    - Ajena = está en el grupo pero aparece en ≤ 1 carrera asociada
+      (o en ninguna).
+    """
+
+    def _seed_plan(
+        self, session, carrera_codigo: str, materias: list[str],
+        plan_id: str | None = None,
+    ) -> str:
+        if session.get(CarreraDB, carrera_codigo) is None:
+            session.add(CarreraDB(
+                codigo=carrera_codigo, nombre=f"Carrera {carrera_codigo}",
+            ))
+        pv_id = plan_id or f"pv-{carrera_codigo}"
+        session.add(PlanCarreraVersionDB(
+            id=pv_id,
+            carrera_codigo=carrera_codigo,
+            nombre=f"Plan {carrera_codigo}",
+            fecha_creacion=date(2026, 1, 1),
+            active=True,
+        ))
+        session.commit()
+        for mc in materias:
+            if session.get(MateriaDB, mc) is None:
+                session.add(MateriaDB(codigo=mc, nombre=f"Mat {mc}"))
+            session.add(PlanEstudioDB(
+                id=f"{pv_id}-{mc}",
+                plan_version_id=pv_id,
+                materia_codigo=mc,
+                carrera_codigo=carrera_codigo,
+                anio_plan=1,
+                cuatrimestre_plan="1C",
+            ))
+        session.commit()
+        return pv_id
+
+    def test_transversal_reporta_faltante_solo_si_en_2plus_asociadas(
+        self, session,
+    ):
+        """FB asociado a A, B, C. Materia FB01 en el plan de A y B
+        (≥ 2 asociadas) → faltante. Materia sólo en A (< 2) → NO
+        faltante."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FB01", "SOLO_A"], plan_id="pv-A")
+        self._seed_plan(session, "B", ["FB01"], plan_id="pv-B")
+        self._seed_plan(session, "C", [], plan_id="pv-C")
+        g_fb = create_grupo(
+            session, "FB", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B", "C"],
+        )
+        # Sin materias en el grupo. FB01 aparece en 2 asociadas →
+        # faltante. SOLO_A aparece en 1 asociada → NO faltante.
+        faltantes, _, _ = chequear_consistencia_grupo(session, g_fb.id)
+        codigos = {f.codigo for f in faltantes}
+        assert codigos == {"FB01"}
+
+    def test_transversal_reporta_ajena_si_solo_1_asociada(self, session):
+        """FB asociado a A, B, C. FB tiene FB02 asignada. FB02 sólo
+        aparece en el plan de A (1 asociada) → ajena, con sugerencia
+        al grupo 'Específicas de A'."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FB02"], plan_id="pv-A")
+        self._seed_plan(session, "B", [], plan_id="pv-B")
+        self._seed_plan(session, "C", [], plan_id="pv-C")
+        g_fb = create_grupo(
+            session, "FB", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B", "C"],
+        )
+        g_a = create_grupo(
+            session, "Específicas de A", sedes_duras=["S2"],
+            carreras_asociadas=["A"],
+        )
+        asignar_materia_a_grupo(session, "FB02", g_fb.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_fb.id)
+        assert len(ajenas) == 1
+        assert ajenas[0].codigo == "FB02"
+        assert ajenas[0].carreras_donde_aparece == ["A"]
+        assert ajenas[0].sugerencia_grupo_id == g_a.id
+
+    def test_transversal_no_reporta_ajena_si_esta_en_2plus_asociadas(
+        self, session,
+    ):
+        """FB asociado a A, B, C. FB tiene FB03 asignada. FB03 aparece
+        en A y B (≥ 2 asociadas) → NO es ajena, está bien clasificada."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FB03"], plan_id="pv-A")
+        self._seed_plan(session, "B", ["FB03"], plan_id="pv-B")
+        self._seed_plan(session, "C", [], plan_id="pv-C")
+        g_fb = create_grupo(
+            session, "FB", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B", "C"],
+        )
+        asignar_materia_a_grupo(session, "FB03", g_fb.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_fb.id)
+        assert ajenas == []
+
+    def test_transversal_ajena_sin_sugerencia_si_aparece_en_0_asociadas(
+        self, session,
+    ):
+        """FB asociado a A, B, C. FB tiene FB04 asignada. FB04 aparece
+        SÓLO en el plan de D (no asociada) → ajena, sin sugerencia
+        automática (a menos que exista grupo con D asociada, pero
+        acá no lo creamos)."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", [], plan_id="pv-A")
+        self._seed_plan(session, "B", [], plan_id="pv-B")
+        self._seed_plan(session, "C", [], plan_id="pv-C")
+        self._seed_plan(session, "D", ["FB04"], plan_id="pv-D")
+        g_fb = create_grupo(
+            session, "FB", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B", "C"],
+        )
+        asignar_materia_a_grupo(session, "FB04", g_fb.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_fb.id)
+        assert len(ajenas) == 1
+        assert ajenas[0].codigo == "FB04"
+        # Sin sugerencia porque no hay grupo asociado a D.
+        assert ajenas[0].sugerencia_grupo_id is None
 
 
 class TestPlanActivo:

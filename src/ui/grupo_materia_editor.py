@@ -551,10 +551,16 @@ def _render_chequeo_consistencia(
         st.caption(
             "Compara las materias del grupo con las materias que "
             "aparecen en el **plan vigente** de las carreras "
-            "asociadas. Detecta dos tipos de inconsistencia: "
-            "**faltantes** (materias de la carrera que no están "
-            "acá) y **ajenas** (materias que están acá pero "
-            "aparecen en el plan de otras carreras)."
+            "asociadas. El chequeo se adapta según cuántas carreras "
+            "estén asociadas al grupo:\n\n"
+            "- **Grupo por-carrera** (1 asociada, tipo *Específicas "
+            "de X*): faltante = aparece exclusivamente en el plan "
+            "de X; ajena = está en el grupo pero aparece también "
+            "en otras carreras.\n"
+            "- **Grupo transversal** (≥ 2 asociadas, tipo *FB*, "
+            "*FI*, *CE*): faltante = aparece en al menos 2 "
+            "carreras asociadas; ajena = está en el grupo pero "
+            "aparece en 1 o 0 asociadas."
         )
 
         run_key = f"consist_run_{grupo.id}"
