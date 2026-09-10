@@ -281,6 +281,61 @@ class TestMateriaService:
         with pytest.raises(EntityNotFoundError):
             service.delete_or_raise(session, "NONEXISTENT")
 
+    def test_delete_materia_con_dictados_no_rompe_integridad(
+        self, session, sample_materia,
+    ):
+        """Reproduce el bug: borrar una materia que tiene dictados
+        (y por ende comisiones/horarios) debe cascadear el borrado
+        de esas filas, no dejarlas huérfanas con FK apuntando a la
+        materia inexistente.
+
+        Con el bug: SQLAlchemy intenta ``UPDATE dictados SET
+        materia_codigo=NULL`` que rompe la constraint ``NOT NULL``.
+        """
+        from datetime import date, time
+        from src.database.models import (
+            ComisionDB, DictadoDB, HorarioDB,
+        )
+
+        service = MateriaService()
+        service.create(session, sample_materia)
+
+        # Creamos un dictado + comisión + horario para la materia.
+        session.add(DictadoDB(
+            id="dict-1",
+            materia_codigo="MAT101",
+            dictado_codigo="MAT101-2026-1C",
+            inicio_dictado=date(2026, 3, 9),
+            fin_dictado=date(2026, 7, 3),
+        ))
+        session.add(ComisionDB(
+            id="com-1",
+            materia_codigo="MAT101",
+            dictado_id="dict-1",
+            nombre="Com 1",
+            numero=1,
+            cupo=30,
+        ))
+        session.add(HorarioDB(
+            id="hor-1",
+            comision_id="com-1",
+            codigo_materia="MAT101",
+            dia="Lunes",
+            hora_inicio=time(8, 0),
+            hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        # El delete DEBE completar sin romper por FK/NOT NULL.
+        result = service.delete(session, "MAT101")
+
+        assert result is True
+        assert service.get(session, "MAT101") is None
+        # Las filas dependientes también se limpiaron.
+        assert session.get(DictadoDB, "dict-1") is None
+        assert session.get(ComisionDB, "com-1") is None
+        assert session.get(HorarioDB, "hor-1") is None
+
 
 # =============================================================================
 # ComisionService Tests

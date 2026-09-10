@@ -526,11 +526,11 @@ from src.database.crud import (
 class MateriaService(BaseCRUDService[Materia, MateriaDB]):
     """
     CRUD service for Materia entities.
-    
+
     Provides domain-level operations for academic subjects,
     including cascading creation of default Comisión and carrera relationships.
     """
-    
+
     def __init__(self):
         super().__init__(
             domain_model=Materia,
@@ -538,6 +538,169 @@ class MateriaService(BaseCRUDService[Materia, MateriaDB]):
             crud=materia_crud,
             id_field="codigo"
         )
+
+    def delete(self, session: Session, entity_id: str) -> bool:
+        """Borra una materia con **cascada explícita** de todas las
+        entidades que la referencian por FK.
+
+        SQLAlchemy no tiene ``ondelete`` configurado en el schema, así
+        que al borrar una materia intenta ``UPDATE ... SET
+        materia_codigo=NULL`` en las tablas hijas — que rompe la
+        constraint NOT NULL. En vez de reconfigurar todo el schema,
+        acá borramos explícitamente en orden topológico:
+
+            HorarioDB → ClaseDB → ComisionDB → DictadoDB
+            (todos referencian a la materia por materia_codigo)
+            → PlanEstudioDB → CorrelativaDB → MateriaLaboratorioDB
+            → InscripcionHistoricaDB → MateriaForecastConfigDB
+            → MateriaDB
+
+        Los grupos de materia se manejan por la referencia
+        ``MateriaDB.grupo_id`` que sí es nullable (no bloquea el
+        delete de la materia).
+        """
+        from sqlmodel import select as _select
+        from src.database.models import (
+            ClaseDB, ComisionDB, CorrelativaDB, DictadoDB,
+            HorarioDB, InscripcionHistoricaDB,
+            MateriaForecastConfigDB, MateriaLaboratorioDB,
+            PlanEstudioDB, ScheduleEntryDB,
+        )
+
+        # Verificar existencia primero (respeta contrato de BaseCRUDService).
+        if self.crud.get(session, entity_id) is None:
+            return False
+
+        # 1. HorarioDB — buscar por comisión de la materia + por codigo_materia.
+        com_ids = [
+            c.id for c in session.exec(
+                _select(ComisionDB).where(
+                    ComisionDB.materia_codigo == entity_id,
+                )
+            ).all()
+        ]
+        if com_ids:
+            for h in session.exec(
+                _select(HorarioDB).where(
+                    HorarioDB.comision_id.in_(com_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                session.delete(h)
+        for h in session.exec(
+            _select(HorarioDB).where(
+                HorarioDB.codigo_materia == entity_id,
+            )
+        ).all():
+            session.delete(h)
+
+        # 2. ClaseDB (cache técnico) — por comisión o por dictado.
+        if com_ids:
+            for c in session.exec(
+                _select(ClaseDB).where(
+                    ClaseDB.comision_id.in_(com_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                session.delete(c)
+        dict_ids = [
+            d.id for d in session.exec(
+                _select(DictadoDB).where(
+                    DictadoDB.materia_codigo == entity_id,
+                )
+            ).all()
+        ]
+        if dict_ids:
+            for c in session.exec(
+                _select(ClaseDB).where(
+                    ClaseDB.dictado_id.in_(dict_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                session.delete(c)
+
+        # 3. ScheduleEntryDB — referencian codigo_materia.
+        for se in session.exec(
+            _select(ScheduleEntryDB).where(
+                ScheduleEntryDB.codigo_materia == entity_id,
+            )
+        ).all():
+            session.delete(se)
+
+        # 4. ComisionDB — de la materia (post horarios/clases).
+        for c in session.exec(
+            _select(ComisionDB).where(
+                ComisionDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(c)
+
+        # 5. DictadoDB — post comisiones. Nota: DictadoCicloDB (link
+        # M:N) tiene FK a dictado_id; SQLite ejecuta este delete y las
+        # filas del link table quedan huérfanas si no las borramos.
+        from src.database.models import DictadoCicloDB
+        if dict_ids:
+            for dc in session.exec(
+                _select(DictadoCicloDB).where(
+                    DictadoCicloDB.dictado_id.in_(dict_ids),  # type: ignore[attr-defined]
+                )
+            ).all():
+                session.delete(dc)
+        for d in session.exec(
+            _select(DictadoDB).where(
+                DictadoDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(d)
+
+        # 6. PlanEstudioDB — link M:N con carreras.
+        for pe in session.exec(
+            _select(PlanEstudioDB).where(
+                PlanEstudioDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(pe)
+
+        # 7. CorrelativaDB — la materia puede aparecer como
+        # materia_codigo o como correlativa (materia_correlativa_codigo).
+        for cor in session.exec(
+            _select(CorrelativaDB).where(
+                CorrelativaDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(cor)
+        for cor in session.exec(
+            _select(CorrelativaDB).where(
+                CorrelativaDB.materia_correlativa_codigo == entity_id,
+            )
+        ).all():
+            session.delete(cor)
+
+        # 8. MateriaLaboratorioDB — link M:N con labs.
+        for ml in session.exec(
+            _select(MateriaLaboratorioDB).where(
+                MateriaLaboratorioDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(ml)
+
+        # 9. InscripcionHistoricaDB — serie histórica.
+        for ih in session.exec(
+            _select(InscripcionHistoricaDB).where(
+                InscripcionHistoricaDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(ih)
+
+        # 10. MateriaForecastConfigDB — overrides de forecast.
+        for fc in session.exec(
+            _select(MateriaForecastConfigDB).where(
+                MateriaForecastConfigDB.materia_codigo == entity_id,
+            )
+        ).all():
+            session.delete(fc)
+
+        session.flush()
+
+        # 11. Finalmente, la materia misma.
+        return super().delete(session, entity_id)
     
     def get_comisiones(self, session: Session, materia_codigo: str) -> List[Comision]:
         """Get all comisiones for a materia."""
