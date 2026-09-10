@@ -701,6 +701,26 @@ class TestChequeoConsistenciaTransversal:
         # aparece — indica adónde se podría mover.
         assert "I" in ajenas[0].carreras_donde_aparece
 
+    def test_faltante_reporta_todas_las_ubicaciones(self, session):
+        """Régimen transversal: una materia que aparece en varias
+        carreras asociadas debe reportarse UNA sola vez, con la
+        lista completa de ubicaciones."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FB20"], plan_id="pv-A")
+        self._seed_plan(session, "E", ["FB20"], plan_id="pv-E")
+        g_fb = create_grupo(
+            session, "FB", sedes_duras=["S1"],
+            carreras_asociadas=["A", "E"],
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g_fb.id)
+        assert len(faltantes) == 1
+        f = faltantes[0]
+        assert f.codigo == "FB20"
+        # Debe listar las 2 ubicaciones.
+        assert len(f.ubicaciones) == 2
+        cods = sorted(u.carrera_codigo for u in f.ubicaciones)
+        assert cods == ["A", "E"]
+
     def test_transversal_ajena_sin_sugerencia_si_aparece_en_0_asociadas(
         self, session,
     ):

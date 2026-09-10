@@ -56,16 +56,29 @@ class ConfigGrupo:
 
 
 @dataclass
+class UbicacionCurricular:
+    """Aparición de una materia en el plan vigente de una carrera:
+    ``(carrera_codigo, anio, cuatri)``. Una misma materia puede
+    tener múltiples ubicaciones si aparece en varios planes."""
+    carrera_codigo: str
+    anio: Optional[int]
+    cuatri: Optional[str]
+
+
+@dataclass
 class MateriaFaltante:
     """Materia detectada por ``chequear_consistencia_grupo`` como
     candidata a agregarse al grupo: aparece en el plan vigente de al
     menos una carrera asociada y **no aparece** en el plan vigente de
-    ninguna carrera no asociada."""
+    ninguna carrera no asociada.
+
+    ``ubicaciones`` lista todas las apariciones en planes vigentes
+    de carreras asociadas — util para mostrar 'aparece en X 2°2C, en
+    E 3°1C' en una sola fila.
+    """
     codigo: str
     nombre: str
-    carrera_codigo: str
-    anio: Optional[int]
-    cuatri: Optional[str]
+    ubicaciones: list[UbicacionCurricular]
     grupo_actual_id: Optional[str]
     grupo_actual_nombre: Optional[str]
 
@@ -731,9 +744,13 @@ def chequear_consistencia_grupo(
             materia_a_no_asociadas.setdefault(mc, []).append(cod)
 
     # -----------------------------------------------------------------
-    # Faltantes
+    # Faltantes: se recolectan todas las ubicaciones por materia y
+    # luego se agrupan en una fila por código (mostrando la lista
+    # completa de ubicaciones donde aparece).
     # -----------------------------------------------------------------
-    faltantes: list[MateriaFaltante] = []
+    ubicaciones_por_faltante: dict[
+        str, list[tuple[str, PlanEstudioDB]],
+    ] = {}
     for cod, mat_map in materias_por_carrera_grupo.items():
         for mc, pe in mat_map.items():
             asoc = materia_a_asociadas.get(mc, [])
@@ -756,31 +773,43 @@ def chequear_consistencia_grupo(
                 continue
             if materia.grupo_id == grupo_id:
                 continue
-            grupo_actual = (
-                session.get(GrupoMateriaDB, materia.grupo_id)
-                if materia.grupo_id else None
-            )
-            faltantes.append(MateriaFaltante(
-                codigo=mc,
-                nombre=materia.nombre,
-                carrera_codigo=cod,
-                anio=pe.anio_plan,
-                cuatri=pe.cuatrimestre_plan,
-                grupo_actual_id=grupo_actual.id if grupo_actual else None,
-                grupo_actual_nombre=(
-                    grupo_actual.nombre if grupo_actual else None
-                ),
-            ))
+            ubicaciones_por_faltante.setdefault(mc, []).append((cod, pe))
 
-    # Dedup por código (una materia puede aparecer en múltiples
-    # carreras asociadas al grupo — la contamos una sola vez).
-    vistas: set[str] = set()
     dedup: list[MateriaFaltante] = []
-    for m in sorted(faltantes, key=lambda x: (x.codigo, x.carrera_codigo)):
-        if m.codigo in vistas:
+    for mc in sorted(ubicaciones_por_faltante):
+        materia = session.get(MateriaDB, mc)
+        if materia is None:
             continue
-        vistas.add(m.codigo)
-        dedup.append(m)
+        grupo_actual = (
+            session.get(GrupoMateriaDB, materia.grupo_id)
+            if materia.grupo_id else None
+        )
+        # Ordenar ubicaciones por (carrera, año, cuatri) para display
+        # estable.
+        ubicaciones_ord = sorted(
+            ubicaciones_por_faltante[mc],
+            key=lambda t: (
+                t[0],
+                t[1].anio_plan if t[1].anio_plan is not None else 99,
+                t[1].cuatrimestre_plan or "",
+            ),
+        )
+        dedup.append(MateriaFaltante(
+            codigo=mc,
+            nombre=materia.nombre,
+            ubicaciones=[
+                UbicacionCurricular(
+                    carrera_codigo=cod,
+                    anio=pe.anio_plan,
+                    cuatri=pe.cuatrimestre_plan,
+                )
+                for cod, pe in ubicaciones_ord
+            ],
+            grupo_actual_id=grupo_actual.id if grupo_actual else None,
+            grupo_actual_nombre=(
+                grupo_actual.nombre if grupo_actual else None
+            ),
+        ))
 
     # -----------------------------------------------------------------
     # Ajenas

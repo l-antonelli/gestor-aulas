@@ -580,9 +580,14 @@ def _render_chequeo_consistencia(
                     {
                         "codigo": f.codigo,
                         "nombre": f.nombre,
-                        "carrera": f.carrera_codigo,
-                        "anio": f.anio,
-                        "cuatri": f.cuatri,
+                        "ubicaciones": [
+                            {
+                                "carrera": u.carrera_codigo,
+                                "anio": u.anio,
+                                "cuatri": u.cuatri,
+                            }
+                            for u in f.ubicaciones
+                        ],
                         "grupo_actual_id": f.grupo_actual_id,
                         "grupo_actual_nombre": f.grupo_actual_nombre,
                     }
@@ -637,15 +642,27 @@ def _render_chequeo_consistencia(
             )
             for i, item in enumerate(faltantes_list):
                 row = st.container()
-                cols = row.columns([1, 3, 2, 2, 1])
+                cols = row.columns([1, 3, 3, 2, 1])
                 cols[0].markdown(f"`{item['codigo']}`")
                 cols[1].write(item["nombre"])
-                cols[2].caption(
-                    f"Carrera: **{item['carrera']}** · "
-                    f"Año {item['anio']} {item['cuatri']}"
-                    if item["anio"] else
-                    f"Carrera: **{item['carrera']}**"
-                )
+                # Ubicaciones: una línea por (carrera, año, cuatri).
+                _ubis = item.get("ubicaciones", [])
+                if _ubis:
+                    _lineas = []
+                    for u in _ubis:
+                        _a = u.get("anio")
+                        _c = u.get("cuatri") or "—"
+                        if _a is not None:
+                            _lineas.append(
+                                f"**{u['carrera']}** · {_a}° {_c}"
+                            )
+                        else:
+                            _lineas.append(f"**{u['carrera']}**")
+                    cols[2].caption(
+                        "Aparece en: " + " · ".join(_lineas)
+                    )
+                else:
+                    cols[2].caption("_Sin ubicaciones_")
                 cols[3].caption(
                     f"Ahora en: **{item['grupo_actual_nombre']}**"
                     if item["grupo_actual_nombre"] else
