@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Optional
 
 import streamlit as st
 from sqlmodel import Session, select
@@ -29,11 +28,10 @@ from src.database.models import (
     CarreraDB,
     GrupoMateriaDB,
     MateriaDB,
-    PlanCarreraVersionDB,
     PlanEstudioDB,
 )
 from src.services.grupo_materia_service import (
-    get_plan_activo,
+    get_plan_vigente,
     list_grupos,
 )
 
@@ -232,26 +230,6 @@ def render_materia_filtros(
     return result
 
 
-def _get_plan_activo_o_reciente(
-    session: Session, carrera_codigo: str,
-) -> Optional[PlanCarreraVersionDB]:
-    """Devuelve la versión de plan activa de la carrera. Si ninguna
-    está marcada como activa, devuelve la más reciente por
-    ``fecha_creacion`` como fallback (para no romper filtros cuando
-    el usuario todavía no tocó el flag)."""
-    pv = get_plan_activo(session, carrera_codigo)
-    if pv is not None:
-        return pv
-    # Fallback: la más reciente.
-    return session.exec(
-        select(PlanCarreraVersionDB).where(
-            PlanCarreraVersionDB.carrera_codigo == carrera_codigo,
-        ).order_by(
-            PlanCarreraVersionDB.fecha_creacion.desc(),  # type: ignore[attr-defined]
-        ).limit(1)
-    ).first()
-
-
 def aplicar_materia_filtros(
     session: Session,
     materias: list[MateriaDB],
@@ -283,7 +261,7 @@ def aplicar_materia_filtros(
             cods_carr = [c.codigo for c in carreras_db]
         plan_ids: list[str] = []
         for cod in cods_carr:
-            pv = _get_plan_activo_o_reciente(session, cod)
+            pv = get_plan_vigente(session, cod)
             if pv is not None:
                 plan_ids.append(pv.id)
         if not plan_ids:

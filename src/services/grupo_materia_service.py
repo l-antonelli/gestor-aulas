@@ -471,12 +471,56 @@ def resolver_sedes_admisibles_por_materia(
 def get_plan_activo(
     session: Session, carrera_codigo: str,
 ) -> Optional[PlanCarreraVersionDB]:
-    """Devuelve la versión de plan marcada como ``active=True`` para
-    la carrera, o ``None`` si no hay ninguna activa."""
+    """Devuelve la versión de plan **marcada** como ``active=True``
+    para la carrera, o ``None`` si no hay ninguna activa.
+
+    Diferencia contra ``get_plan_vigente``: esta función devuelve
+    literalmente lo que dice el schema (``active=True``). Se usa
+    donde importa distinguir "marcado" de "efectivo" — por ejemplo,
+    el radio de plan activo en el módulo Carreras, o el
+    preselector de planes de un ciclo nuevo (donde el usuario ve
+    exactamente lo que va a quedar guardado).
+    """
     return session.exec(
         select(PlanCarreraVersionDB).where(
             PlanCarreraVersionDB.carrera_codigo == carrera_codigo,
             PlanCarreraVersionDB.active == True,  # noqa: E712
+        ).limit(1)
+    ).first()
+
+
+def get_plan_vigente(
+    session: Session, carrera_codigo: str,
+) -> Optional[PlanCarreraVersionDB]:
+    """Devuelve la versión de plan **vigente** de la carrera aplicando
+    la política global del sistema:
+
+    1. Si la carrera tiene una versión marcada como ``active=True`` →
+       esa.
+    2. Si no, **fallback al más reciente por ``fecha_creacion``** —
+       para que los filtros globales fuera del contexto de un plan
+       de cursada sigan funcionando aunque el usuario no haya
+       marcado ninguna versión como activa.
+    3. Si la carrera no tiene ninguna versión → ``None``.
+
+    **Regla operativa** (para no confundir con casos contextuales):
+
+    - **Filtros globales de materias, chequeos de consistencia,
+      preselección de ciclos nuevos** → usan ``get_plan_vigente``.
+    - **Validaciones o filtros DENTRO del contexto de un plan de
+      cursada / ciclo** → NO usan esta función; leen directamente
+      las versiones asociadas al ciclo vía ``CicloPlanVersionDB``.
+      Esto permite que ciclos antiguos conserven las versiones con
+      las que se armaron aunque después se marque otra como activa.
+    """
+    activo = get_plan_activo(session, carrera_codigo)
+    if activo is not None:
+        return activo
+    return session.exec(
+        select(PlanCarreraVersionDB).where(
+            PlanCarreraVersionDB.carrera_codigo == carrera_codigo,
+        ).order_by(
+            PlanCarreraVersionDB.fecha_creacion.desc(),  # type: ignore[attr-defined]
         ).limit(1)
     ).first()
 
@@ -569,23 +613,31 @@ def chequear_consistencia_grupo(
         )
         return ([], warnings)
 
-    planes_activos: dict[str, str] = {}  # carrera_codigo -> plan_version_id
+    # Política global: usar el plan **vigente** (activo o, en su
+    # defecto, el más reciente) — mismo criterio que aplican los
+    # filtros globales de materias. Ver `get_plan_vigente`.
+    planes_vigentes: dict[str, str] = {}  # carrera → plan_version_id
     for cod in carreras_asociadas:
-        pv = get_plan_activo(session, cod)
+        pv = get_plan_vigente(session, cod)
         if pv is None:
             warnings.append(
-                f"La carrera '{cod}' no tiene ningún plan marcado como activo."
+                f"La carrera '{cod}' no tiene ninguna versión de plan cargada."
             )
             continue
-        planes_activos[cod] = pv.id
+        planes_vigentes[cod] = pv.id
+        if not pv.active:
+            warnings.append(
+                f"La carrera '{cod}' no tiene plan marcado como activo; "
+                f"se usa el más reciente ('{pv.nombre}') como fallback."
+            )
 
-    if not planes_activos:
+    if not planes_vigentes:
         return ([], warnings)
 
     # Índice: materia_codigo → set de carreras del grupo que la tienen
-    # en su plan activo.
+    # en su plan vigente.
     materias_por_carrera_grupo: dict[str, dict[str, PlanEstudioDB]] = {}
-    for cod, pv_id in planes_activos.items():
+    for cod, pv_id in planes_vigentes.items():
         entries = list(session.exec(
             select(PlanEstudioDB).where(
                 PlanEstudioDB.plan_version_id == pv_id,
@@ -595,9 +647,9 @@ def chequear_consistencia_grupo(
             e.materia_codigo: e for e in entries
         }
 
-    # Necesitamos también los planes activos de las OTRAS carreras
+    # Necesitamos también los planes vigentes de las OTRAS carreras
     # para el filtro "exclusiva de las asociadas": una materia
-    # exclusiva es la que no aparece en ningún plan activo de otra
+    # exclusiva es la que no aparece en ningún plan vigente de otra
     # carrera.
     todas_carreras = list(session.exec(
         select(CarreraDB.codigo)
@@ -607,7 +659,7 @@ def chequear_consistencia_grupo(
     ]
     materias_en_otras: set[str] = set()
     for cod in carreras_no_asociadas:
-        pv = get_plan_activo(session, cod)
+        pv = get_plan_vigente(session, cod)
         if pv is None:
             continue
         entries = list(session.exec(

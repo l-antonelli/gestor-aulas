@@ -383,7 +383,10 @@ class TestChequeoConsistencia:
         assert faltantes == []
         assert any("carreras asociadas" in w for w in warnings)
 
-    def test_sin_plan_activo_warning(self, session):
+    def test_carrera_sin_planes_warning(self, session):
+        """Carrera sin ninguna versión de plan cargada: el chequeo
+        emite warning ("no tiene ninguna versión de plan cargada") y
+        no lista faltantes."""
         _seed_sedes(session)
         session.add(CarreraDB(codigo="A", nombre="A"))
         session.commit()
@@ -392,7 +395,29 @@ class TestChequeoConsistencia:
         )
         faltantes, warnings = chequear_consistencia_grupo(session, g.id)
         assert faltantes == []
-        assert any("plan marcado como activo" in w for w in warnings)
+        assert any(
+            "no tiene ninguna versión de plan cargada" in w
+            for w in warnings
+        )
+
+    def test_carrera_con_plan_no_marcado_activo_usa_fallback(
+        self, session,
+    ):
+        """Cuando la carrera tiene planes pero ninguno activo, el
+        chequeo usa el más reciente como fallback y emite warning."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA1"], activo=False)
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"], carreras_asociadas=["A"],
+        )
+        faltantes, warnings = chequear_consistencia_grupo(session, g.id)
+        # El fallback encuentra MA1 como exclusiva de A.
+        assert {f.codigo for f in faltantes} == {"MA1"}
+        # Warning explícito de que se está usando fallback.
+        assert any(
+            "fallback" in w.lower() or "más reciente" in w.lower()
+            for w in warnings
+        )
 
     def test_detecta_materia_exclusiva_faltante(self, session):
         _seed_sedes(session)
