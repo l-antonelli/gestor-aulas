@@ -681,11 +681,12 @@ def chequear_consistencia_grupo(
     #
     # - **Transversal** (≥ 2 asociadas, típico FB/FI/CE): una
     #   materia es "común a las asociadas" si aparece en ≥ 2 de
-    #   ellas.
-    #     Faltante = aparece en ≥ 2 carreras asociadas y no está
-    #                en el grupo.
-    #     Ajena = está en el grupo pero aparece en ≤ 1 carrera
-    #             asociada.
+    #   ellas Y NO aparece en carreras no asociadas.
+    #     Faltante = aparece en ≥ 2 carreras asociadas, no aparece
+    #                en ninguna no asociada, y no está en el grupo.
+    #     Ajena = está en el grupo pero (aparece en ≤ 1 asociada,
+    #             o aparece en ≥ 1 no asociada). O sea, no cumple
+    #             la exclusividad transversal.
     # -----------------------------------------------------------------
     modo_transversal = len(carreras_asociadas) >= 2
 
@@ -738,8 +739,12 @@ def chequear_consistencia_grupo(
             asoc = materia_a_asociadas.get(mc, [])
             no_asoc = materia_a_no_asociadas.get(mc, [])
             if modo_transversal:
-                # Transversal: faltante si aparece en ≥ 2 asociadas.
-                if len(asoc) < 2:
+                # Transversal: faltante si aparece en ≥ 2 asociadas
+                # Y NO aparece en carreras no asociadas (exclusividad
+                # transversal: si además está en otra carrera, el
+                # grupo con esas asociaciones específicas no es su
+                # lugar natural).
+                if len(asoc) < 2 or no_asoc:
                     continue
             else:
                 # Por-carrera: faltante si es exclusiva de la única
@@ -790,12 +795,17 @@ def chequear_consistencia_grupo(
         no_asoc = materia_a_no_asociadas.get(m.codigo, [])
 
         if modo_transversal:
-            # Transversal: ajena si aparece en ≤ 1 carrera asociada.
-            if len(asoc) >= 2:
+            # Transversal: ajena si NO cumple exclusividad
+            # transversal, es decir:
+            #   (a) aparece en ≤ 1 carrera asociada, o
+            #   (b) aparece en ≥ 1 carrera no asociada.
+            # Si aparece en ≥ 2 asociadas y en 0 no-asociadas → OK.
+            if len(asoc) >= 2 and not no_asoc:
                 continue
             # `carreras_donde_aparece` reporta dónde aparece — puede
-            # ser la única asociada (donde se sugiere mover al grupo
-            # por-carrera de esa carrera) o carreras no asociadas.
+            # incluir asociadas (donde se sugiere mover al grupo
+            # por-carrera de esa carrera) o carreras no asociadas
+            # (adónde apunta el "conflicto" de la exclusividad).
             carreras_donde_aparece = sorted(set(asoc) | set(no_asoc))
         else:
             # Por-carrera: ajena si aparece en carreras además de la

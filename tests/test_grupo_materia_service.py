@@ -653,6 +653,54 @@ class TestChequeoConsistenciaTransversal:
         _, ajenas, _ = chequear_consistencia_grupo(session, g_fb.id)
         assert ajenas == []
 
+    def test_transversal_no_faltante_si_aparece_tambien_en_no_asociada(
+        self, session,
+    ):
+        """Régimen transversal: faltante DEBE exigir exclusividad en
+        las asociadas.
+
+        F asociado a A, M, E. FIII aparece en el plan de A, M, E
+        (3 asociadas → cumple '≥ 2') pero también en I (no asociada).
+        NO debe ser faltante: si aparece en carreras no asociadas,
+        el grupo F (con esas asociaciones específicas) no es su
+        lugar natural — probablemente pertenezca a un transversal
+        más amplio o a un grupo con distintas asociaciones."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FIII"], plan_id="pv-A")
+        self._seed_plan(session, "M", ["FIII"], plan_id="pv-M")
+        self._seed_plan(session, "E", ["FIII"], plan_id="pv-E")
+        self._seed_plan(session, "I", ["FIII"], plan_id="pv-I")
+        g_f = create_grupo(
+            session, "F", sedes_duras=["S1"],
+            carreras_asociadas=["A", "M", "E"],
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g_f.id)
+        assert faltantes == []
+
+    def test_transversal_ajena_si_esta_en_asociadas_pero_tambien_en_no_asociadas(
+        self, session,
+    ):
+        """Régimen transversal: si la materia está asignada al grupo
+        transversal y aparece en asociadas Y también en no asociadas,
+        se reporta como ajena — el grupo con esas asociaciones no
+        es su lugar natural."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FIII"], plan_id="pv-A")
+        self._seed_plan(session, "M", ["FIII"], plan_id="pv-M")
+        self._seed_plan(session, "E", ["FIII"], plan_id="pv-E")
+        self._seed_plan(session, "I", ["FIII"], plan_id="pv-I")
+        g_f = create_grupo(
+            session, "F", sedes_duras=["S1"],
+            carreras_asociadas=["A", "M", "E"],
+        )
+        asignar_materia_a_grupo(session, "FIII", g_f.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_f.id)
+        assert len(ajenas) == 1
+        assert ajenas[0].codigo == "FIII"
+        # `carreras_donde_aparece` reporta las no-asociadas donde
+        # aparece — indica adónde se podría mover.
+        assert "I" in ajenas[0].carreras_donde_aparece
+
     def test_transversal_ajena_sin_sugerencia_si_aparece_en_0_asociadas(
         self, session,
     ):

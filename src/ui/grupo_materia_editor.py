@@ -558,9 +558,11 @@ def _render_chequeo_consistencia(
             "de X; ajena = está en el grupo pero aparece también "
             "en otras carreras.\n"
             "- **Grupo transversal** (≥ 2 asociadas, tipo *FB*, "
-            "*FI*, *CE*): faltante = aparece en al menos 2 "
-            "carreras asociadas; ajena = está en el grupo pero "
-            "aparece en 1 o 0 asociadas."
+            "*FI*, *CE*): la materia debe ser **exclusiva de las "
+            "asociadas**. Faltante = aparece en ≥ 2 asociadas y en "
+            "ninguna no-asociada; ajena = está en el grupo pero "
+            "aparece en ≤ 1 asociada, o aparece también en al "
+            "menos una carrera **no asociada**."
         )
 
         run_key = f"consist_run_{grupo.id}"
