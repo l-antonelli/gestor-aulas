@@ -222,6 +222,10 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
                     particion_details=_details.get("particion_details", []),
                     conflictos_horarios=_details.get("conflictos_horarios", []),
                     conflictos_ignorados=_details.get("conflictos_ignorados", []),
+                    camino_bloqueos=_details.get("camino_bloqueos", []),
+                    n_camino_bloqueos=len(
+                        _details.get("camino_bloqueos", []) or []
+                    ),
                     esperadas=_details.get("esperadas", {}),
                     mat_map=_details.get("mat_map", {}),
                 )
@@ -368,6 +372,156 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
         )
     else:
         st.success("Este plan no tiene conflictos bloqueantes.")
+
+    # =====================================================================
+    # Camino de cursada
+    # =====================================================================
+    _render_camino_cursada_section(summary, plan_id, key_ns)
+
+    # =====================================================================
+    # Excepciones auto-limpiadas (informativo, si hubo).
+    # =====================================================================
+    _render_excepciones_stale_removidas(summary)
+
+
+def _render_excepciones_stale_removidas(summary) -> None:
+    """Si la validación auto-limpió excepciones stale, mostrar un
+    aviso informativo al usuario para que sepa qué pares dejaron de
+    aplicar (por ejemplo, tras un cambio en el plan de estudio)."""
+    stale = getattr(summary, "excepciones_stale_removidas", None) or []
+    if not stale:
+        return
+    st.divider()
+    st.info(
+        f"🧹 Se limpiaron **{len(stale)}** excepción(es) obsoleta(s) "
+        "de conflicto de horarios. Los pares ya no aplicaban porque "
+        "las materias dejaron de coexistir en algún grupo curricular "
+        "de este plan (por ejemplo, se sacó del plan de estudio o "
+        "cambió de año/cuatri)."
+    )
+    with st.expander(
+        f"Ver detalle ({len(stale)} par(es) removidos)",
+        expanded=False,
+    ):
+        for i, ex in enumerate(stale, start=1):
+            a = ex.get("materia_a", "?")
+            b = ex.get("materia_b", "?")
+            razon = ex.get("razon", "") or "_(sin razón)_"
+            st.markdown(
+                f"{i}. `{a}` ↔ `{b}` — razón guardada: {razon}"
+            )
+
+
+def _render_camino_cursada_section(
+    summary, plan_id: str, key_ns: str,
+) -> None:
+    """Sección 'Camino de cursada' en el detalle del plan.
+
+    Muestra los grupos (carrera × año × cuatri) donde **ninguna
+    combinación** de comisiones deja cursar todas las materias
+    obligatorias sin solapamientos. Es más fuerte que el chequeo
+    par-a-par: aunque haya conflictos pareados, si otra comisión los
+    resuelve, no aparece acá.
+
+    Sólo trata solapamiento — el margen intersede (dependiente de la
+    config del LP) vive en el pre-check del asignador.
+    """
+    st.divider()
+    n = summary.n_camino_bloqueos
+    st.markdown("### 🧭 Camino de cursada")
+    if n == 0:
+        st.success(
+            "✅ Todas las combinaciones de comisiones son compatibles: "
+            "para cada (carrera × año × cuatri) existe al menos una "
+            "elección de comisiones sin solapamientos entre materias "
+            "obligatorias."
+        )
+        return
+
+    st.error(
+        f"❌ {n} grupo(s) sin combinación cursable. En estos casos, "
+        "**cualquier alumno** que curse todas las obligatorias del "
+        "grupo se choca de horarios — no importa qué comisión elija."
+    )
+    st.caption(
+        "A diferencia del chequeo par-a-par de arriba (que reporta "
+        "cada solapamiento individual), este chequeo hace "
+        "*backtracking* sobre las comisiones y sólo bloquea cuando "
+        "**no existe** combinación viable."
+    )
+    for i, item in enumerate(summary.camino_bloqueos):
+        titulo = item.get("titulo", "Camino de cursada bloqueado")
+        with st.expander(f"🔴 {titulo}", expanded=(i < 3)):
+            st.markdown(item.get("detalle", ""))
+            ctx = item.get("contexto") or {}
+            par = ctx.get("par_materias") or []
+            if ctx.get("tipo") == "solapamiento" and len(par) == 2:
+                _render_shortcut_ignorar_par_desde_plan(
+                    plan_id=plan_id,
+                    par=(str(par[0]), str(par[1])),
+                    key_ns=key_ns,
+                    idx=i,
+                )
+
+
+def _render_shortcut_ignorar_par_desde_plan(
+    plan_id: str,
+    par: tuple[str, str],
+    key_ns: str,
+    idx: int,
+) -> None:
+    """Shortcut inline para marcar el par como excepción desde el
+    detalle del plan. Reusa ``add_ignored_pair`` y el mismo modelo
+    que ya usa el asignador."""
+    from src.database.connection import get_session
+    from src.services.plan_validation_service import (
+        add_ignored_pair,
+        get_ignored_pairs,
+    )
+
+    a, b = sorted(par)
+    with next(get_session()) as _sess:
+        ya = (a, b) in get_ignored_pairs(_sess, plan_id)
+    if ya:
+        st.success(
+            f"✅ El par **{a} ↔ {b}** ya está marcado como excepción "
+            "para este plan."
+        )
+        return
+
+    st.divider()
+    st.markdown(
+        f"**¿Cursan alumnos distintos {a} y {b} en la práctica?**"
+    )
+    st.caption(
+        "Si el solapamiento es formal pero en realidad **cada "
+        "materia la cursa gente distinta** (por ejemplo dos "
+        "materias que comparten nombre pero pertenecen a años "
+        "distintos del plan), podés marcar el par como excepción. "
+        "El chequeo de camino de cursada dejará de bloquearlo. "
+        "Sólo afecta a este plan."
+    )
+    razon_key = f"{key_ns}_plan_ignora_razon_{idx}"
+    razon = st.text_input(
+        "Razón (opcional, queda registrada)",
+        key=razon_key,
+        placeholder="Ej.: 'Distintos años del plan cursan la materia'",
+    )
+    btn_key = f"{key_ns}_plan_ignora_btn_{idx}"
+    if st.button(
+        f"🙈 Ignorar par {a} ↔ {b} en este plan",
+        key=btn_key,
+    ):
+        with next(get_session()) as _sess:
+            add_ignored_pair(_sess, plan_id, a, b, razon=razon or "")
+        # Invalidar caché de validación → obligar rerun.
+        st.session_state.pop(
+            f"{key_ns}_plan_validation_summary", None,
+        )
+        st.toast(
+            f"Par {a} ↔ {b} agregado como excepción. Volvé a validar."
+        )
+        st.rerun()
 
 
 # =============================================================================
@@ -1870,9 +2024,36 @@ def _render_detalle_por_materia(
     _pending_key = f"{key_ns}_dpm_pending_codigo"
     _pending_codigo: Optional[str] = st.session_state.pop(_pending_key, None)
 
+    # Consolidar por código de materia: el editor inline trabaja sobre
+    # el catálogo (unico por materia) y sobre las comisiones del plan
+    # (tambien unicas por materia+plan). Si iteraramos por ubicación
+    # curricular, materias comunes que aparecen en varias carreras
+    # renderearían el mismo editor N veces → colisión de keys en los
+    # number_inputs de h/sem, hteo, hlab, etc. En su lugar, agrupamos
+    # las ubicaciones matcheadas por el filtro en una única tarjeta y
+    # las listamos en el header del expander.
+    _by_code: dict[str, list[dict]] = {}
+    for _r in _filtered:
+        _by_code.setdefault(_r["codigo"], []).append(_r)
+    _loop_rows: list[dict] = []
+    for _r_list in _by_code.values():
+        _base = dict(_r_list[0])
+        _base["_ubicaciones_filtradas"] = [
+            {
+                "carrera": _rr["carrera"],
+                "anio": _rr["anio"],
+                "cuatri": _rr["cuatri"],
+            }
+            for _rr in _r_list
+        ]
+        _loop_rows.append(_base)
+    # Mantener el orden previo (primera ubicación de cada código).
+    _loop_rows.sort(
+        key=lambda r: (r["carrera"], r["anio"] or 99, r["codigo"]),
+    )
+
     # Si lo pedido no está entre las filtradas, lo agregamos al final
     # del set para que aparezca en la página actual del loop.
-    _loop_rows = list(_filtered)
     if _pending_codigo and not any(
         r["codigo"] == _pending_codigo for r in _loop_rows
     ):
@@ -1880,7 +2061,13 @@ def _render_detalle_por_materia(
             (r for r in _rows if r["codigo"] == _pending_codigo), None
         )
         if _extra:
-            _loop_rows.append(_extra)
+            _extra_row = dict(_extra)
+            _extra_row["_ubicaciones_filtradas"] = [{
+                "carrera": _extra["carrera"],
+                "anio": _extra["anio"],
+                "cuatri": _extra["cuatri"],
+            }]
+            _loop_rows.append(_extra_row)
 
     # --- Paginación ---
     _PAGE_SIZE = 10
@@ -1896,7 +2083,7 @@ def _render_detalle_por_materia(
 
     st.divider()
     st.markdown(
-        f"##### 🛠️ Detalle por materia ({len(_loop_rows)} resultado(s))"
+        f"##### 🛠️ Detalle por materia ({len(_loop_rows)} materia(s))"
     )
 
     # Botones globales y selector de página
@@ -1942,7 +2129,7 @@ def _render_detalle_por_materia(
         st.caption(
             f"Página {int(_page)} de {_total_pages} · "
             f"{_PAGE_SIZE} materias/página · "
-            f"total {len(_loop_rows)}"
+            f"total {len(_loop_rows)} materia(s)"
         )
 
     _force_expand = st.session_state.pop(
@@ -2002,16 +2189,24 @@ def _render_detalle_por_materia(
         else:
             _lab_suffix = ""
 
-        # Sufijo de ubicación curricular. Se agrega sólo cuando la
-        # materia aparece en múltiples ubicaciones (materias comunes) —
-        # así el usuario ve claramente que es "la misma materia en otra
-        # carrera/año/cuatri" y no un duplicado.
+        # Sufijo de ubicación curricular. Cuando la materia aparece en
+        # varias ubicaciones curriculares y el filtro dejó pasar más de
+        # una, listamos todas (agrupadas en el mismo expander) para que
+        # el usuario vea que es "la misma materia en varias carreras"
+        # y no dos entradas duplicadas.
         _ubicacion_lbl = ""
-        if _r["n_carreras"] >= 2 and _r.get("carrera") and _r["carrera"] != "—":
+        _ubics = _r.get("_ubicaciones_filtradas") or []
+        _ubics_utiles = [
+            u for u in _ubics
+            if u.get("carrera") and u["carrera"] != "—"
+        ]
+        if _ubics_utiles:
+            def _fmt_ubic(u: dict) -> str:
+                if u.get("anio"):
+                    return f"{u['carrera']} · {u['anio']}° {u['cuatri']}"
+                return u["carrera"]
             _ubicacion_lbl = (
-                f" — [{_r['carrera']}"
-                f" · {_r['anio']}° {_r['cuatri']}]"
-                if _r.get("anio") else f" — [{_r['carrera']}]"
+                " — [" + " | ".join(_fmt_ubic(u) for u in _ubics_utiles) + "]"
             )
         _hdr = (
             f"{_worst_icon} {_code}{_ubicacion_lbl} — "

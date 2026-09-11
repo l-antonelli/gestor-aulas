@@ -60,9 +60,8 @@ from src.services.asignacion_aulas_helpers import (
     diagnose_infeasibility,
     validar_particion_factible,
 )
-from src.services.carrera_sede_service import (
-    sedes_admisibles_para_carrera,
-    sedes_admisibles_para_materia,
+from src.services.grupo_materia_service import (
+    sedes_admisibles_set_por_materia,
 )
 from src.services.resolucion_jerarquica import resolve_virtual
 
@@ -80,6 +79,14 @@ class Bloqueo:
     titulo: str                # línea corta con el problema
     detalle: str               # markdown con contexto (materias, aulas, día)
     entidades_a_revisar: list[str] = field(default_factory=list)
+    # Datos estructurados que la UI puede usar para acciones directas
+    # sobre el bloqueo (por ej. shortcuts). Formato libre — cada
+    # codigo_regla decide qué claves publica. Ejemplo para
+    # "R13-camino" con tipo="solapamiento":
+    #   {"tipo": "solapamiento",
+    #    "par_materias": ("M1", "M2"),      # ordenadas lex
+    #    "carrera": "A", "anio": 1, "cuatri": "1C"}
+    contexto: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -236,24 +243,16 @@ def check_factibilidad_estructural(
     for ml in lab_pairs:
         materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
 
-    # Sedes admisibles resueltas por HORARIO (respetando override).
+    # Sedes admisibles resueltas por HORARIO vía Grupo de Materias.
+    # ``ComisionDB.carrera_asignada`` quedó como etiqueta visual y no
+    # interviene en la resolución (idem LP en R10). Ver
+    # `asignacion_aulas_service.build_inputs`.
     sedes_admis_mat: dict[str, Optional[set[str]]] = {
-        mc: sedes_admisibles_para_materia(session, mc)
+        mc: sedes_admisibles_set_por_materia(session, mc)
         for mc in mat_codes
-    }
-    carreras_over_unicas = sorted({
-        c for c in carrera_override.values() if c
-    })
-    sedes_admis_carr: dict[str, Optional[set[str]]] = {
-        cc: sedes_admisibles_para_carrera(session, cc)
-        for cc in carreras_over_unicas
     }
 
     def _sedes_admis_del_horario(h_id: str) -> Optional[set[str]]:
-        cid = comision_de_horario.get(h_id)
-        car = carrera_override.get(cid) if cid else None
-        if car:
-            return sedes_admis_carr.get(car)
         mc = materia_de_horario.get(h_id, "")
         return sedes_admis_mat.get(mc)
 
@@ -689,20 +688,42 @@ def _add_bloqueos_camino_cursada(
     Reusa el patrón de `validar_conflictos_horarios_plan` (L354-410 de
     ``validations.py``) para agrupar por (carrera, año, cuatri) y
     enriquecer con anuales.
+
+    ``margen_min_intersede_minutos = 0`` desactiva el eje "margen
+    intersede" pero el chequeo por **solapamiento horario** sigue
+    corriendo — dos materias obligatorias del mismo (carrera, año,
+    cuatri) que se pisan y no tienen alternativa de comisión siguen
+    bloqueando el camino de cursada aunque no haya restricción de
+    traslado entre sedes.
     """
-    if margen_min_intersede_minutos <= 0:
-        return
     if plan.ciclo_id is None:
         return
 
     from src.database.models import (
         CicloDB,
         CicloPlanVersionDB,
+        IgnoredConflictDB,
         PlanEstudioDB,
     )
     from src.services.grupo_materia_service import (
         resolver_sedes_admisibles_por_materia,
     )
+
+    # Pares de materias marcados como excepciones de conflicto para
+    # este plan. Cubre el caso realista donde dos materias del mismo
+    # (carrera, año, cuatri) figuran en paralelo porque en la práctica
+    # las cursan grupos de alumnos distintos (ej. IA-1.2 vs IA0 para
+    # distintos años del plan de IA). Sólo aplica al eje
+    # "solapamiento horario"; el margen intersede sigue bloqueando
+    # aunque el par figure como ignorado.
+    ignored_pairs: set[tuple[str, str]] = {
+        (row.materia_a, row.materia_b)
+        for row in session.exec(
+            select(IgnoredConflictDB).where(
+                IgnoredConflictDB.plan_cursada_id == plan.id,
+            )
+        ).all()
+    }
 
     plan_version_ids = list(session.exec(
         select(CicloPlanVersionDB.plan_version_id)
@@ -821,8 +842,17 @@ def _add_bloqueos_camino_cursada(
         def _par_es_compatible(
             cid_a: str, cid_b: str,
         ) -> tuple[bool, Optional[dict]]:
-            """True si toda pareja de horarios contiguos (mismo día,
-            gap < margen) entre cid_a y cid_b tiene sedes compatibles."""
+            """True si el par (cid_a, cid_b) no bloquea el camino de
+            cursada. Verifica dos ejes:
+
+            1. **Solapamiento horario**: si algún horario de A pisa
+               algún horario de B en el mismo día, ningún alumno puede
+               cursar ambas materias en esas comisiones. Bloqueo
+               directo, independiente de sedes.
+            2. **Margen intersede**: si dos horarios contiguos (gap <
+               margen) tienen sedes admisibles disjuntas, no hay
+               traslado factible.
+            """
             key = (cid_a, cid_b) if cid_a < cid_b else (cid_b, cid_a)
             if key in pair_compat:
                 return pair_compat[key]
@@ -830,19 +860,30 @@ def _add_bloqueos_camino_cursada(
             hs_b = horarios_por_comision_all.get(cid_b, [])
             sedes_a = sedes_por_com.get(cid_a)
             sedes_b = sedes_por_com.get(cid_b)
-            # Si alguno es None (sin restricción), el par siempre cierra:
-            # cualquier sede a la que caiga uno, el otro puede acompañar.
-            if sedes_a is None or sedes_b is None:
-                pair_compat[key] = (True, None)
-                return pair_compat[key]
-            interseccion = sedes_a & sedes_b
-            # Si hay pares en riesgo (mismo día con gap chico), la
-            # intersección DEBE ser no vacía.
+            interseccion: Optional[set[str]] = None
+            if sedes_a is not None and sedes_b is not None:
+                interseccion = sedes_a & sedes_b
+
+            # ¿El par de materias está marcado como excepción para
+            # este plan? Sólo aplica al eje "solapamiento" — el
+            # margen intersede es física del cronograma y sigue
+            # bloqueando aunque el par esté ignorado.
+            mat_a_key = hs_a[0].codigo_materia if hs_a else None
+            mat_b_key = hs_b[0].codigo_materia if hs_b else None
+            if mat_a_key and mat_b_key:
+                _pair_key = (
+                    (mat_a_key, mat_b_key)
+                    if mat_a_key < mat_b_key else
+                    (mat_b_key, mat_a_key)
+                )
+                solap_ignorado = _pair_key in ignored_pairs
+            else:
+                solap_ignorado = False
+
             for h1 in hs_a:
                 for h2 in hs_b:
                     if h1.dia != h2.dia:
                         continue
-                    # gap: min(inicio de uno menos fin del otro) ≥ 0.
                     f1 = _mins(h1.hora_fin)
                     i1 = _mins(h1.hora_inicio)
                     f2 = _mins(h2.hora_fin)
@@ -852,14 +893,26 @@ def _add_bloqueos_camino_cursada(
                     elif i1 >= f2:
                         gap = i1 - f2
                     else:
-                        # Se solapan: no es problema de traslado sino
-                        # de cursada solapada (otra validación).
-                        continue
+                        # (1) Solapamiento: bloqueo directo salvo que
+                        # el par esté marcado como excepción en
+                        # `IgnoredConflictDB`.
+                        if solap_ignorado:
+                            continue
+                        pair_compat[key] = (False, {
+                            "tipo": "solapamiento",
+                            "h1": h1, "h2": h2, "gap": 0,
+                            "sedes_a": sedes_a or set(),
+                            "sedes_b": sedes_b or set(),
+                        })
+                        return pair_compat[key]
                     if gap >= margen_min_intersede_minutos:
                         continue
-                    # Par en riesgo: precisa intersección de sedes.
-                    if not interseccion:
+                    # (2) Par en riesgo intersede. Sólo bloquea si
+                    # ambos grupos tienen restricción DURO (sedes_a y
+                    # sedes_b definidas) y la intersección es vacía.
+                    if interseccion is not None and not interseccion:
                         pair_compat[key] = (False, {
+                            "tipo": "intersede",
                             "h1": h1, "h2": h2, "gap": gap,
                             "sedes_a": sedes_a, "sedes_b": sedes_b,
                         })
@@ -946,32 +999,69 @@ def _add_bloqueos_camino_cursada(
             info = conflicto_ejemplo["par"]
             h1 = info["h1"]
             h2 = info["h2"]
-            sa: set[str] = info["sedes_a"] or set()
-            sb: set[str] = info["sedes_b"] or set()
-            detalle_lines.extend([
-                "",
-                "**Ejemplo de conflicto irresoluble** "
-                "(entre dos comisiones que igualmente hay que combinar):",
-                f"- **Materia 1**: `{h1.codigo_materia}` "
-                f"({mat_nombre.get(h1.codigo_materia, '?')}) — "
-                f"{h1.dia} {h1.hora_inicio.strftime('%H:%M')}–"
-                f"{h1.hora_fin.strftime('%H:%M')}",
-                f"- **Materia 2**: `{h2.codigo_materia}` "
-                f"({mat_nombre.get(h2.codigo_materia, '?')}) — "
-                f"{h2.dia} {h2.hora_inicio.strftime('%H:%M')}–"
-                f"{h2.hora_fin.strftime('%H:%M')}",
-                f"- **Gap**: {info['gap']} minutos "
-                f"(< {margen_min_intersede_minutos} de margen)",
-                "- **Sedes admisibles M1**: "
-                + (", ".join(sede_nombre.get(s) or s for s in sorted(sa)) or "—"),
-                "- **Sedes admisibles M2**: "
-                + (", ".join(sede_nombre.get(s) or s for s in sorted(sb)) or "—"),
-                "",
-                "Ningún alumno del grupo puede cursar respetando el "
-                "margen. Alternativas: ampliar el grupo de sedes de "
-                "alguna de las materias, ajustar el cronograma, o bajar "
-                "el margen intersede.",
-            ])
+            sa: set[str] = info.get("sedes_a") or set()
+            sb: set[str] = info.get("sedes_b") or set()
+            tipo_conflicto = info.get("tipo", "intersede")
+            if tipo_conflicto == "solapamiento":
+                detalle_lines.extend([
+                    "",
+                    "**Ejemplo de conflicto irresoluble** "
+                    "(dos comisiones se solapan horariamente):",
+                    f"- **Materia 1**: `{h1.codigo_materia}` "
+                    f"({mat_nombre.get(h1.codigo_materia, '?')}) — "
+                    f"{h1.dia} {h1.hora_inicio.strftime('%H:%M')}–"
+                    f"{h1.hora_fin.strftime('%H:%M')}",
+                    f"- **Materia 2**: `{h2.codigo_materia}` "
+                    f"({mat_nombre.get(h2.codigo_materia, '?')}) — "
+                    f"{h2.dia} {h2.hora_inicio.strftime('%H:%M')}–"
+                    f"{h2.hora_fin.strftime('%H:%M')}",
+                    "",
+                    "Ningún alumno puede cursar dos materias "
+                    "obligatorias en el mismo horario. Alternativas: "
+                    "agregar una comisión adicional a alguna de las "
+                    "materias en otro día/hora, o mover uno de los "
+                    "horarios en el cronograma.",
+                ])
+            else:
+                detalle_lines.extend([
+                    "",
+                    "**Ejemplo de conflicto irresoluble** "
+                    "(entre dos comisiones que igualmente hay que "
+                    "combinar):",
+                    f"- **Materia 1**: `{h1.codigo_materia}` "
+                    f"({mat_nombre.get(h1.codigo_materia, '?')}) — "
+                    f"{h1.dia} {h1.hora_inicio.strftime('%H:%M')}–"
+                    f"{h1.hora_fin.strftime('%H:%M')}",
+                    f"- **Materia 2**: `{h2.codigo_materia}` "
+                    f"({mat_nombre.get(h2.codigo_materia, '?')}) — "
+                    f"{h2.dia} {h2.hora_inicio.strftime('%H:%M')}–"
+                    f"{h2.hora_fin.strftime('%H:%M')}",
+                    f"- **Gap**: {info['gap']} minutos "
+                    f"(< {margen_min_intersede_minutos} de margen)",
+                    "- **Sedes admisibles M1**: "
+                    + (", ".join(sede_nombre.get(s) or s for s in sorted(sa)) or "—"),
+                    "- **Sedes admisibles M2**: "
+                    + (", ".join(sede_nombre.get(s) or s for s in sorted(sb)) or "—"),
+                    "",
+                    "Ningún alumno del grupo puede cursar respetando "
+                    "el margen. Alternativas: ampliar el grupo de "
+                    "sedes de alguna de las materias, ajustar el "
+                    "cronograma, o bajar el margen intersede.",
+                ])
+        # Contexto estructurado para que la UI pueda ofrecer shortcuts
+        # (por ej. "Ignorar este par" cuando el bloqueo es un
+        # solapamiento entre dos materias del plan).
+        contexto: dict = {
+            "carrera": carrera, "anio": anio, "cuatri": cuatri,
+        }
+        if conflicto_ejemplo.get("par"):
+            info = conflicto_ejemplo["par"]
+            contexto["tipo"] = info.get("tipo", "intersede")
+            h1 = info["h1"]
+            h2 = info["h2"]
+            a, b = sorted((h1.codigo_materia, h2.codigo_materia))
+            contexto["par_materias"] = [a, b]
+
         reporte.bloqueos.append(Bloqueo(
             codigo_regla="R13-camino",
             severidad="bloqueante",
@@ -984,4 +1074,108 @@ def _add_bloqueos_camino_cursada(
             entidades_a_revisar=[
                 f"materia:{mc}" for mc, _ in opciones_por_materia
             ],
+            contexto=contexto,
         ))
+
+
+# =============================================================================
+# API pública: chequeo de camino de cursada aislado
+# =============================================================================
+
+
+def check_camino_cursada(
+    session: Session,
+    plan_id: str,
+    *,
+    margen_min_intersede_minutos: int = 0,
+) -> list[Bloqueo]:
+    """Corre sólo el chequeo de camino de cursada y devuelve los
+    bloqueos detectados.
+
+    Es un wrapper sobre ``_add_bloqueos_camino_cursada`` que expone el
+    chequeo aislado para call sites que **no** son el pre-check del LP
+    — típicamente el detalle del plan, donde queremos ver si hay
+    combinaciones inviables por **solapamiento horario** entre
+    comisiones (sin importar traslados intersede, que dependen de la
+    config del LP).
+
+    Args:
+        session: sesión activa.
+        plan_id: plan de cursada a revisar.
+        margen_min_intersede_minutos: si es 0 (default), sólo se
+            reportan bloqueos por solapamiento. Si es > 0, además se
+            reportan bloqueos por margen intersede — coincide con el
+            comportamiento del pre-check del asignador.
+
+    Returns:
+        Lista de ``Bloqueo`` con ``codigo_regla="R13-camino"``. Cada
+        bloqueo trae ``contexto["tipo"] ∈ {"solapamiento",
+        "intersede"}`` para que la UI pueda diferenciarlos.
+    """
+    plan = session.get(PlanificacionCursadaDB, plan_id)
+    if plan is None:
+        return []
+
+    # Cargar comisiones + horarios (misma lógica que
+    # check_factibilidad_estructural, versión mínima).
+    comisiones = list(session.exec(
+        select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
+    ).all())
+    if not comisiones:
+        return []
+    com_ids = [c.id for c in comisiones]
+
+    horarios_db = list(session.exec(
+        select(HorarioDB).where(HorarioDB.comision_id.in_(com_ids))  # type: ignore[attr-defined]
+    ).all())
+
+    # Filtrar virtuales — mismo criterio del pre-check general.
+    materias_db = list(session.exec(
+        select(MateriaDB).where(
+            MateriaDB.codigo.in_(  # type: ignore[attr-defined]
+                sorted({h.codigo_materia for h in horarios_db})
+            )
+        )
+    ).all()) if horarios_db else []
+    mat_nombre = {m.codigo: m.nombre for m in materias_db}
+    materia_virtual = {m.codigo: m.virtual for m in materias_db}
+    materia_dict_virtual: dict[str, Optional[bool]] = {}
+    if plan.ciclo_id:
+        for mc, v in session.exec(
+            select(DictadoDB.materia_codigo, DictadoDB.virtual)
+            .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)  # type: ignore[arg-type]
+            .where(DictadoCicloDB.ciclo_id == plan.ciclo_id)
+        ).all():
+            materia_dict_virtual[mc] = v
+
+    horarios_por_comision: dict[str, list[HorarioDB]] = {}
+    for h in horarios_db:
+        if resolve_virtual(
+            horario_virtual=h.virtual,
+            dictado_virtual=materia_dict_virtual.get(h.codigo_materia),
+            materia_virtual=materia_virtual.get(h.codigo_materia, False),
+        ):
+            continue
+        horarios_por_comision.setdefault(h.comision_id, []).append(h)
+
+    if not horarios_por_comision:
+        return []
+
+    # Nombres de sedes (los usa el detalle para intersede; para
+    # solapamiento no importa).
+    from src.database.models import SedeDB
+    sedes_db = list(session.exec(select(SedeDB)).all())
+    sede_nombre = {s.id: s.nombre for s in sedes_db}
+
+    reporte_tmp = ReporteFactibilidad(plan_id=plan_id, factible=True)
+    _add_bloqueos_camino_cursada(
+        session=session,
+        plan=plan,
+        comisiones=comisiones,
+        horarios_por_comision_all=horarios_por_comision,
+        margen_min_intersede_minutos=margen_min_intersede_minutos,
+        reporte=reporte_tmp,
+        mat_nombre=mat_nombre,
+        sede_nombre=sede_nombre,
+    )
+    return list(reporte_tmp.bloqueos) + list(reporte_tmp.advertencias)

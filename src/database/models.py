@@ -342,6 +342,31 @@ class GrupoMateriaDB(SQLModel, table=True):
     nombre: str = Field(min_length=1, unique=True, index=True)
     descripcion: str = Field(default="")
     es_sin_clasificar: bool = Field(default=False, index=True)
+    # Flags que gobiernan qué chequea `chequear_consistencia_grupo`.
+    # Los 3 activados = chequeo exclusivo/exhaustivo (comportamiento
+    # más estricto, recomendado para grupos transversales). Apagar
+    # un flag desactiva selectivamente ese eje del chequeo.
+    #
+    # 1) `chequear_pertenencia_asociadas` (ajena por no pertenencia):
+    #    si ON, marca como ajena cualquier materia del grupo que
+    #    NO aparezca en el plan vigente de al menos una carrera
+    #    asociada. Sirve para grupos donde toda materia del grupo
+    #    debe pertenecer a alguna carrera asociada.
+    chequear_pertenencia_asociadas: bool = Field(default=True)
+    # 2) `chequear_exclusividad_no_asociadas` (ajena por contaminación):
+    #    si ON, marca como ajena cualquier materia del grupo que
+    #    aparezca ADEMÁS en el plan vigente de alguna carrera NO
+    #    asociada. Sirve para enforzar exclusividad: "esta materia
+    #    debe ser propia de las carreras asociadas, no compartida
+    #    con otras".
+    chequear_exclusividad_no_asociadas: bool = Field(default=True)
+    # 3) `chequear_completitud` (faltantes):
+    #    si ON, busca materias que corresponden al grupo pero no
+    #    están: materias que aparecen en el plan vigente de las
+    #    carreras asociadas y respetan las reglas de exclusividad
+    #    activas, pero están en otro grupo. Apagar este flag
+    #    silencia las faltantes sin desactivar las ajenas.
+    chequear_completitud: bool = Field(default=True)
 
 
 class GrupoMateriaSedeDB(SQLModel, table=True):

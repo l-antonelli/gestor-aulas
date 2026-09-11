@@ -87,12 +87,24 @@ class PlanValidationSummary:
     n_conflictos_horarios: int = 0
     n_conflictos_ignorados: int = 0
 
+    # Camino de cursada (grupos [carrera × año × cuatri] donde ninguna
+    # combinación de comisiones deja cursar todo). Se computa aislado
+    # del margen intersede — sólo detecta solapamientos horarios entre
+    # dos materias obligatorias de un mismo grupo curricular.
+    n_camino_bloqueos: int = 0
+
+    # Excepciones (IgnoredConflictDB) auto-limpiadas en esta corrida
+    # porque las materias del par ya no coexisten en ningún grupo
+    # curricular. Se reporta al usuario a modo informativo.
+    excepciones_stale_removidas: list[dict] = field(default_factory=list)
+
     # Detalle (para reconstruccion sin recomputar)
     faltantes_por_carrera: list[dict] = field(default_factory=list)
     extras: list[dict] = field(default_factory=list)
     particion_details: list[str] = field(default_factory=list)
     conflictos_horarios: list[dict] = field(default_factory=list)
     conflictos_ignorados: list[dict] = field(default_factory=list)
+    camino_bloqueos: list[dict] = field(default_factory=list)
     esperadas: dict[str, str] = field(default_factory=dict)
     mat_map: dict[str, str] = field(default_factory=dict)
 
@@ -103,6 +115,7 @@ class PlanValidationSummary:
             "particion_details": self.particion_details,
             "conflictos_horarios": self.conflictos_horarios,
             "conflictos_ignorados": self.conflictos_ignorados,
+            "camino_bloqueos": self.camino_bloqueos,
             "esperadas": self.esperadas,
             "mat_map": self.mat_map,
             "particion_message": self.particion_message,
@@ -411,6 +424,15 @@ def validar_plan(
         len(summary.particion_details) if not part_result.valid else 0
     )
 
+    # Auto-limpieza de excepciones stale antes de leer los pares.
+    # Si cambió el plan de estudio (materia quitada, año/cuatri
+    # movido), las excepciones que ya no aplican a ningún grupo
+    # curricular se borran silenciosamente. El caller/UI puede
+    # inspeccionar `summary.excepciones_stale_removidas` para
+    # informarle al usuario.
+    excepciones_stale = cleanup_stale_ignored_pairs(session, plan_id)
+    summary.excepciones_stale_removidas = excepciones_stale
+
     # Conflictos de horarios (con ignorados aplicados)
     ignored_pairs = get_ignored_pairs(session, plan_id)
     conflictos = validar_conflictos_horarios_plan_estructurados(
@@ -432,7 +454,33 @@ def validar_plan(
         summary.conflictos_ignorados = [_conflicto_to_dict(c) for c in ignored_list]
         summary.n_conflictos_ignorados = len(ignored_pairs)
 
+    # Chequeo camino de cursada (sin margen intersede — el margen es
+    # config del LP y sólo aplica al pre-check del asignador). Detecta
+    # grupos [carrera × año × cuatri] donde NO existe combinación de
+    # comisiones que evite solapamientos entre materias obligatorias.
+    # Un mismo par ya listado en `IgnoredConflictDB` se salta.
+    from src.services.factibilidad_service import check_camino_cursada
+    camino = check_camino_cursada(
+        session, plan_id, margen_min_intersede_minutos=0,
+    )
+    summary.camino_bloqueos = [
+        _bloqueo_camino_to_dict(b) for b in camino
+    ]
+    summary.n_camino_bloqueos = len(summary.camino_bloqueos)
+
     return summary
+
+
+def _bloqueo_camino_to_dict(b) -> dict:
+    ctx = getattr(b, "contexto", None) or {}
+    return {
+        "codigo_regla": b.codigo_regla,
+        "severidad": b.severidad,
+        "titulo": b.titulo,
+        "detalle": b.detalle,
+        "entidades_a_revisar": list(b.entidades_a_revisar or []),
+        "contexto": ctx,
+    }
 
 
 def _conflicto_to_dict(c: ConflictoHorario) -> dict:
@@ -563,6 +611,93 @@ def get_ignored_pairs(
         .where(IgnoredConflictDB.plan_cursada_id == plan_id)
     ).all())
     return {(r.materia_a, r.materia_b) for r in rows}
+
+
+def cleanup_stale_ignored_pairs(
+    session: Session, plan_id: str,
+) -> list[dict]:
+    """Elimina excepciones stale (``IgnoredConflictDB``) para el plan.
+
+    Una excepción es **stale** cuando ambas materias del par ya no
+    coexisten en ningún grupo curricular ``(carrera, año, cuatri)``
+    del ciclo del plan. Escenarios que la vuelven stale:
+
+    - Una de las materias se quitó del plan de estudio.
+    - Alguna de las materias cambió a otro año/cuatri y ya no comparte
+      grupo con la otra.
+    - El plan de carrera versión activo cambió y la nueva versión ya
+      no las tiene juntas.
+
+    Motivación: una excepción "ignorar solapamiento entre A y B" tiene
+    sentido cuando A y B efectivamente están en el mismo grupo
+    curricular. Si dejan de estarlo, la excepción no puede aplicarse
+    a ningún chequeo — queda como ruido en el panel.
+
+    Devuelve una lista con las excepciones eliminadas, cada una con
+    ``{materia_a, materia_b, razon}`` — el caller puede reportarlas
+    al usuario (por ejemplo, mostrando un toast/warning).
+    """
+    plan = session.get(PlanificacionCursadaDB, plan_id)
+    if plan is None or plan.ciclo_id is None:
+        return []
+
+    # Set de pares vivos: aquellos (a, b) donde A y B están juntas en
+    # algún grupo curricular del ciclo.
+    cpv_rows = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
+    ).all())
+    if not cpv_rows:
+        # Sin planes de estudio en el ciclo → no podemos determinar
+        # coexistencia; no borramos nada.
+        return []
+    pe_rows = list(session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.plan_version_id.in_(cpv_rows))  # type: ignore[attr-defined]
+    ).all())
+
+    # Grupos curriculares → materias obligatorias.
+    grupos: dict[tuple[str, int, str], set[str]] = {}
+    for pe in pe_rows:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        if pe.optativa:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        grupos.setdefault(key, set()).add(pe.materia_codigo)
+    # Enriquecer con anuales del mismo (carrera, año).
+    ciclo = session.get(CicloDB, plan.ciclo_id)
+    cuatri_ciclo = f"{ciclo.numero}C" if ciclo else None
+    grupos_activos: list[set[str]] = []
+    for (car, an, cu), mats in grupos.items():
+        if cuatri_ciclo and cu != cuatri_ciclo:
+            continue
+        enriched = set(mats)
+        anual_key = (car, an, "Anual")
+        if anual_key in grupos:
+            enriched |= grupos[anual_key]
+        grupos_activos.append(enriched)
+
+    def _par_vivo(a: str, b: str) -> bool:
+        return any(a in g and b in g for g in grupos_activos)
+
+    filas = list(session.exec(
+        select(IgnoredConflictDB)
+        .where(IgnoredConflictDB.plan_cursada_id == plan_id)
+    ).all())
+
+    eliminadas: list[dict] = []
+    for f in filas:
+        if not _par_vivo(f.materia_a, f.materia_b):
+            eliminadas.append({
+                "materia_a": f.materia_a,
+                "materia_b": f.materia_b,
+                "razon": f.razon,
+            })
+            session.delete(f)
+    if eliminadas:
+        session.commit()
+    return eliminadas
 
 
 def add_ignored_pair(

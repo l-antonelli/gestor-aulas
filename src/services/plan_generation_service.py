@@ -906,6 +906,32 @@ def build_timetable_grid(
         select(HorarioDB).where(col(HorarioDB.comision_id).in_(comision_ids))
     ).all()
 
+    # Precomputar mapa aula_id → label "Sede · Aula" para poblar
+    # ``TimetableBlock.aula_label``. Sin este paso, el calendar
+    # renderer imprime "Sin aula" aunque el horario tenga aula real
+    # asignada — bug histórico de este builder que no leía
+    # ``HorarioDB.aula_id``.
+    from src.database.models import AulaDB, SedeDB
+    aula_ids = {h.aula_id for h in horarios if h.aula_id}
+    aula_label_by_id: dict[str, str] = {}
+    if aula_ids:
+        aulas_db = session.exec(
+            select(AulaDB).where(col(AulaDB.id).in_(aula_ids))
+        ).all()
+        sede_ids = {a.sede_id for a in aulas_db if a.sede_id}
+        sede_nombre_by_id: dict[str, str] = {}
+        if sede_ids:
+            sede_nombre_by_id = {
+                s.id: s.nombre for s in session.exec(
+                    select(SedeDB).where(col(SedeDB.id).in_(sede_ids))
+                ).all()
+            }
+        for a in aulas_db:
+            sede_txt = sede_nombre_by_id.get(a.sede_id, "") if a.sede_id else ""
+            aula_label_by_id[a.id] = (
+                f"{sede_txt} · {a.nombre}" if sede_txt else a.nombre
+            )
+
     # Build blocks grouped by day
     grid: dict[str, list[TimetableBlock]] = {}
     for h in horarios:
@@ -930,6 +956,9 @@ def build_timetable_grid(
             hora_fin=h.hora_fin,
             virtual=is_virtual,
             en_periodo=periodo_map.get(com.materia_codigo),
+            aula_label=(
+                aula_label_by_id.get(h.aula_id) if h.aula_id else None
+            ),
         )
         grid.setdefault(h.dia, []).append(block)
 

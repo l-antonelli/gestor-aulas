@@ -305,6 +305,9 @@ def _render_check_factibilidad(
                                 for e in bloqueo.entidades_a_revisar
                             )
                         )
+                    _render_shortcut_ignorar_par(
+                        session, plan_id, bloqueo, key_ns, idx=i,
+                    )
 
         if reporte.advertencias:
             with st.expander(
@@ -313,6 +316,369 @@ def _render_check_factibilidad(
             ):
                 for adv in reporte.advertencias:
                     st.markdown(f"**{adv.titulo}**  \n{adv.detalle}")
+
+        # Panel de excepciones activas (pares ignorados). Se muestra
+        # siempre que exista al menos uno para dar visibilidad al
+        # usuario de qué solapamientos se están silenciando.
+        _render_panel_excepciones_activas(session, plan_id, key_ns)
+
+        # Panel de colisiones de aula: si hay HorarioDB del plan
+        # asignados a la MISMA aula en franjas que se pisan, es un
+        # doble booking físico que el LP no debería tolerar. Aparece
+        # típicamente cuando el operador movió un horario después de
+        # correr el asignador.
+        _render_panel_colisiones_aula(session, plan_id, key_ns)
+
+
+def _render_panel_colisiones_aula(
+    session: Session, plan_id: str, key_ns: str,
+) -> None:
+    """Detecta y muestra colisiones de aula (mismo aula, overlap
+    horario) en el plan. Ofrece shortcut para liberar el aula del
+    horario problemático."""
+    from src.services.plan_actions_service import (
+        detectar_colisiones_aula_plan,
+        liberar_aula_horario,
+    )
+    from src.database.models import AulaDB, MateriaDB
+
+    colisiones = detectar_colisiones_aula_plan(session, plan_id)
+    n = len(colisiones)
+    if n == 0:
+        return
+    aula_ids = sorted({c["aula_id"] for c in colisiones})
+    aulas = {
+        a.id: a for a in session.exec(
+            select(AulaDB).where(
+                AulaDB.id.in_(aula_ids)  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+    mat_codes = sorted({
+        c["codigo_materia_a"] for c in colisiones
+    } | {
+        c["codigo_materia_b"] for c in colisiones
+    })
+    mats = {
+        m.codigo: m for m in session.exec(
+            select(MateriaDB).where(
+                MateriaDB.codigo.in_(mat_codes)  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+
+    st.error(
+        f"🚨 **{n} colisión(es) de aula detectada(s)**: hay clases "
+        "del plan con la misma aula asignada en franjas que se "
+        "pisan. Típicamente ocurre después de mover un horario a "
+        "otra franja sin re-correr el asignador. Liberá el aula de "
+        "uno de los dos horarios y re-corré el LP para reasignar."
+    )
+    for i, c in enumerate(colisiones):
+        aula = aulas.get(c["aula_id"])
+        aula_txt = (
+            f"{aula.codigo_aula}" if aula else c["aula_id"][:8]
+        )
+        with st.expander(
+            f"🔴 {aula_txt} · {c['dia']} — "
+            f"{c['codigo_materia_a']} vs {c['codigo_materia_b']}",
+            expanded=(i < 2),
+        ):
+            _ma = mats.get(c["codigo_materia_a"])
+            _mb = mats.get(c["codigo_materia_b"])
+            st.markdown(
+                f"- **{c['codigo_materia_a']}** "
+                f"({_ma.nombre if _ma else '?'}) — "
+                f"{c['hora_inicio_a']}–{c['hora_fin_a']}"
+                + (" · manual" if c["manual_a"] else "")
+            )
+            st.markdown(
+                f"- **{c['codigo_materia_b']}** "
+                f"({_mb.nombre if _mb else '?'}) — "
+                f"{c['hora_inicio_b']}–{c['hora_fin_b']}"
+                + (" · manual" if c["manual_b"] else "")
+            )
+            cols = st.columns(2)
+            if cols[0].button(
+                f"🧹 Liberar aula de {c['codigo_materia_a']}",
+                key=f"{key_ns}_liberar_a_{i}",
+                help=(
+                    "Deja este horario sin aula asignada. El LP la "
+                    "reasigna en la próxima corrida."
+                ),
+            ):
+                liberar_aula_horario(session, c["horario_a_id"])
+                st.toast(
+                    f"Aula liberada para {c['codigo_materia_a']}. "
+                    "Re-corré el asignador."
+                )
+                st.rerun()
+            if cols[1].button(
+                f"🧹 Liberar aula de {c['codigo_materia_b']}",
+                key=f"{key_ns}_liberar_b_{i}",
+                help=(
+                    "Deja este horario sin aula asignada. El LP la "
+                    "reasigna en la próxima corrida."
+                ),
+            ):
+                liberar_aula_horario(session, c["horario_b_id"])
+                st.toast(
+                    f"Aula liberada para {c['codigo_materia_b']}. "
+                    "Re-corré el asignador."
+                )
+                st.rerun()
+
+
+def _render_panel_excepciones_activas(
+    session: Session, plan_id: str, key_ns: str,
+) -> None:
+    """Panel que lista los pares en ``IgnoredConflictDB`` para el
+    plan actual, con opción de quitar cada excepción.
+
+    Sólo se agrega desde los shortcuts inline (aca no permite crear
+    excepciones nuevas). Sirve para auditar y revertir.
+    """
+    from src.services.plan_validation_service import (
+        get_ignored_pairs,
+        remove_ignored_pair,
+    )
+    from src.database.models import IgnoredConflictDB
+
+    filas = list(session.exec(
+        select(IgnoredConflictDB).where(
+            IgnoredConflictDB.plan_cursada_id == plan_id,
+        ).order_by(
+            IgnoredConflictDB.materia_a,  # type: ignore[arg-type]
+            IgnoredConflictDB.materia_b,  # type: ignore[arg-type]
+        )
+    ).all())
+
+    n = len(filas)
+    with st.expander(
+        f"🙈 Excepciones de conflicto activas ({n})",
+        expanded=False,
+    ):
+        if n == 0:
+            st.caption(
+                "No hay pares de materias marcados como excepción "
+                "para este plan. Los shortcuts que aparecen dentro de "
+                "los bloqueos del chequeo estructural (cuando hay "
+                "solapamientos) permiten agregar excepciones puntuales."
+            )
+            return
+
+        st.caption(
+            "Cada fila representa un par de materias cuyo "
+            "solapamiento se está silenciando en los chequeos de "
+            "camino de cursada — tanto en el detalle del plan como "
+            "en el pre-check del asignador. Sólo afectan a este plan."
+        )
+        _ = get_ignored_pairs  # smoke ref (util para tests)
+        for i, f in enumerate(filas):
+            cols = st.columns([2, 2, 4, 1])
+            cols[0].markdown(f"`{f.materia_a}`")
+            cols[1].markdown(f"`{f.materia_b}`")
+            cols[2].caption(
+                f"**Razón**: {f.razon or '_(sin razón)_'} · "
+                f"desde {f.fecha_creacion.strftime('%Y-%m-%d')}"
+            )
+            if cols[3].button(
+                "🗑️",
+                key=f"{key_ns}_del_ign_{i}",
+                help=(
+                    f"Quitar excepción {f.materia_a} ↔ {f.materia_b}. "
+                    "Vuelve a activar los bloqueos correspondientes."
+                ),
+            ):
+                remove_ignored_pair(
+                    session, plan_id, f.materia_a, f.materia_b,
+                )
+                # Invalidar el reporte cacheado para que el chequeo
+                # se re-corra.
+                st.session_state.pop(f"{key_ns}_check_reporte", None)
+                st.toast(
+                    f"Excepción {f.materia_a} ↔ {f.materia_b} "
+                    "quitada. Volvé a correr el chequeo."
+                )
+                st.rerun()
+
+
+def _render_shortcut_ignorar_par(
+    session: Session,
+    plan_id: str,
+    bloqueo,
+    key_ns: str,
+    idx: int,
+) -> None:
+    """Muestra un shortcut inline para agregar una excepción de
+    conflicto ignorado desde el bloqueo del pre-check.
+
+    Sólo se activa cuando el bloqueo publica un contexto con
+    ``tipo="solapamiento"`` y ``par_materias=[a, b]`` (lo que hace
+    ``_add_bloqueos_camino_cursada`` para conflictos de solapamiento
+    horario). Otros bloqueos (intersede, R1, R4, etc.) no ofrecen el
+    shortcut — la excepción no aplica al problema.
+    """
+    ctx = getattr(bloqueo, "contexto", None) or {}
+    if ctx.get("tipo") != "solapamiento":
+        return
+    par = ctx.get("par_materias") or []
+    if len(par) != 2:
+        return
+    from src.services.plan_validation_service import (
+        add_ignored_pair,
+        get_ignored_pairs,
+    )
+
+    a, b = sorted((str(par[0]), str(par[1])))
+    ya_ignorado = (a, b) in get_ignored_pairs(session, plan_id)
+    if ya_ignorado:
+        st.success(
+            f"✅ Par **{a} ↔ {b}** ya está marcado como excepción "
+            "para este plan. Volvé a correr el chequeo para "
+            "confirmar que el bloqueo desaparece."
+        )
+        return
+
+    st.divider()
+    st.markdown(
+        f"**¿Cursan alumnos distintos {a} y {b} en la práctica?**"
+    )
+    st.caption(
+        "Si el solapamiento es formal pero en la realidad **cada "
+        "materia la cursan grupos de alumnos distintos** (ej. una "
+        "misma materia con dos codigos según el año del plan), "
+        "podés marcar el par como excepción. El chequeo de camino "
+        "de cursada dejará de bloquearlo. Sólo afecta a este plan."
+    )
+    razon_key = f"{key_ns}_ignora_razon_{idx}"
+    razon = st.text_input(
+        "Razón (opcional, queda registrada)",
+        key=razon_key,
+        placeholder=(
+            "Ej.: 'Alumnos distintos según año del plan'"
+        ),
+    )
+    btn_key = f"{key_ns}_ignora_btn_{idx}"
+    if st.button(
+        f"🙈 Ignorar par {a} ↔ {b} en este plan",
+        key=btn_key,
+    ):
+        try:
+            add_ignored_pair(
+                session, plan_id, a, b, razon=razon or "",
+            )
+            st.session_state.pop(f"{key_ns}_check_result", None)
+            st.session_state.pop(f"{key_ns}_check_reporte", None)
+            st.toast(
+                f"Par {a} ↔ {b} agregado como excepción. "
+                "Volvé a correr el chequeo."
+            )
+            st.rerun()
+        except Exception as e:  # pragma: no cover
+            st.error(f"No se pudo guardar la excepción: {e}")
+
+
+def _cargar_defaults_desde_ultima_corrida(
+    session: Session, plan_id: str, key_ns: str,
+) -> dict:
+    """Lee la última corrida del plan y devuelve un dict con los
+    valores que se usarán como default del panel.
+
+    Los defaults **sólo se aplican al primer render** de la pestaña
+    para el plan (idempotente por ``key_ns + plan_id``). Después,
+    Streamlit conserva el estado en ``st.session_state`` y el usuario
+    puede editar libremente.
+
+    Si no hay corridas previas, devuelve dict vacío — cada widget
+    aplica su default original.
+    """
+    from src.database.models import LPRunDB
+    from sqlmodel import select as _select
+    import json as _json
+
+    marker_key = f"{key_ns}_defaults_loaded_for_plan"
+    ya_cargado = st.session_state.get(marker_key) == plan_id
+
+    last_run = session.exec(
+        _select(LPRunDB)
+        .where(LPRunDB.plan_cursada_id == plan_id)
+        .order_by(LPRunDB.run_at.desc())  # type: ignore[attr-defined]
+        .limit(1)
+    ).first()
+
+    if last_run is None:
+        # Sin corridas previas: nada que prefill. Marcamos el flag
+        # para no volver a pegarle a la DB en cada rerun.
+        st.session_state[marker_key] = plan_id
+        return {}
+
+    try:
+        d = _json.loads(last_run.details_json or "{}")
+    except (ValueError, TypeError):
+        st.session_state[marker_key] = plan_id
+        return {}
+    ra = (d.get("veredicto", {}) or {}).get("restricciones_activas", {})
+    if not ra:
+        # Corrida vieja sin el bloque `restricciones_activas`. Podemos
+        # armar un dict parcial desde las columnas persistidas.
+        st.session_state[marker_key] = plan_id
+        return {
+            "lambda_over": last_run.lambda_over,
+            "lambda_under": last_run.lambda_under,
+            "tol_over": last_run.tol_over,
+            "tol_under": last_run.tol_under,
+            "activar_alpha": last_run.activar_alpha,
+            "respetar_ediciones_manuales":
+                last_run.respetar_ediciones_manuales,
+            "timeout_seconds": last_run.timeout_seconds,
+        }
+
+    # Pre-poblar `st.session_state` con las keys que usa cada widget
+    # para que aparezcan pre-seleccionadas en el primer render.
+    # Estos son parámetros escalares (widgets únicos): sólo prefill si
+    # la key no existe, para respetar cambios del usuario en la sesión.
+    if not ya_cargado:
+        _prefill = {
+            f"{key_ns}_lover": float(ra.get("lambda_over", 10.0)),
+            f"{key_ns}_lunder": float(ra.get("lambda_under", 1.0)),
+            f"{key_ns}_tover": float(ra.get("tol_over", 0.0)),
+            f"{key_ns}_tunder": float(ra.get("tol_under", 0.20)),
+            f"{key_ns}_lsede": float(ra.get("lambda_sede_pref", 5.0)),
+            f"{key_ns}_margen_intersede":
+                int(ra.get("margen_min_intersede_minutos", 30)),
+            f"{key_ns}_lambda_intersede":
+                float(ra.get("lambda_intersede", 0.0)),
+            f"{key_ns}_forzar_misma_sede":
+                bool(ra.get("forzar_misma_sede_por_comision", False)),
+            f"{key_ns}_strict_r5": bool(ra.get("strict_r5", True)),
+            f"{key_ns}_activar_alpha":
+                bool(ra.get("activar_alpha", False)),
+            f"{key_ns}_respetar": bool(
+                ra.get("respetar_ediciones_manuales", True)
+            ),
+            f"{key_ns}_timeout": int(ra.get("timeout_seconds", 300)),
+        }
+        for k, v in _prefill.items():
+            if k not in st.session_state:
+                st.session_state[k] = v
+
+    # Modos por grupo: pre-populate en CADA render (no sólo la primera
+    # vez). Los widgets `st.radio` con keys dinámicas basadas en
+    # grupo_id pueden ser destruidos por Streamlit cuando la vista
+    # colapsa/expande, y sin este re-prefill los grupos vuelven al
+    # default "DURO" perdiendo la config persistida. Sólo seteamos si
+    # la key no está en session_state (respetamos cambios del usuario
+    # dentro de la misma sesión). Cuando el usuario cambia un modo, la
+    # key ya está seteada por el widget → no se pisa.
+    modos = ra.get("modos_por_grupo") or {}
+    for gid, modo in modos.items():
+        k = f"{key_ns}_modo_grupo_{gid}"
+        if k not in st.session_state:
+            st.session_state[k] = modo
+
+    st.session_state[marker_key] = plan_id
+    return {}
 
 
 def _render_config_form(
@@ -325,6 +691,12 @@ def _render_config_form(
         return None
     from src.database.models import CicloDB
     ciclo = session.get(CicloDB, plan.ciclo_id) if plan.ciclo_id else None
+
+    # Prefill de session_state con los valores de la última corrida
+    # del plan. Idempotente por (key_ns, plan_id): sólo aplica al
+    # primer render; después Streamlit mantiene el estado y las
+    # ediciones del usuario prevalecen.
+    _cargar_defaults_desde_ultima_corrida(session, plan_id, key_ns)
 
     default_fecha = date.today()
     if ciclo is not None:
@@ -486,35 +858,53 @@ def _render_config_form(
                 )
 
         # -----------------------------------------------------------------
-        # Preferencias de sede (R12 blanda + R13 dura).
+        # Preferencias y restricciones de sede — todo lo relacionado a la
+        # configuración de sedes se agrupa acá: modo por-grupo (DURO/BLANDO),
+        # peso de preferencia (λ sede, sólo aplica a grupos BLANDO),
+        # margen intersede y misma sede por comisión.
         # -----------------------------------------------------------------
         with st.container(border=True):
             st.markdown("**🏛️ Preferencias y restricciones de sede**")
             st.caption(
-                "**Sede preferida**: se calcula automáticamente por "
-                "materia — primero se elige la sede del laboratorio "
-                "compatible si la materia tiene lab; si no, la sede "
-                "habilitada por la carrera. **Margen intersede**: "
-                "para que los alumnos puedan trasladarse entre "
-                "sedes distintas dentro del día."
+                "Cada grupo declara AMBAS configuraciones de sede (set "
+                "DURO y lista BLANDA) en **Materias → 📦 Grupos**. Acá "
+                "elegís qué modo usa el asignador por grupo, y cómo "
+                "pesar las preferencias blandas frente a los traslados "
+                "entre sedes."
+            )
+
+            # -- Modo por grupo + λ sede pref (pegados: el λ sólo aplica
+            # a grupos en modo BLANDO, tiene sentido verlos juntos).
+            modos_por_grupo = _render_modos_por_grupo(session, key_ns)
+
+            lambda_sede_pref = st.number_input(
+                "Peso de preferencia de sede blanda (λ sede)",
+                min_value=0.0, value=5.0, step=1.0,
+                help=(
+                    "Aplica **sólo a los grupos configurados en modo "
+                    "BLANDO** (arriba): costo por cada horario asignado "
+                    "a una sede que no es la preferida del grupo. Con "
+                    "λ alto el asignador respeta la sede preferida a "
+                    "costa de aceptar aulas más chicas o más grandes. "
+                    "Con λ = 0 la preferencia se ignora (el LP elige "
+                    "la sede admisible que mejor caiga por capacidad). "
+                    "En los grupos DURO no tiene efecto — ahí las "
+                    "sedes fuera del set directamente no son "
+                    "admisibles. Default: 5."
+                ),
+                key=f"{key_ns}_lsede",
+            )
+
+            st.divider()
+            # -- Traslados entre sedes (misma comisión / mismos alumnos).
+            st.markdown("**Traslados intersede**")
+            st.caption(
+                "Reglas para que los horarios contiguos de una misma "
+                "comisión (o los alumnos entre materias) puedan "
+                "trasladarse entre sedes distintas."
             )
             c_sede1, c_sede2 = st.columns(2)
             with c_sede1:
-                lambda_sede_pref = st.number_input(
-                    "Peso de preferencia de sede (λ sede)",
-                    min_value=0.0, value=5.0, step=1.0,
-                    help=(
-                        "Costo blando de asignar un horario a una "
-                        "sede que no es su preferida. Con λ alto el "
-                        "asignador respeta la sede preferida a costa "
-                        "de aceptar aulas más chicas o más grandes. "
-                        "Con λ = 0 la preferencia se ignora (el LP "
-                        "elige la sede admisible que mejor caiga "
-                        "por capacidad). Default: 5."
-                    ),
-                    key=f"{key_ns}_lsede",
-                )
-            with c_sede2:
                 margen_intersede = st.number_input(
                     "Margen mínimo entre sedes (minutos)",
                     min_value=0, max_value=180, value=30, step=5,
@@ -528,28 +918,25 @@ def _render_config_form(
                     ),
                     key=f"{key_ns}_margen_intersede",
                 )
-
-            forzar_misma_sede = st.toggle(
-                "Forzar misma sede por comisión",
-                value=False,
-                help=(
-                    "Cuando está activo, el asignador obliga a que "
-                    "todos los horarios de una misma comisión caigan "
-                    "en la misma sede. Evita comisiones fragmentadas "
-                    "entre sedes distintas — típicamente el profesor "
-                    "no viaja a mitad de semana.\n\n"
-                    "Introduce variables auxiliares por comisión × "
-                    "sede, así que aumenta el tamaño del modelo. "
-                    "Recomendado dejarlo apagado para diagnóstico "
-                    "estructural, y encendido en la corrida final."
-                ),
-                key=f"{key_ns}_forzar_misma_sede",
-            )
-
-        # -----------------------------------------------------------------
-        # Modo por-grupo (DURO / BLANDO)
-        # -----------------------------------------------------------------
-        modos_por_grupo = _render_modos_por_grupo(session, key_ns)
+            with c_sede2:
+                forzar_misma_sede = st.toggle(
+                    "Forzar misma sede por comisión",
+                    value=False,
+                    help=(
+                        "Cuando está activo, el asignador obliga a "
+                        "que todos los horarios de una misma comisión "
+                        "caigan en la misma sede. Evita comisiones "
+                        "fragmentadas entre sedes distintas — "
+                        "típicamente el profesor no viaja a mitad de "
+                        "semana.\n\n"
+                        "Introduce variables auxiliares por comisión "
+                        "× sede, así que aumenta el tamaño del "
+                        "modelo. Recomendado dejarlo apagado para "
+                        "diagnóstico estructural, y encendido en la "
+                        "corrida final."
+                    ),
+                    key=f"{key_ns}_forzar_misma_sede",
+                )
 
         # -----------------------------------------------------------------
         # Timeout + avanzado.
@@ -656,13 +1043,24 @@ def _render_modos_por_grupo(
     """
     from src.services.grupo_materia_service import (
         contar_materias_por_grupo,
+        get_config_grupo,
         list_grupos,
     )
+    from src.database.models import SedeDB
 
     grupos = list_grupos(session)
     counts = contar_materias_por_grupo(session)
     if not grupos:
         return {}
+
+    # Nombres de sedes para armar el caption del efecto del modo.
+    sedes = list(session.exec(select(SedeDB)).all())
+    sede_nombre = {s.id: s.nombre for s in sedes}
+
+    def _fmt_lista(sede_ids: list[str]) -> str:
+        if not sede_ids:
+            return "_(lista vacía)_"
+        return ", ".join(sede_nombre.get(sid, sid) for sid in sede_ids)
 
     # Ordenar: Sin clasificar primero, resto alfabético.
     def _sort_key(g):
@@ -670,36 +1068,76 @@ def _render_modos_por_grupo(
 
     grupos_ord = sorted(grupos, key=_sort_key)
 
-    with st.container(border=True):
-        st.markdown("**🧭 Modo por grupo de materias**")
-        st.caption(
-            "Cada grupo declara AMBAS configuraciones de sede (set "
-            "DURO y lista BLANDA) en **Materias → 📦 Grupos**. Acá "
-            "elegís cuál usa el asignador para cada grupo en esta "
-            "corrida. **DURO**: filtra por el set duro del grupo (si "
-            "está vacío, deja pasar todas). **BLANDO**: no filtra, "
-            "usa la primera sede como preferida (R12)."
-        )
-        resultado: dict[str, str] = {}
-        for g in grupos_ord:
-            state_key = f"{key_ns}_modo_grupo_{g.id}"
-            cols = st.columns([3, 2])
-            with cols[0]:
-                prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
-                n = counts.get(g.id, 0)
-                st.markdown(
-                    f"{prefix}**{g.nombre}** · {n} materia(s)"
+    st.markdown("**🧭 Modo por grupo**")
+    st.caption(
+        "**DURO**: filtra por el set duro del grupo (si está vacío, "
+        "deja pasar todas). **BLANDO**: no filtra, usa la primera "
+        "sede de la lista blanda como preferida — el peso *λ sede* "
+        "de abajo decide cuánto se respeta esa preferencia."
+    )
+    resultado: dict[str, str] = {}
+    for g in grupos_ord:
+        state_key = f"{key_ns}_modo_grupo_{g.id}"
+        cfg_grupo = get_config_grupo(session, g.id)
+        cols = st.columns([3, 2])
+        with cols[0]:
+            prefix = "⚠️ " if g.es_sin_clasificar else "📦 "
+            n = counts.get(g.id, 0)
+            st.markdown(
+                f"{prefix}**{g.nombre}** · {n} materia(s)"
+            )
+        with cols[1]:
+            modo = st.radio(
+                f"Modo {g.nombre}",
+                options=["DURO", "BLANDO"],
+                horizontal=True,
+                key=state_key,
+                label_visibility="collapsed",
+            )
+            resultado[g.id] = modo
+
+        # Caption con el efecto concreto del modo seleccionado sobre
+        # este grupo. Ayuda a entender de un vistazo qué sedes se
+        # están habilitando o preferenciando sin abrir el editor.
+        if modo == "DURO":
+            duras = cfg_grupo.sedes_duras
+            if duras:
+                st.caption(
+                    "🔒 **DURO**: sólo se admiten aulas en → "
+                    + _fmt_lista(duras)
                 )
-            with cols[1]:
-                modo = st.radio(
-                    f"Modo {g.nombre}",
-                    options=["DURO", "BLANDO"],
-                    horizontal=True,
-                    key=state_key,
-                    label_visibility="collapsed",
+            else:
+                st.caption(
+                    "🔒 **DURO**: set vacío → fallback permisivo "
+                    "(cualquier sede es admisible). Configuralo en "
+                    "**Materias → 📦 Grupos** si querés restringir."
                 )
-                resultado[g.id] = modo
-        return resultado
+        else:
+            blandas = cfg_grupo.sedes_blandas_ordenadas
+            if blandas:
+                preferida = sede_nombre.get(blandas[0]) or blandas[0]
+                alt = [
+                    (sede_nombre.get(sid) or sid) for sid in blandas[1:]
+                ]
+                if alt:
+                    st.caption(
+                        f"🎯 **BLANDO**: sede preferida → **{preferida}**; "
+                        f"alternativas con costo *λ sede* → "
+                        + ", ".join(alt)
+                    )
+                else:
+                    st.caption(
+                        f"🎯 **BLANDO**: sede preferida → **{preferida}** "
+                        "(sin alternativas configuradas)."
+                    )
+            else:
+                st.caption(
+                    "🎯 **BLANDO**: lista blanda vacía → no aplica R12 "
+                    "para este grupo (cualquier sede, sin preferencia). "
+                    "Configuralo en **Materias → 📦 Grupos**."
+                )
+        st.divider()
+    return resultado
 
 
 # =============================================================================
@@ -1053,12 +1491,55 @@ def _contar_desactualizados(
     LP la rechazaría hoy — el flujo se ve inconsistente al usuario
     (aparecen "aulas libres" en franjas saturadas porque hay horarios
     que "escaparon" a sedes que hoy no admiten).
+
+    Nota sobre modos por-grupo: si la última corrida usó BLANDO para
+    algún grupo, las asignaciones "alternativas" (a la sede que no es
+    la preferida) son completamente legítimas — no son
+    desactualizaciones. Para evitar falsos positivos, este chequeo
+    reconstruye ``LPConfig`` con los modos por-grupo de la última
+    corrida y usa ese ``compat``. Sólo marca como desactualizado un
+    horario que **hoy** no es compatible con la config que la corrida
+    efectivamente usó (típicamente porque cambiaron datos de sede,
+    tipo de aula o el grupo de la materia después de la corrida).
     """
+    import json as _json
     from src.services.asignacion_aulas_service import (
         build_inputs, LPConfig,
     )
+    from src.database.models import LPRunDB
+
+    # Reconstruir LPConfig desde el snapshot de la última corrida del
+    # plan — así la detección refleja exactamente la config con la que
+    # se asignaron las aulas actuales. Si no hay corridas, caemos al
+    # default estricto (todo DURO).
+    modos_por_grupo: dict[str, str] = {}
+    forzar_misma_sede = False
+    last_run = session.exec(
+        select(LPRunDB)
+        .where(LPRunDB.plan_cursada_id == plan_id)
+        .order_by(LPRunDB.run_at.desc())  # type: ignore[attr-defined]
+        .limit(1)
+    ).first()
+    if last_run is not None:
+        try:
+            d = _json.loads(last_run.details_json or "{}")
+            ra = (d.get("veredicto", {}) or {}).get(
+                "restricciones_activas", {}
+            )
+            modos_por_grupo = dict(ra.get("modos_por_grupo") or {})
+            forzar_misma_sede = bool(
+                ra.get("forzar_misma_sede_por_comision", False)
+            )
+        except (ValueError, TypeError):
+            pass
+
+    cfg = LPConfig(
+        modos_por_grupo=modos_por_grupo,
+        forzar_misma_sede_por_comision=forzar_misma_sede,
+    )
+
     try:
-        inputs = build_inputs(session, plan_id, LPConfig())
+        inputs = build_inputs(session, plan_id, cfg)
     except Exception:
         return {"count": 0, "detalle": []}
 

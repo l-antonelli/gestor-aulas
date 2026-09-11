@@ -196,9 +196,8 @@ def _recompute_heatmap_por_sede_live(
         compute_heatmap_por_sede,
         compute_heatmap_total_sin_sede,
     )
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_carrera,
-        sedes_admisibles_para_materia,
+    from src.services.grupo_materia_service import (
+        sedes_admisibles_set_por_materia,
     )
     from src.services.resolucion_jerarquica import resolve_virtual
 
@@ -211,10 +210,6 @@ def _recompute_heatmap_por_sede_live(
     ).all())
     if not com_ids:
         return None
-    coms = list(session.exec(
-        select(_Com).where(_Com.id.in_(com_ids))  # type: ignore[attr-defined]
-    ).all())
-    _carrera_override_por_com = {c.id: c.carrera_asignada for c in coms}
     hs_all = list(session.exec(
         select(_Hor).where(_Hor.comision_id.in_(com_ids))  # type: ignore[attr-defined]
     ).all())
@@ -270,33 +265,13 @@ def _recompute_heatmap_por_sede_live(
     for ml in lab_pairs:
         materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
 
-    # Sedes admisibles por materia (con override de comisión aplicado
-    # al horario, tomando la carrera_asignada de la comisión si existe).
-    # `compute_heatmap_por_sede` recibe el dict por-materia; para respetar
-    # el override por-comisión hacemos un pre-fold: si TODOS los horarios
-    # de una materia comparten el mismo override (o ninguno lo tiene), el
-    # dict por-materia es suficiente. Cuando hay override mixto, dejamos
-    # las sedes de la materia (fallback conservador) — la corrida del LP
-    # sí aplica override por comisión, y el "Detalle de horarios" del
-    # inspector también filtra bien por resolve_virtual.
-    hs_por_materia: dict[str, list[_Hor]] = {}
-    for h in hs_all:
-        hs_por_materia.setdefault(h.codigo_materia, []).append(h)
-    sedes_admis_por_mat: dict[str, set[str] | None] = {}
-    for mc in materias_codes:
-        overrides = {
-            _carrera_override_por_com.get(h.comision_id)
-            for h in hs_por_materia.get(mc, [])
-        }
-        overrides.discard(None)
-        if len(overrides) == 1:
-            (_car,) = overrides
-            if _car:
-                sedes_admis_por_mat[mc] = sedes_admisibles_para_carrera(
-                    session, _car,
-                )
-                continue
-        sedes_admis_por_mat[mc] = sedes_admisibles_para_materia(session, mc)
+    # Sedes admisibles por materia vía Grupo de Materias. Idem LP y
+    # factibilidad: ``ComisionDB.carrera_asignada`` no interviene en
+    # la resolución (quedó como etiqueta visual).
+    sedes_admis_por_mat: dict[str, set[str] | None] = {
+        mc: sedes_admisibles_set_por_materia(session, mc)
+        for mc in materias_codes
+    }
 
     heatmap = compute_heatmap_por_sede(
         horario_slots, aulas, materia_lab_map,
@@ -1950,6 +1925,43 @@ def _dialog_editar_horario(
                         rows, hide_index=True, use_container_width=True,
                     )
 
+            if preview.colisiones_aula:
+                st.error(
+                    f"🚨 **Doble booking de aula**: mover este "
+                    f"horario dejaría el aula asignada en simultáneo "
+                    f"con **{len(preview.colisiones_aula)} otra(s) "
+                    "clase(s)**. Antes de confirmar, liberá el aula "
+                    "del horario editado o del que colisiona, y "
+                    "volvé a correr el asignador."
+                )
+                with st.expander(
+                    f"Ver colisiones ({len(preview.colisiones_aula)})",
+                    expanded=True,
+                ):
+                    _rows_col = []
+                    for c in preview.colisiones_aula:
+                        _rows_col.append({
+                            "Materia": c.get("codigo_materia"),
+                            "Día": c.get("dia"),
+                            "Inicio": c.get("hora_inicio"),
+                            "Fin": c.get("hora_fin"),
+                            "Aula manual": (
+                                "sí"
+                                if c.get("otro_manual") else "no"
+                            ),
+                        })
+                    st.dataframe(
+                        _rows_col,
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "Después de confirmar el cambio, si tenés dudas "
+                        "sobre cuál mantener, podés liberar el aula del "
+                        "horario editado para que el LP la reasigne en "
+                        "la próxima corrida."
+                    )
+
             if preview.es_seguro:
                 msg_partes = [
                     "✅ El cambio NO agrega conflictos nuevos ni "
@@ -2186,8 +2198,8 @@ def _render_inspector_franja(
         HorarioSlot as _HorarioSlot,
         horarios_que_intersectan_rango,
     )
-    from src.services.carrera_sede_service import (
-        sedes_admisibles_para_materia as _sedes_admis,
+    from src.services.grupo_materia_service import (
+        sedes_admisibles_set_por_materia as _sedes_admis,
     )
     from src.services.plan_generation_service import TimetableBlock
     from src.ui.calendar_render import render_timetable_calendar
@@ -2934,12 +2946,12 @@ def _render_diagnostico_infactibilidad(
             "Cuando los chequeos rápidos de arriba no encuentran "
             "ninguna causa pero la asignación no logra ubicar todas "
             "las aulas, el sistema prueba **ignorar temporalmente "
-            "cada una de las tres restricciones flexibles** del "
-            "modelo, una a la vez, y ve si el problema se resuelve. "
-            "La restricción que al ignorarse permite resolver es la "
-            "que está causando el conflicto. Si parece que hay más "
-            "de una culpable, se marca **la causa probable "
-            "principal** (las otras suelen ser efectos secundarios)."
+            "cada restricción del modelo**, una a la vez, y ve si el "
+            "problema se resuelve. La restricción que al ignorarse "
+            "permite resolver es la que está causando el conflicto. "
+            "Si parece que hay más de una culpable, se marca **la "
+            "causa probable principal** (las otras suelen ser "
+            "efectos secundarios)."
         )
 
         principal = iis.get("principal")
@@ -2956,29 +2968,121 @@ def _render_diagnostico_infactibilidad(
                 "Horarios sin tipo determinado sin aula compatible "
                 "ni como teoría ni como lab"
             ),
+            "R10": (
+                "Filtro de sede por grupo (modo DURO): la demanda "
+                "en las sedes admisibles supera la oferta"
+            ),
+            "R13": (
+                "Margen intersede: horarios contiguos de la misma "
+                "comisión no pueden separarse entre sedes"
+            ),
+            "R14": (
+                "Forzar misma sede por comisión: la config obliga "
+                "más de lo que la oferta puede absorber"
+            ),
         }
 
         if principal:
             st.error(
-                f"**Causa probable: {descripciones_cortas[principal]}**"
+                f"**Causa probable: {descripciones_cortas.get(principal, principal)}**"
             )
+            # Recomendación accionable: si la causa es R10 y el IIS
+            # identificó qué grupo(s) DURO rescatarían el modelo al
+            # pasar a BLANDO, mostrar la lista.
+            if principal == "R10":
+                _det_r10 = (iis.get("detalles") or {}).get("R10") or {}
+                _grupos = _det_r10.get("grupos_rescate") or []
+                if _grupos:
+                    st.info(
+                        "💡 **Recomendación accionable**: pasar a modo "
+                        "**BLANDO** cualquiera de los siguientes grupos "
+                        "resuelve la infactibilidad de manera "
+                        "individual. Elegí el que menos comprometa la "
+                        "preferencia de sede de tu plan."
+                    )
+                    _rows_rescate = [
+                        {
+                            "Grupo": g["grupo_nombre"],
+                            "Materias del plan": g["n_materias_plan"],
+                            "Cambio propuesto": (
+                                f"{g['modo_actual']} → "
+                                f"{g['modo_propuesto']}"
+                            ),
+                        }
+                        for g in _grupos
+                    ]
+                    st.dataframe(
+                        _rows_rescate,
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "Los cambios se aplican desde el selector "
+                        "**🧭 Modo por grupo** del panel del asignador. "
+                        "Con BLANDO, el LP puede usar sedes alternativas "
+                        "de la lista blanda del grupo (pagando el "
+                        "costo *λ sede* por cada horario que se "
+                        "aleje de la preferida)."
+                    )
         else:
             st.warning(
                 "**No se pudo identificar una sola causa.** Ninguna "
-                "de las tres reglas, al ignorarse por separado, "
+                "de las reglas probadas, al ignorarse por separado, "
                 "permite resolver el modelo. Eso significa que la "
                 "infactibilidad **combina varias condiciones a la "
-                "vez**. Recomendaciones generales: revisá si tenés "
-                "muchas clases en pocas franjas (marcá virtual los "
-                "recursados / dictados por Zoom desde Ciclos → "
-                "Dictados), si hay materias con horas teoría/lab "
-                "incoherentes con sus horarios, y si hay horarios "
-                "sin tipo determinado en el cronograma."
+                "vez**."
             )
+            # Análisis combinado: si el IIS probó pares de relajaciones
+            # y encontró combinaciones que rescatan el modelo, listar
+            # las opciones accionables. Cada fila muestra un par de
+            # cambios que aplicados juntos resuelven la infactibilidad.
+            _combos = iis.get("combinaciones_rescate") or []
+            if _combos:
+                st.info(
+                    "💡 **Combinaciones accionables**: aplicá los "
+                    "**dos cambios** de una misma fila (grupo a "
+                    "BLANDO + ajuste extra). Están ordenadas por "
+                    "menor impacto (grupos con menos materias en "
+                    "el plan primero)."
+                )
+                _combos_ord = sorted(
+                    _combos,
+                    key=lambda c: c.get("n_materias_plan", 0),
+                )
+                _rows_combo = [
+                    {
+                        "Pasar a BLANDO": c["grupo_nombre"],
+                        "Materias del plan": c["n_materias_plan"],
+                        "Y además": c["extra_label"],
+                    }
+                    for c in _combos_ord
+                ]
+                st.dataframe(
+                    _rows_combo,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                st.caption(
+                    "Recomendaciones generales: revisá si tenés "
+                    "muchas clases en pocas franjas (marcá virtual "
+                    "los recursados / dictados por Zoom desde "
+                    "Ciclos → Dictados), si algún grupo en modo "
+                    "DURO tiene un set de sedes demasiado chico "
+                    "para su demanda, y si el toggle 'Forzar misma "
+                    "sede por comisión' está pidiendo más de lo "
+                    "que la oferta permite."
+                )
 
         st.markdown("**Detalle por regla:**")
-        for ri in ("R4", "R5", "R6"):
-            _det = (iis.get("detalles") or {}).get(ri, {})
+        # Orden de exposición: sede-related primero (R10/R14/R13),
+        # después las históricas (R4/R5/R6). Iteramos sobre las que
+        # realmente aparecen en `detalles` para no listar reglas no
+        # probadas.
+        _detalles_map = iis.get("detalles") or {}
+        _orden_ui = ("R10", "R14", "R13", "R4", "R5", "R6")
+        for ri in _orden_ui:
+            _det = _detalles_map.get(ri)
             if not _det:
                 continue
             _feas = _det.get("feasible_relajado", False)

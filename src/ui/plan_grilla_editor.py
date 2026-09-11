@@ -158,13 +158,45 @@ def _dialog_edit_horario():
 
     st.divider()
 
+    base_dia = pending.get("_baseline_dia", pending["dia"])
+    base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
+    base_hf = pending.get("_baseline_hf", pending["hora_fin"])
+
+    # Preview de impacto: cualquier edición que toque día/hora dispara
+    # el flujo compartido `render_preview_impacto_edicion` para
+    # mostrar conflictos que agrega o colisiones de aula que
+    # quedarían. Sin preview, el operador podía guardar cambios que
+    # dejaban doble booking o pares de solapamiento silenciosos.
+    from src.ui.horario_edit_shared import (
+        preview_hay_riesgo,
+        render_preview_impacto_edicion,
+    )
+    toca_slot = (
+        new_dia != base_dia
+        or new_inicio != base_hi
+        or new_fin != base_hf
+    )
+    preview_slot = render_preview_impacto_edicion(
+        plan_id=plan_id,
+        horario_id=pending["horario_id"],
+        nuevo_dia=new_dia,
+        nuevo_hora_inicio=new_inicio,
+        nuevo_hora_fin=new_fin,
+        hubo_cambio_slot=toca_slot,
+    )
+
+    st.divider()
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Guardar", type="primary", use_container_width=True):
-            base_dia = pending.get("_baseline_dia", pending["dia"])
-            base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
-            base_hf = pending.get("_baseline_hf", pending["hora_fin"])
-
+        _hay_riesgo = preview_hay_riesgo(preview_slot)
+        _btn_label = (
+            "⚠️ Guardar de todos modos" if _hay_riesgo else "Guardar"
+        )
+        if st.button(
+            _btn_label, type="primary", use_container_width=True,
+            disabled=bool(preview_slot and preview_slot.error),
+        ):
             cambios: dict = {}
             if new_dia != base_dia:
                 cambios["dia"] = new_dia
@@ -596,6 +628,12 @@ def render_plan_grilla_editor(
     # Toast pendiente de accion anterior
     if "_pge_toast" in st.session_state:
         st.toast(st.session_state.pop("_pge_toast"))
+
+    # Warning persistente por colisiones detectadas post-edición
+    # batch (data_editor de horarios). Se limpia sólo cuando la
+    # próxima edición deja el plan sin colisiones.
+    if "_pge_colisiones_warning" in st.session_state:
+        st.warning(st.session_state["_pge_colisiones_warning"])
 
     with next(get_session()) as session:
         plan = session.get(PlanificacionCursadaDB, plan_id)
@@ -1462,6 +1500,27 @@ def _render_tabla_editable_por_materia(
             parts.append(f"{deleted} eliminada(s)")
         if parts:
             st.session_state["_pge_toast"] = ", ".join(parts).capitalize()
+
+        # Chequeo post-commit: si el batch dejó colisiones de aula
+        # (típicamente cuando se cambia día/hora de un HorarioDB con
+        # aula asignada), lo reportamos como warning persistente.
+        # No podemos abrir un modal por celda editada — sí podemos
+        # avisar que hay que ir al panel de aulas a revisar.
+        if saved or deleted or created:
+            from src.services.plan_actions_service import (
+                detectar_colisiones_aula_plan,
+            )
+            with next(get_session()) as _post_sess:
+                _cols = detectar_colisiones_aula_plan(_post_sess, plan_id)
+            if _cols:
+                st.session_state["_pge_colisiones_warning"] = (
+                    f"⚠️ Después de esta edición quedan "
+                    f"{len(_cols)} colisión(es) de aula en el plan. "
+                    "Andá al panel de aulas o al asignador para "
+                    "revisarlas y liberarlas."
+                )
+            else:
+                st.session_state.pop("_pge_colisiones_warning", None)
 
     st.data_editor(
         df,

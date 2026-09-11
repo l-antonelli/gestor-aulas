@@ -1470,20 +1470,38 @@ def compute_pares_intersede_riesgo(
     horarios: list[HorarioSlot],
     comision_de_horario: dict[str, str],
     margen_min_intersede_minutos: int,
+    *,
+    grupos_curriculares_de_horario: (
+        dict[str, set[tuple[str, int, str]]] | None
+    ) = None,
 ) -> list[tuple[str, str, int]]:
-    """Detecta pares de horarios contiguos de la misma comisión el
-    mismo día donde el gap entre fin(h1) y inicio(h2) es menor que
-    ``margen_min_intersede_minutos``.
+    """Detecta pares de horarios contiguos con gap corto en riesgo
+    de intersede.
 
-    Estos pares son los "de riesgo": si caen en sedes distintas, no
-    alcanza el tiempo para trasladarse. La restricción R13 (Fase 4)
-    los bloquea a nivel LP.
+    Dos tipos de riesgo:
+
+    1. **Traslado del profesor** — dos horarios de la **misma
+       comisión** el mismo día contiguos. Si caen en sedes distintas,
+       el docente no llega a tiempo. Siempre se detecta.
+    2. **Traslado del alumno** — dos horarios de **materias
+       distintas del mismo (carrera, año, cuatri)** el mismo día
+       contiguos. Ningún alumno del grupo puede trasladarse. Sólo se
+       detecta si se provee ``grupos_curriculares_de_horario``.
+
+    La restricción R13 del LP bloquea ambos tipos por igual: para
+    cada par en riesgo, no puede haber una asignación que ubique
+    los dos horarios en sedes distintas.
 
     Args:
         horarios: lista de HorarioSlot activos.
         comision_de_horario: horario_id → comision_id.
         margen_min_intersede_minutos: umbral en minutos. Si es 0, la
             función devuelve una lista vacía (restricción desactivada).
+        grupos_curriculares_de_horario: opcional, horario_id → set de
+            claves ``(carrera_codigo, anio, cuatri)`` a las que
+            pertenece la materia del horario. Necesario para detectar
+            pares intercomisión del mismo grupo curricular. Si es
+            None o vacío, sólo se detectan pares de la misma comisión.
 
     Returns:
         Lista de tuplas ``(h1_id, h2_id, gap_minutos)`` con h1 anterior
@@ -1494,7 +1512,11 @@ def compute_pares_intersede_riesgo(
     if margen_min_intersede_minutos <= 0:
         return []
 
-    # Agrupar horarios por (comision, dia) para chequear pares.
+    pares_set: set[tuple[str, str, int]] = set()
+
+    # ------------------------------------------------------------------
+    # (1) Pares de la misma comisión — traslado del profesor.
+    # ------------------------------------------------------------------
     por_com_dia: dict[tuple[str, str], list[HorarioSlot]] = {}
     for h in horarios:
         cid = comision_de_horario.get(h.id)
@@ -1502,11 +1524,9 @@ def compute_pares_intersede_riesgo(
             continue
         por_com_dia.setdefault((cid, h.dia), []).append(h)
 
-    pares: list[tuple[str, str, int]] = []
     for _key, hs in por_com_dia.items():
         if len(hs) < 2:
             continue
-        # Ordenar por hora_inicio para procesar contiguos.
         hs_sorted = sorted(
             hs, key=lambda x: (x.hora_inicio, x.hora_fin),
         )
@@ -1518,15 +1538,63 @@ def compute_pares_intersede_riesgo(
                 ini2_min = h2.hora_inicio.hour * 60 + h2.hora_inicio.minute
                 gap = ini2_min - fin1_min
                 if gap < 0:
-                    # Se solapan: lo captura R4.
                     continue
                 if gap >= margen_min_intersede_minutos:
-                    # Suficiente margen — y como hs_sorted está por
-                    # hora_inicio, cualquier h3 posterior también.
                     break
-                pares.append((h1.id, h2.id, gap))
+                pares_set.add((h1.id, h2.id, gap))
 
-    return pares
+    # ------------------------------------------------------------------
+    # (2) Pares intercomisión del mismo grupo curricular — traslado
+    # del alumno. Sólo si se proveyó el mapping.
+    # ------------------------------------------------------------------
+    if grupos_curriculares_de_horario:
+        # Agrupar horarios por (grupo_curricular, dia) considerando
+        # que cada horario puede pertenecer a varios grupos (una
+        # materia puede figurar en el plan de varias carreras).
+        por_grupo_dia: dict[
+            tuple[tuple[str, int, str], str], list[HorarioSlot]
+        ] = {}
+        for h in horarios:
+            grupos = grupos_curriculares_de_horario.get(h.id) or set()
+            for gk in grupos:
+                por_grupo_dia.setdefault((gk, h.dia), []).append(h)
+
+        for _key, hs in por_grupo_dia.items():
+            if len(hs) < 2:
+                continue
+            hs_sorted = sorted(
+                hs, key=lambda x: (x.hora_inicio, x.hora_fin),
+            )
+            for i in range(len(hs_sorted)):
+                for j in range(i + 1, len(hs_sorted)):
+                    h1 = hs_sorted[i]
+                    h2 = hs_sorted[j]
+                    # Skip si son de la misma materia (misma
+                    # comisión ya cubierta arriba; distintas
+                    # comisiones de la misma materia no son
+                    # cursables juntas por definición, no un
+                    # traslado real).
+                    if h1.materia_codigo == h2.materia_codigo:
+                        continue
+                    fin1_min = h1.hora_fin.hour * 60 + h1.hora_fin.minute
+                    ini2_min = h2.hora_inicio.hour * 60 + h2.hora_inicio.minute
+                    gap = ini2_min - fin1_min
+                    if gap < 0:
+                        continue
+                    if gap >= margen_min_intersede_minutos:
+                        break
+                    # Canonicalizar orden por id para deduplicar
+                    # cuando el mismo par aparece en varios grupos
+                    # curriculares (materias compartidas entre
+                    # carreras).
+                    a, b = (
+                        (h1.id, h2.id) if h1.id < h2.id
+                        else (h2.id, h1.id)
+                    )
+                    pares_set.add((a, b, gap))
+
+    # Devolver como lista ordenada para determinismo.
+    return sorted(pares_set)
 
 
 def compute_heatmap_total_sin_sede(

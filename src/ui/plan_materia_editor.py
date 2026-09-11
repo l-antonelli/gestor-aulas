@@ -172,16 +172,44 @@ def _dialog_edit_horario():
             ),
         )
 
+    # Comparar contra baseline para detectar cambios reales.
+    _base_dia = pending.get("_baseline_dia", pending["dia"])
+    _base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
+    _base_hf = pending.get("_baseline_hf", pending["hora_fin"])
+
+    # Preview de impacto compartido (colisiones de aula +
+    # solapamientos + duplicados). Se dispara sólo si el usuario
+    # tocó día u horas.
+    from src.ui.horario_edit_shared import (
+        preview_hay_riesgo,
+        render_preview_impacto_edicion,
+    )
+    _toca_slot = (
+        new_dia != _base_dia
+        or new_inicio != _base_hi
+        or new_fin != _base_hf
+    )
+    _preview_slot = render_preview_impacto_edicion(
+        plan_id=_plan_id,
+        horario_id=pending["horario_id"],
+        nuevo_dia=new_dia,
+        nuevo_hora_inicio=new_inicio,
+        nuevo_hora_fin=new_fin,
+        hubo_cambio_slot=_toca_slot,
+    )
+
     st.divider()
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Guardar", type="primary", use_container_width=True):
-            # Comparar contra baseline (DB) para detectar cambios reales
-            _base_dia = pending.get("_baseline_dia", pending["dia"])
-            _base_hi = pending.get("_baseline_hi", pending["hora_inicio"])
-            _base_hf = pending.get("_baseline_hf", pending["hora_fin"])
-
+        _hay_riesgo = preview_hay_riesgo(_preview_slot)
+        _btn_label = (
+            "⚠️ Guardar de todos modos" if _hay_riesgo else "Guardar"
+        )
+        if st.button(
+            _btn_label, type="primary", use_container_width=True,
+            disabled=bool(_preview_slot and _preview_slot.error),
+        ):
             cambios: dict = {}
             if new_dia != _base_dia:
                 cambios["dia"] = new_dia

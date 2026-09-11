@@ -154,6 +154,14 @@ def _run_migrations(eng):
         # criterio: por qué existe el grupo, cuándo agregarle o
         # sacarle materias, etc.
         "ALTER TABLE grupo_materia ADD COLUMN descripcion VARCHAR NOT NULL DEFAULT ''",
+        # Flags que gobiernan qué ejes chequea el chequeo de
+        # consistencia por grupo (2026-09-10). Por default los 3
+        # activados (comportamiento previo del chequeo, más
+        # estricto). El usuario puede apagarlos desde la UI para
+        # relajar el chequeo eje-por-eje.
+        "ALTER TABLE grupo_materia ADD COLUMN chequear_pertenencia_asociadas BOOLEAN NOT NULL DEFAULT 1",
+        "ALTER TABLE grupo_materia ADD COLUMN chequear_exclusividad_no_asociadas BOOLEAN NOT NULL DEFAULT 1",
+        "ALTER TABLE grupo_materia ADD COLUMN chequear_completitud BOOLEAN NOT NULL DEFAULT 1",
     ]
     with eng.connect() as conn:
         for sql in migrations:
@@ -1119,8 +1127,11 @@ def _migrate_grupos_materia(eng):
             grupo_sin_clasificar_id = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
                 "INSERT INTO grupo_materia "
-                "(id, nombre, descripcion, es_sin_clasificar) "
-                "VALUES (?, ?, '', ?)",
+                "(id, nombre, descripcion, es_sin_clasificar, "
+                "chequear_pertenencia_asociadas, "
+                "chequear_exclusividad_no_asociadas, "
+                "chequear_completitud) "
+                "VALUES (?, ?, '', ?, 1, 1, 1)",
                 (grupo_sin_clasificar_id, "Sin clasificar", 1),
             )
             for orden, sede_id in enumerate(sede_ids_todas):
@@ -1171,8 +1182,11 @@ def _migrate_grupos_materia(eng):
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
                 "INSERT INTO grupo_materia "
-                "(id, nombre, descripcion, es_sin_clasificar) "
-                "VALUES (?, ?, '', ?)",
+                "(id, nombre, descripcion, es_sin_clasificar, "
+                "chequear_pertenencia_asociadas, "
+                "chequear_exclusividad_no_asociadas, "
+                "chequear_completitud) "
+                "VALUES (?, ?, '', ?, 1, 1, 1)",
                 (gid, nombre, 0),
             )
             for orden, sid in enumerate(sede_ids):
@@ -1201,8 +1215,11 @@ def _migrate_grupos_materia(eng):
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
                 "INSERT INTO grupo_materia "
-                "(id, nombre, descripcion, es_sin_clasificar) "
-                "VALUES (?, ?, '', ?)",
+                "(id, nombre, descripcion, es_sin_clasificar, "
+                "chequear_pertenencia_asociadas, "
+                "chequear_exclusividad_no_asociadas, "
+                "chequear_completitud) "
+                "VALUES (?, ?, '', ?, 1, 1, 1)",
                 (gid, gname, 0),
             )
             # Sedes: las de la carrera si tiene, sino lista vacía.

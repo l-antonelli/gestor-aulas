@@ -158,8 +158,25 @@ def _render_selector_grupo(
                     key="grupo_materia_selector",
                     label_visibility="collapsed",
                 )
+                nuevo_grupo_id = grupos_ord[elegido].id
+                # Si el usuario cambió de grupo, limpiamos el estado
+                # UI del grupo anterior. Esto evita que ediciones
+                # intermedias (blandas reordenadas, sedes agregadas o
+                # quitadas sin guardar) queden vivas en session_state
+                # y pisen la DB cuando el usuario vuelva al grupo
+                # anterior y apriete Guardar sin darse cuenta de que
+                # tiene cambios pendientes.
+                anterior = st.session_state.get(
+                    "grupo_materia_seleccionado",
+                )
+                if anterior and anterior != nuevo_grupo_id:
+                    for _k in (
+                        f"grupo_blandas_orden_{anterior}",
+                        f"grupo_blandas_orden_{anterior}_source",
+                    ):
+                        st.session_state.pop(_k, None)
                 st.session_state["grupo_materia_seleccionado"] = (
-                    grupos_ord[elegido].id
+                    nuevo_grupo_id
                 )
             with col_new:
                 if st.button(
@@ -321,27 +338,76 @@ def _render_editor_grupo(
             ),
             height=100,
         )
-        carrera_names_actuales = [
-            carrera_nombre_by_codigo.get(c, c)
-            for c in cfg.carreras_asociadas
-        ]
-        carreras_seleccionadas_names = st.multiselect(
-            "Carreras asociadas",
-            options=[c.nombre for c in carreras_db],
-            default=carrera_names_actuales,
-            key=f"grupo_carreras_{grupo.id}",
-            help=(
-                "Carreras a las que 'pertenece' este grupo, para el "
-                "chequeo de consistencia. No dispara sync automático — "
-                "sirve para que el botón 'Chequear consistencia' pueda "
-                "listar las materias exclusivas de estas carreras que "
-                "todavía no están acá."
-            ),
+        st.divider()
+        # -- Asociaciones y chequeos (agrupados) --
+        st.markdown("#### 🎯 Asociaciones y chequeos")
+        st.caption(
+            "Las carreras asociadas definen contra qué planes se "
+            "compara el grupo. Los chequeos, al lado, determinan "
+            "**qué inconsistencias** se detectan: podés apagar cada "
+            "eje selectivamente si tu criterio de agrupación no lo "
+            "necesita."
         )
-        carreras_seleccionadas = [
-            carrera_codigo_by_nombre[n]
-            for n in carreras_seleccionadas_names
-        ]
+        col_carreras, col_chequeos = st.columns([2, 1])
+        with col_carreras:
+            carrera_names_actuales = [
+                carrera_nombre_by_codigo.get(c, c)
+                for c in cfg.carreras_asociadas
+            ]
+            carreras_seleccionadas_names = st.multiselect(
+                "Carreras asociadas",
+                options=[c.nombre for c in carreras_db],
+                default=carrera_names_actuales,
+                key=f"grupo_carreras_{grupo.id}",
+                help=(
+                    "Carreras a las que 'pertenece' este grupo. No "
+                    "dispara sync automático — se usa como referencia "
+                    "para el chequeo de consistencia."
+                ),
+            )
+            carreras_seleccionadas = [
+                carrera_codigo_by_nombre[n]
+                for n in carreras_seleccionadas_names
+            ]
+
+        with col_chequeos:
+            st.markdown("**Chequeos activos**")
+            check_pert = st.toggle(
+                "Pertenencia a las asociadas",
+                value=grupo.chequear_pertenencia_asociadas,
+                key=f"chk_pert_{grupo.id}",
+                help=(
+                    "Si está ON, se marca como *ajena* toda materia "
+                    "del grupo que no aparezca en el plan vigente de "
+                    "alguna carrera asociada. En grupos transversales "
+                    "(≥ 2 asociadas) el umbral es aparecer en al "
+                    "menos 2 asociadas — apagalo si te alcanza con "
+                    "que aparezca en 1."
+                ),
+            )
+            check_excl = st.toggle(
+                "Exclusividad frente a no asociadas",
+                value=grupo.chequear_exclusividad_no_asociadas,
+                key=f"chk_excl_{grupo.id}",
+                help=(
+                    "Si está ON, se marca como *ajena* toda materia "
+                    "del grupo que aparezca **además** en el plan "
+                    "vigente de alguna carrera **no** asociada. "
+                    "Apagalo cuando el grupo tolera materias que "
+                    "también aparecen en otras carreras."
+                ),
+            )
+            check_compl = st.toggle(
+                "Completitud (detectar faltantes)",
+                value=grupo.chequear_completitud,
+                key=f"chk_compl_{grupo.id}",
+                help=(
+                    "Si está ON, el chequeo busca materias que "
+                    "corresponden al grupo pero están en otro grupo "
+                    "(o sin grupo). Apagalo para ignorar las "
+                    "faltantes y validar sólo las ajenas."
+                ),
+            )
 
         st.divider()
         # -- Sedes admisibles (modo DURO) --
@@ -375,16 +441,26 @@ def _render_editor_grupo(
             "son alternativas con costo `λ_sede_pref` por horario "
             "desplazado. Reordenalas con ↑ / ↓."
         )
+        # Re-hidratación: como fingerprint usamos la tupla ordenada de
+        # sede_ids que hay HOY en DB. Si esa tupla cambia entre renders
+        # (por otro path que tocó la DB, o al abrir el grupo por
+        # primera vez), rehidratamos el session_state desde DB. Usar
+        # `grupo.id` como fingerprint era un bug: nunca cambiaba
+        # después del primer render → si el usuario tocaba las
+        # blandas sin guardar y volvía después, el session_state
+        # quedaba desincronizado con la DB y el próximo Guardar
+        # pisaba lo que estaba persistido.
         blandas_order_key = f"grupo_blandas_orden_{grupo.id}"
         blandas_source_key = f"{blandas_order_key}_source"
+        db_fingerprint = tuple(cfg.sedes_blandas_ordenadas)
         if (
             blandas_order_key not in st.session_state
-            or st.session_state.get(blandas_source_key) != grupo.id
+            or st.session_state.get(blandas_source_key) != db_fingerprint
         ):
             st.session_state[blandas_order_key] = list(
                 cfg.sedes_blandas_ordenadas
             )
-            st.session_state[blandas_source_key] = grupo.id
+            st.session_state[blandas_source_key] = db_fingerprint
         blandas_local: list[str] = list(
             st.session_state[blandas_order_key]
         )
@@ -483,6 +559,9 @@ def _render_editor_grupo(
                         sedes_duras=duras_edit_ids,
                         sedes_blandas_ordenadas=blandas_local,
                         carreras_asociadas=carreras_seleccionadas,
+                        chequear_pertenencia_asociadas=check_pert,
+                        chequear_exclusividad_no_asociadas=check_excl,
+                        chequear_completitud=check_compl,
                     )
                     st.success("Cambios guardados.")
                     st.session_state.pop(blandas_order_key, None)
@@ -548,22 +627,29 @@ def _render_chequeo_consistencia(
     """
     with st.container(border=True):
         st.markdown("#### 🔍 Chequeo de consistencia")
-        st.caption(
-            "Compara las materias del grupo con las materias que "
-            "aparecen en el **plan vigente** de las carreras "
-            "asociadas. El chequeo se adapta según cuántas carreras "
-            "estén asociadas al grupo:\n\n"
-            "- **Grupo por-carrera** (1 asociada, tipo *Específicas "
-            "de X*): faltante = aparece exclusivamente en el plan "
-            "de X; ajena = está en el grupo pero aparece también "
-            "en otras carreras.\n"
-            "- **Grupo transversal** (≥ 2 asociadas, tipo *FB*, "
-            "*FI*, *CE*): la materia debe ser **exclusiva de las "
-            "asociadas**. Faltante = aparece en ≥ 2 asociadas y en "
-            "ninguna no-asociada; ajena = está en el grupo pero "
-            "aparece en ≤ 1 asociada, o aparece también en al "
-            "menos una carrera **no asociada**."
-        )
+        # Resumen textual de qué ejes están activos para este grupo.
+        _ejes: list[str] = []
+        if grupo.chequear_pertenencia_asociadas:
+            _ejes.append("**pertenencia**")
+        if grupo.chequear_exclusividad_no_asociadas:
+            _ejes.append("**exclusividad**")
+        if grupo.chequear_completitud:
+            _ejes.append("**completitud**")
+        if _ejes:
+            _ejes_txt = ", ".join(_ejes)
+            st.caption(
+                f"Ejes activos: {_ejes_txt}. Compara las materias del "
+                "grupo con los **planes vigentes** de las carreras "
+                "asociadas. Podés activar o desactivar cada eje desde "
+                "el contenedor **Asociaciones y chequeos** de arriba."
+            )
+        else:
+            st.caption(
+                "Todos los ejes están desactivados — el chequeo no va "
+                "a reportar faltantes ni ajenas. Activá al menos uno "
+                "desde el contenedor **Asociaciones y chequeos** de "
+                "arriba para poder validar la consistencia."
+            )
 
         run_key = f"consist_run_{grupo.id}"
         result_key = f"consist_result_{grupo.id}"
@@ -636,10 +722,23 @@ def _render_chequeo_consistencia(
 
         # --- Sección: Faltantes ------------------------------------
         if faltantes_list:
-            st.warning(
+            # Explicación adaptada a los ejes activos.
+            _base = (
                 f"➕ **{len(faltantes_list)} materia(s) faltante(s)**: "
                 "corresponderían a este grupo pero están en otro."
             )
+            _detalle: list[str] = []
+            if grupo.chequear_pertenencia_asociadas:
+                _detalle.append(
+                    "aparecen en el plan de las asociadas"
+                )
+            if grupo.chequear_exclusividad_no_asociadas:
+                _detalle.append(
+                    "no aparecen en carreras no asociadas"
+                )
+            if _detalle:
+                _base += " Criterio: " + " y ".join(_detalle) + "."
+            st.warning(_base)
             for i, item in enumerate(faltantes_list):
                 row = st.container()
                 cols = row.columns([1, 3, 3, 2, 1])
@@ -698,11 +797,26 @@ def _render_chequeo_consistencia(
         if ajenas_list:
             if faltantes_list:
                 st.divider()
+            _motivos: list[str] = []
+            if grupo.chequear_pertenencia_asociadas:
+                _motivos.append(
+                    "no cumplen la **pertenencia** a las asociadas"
+                )
+            if grupo.chequear_exclusividad_no_asociadas:
+                _motivos.append(
+                    "aparecen en el plan de carreras "
+                    "**no asociadas**"
+                )
+            _motivo_txt = (
+                " o ".join(_motivos)
+                if _motivos else
+                "violan los ejes activos del chequeo"
+            )
             st.warning(
                 f"⚠️ **{len(ajenas_list)} materia(s) ajena(s)**: "
-                "están en este grupo pero aparecen en el plan de "
-                "carreras **no asociadas**. Verificá si "
-                "corresponden a este grupo o conviene moverlas."
+                f"están en este grupo pero {_motivo_txt}. "
+                "Verificá si corresponden a este grupo o conviene "
+                "moverlas."
             )
             for i, item in enumerate(ajenas_list):
                 row = st.container()

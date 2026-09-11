@@ -158,14 +158,22 @@ def create_grupo(
     carreras_asociadas: Optional[list[str]] = None,
     es_sin_clasificar: bool = False,
     descripcion: str = "",
+    chequear_pertenencia_asociadas: bool = True,
+    chequear_exclusividad_no_asociadas: bool = True,
+    chequear_completitud: bool = True,
 ) -> GrupoMateriaDB:
     """Crea un grupo con las dos configuraciones de sede + carreras
-    asociadas.
+    asociadas + flags de chequeo.
 
     Validaciones:
     - Nombre único.
     - Sólo un grupo con ``es_sin_clasificar=True``.
     - Las sedes referenciadas deben existir (FK).
+
+    Los tres ``chequear_*`` gobiernan qué ejes evalúa
+    ``chequear_consistencia_grupo``. Ver docstring del modelo
+    ``GrupoMateriaDB`` para la semántica de cada uno. Default: los
+    tres activados.
     """
     if get_grupo_por_nombre(session, nombre) is not None:
         raise ValueError(f"Ya existe un grupo con nombre '{nombre}'.")
@@ -176,6 +184,9 @@ def create_grupo(
         nombre=nombre,
         descripcion=descripcion,
         es_sin_clasificar=es_sin_clasificar,
+        chequear_pertenencia_asociadas=chequear_pertenencia_asociadas,
+        chequear_exclusividad_no_asociadas=chequear_exclusividad_no_asociadas,
+        chequear_completitud=chequear_completitud,
     )
     session.add(grupo)
     session.flush()
@@ -202,6 +213,9 @@ def update_grupo(
     sedes_blandas_ordenadas: Optional[list[str]] = None,
     carreras_asociadas: Optional[list[str]] = None,
     descripcion: Optional[str] = None,
+    chequear_pertenencia_asociadas: Optional[bool] = None,
+    chequear_exclusividad_no_asociadas: Optional[bool] = None,
+    chequear_completitud: Optional[bool] = None,
 ) -> None:
     """Actualiza el grupo. Los args con ``None`` se ignoran (dejan la
     configuración previa intacta); los que se pasan (aunque sean
@@ -217,6 +231,25 @@ def update_grupo(
 
     if descripcion is not None and descripcion != grupo.descripcion:
         grupo.descripcion = descripcion
+        session.add(grupo)
+
+    if (
+        chequear_pertenencia_asociadas is not None
+        and chequear_pertenencia_asociadas != grupo.chequear_pertenencia_asociadas
+    ):
+        grupo.chequear_pertenencia_asociadas = chequear_pertenencia_asociadas
+        session.add(grupo)
+    if (
+        chequear_exclusividad_no_asociadas is not None
+        and chequear_exclusividad_no_asociadas != grupo.chequear_exclusividad_no_asociadas
+    ):
+        grupo.chequear_exclusividad_no_asociadas = chequear_exclusividad_no_asociadas
+        session.add(grupo)
+    if (
+        chequear_completitud is not None
+        and chequear_completitud != grupo.chequear_completitud
+    ):
+        grupo.chequear_completitud = chequear_completitud
         session.add(grupo)
 
     if sedes_duras is not None or sedes_blandas_ordenadas is not None:
@@ -509,6 +542,47 @@ def resolver_sedes_admisibles_por_materia(
     )
 
 
+def sedes_admisibles_set_por_materia(
+    session: Session,
+    materia_codigo: str,
+    modos_por_grupo: Optional[dict[str, str]] = None,
+) -> Optional[set[str]]:
+    """Devuelve el set de sedes admisibles para el LP dada una materia
+    y el mapa de modos por grupo — la versión "legacy-friendly"
+    usada por chequeos y heatmaps que necesitan el mismo filtro que
+    el LP aplica.
+
+    Semántica (idéntica al bloque R10 de ``build_inputs``):
+
+    - Modo **DURO** con lista no vacía → ``set(sedes_ordenadas)``.
+    - Modo **DURO** con lista vacía → ``None`` (fallback permisivo).
+    - Modo **BLANDO** → ``None`` (todas admisibles, distinto costo).
+    - Materia sin grupo → ``None``.
+
+    ``None`` significa "sin restricción de sede" — es lo que interpreta
+    ``compute_heatmap_por_sede`` como "cualquier sede vale".
+
+    ``modos_por_grupo`` es opcional; si se omite, se asume DURO para
+    todo grupo (el modo más restrictivo — coincide con el fallback
+    del LP cuando ``LPConfig.modos_por_grupo`` no tiene entrada
+    explícita).
+    """
+    grupo = resolver_grupo_de_materia(session, materia_codigo)
+    if grupo is None:
+        return None
+    modo: Modo = (
+        (modos_por_grupo or {}).get(grupo.id, "DURO")  # type: ignore[assignment]
+    )
+    sedes_ord, modo_eff = resolver_config_sedes_por_materia(
+        session, materia_codigo, modo,
+    )
+    if modo_eff != "DURO":
+        return None
+    if not sedes_ord:
+        return None
+    return set(sedes_ord)
+
+
 # =============================================================================
 # Chequeo de consistencia
 # =============================================================================
@@ -632,17 +706,26 @@ def chequear_consistencia_grupo(
     """Chequea la consistencia bidireccional del grupo contra los
     planes vigentes de sus carreras asociadas.
 
+    La lógica se controla con los 3 flags del grupo (ver
+    ``GrupoMateriaDB``):
+
+    - ``chequear_pertenencia_asociadas``: eje "toda materia del grupo
+      pertenece a las asociadas". En régimen transversal (≥2 asociadas)
+      la interpretación es más fuerte: exige aparecer en al menos 2
+      asociadas — si aparece en 1 sola, corresponde al específico de
+      esa carrera.
+    - ``chequear_exclusividad_no_asociadas``: eje "no aparece en no
+      asociadas".
+    - ``chequear_completitud``: si OFF, no se computan faltantes.
+
     Devuelve ``(faltantes, ajenas, warnings)``:
 
-    - **faltantes**: materias que corresponderían al grupo pero
-      están en otro (o sin grupo). Detectadas por: aparecen en el
-      plan vigente de una carrera asociada, no aparecen en planes
-      vigentes de carreras no asociadas, y no están ya en el grupo.
-    - **ajenas**: materias que están en el grupo pero probablemente
-      no deberían — no aparecen en el plan vigente de ninguna
-      carrera asociada, y sí aparecen en el plan vigente de al
-      menos una carrera no asociada. Sugerencia de destino cuando
-      es unívoca.
+    - **faltantes**: materias que aparecen en al menos una carrera
+      asociada, respetan los umbrales activos (pertenencia y
+      exclusividad, si están ON) y están en otro grupo (o sin grupo).
+      Vacío si ``chequear_completitud=False``.
+    - **ajenas**: materias del grupo que violan alguno de los ejes
+      activos. Si ambos flags de ajena están OFF, siempre vacío.
     - **warnings**: mensajes útiles para la UI (por ej. "la carrera
       X no tiene plan activo, se usa fallback").
     """
@@ -682,26 +765,19 @@ def chequear_consistencia_grupo(
     if not planes_vigentes:
         return ([], [], warnings)
 
-    # -----------------------------------------------------------------
-    # Régimen del chequeo según cantidad de carreras asociadas:
-    #
-    # - **Por-carrera** (1 asociada, típico "Específicas de X"):
-    #   una materia es "de X" si aparece EXCLUSIVAMENTE en el plan
-    #   vigente de X.
-    #     Faltante = exclusiva de X y no está en el grupo.
-    #     Ajena = está en el grupo pero aparece en el plan de otras
-    #             carreras (además de X, o en lugar de X).
-    #
-    # - **Transversal** (≥ 2 asociadas, típico FB/FI/CE): una
-    #   materia es "común a las asociadas" si aparece en ≥ 2 de
-    #   ellas Y NO aparece en carreras no asociadas.
-    #     Faltante = aparece en ≥ 2 carreras asociadas, no aparece
-    #                en ninguna no asociada, y no está en el grupo.
-    #     Ajena = está en el grupo pero (aparece en ≤ 1 asociada,
-    #             o aparece en ≥ 1 no asociada). O sea, no cumple
-    #             la exclusividad transversal.
-    # -----------------------------------------------------------------
+    # Umbral de pertenencia para régimen transversal (≥2 asociadas):
+    # cuando `chequear_pertenencia_asociadas` está ON, se requiere que
+    # la materia aparezca en al menos 2 asociadas (interpretación
+    # transversal: una materia en 1 sola asociada pertenece al
+    # específico de esa carrera, no al grupo transversal). Cuando
+    # está OFF, basta con aparecer en 1 (relaja el umbral).
     modo_transversal = len(carreras_asociadas) >= 2
+    umbral_pertenencia = (
+        2 if (
+            modo_transversal
+            and grupo.chequear_pertenencia_asociadas
+        ) else 1
+    )
 
     # Índice: materia_codigo → { carrera → PlanEstudioDB } para las
     # carreras asociadas del grupo.
@@ -744,138 +820,149 @@ def chequear_consistencia_grupo(
             materia_a_no_asociadas.setdefault(mc, []).append(cod)
 
     # -----------------------------------------------------------------
-    # Faltantes: se recolectan todas las ubicaciones por materia y
-    # luego se agrupan en una fila por código (mostrando la lista
-    # completa de ubicaciones donde aparece).
+    # Faltantes: sólo si `chequear_completitud=True`. Una materia es
+    # faltante si aparece en las asociadas cumpliendo:
+    #   * `umbral_pertenencia`: nº mínimo de asociadas donde aparece.
+    #   * Si `chequear_exclusividad_no_asociadas=True`, no aparece en
+    #     ninguna no-asociada.
+    # Y además está en otro grupo (o sin grupo).
     # -----------------------------------------------------------------
-    ubicaciones_por_faltante: dict[
-        str, list[tuple[str, PlanEstudioDB]],
-    ] = {}
-    for cod, mat_map in materias_por_carrera_grupo.items():
-        for mc, pe in mat_map.items():
-            asoc = materia_a_asociadas.get(mc, [])
-            no_asoc = materia_a_no_asociadas.get(mc, [])
-            if modo_transversal:
-                # Transversal: faltante si aparece en ≥ 2 asociadas
-                # Y NO aparece en carreras no asociadas (exclusividad
-                # transversal: si además está en otra carrera, el
-                # grupo con esas asociaciones específicas no es su
-                # lugar natural).
-                if len(asoc) < 2 or no_asoc:
+    dedup: list[MateriaFaltante] = []
+    if grupo.chequear_completitud:
+        ubicaciones_por_faltante: dict[
+            str, list[tuple[str, PlanEstudioDB]],
+        ] = {}
+        for cod, mat_map in materias_por_carrera_grupo.items():
+            for mc, pe in mat_map.items():
+                asoc = materia_a_asociadas.get(mc, [])
+                no_asoc = materia_a_no_asociadas.get(mc, [])
+                if len(asoc) < umbral_pertenencia:
                     continue
-            else:
-                # Por-carrera: faltante si es exclusiva de la única
-                # carrera asociada (no aparece en no-asociadas).
-                if no_asoc:
+                if grupo.chequear_exclusividad_no_asociadas and no_asoc:
                     continue
+                materia = session.get(MateriaDB, mc)
+                if materia is None:
+                    continue
+                if materia.grupo_id == grupo_id:
+                    continue
+                ubicaciones_por_faltante.setdefault(mc, []).append((cod, pe))
+
+        for mc in sorted(ubicaciones_por_faltante):
             materia = session.get(MateriaDB, mc)
             if materia is None:
                 continue
-            if materia.grupo_id == grupo_id:
-                continue
-            ubicaciones_por_faltante.setdefault(mc, []).append((cod, pe))
-
-    dedup: list[MateriaFaltante] = []
-    for mc in sorted(ubicaciones_por_faltante):
-        materia = session.get(MateriaDB, mc)
-        if materia is None:
-            continue
-        grupo_actual = (
-            session.get(GrupoMateriaDB, materia.grupo_id)
-            if materia.grupo_id else None
-        )
-        # Ordenar ubicaciones por (carrera, año, cuatri) para display
-        # estable.
-        ubicaciones_ord = sorted(
-            ubicaciones_por_faltante[mc],
-            key=lambda t: (
-                t[0],
-                t[1].anio_plan if t[1].anio_plan is not None else 99,
-                t[1].cuatrimestre_plan or "",
-            ),
-        )
-        dedup.append(MateriaFaltante(
-            codigo=mc,
-            nombre=materia.nombre,
-            ubicaciones=[
-                UbicacionCurricular(
-                    carrera_codigo=cod,
-                    anio=pe.anio_plan,
-                    cuatri=pe.cuatrimestre_plan,
-                )
-                for cod, pe in ubicaciones_ord
-            ],
-            grupo_actual_id=grupo_actual.id if grupo_actual else None,
-            grupo_actual_nombre=(
-                grupo_actual.nombre if grupo_actual else None
-            ),
-        ))
+            grupo_actual = (
+                session.get(GrupoMateriaDB, materia.grupo_id)
+                if materia.grupo_id else None
+            )
+            # Ordenar ubicaciones por (carrera, año, cuatri) para
+            # display estable.
+            ubicaciones_ord = sorted(
+                ubicaciones_por_faltante[mc],
+                key=lambda t: (
+                    t[0],
+                    t[1].anio_plan if t[1].anio_plan is not None else 99,
+                    t[1].cuatrimestre_plan or "",
+                ),
+            )
+            dedup.append(MateriaFaltante(
+                codigo=mc,
+                nombre=materia.nombre,
+                ubicaciones=[
+                    UbicacionCurricular(
+                        carrera_codigo=cod,
+                        anio=pe.anio_plan,
+                        cuatri=pe.cuatrimestre_plan,
+                    )
+                    for cod, pe in ubicaciones_ord
+                ],
+                grupo_actual_id=grupo_actual.id if grupo_actual else None,
+                grupo_actual_nombre=(
+                    grupo_actual.nombre if grupo_actual else None
+                ),
+            ))
 
     # -----------------------------------------------------------------
-    # Ajenas
+    # Ajenas: se reportan si al menos uno de los flags de ajena
+    # dispara. Cada flag agrega un motivo:
+    #
+    # - `chequear_pertenencia_asociadas=True`: si la materia aparece
+    #   en < `umbral_pertenencia` asociadas, viola pertenencia.
+    # - `chequear_exclusividad_no_asociadas=True`: si la materia
+    #   aparece en al menos una no-asociada, viola exclusividad.
+    #
+    # Si ambos flags están OFF, no se reportan ajenas.
     # -----------------------------------------------------------------
     materias_del_grupo = list(session.exec(
         select(MateriaDB).where(MateriaDB.grupo_id == grupo_id)
     ).all())
 
     ajenas: list[MateriaAjena] = []
-    for m in materias_del_grupo:
-        asoc = materia_a_asociadas.get(m.codigo, [])
-        no_asoc = materia_a_no_asociadas.get(m.codigo, [])
-
-        if modo_transversal:
-            # Transversal: ajena si NO cumple exclusividad
-            # transversal, es decir:
-            #   (a) aparece en ≤ 1 carrera asociada, o
-            #   (b) aparece en ≥ 1 carrera no asociada.
-            # Si aparece en ≥ 2 asociadas y en 0 no-asociadas → OK.
-            if len(asoc) >= 2 and not no_asoc:
+    check_pert = grupo.chequear_pertenencia_asociadas
+    check_excl = grupo.chequear_exclusividad_no_asociadas
+    if check_pert or check_excl:
+        for m in materias_del_grupo:
+            asoc = materia_a_asociadas.get(m.codigo, [])
+            no_asoc = materia_a_no_asociadas.get(m.codigo, [])
+            viola_pert = check_pert and len(asoc) < umbral_pertenencia
+            viola_excl = check_excl and bool(no_asoc)
+            if not (viola_pert or viola_excl):
                 continue
-            # `carreras_donde_aparece` reporta dónde aparece — puede
-            # incluir asociadas (donde se sugiere mover al grupo
-            # por-carrera de esa carrera) o carreras no asociadas
-            # (adónde apunta el "conflicto" de la exclusividad).
-            carreras_donde_aparece = sorted(set(asoc) | set(no_asoc))
-        else:
-            # Por-carrera: ajena si aparece en carreras además de la
-            # asociada, o si no aparece en la asociada.
-            if not no_asoc and asoc:
-                continue  # exclusiva de la asociada → OK
-            carreras_donde_aparece = sorted(no_asoc)
+            # `carreras_donde_aparece`: reportar las carreras que
+            # explican el diagnóstico.
+            if viola_excl and viola_pert:
+                # Ambos ejes fallan: mostrar las asociadas donde
+                # sí aparece (para el usuario ver dónde queda) y
+                # las no-asociadas (destino natural). Priorizamos
+                # las no-asociadas si son las únicas donde aparece
+                # — se preserva el comportamiento por-carrera anterior.
+                if not asoc:
+                    carreras_donde_aparece = sorted(no_asoc)
+                else:
+                    carreras_donde_aparece = sorted(set(asoc) | set(no_asoc))
+            elif viola_excl:
+                # Pertenencia OK pero contamina: reporta las no
+                # asociadas donde aparece.
+                carreras_donde_aparece = sorted(no_asoc)
+            else:
+                # viola_pert sólo: reporta dónde aparece (asoc + no
+                # asoc), para que el usuario vea a qué carrera
+                # pertenece la materia.
+                carreras_donde_aparece = sorted(set(asoc) | set(no_asoc))
 
-        if not carreras_donde_aparece:
-            # No aparece en ningún plan vigente. Puede ser una materia
-            # optativa, archivada o desconectada. La saltamos para no
-            # confundir.
-            continue
+            if not carreras_donde_aparece:
+                # No aparece en ningún plan vigente. Puede ser una
+                # materia optativa, archivada o desconectada. La
+                # saltamos para no confundir.
+                continue
 
-        # Sugerencia de grupo destino cuando es unívoca: existe un
-        # único grupo (distinto al actual) asociado a alguna de las
-        # carreras donde aparece la materia.
-        sugerencia_id: Optional[str] = None
-        sugerencia_nombre: Optional[str] = None
-        if len(carreras_donde_aparece) == 1:
-            unica = carreras_donde_aparece[0]
-            candidatos = list(session.exec(
-                select(GrupoMateriaCarreraDB.grupo_id).where(
-                    GrupoMateriaCarreraDB.carrera_codigo == unica,
-                )
-            ).all())
-            candidatos = [gid for gid in candidatos if gid != grupo_id]
-            if len(candidatos) == 1:
-                g_dest = session.get(GrupoMateriaDB, candidatos[0])
-                if g_dest is not None:
-                    sugerencia_id = g_dest.id
-                    sugerencia_nombre = g_dest.nombre
+            # Sugerencia de grupo destino cuando es unívoca: existe un
+            # único grupo (distinto al actual) asociado a alguna de las
+            # carreras donde aparece la materia.
+            sugerencia_id: Optional[str] = None
+            sugerencia_nombre: Optional[str] = None
+            if len(carreras_donde_aparece) == 1:
+                unica = carreras_donde_aparece[0]
+                candidatos = list(session.exec(
+                    select(GrupoMateriaCarreraDB.grupo_id).where(
+                        GrupoMateriaCarreraDB.carrera_codigo == unica,
+                    )
+                ).all())
+                candidatos = [gid for gid in candidatos if gid != grupo_id]
+                if len(candidatos) == 1:
+                    g_dest = session.get(GrupoMateriaDB, candidatos[0])
+                    if g_dest is not None:
+                        sugerencia_id = g_dest.id
+                        sugerencia_nombre = g_dest.nombre
 
-        ajenas.append(MateriaAjena(
-            codigo=m.codigo,
-            nombre=m.nombre,
-            carreras_donde_aparece=carreras_donde_aparece,
-            sugerencia_grupo_id=sugerencia_id,
-            sugerencia_grupo_nombre=sugerencia_nombre,
-        ))
-    ajenas.sort(key=lambda x: x.codigo)
+            ajenas.append(MateriaAjena(
+                codigo=m.codigo,
+                nombre=m.nombre,
+                carreras_donde_aparece=carreras_donde_aparece,
+                sugerencia_grupo_id=sugerencia_id,
+                sugerencia_grupo_nombre=sugerencia_nombre,
+            ))
+        ajenas.sort(key=lambda x: x.codigo)
 
     return (dedup, ajenas, warnings)
 

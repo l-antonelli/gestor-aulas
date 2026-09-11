@@ -43,9 +43,8 @@ from src.database.models import (
 from src.services.asignacion_aulas_helpers import (
     sede_preferida_desde_sets,
 )
-from src.services.carrera_sede_service import (
-    sedes_admisibles_para_carrera,
-    sedes_admisibles_para_materia,
+from src.services.grupo_materia_service import (
+    sedes_admisibles_set_por_materia,
 )
 from src.services.plan_generation_service import (
     get_inscriptos_esperados_por_comision,
@@ -218,24 +217,24 @@ def compute_metricas_calidad(
     for ml in lab_pairs:
         materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
 
-    # Sedes admisibles resueltas por HORARIO (respetando override de
-    # comisión). Sirve para calcular sede preferida.
+    # Sedes admisibles resueltas por HORARIO vía Grupo de Materias.
+    # ``ComisionDB.carrera_asignada`` quedó como etiqueta visual y no
+    # interviene en la resolución (el LP tampoco la usa — ver
+    # `asignacion_aulas_service.build_inputs`, sección R10). Todo se
+    # resuelve por la materia y su grupo.
+    #
+    # Nota: acá pasamos ``modos_por_grupo={}`` porque las métricas se
+    # calculan sobre una corrida ya persistida y no conocemos el modo
+    # con el que corrió el LP. Asumir DURO como default es coherente
+    # con el fallback del LP cuando no hay override por-grupo, y
+    # devuelve el filtro más restrictivo — coincide con lo que el
+    # inspector de la corrida muestra como "sedes duras".
     sedes_admis_por_materia: dict[str, Optional[set[str]]] = {
-        mc: sedes_admisibles_para_materia(session, mc)
+        mc: sedes_admisibles_set_por_materia(session, mc)
         for mc in mat_codes
-    }
-    carreras_override_unicas = sorted({
-        c for c in carrera_asignada_por_comision.values() if c
-    })
-    sedes_admis_por_carrera_override: dict[str, Optional[set[str]]] = {
-        cc: sedes_admisibles_para_carrera(session, cc)
-        for cc in carreras_override_unicas
     }
 
     def _sedes_admisibles_del_horario(h: HorarioDB) -> Optional[set[str]]:
-        car_override = carrera_asignada_por_comision.get(h.comision_id)
-        if car_override:
-            return sedes_admis_por_carrera_override.get(car_override)
         return sedes_admis_por_materia.get(h.codigo_materia)
 
     # Forecast por comisión.

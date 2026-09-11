@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import time as _time_mod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 
@@ -199,6 +199,8 @@ def build_inputs(
     session: Session,
     plan_id: str,
     config: LPConfig,
+    *,
+    relax_r10: bool = False,
 ) -> LPInputs:
     """Arma los inputs del LP a partir del plan de cursada.
 
@@ -210,6 +212,11 @@ def build_inputs(
        ``get_inscriptos_esperados_por_comision``).
     4. Computa compat[h, a] aplicando R3.
     5. Computa los grupos de simultaneidad sobre la grilla semanal.
+
+    ``relax_r10``: cuando ``True``, se omite el filtro por sede (R10)
+    en la construcción de ``compat``. Se usa solo desde el diagnóstico
+    IIS para detectar cuándo el filtro de sede es el que hace el
+    modelo infactible.
     """
     plan = session.get(PlanificacionCursadaDB, plan_id)
     if plan is None:
@@ -474,7 +481,9 @@ def build_inputs(
         # R10: filtro sólo se aplica en modo DURO con lista no vacía.
         # DURO con lista vacía = "todas admisibles" (fallback permisivo).
         # BLANDO nunca filtra (todas admisibles con distinto costo).
-        if modo != "DURO" or not sedes_ord:
+        # `relax_r10` (usado por el IIS) desactiva completamente el filtro
+        # de sede — útil para detectar si es R10 la causa del infeasible.
+        if relax_r10 or modo != "DURO" or not sedes_ord:
             continue
         admisibles = set(sedes_ord)
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
@@ -498,6 +507,82 @@ def build_inputs(
     sim_groups = compute_simultaneidad_groups(horarios_para_sim)
 
     # R13 (Fase 4): pares de horarios contiguos en riesgo intersede.
+    # Dos tipos de riesgo se detectan:
+    #   (a) traslado del profesor: dos horarios de la misma comisión.
+    #   (b) traslado del alumno: dos horarios de materias distintas
+    #       del mismo grupo curricular (carrera, año, cuatri).
+    # Para (b) construimos el mapping horario_id → set de claves
+    # (carrera, año, cuatri) leyendo PlanEstudioDB de las versiones
+    # de plan asociadas al ciclo, filtrando por cuatri del ciclo y
+    # enriqueciendo con anuales del mismo carrera+año (idéntico al
+    # criterio del pre-check camino cursada). Sólo se computa si
+    # hay margen > 0; sino sería trabajo desperdiciado.
+    grupos_curriculares_de_horario: dict[
+        str, set[tuple[str, int, str]]
+    ] = {}
+    if config.margen_min_intersede_minutos > 0 and plan.ciclo_id:
+        from src.database.models import (
+            CicloPlanVersionDB as _CicloPlanVersionDB,
+            PlanEstudioDB as _PlanEstudioDB,
+        )
+        _pv_ids = list(session.exec(
+            select(_CicloPlanVersionDB.plan_version_id)
+            .where(_CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
+        ).all())
+        if _pv_ids:
+            _ciclo_obj = session.get(CicloDB, plan.ciclo_id)
+            _cuatri_ciclo = (
+                f"{_ciclo_obj.numero}C" if _ciclo_obj else None
+            )
+            _pe_rows = list(session.exec(
+                select(_PlanEstudioDB).where(
+                    _PlanEstudioDB.plan_version_id.in_(_pv_ids)  # type: ignore[attr-defined]
+                )
+            ).all())
+            # (carrera, anio, cuatri) → set[materia_codigo]. Sólo
+            # obligatorias — las optativas no forman parte del
+            # camino de cursada.
+            _grupos_plan: dict[
+                tuple[str, int, str], set[str]
+            ] = {}
+            for _pe in _pe_rows:
+                if (
+                    _pe.anio_plan is None
+                    or _pe.cuatrimestre_plan is None
+                    or _pe.optativa
+                ):
+                    continue
+                _k = (
+                    _pe.carrera_codigo,
+                    _pe.anio_plan,
+                    _pe.cuatrimestre_plan,
+                )
+                _grupos_plan.setdefault(_k, set()).add(_pe.materia_codigo)
+            # Filtrar por cuatri del ciclo y enriquecer con anuales.
+            _grupos_enriquecidos: dict[
+                tuple[str, int, str], set[str]
+            ] = {}
+            for (_car, _an, _cu), _mats in _grupos_plan.items():
+                if _cuatri_ciclo and _cu != _cuatri_ciclo:
+                    continue
+                _enriched = set(_mats)
+                _anual_key = (_car, _an, "Anual")
+                if _anual_key in _grupos_plan:
+                    _enriched |= _grupos_plan[_anual_key]
+                _grupos_enriquecidos[(_car, _an, _cu)] = _enriched
+            # Invertir: materia_codigo → set de grupos donde figura.
+            _grupos_de_materia: dict[
+                str, set[tuple[str, int, str]]
+            ] = {}
+            for _gk, _mats in _grupos_enriquecidos.items():
+                for _mc in _mats:
+                    _grupos_de_materia.setdefault(_mc, set()).add(_gk)
+            # Mapeo horario → grupos curriculares.
+            for _h in horarios:
+                _gs = _grupos_de_materia.get(_h.materia_codigo)
+                if _gs:
+                    grupos_curriculares_de_horario[_h.id] = _gs
+
     from src.services.asignacion_aulas_helpers import (
         compute_pares_intersede_riesgo,
     )
@@ -505,6 +590,9 @@ def build_inputs(
         horarios=horarios,
         comision_de_horario=comision_de_horario,
         margen_min_intersede_minutos=config.margen_min_intersede_minutos,
+        grupos_curriculares_de_horario=(
+            grupos_curriculares_de_horario or None
+        ),
     )
 
     return LPInputs(
@@ -917,7 +1005,7 @@ def build_model(
     # blando `y[h1, h2]` binaria con `y ≥ (x1_s1 + x2_s2) - 1` para
     # cada par (s1, s2). Hoy queda cableado por si se usa después.
     intersede_pares: dict[tuple[str, str], pulp.LpVariable] = {}
-    if inputs.pares_intersede_riesgo:
+    if inputs.pares_intersede_riesgo and "R13" not in relax_set:
         # Aulas por sede.
         aulas_de_sede: dict[str, list[str]] = {}
         for a in inputs.aulas:
@@ -1185,6 +1273,7 @@ def apply_solution(
     solution: LPSolution,
     fecha_desde: date,
     respetar_manuales: bool = True,
+    no_ocupa_aula_ids: Optional[set[str]] = None,
 ) -> ApplyResult:
     """Aplica la solución del asignador al PATRÓN (``HorarioDB``).
 
@@ -1199,6 +1288,16 @@ def apply_solution(
        también lo persiste.
     3. Propaga el aula a las ``ClaseDB`` no ejecutadas del plan (con
        ``fecha >= fecha_desde``) como cache técnico.
+
+    Además, los horarios del plan que **fueron excluidos del modelo
+    LP** (típicamente los virtuales que estaban en
+    ``inputs.no_ocupa_aula_ids``) se sanean: si arrastraban una
+    ``aula_id`` de una corrida vieja (cuando eran presenciales),
+    quedaría stale. La liberamos acá para que el estado de la DB
+    refleje la verdad: un horario virtual **no tiene aula**. Si el
+    usuario había fijado la asignación manualmente y
+    ``respetar_manuales=True``, se preserva — asumimos que sabe lo
+    que hace.
 
     ``ClaseDB.aula_asignada_manualmente`` está deprecado (se usaba en
     la era de clases puntuales); acá lo bajamos siempre para mantener
@@ -1252,6 +1351,42 @@ def apply_solution(
                 c.tipo_clase = tipo_nuevo
             session.add(c)
             apply_result.n_clases_actualizadas += 1
+
+    # Saneamiento de horarios excluidos del modelo. Los horarios
+    # virtuales (``no_ocupa_aula_ids``) no producen entrada en
+    # ``x_assignments``: si arrastraban aula asignada de una corrida
+    # vieja, queda como ``aula_id`` fantasma en la DB. Los liberamos
+    # acá para mantener la invariante "horario virtual ⇒ sin aula".
+    # Preservamos el pin manual si el toggle lo pide.
+    if no_ocupa_aula_ids:
+        for horario_id in no_ocupa_aula_ids:
+            horario = session.get(HorarioDB, horario_id)
+            if horario is None or horario.aula_id is None:
+                continue
+            if respetar_manuales and horario.aula_asignada_manualmente:
+                continue
+            aula_previa = horario.aula_id
+            horario.aula_id = None
+            horario.aula_asignada_manualmente = False
+            session.add(horario)
+            apply_result.n_horarios_reasignados += 1
+            apply_result.reasignaciones.append({
+                "horario_id": horario_id,
+                "aula_previa": aula_previa,
+                "aula_nueva": None,
+            })
+            # Propagar a las clases del plan también.
+            query = select(ClaseDB).where(
+                ClaseDB.horario_id == horario_id,
+                ClaseDB.fecha >= fecha_desde,
+                ClaseDB.executed == False,  # noqa: E712
+                ClaseDB.plan_cursada_id == plan_id,
+            )
+            for c in session.exec(query).all():
+                c.aula_id = None
+                c.aula_asignada_manualmente = False
+                session.add(c)
+                apply_result.n_clases_actualizadas += 1
 
     session.commit()
     return apply_result
@@ -1519,6 +1654,18 @@ def persist_run(
             "R4": "más clases simultáneas que aulas disponibles",
             "R5": "horas declaradas vs horarios cargados (teoría/lab)",
             "R6": "horarios sin tipo determinado sin aula compatible",
+            "R10": (
+                "sedes DURO del grupo insuficientes para acomodar la "
+                "demanda"
+            ),
+            "R13": (
+                "margen intersede impide combinar horarios contiguos "
+                "de la misma comisión entre sedes distintas"
+            ),
+            "R14": (
+                "obligar misma sede por comisión no es compatible con "
+                "la oferta de aulas por sede"
+            ),
         }
         if principal:
             desc = descripciones_cortas.get(principal, principal)
@@ -1527,12 +1674,52 @@ def persist_run(
                 "Mirá la sección 'Diagnóstico cruzado' abajo para "
                 "detalles y acciones específicas."
             )
+            # Cuando la causa es R10, si el IIS refinó qué grupos
+            # rescatan individualmente el modelo, enganchamos una
+            # recomendación accionable al resumen humano.
+            if principal == "R10":
+                _det_r10 = (iis.get("detalles") or {}).get("R10") or {}
+                _grupos = _det_r10.get("grupos_rescate") or []
+                if _grupos:
+                    _grupos_txt = ", ".join(
+                        f"**{g['grupo_nombre']}**" for g in _grupos[:3]
+                    )
+                    _extra = (
+                        f" (+ {len(_grupos) - 3} más)"
+                        if len(_grupos) > 3 else ""
+                    )
+                    _iis_resumen += (
+                        f"\n\n💡 Recomendación: pasar a modo "
+                        f"**BLANDO** alguno de estos grupos "
+                        f"resuelve la infactibilidad: {_grupos_txt}"
+                        f"{_extra}."
+                    )
         else:
             _iis_resumen = (
                 "🔍 No se pudo identificar una causa única. La "
                 "infactibilidad combina varias condiciones del modelo. "
                 "Mirá el detalle abajo."
             )
+            # Cuando el IIS probó combinaciones de dos ejes y alguna
+            # rescató el modelo, engancharlas al resumen humano como
+            # recomendación priorizada. La UI de "Diagnóstico cruzado"
+            # muestra la lista completa; acá listamos las 2-3 más
+            # accionables (menos materias afectadas = menor impacto).
+            _combos = iis.get("combinaciones_rescate") or []
+            if _combos:
+                _combos_ord = sorted(
+                    _combos, key=lambda c: c.get("n_materias_plan", 0),
+                )[:3]
+                _lineas = [
+                    f"• Pasar **{c['grupo_nombre']}** a BLANDO y "
+                    f"{c['extra_label']}"
+                    for c in _combos_ord
+                ]
+                _iis_resumen += (
+                    "\n\n💡 Combinaciones que resuelven la "
+                    "infactibilidad (necesitás aplicar los dos "
+                    "cambios juntos):\n" + "\n".join(_lineas)
+                )
         error_message = (
             (error_message + "\n\n" if error_message else "")
             + _iis_resumen
@@ -1579,14 +1766,30 @@ def get_latest_run(session: Session, plan_id: str) -> Optional[LPRunDB]:
 def _run_iis_relajacion(
     inputs: LPInputs,
     config: LPConfig,
+    *,
+    session: Optional[Session] = None,
+    plan_id: Optional[str] = None,
 ) -> dict:
     """Diagnóstico cruzado por relajación selectiva (IIS).
 
     Cuando el solver da `infeasible` y las cotas estructurales no
-    detectan ninguna causa, relajamos cada restricción "blanda" (R4,
-    R5, R6) por separado y re-corremos el modelo. Para cada
-    relajación que hace al modelo factible, la marcamos como
-    *candidata* a culpable.
+    detectan ninguna causa, relajamos cada restricción "blanda" por
+    separado y re-corremos el modelo. Para cada relajación que hace al
+    modelo factible, la marcamos como *candidata* a culpable.
+
+    Restricciones probadas:
+
+    - ``R4``: no dos horarios simultáneos en la misma aula.
+    - ``R5``: horas de teoría/lab declaradas cuadran con el total.
+    - ``R6``: horarios con tipo determinado.
+    - ``R10``: filtro de sede admisible por grupo (modo DURO).
+    - ``R13``: margen mínimo intersede entre horarios contiguos.
+    - ``R14``: forzar misma sede por comisión (sólo se prueba si
+      está activo en la config).
+
+    ``R10`` requiere reconstruir ``inputs`` sin el filtro de sede; por
+    eso este helper puede recibir ``session`` y ``plan_id`` para
+    hacerlo. Si no se le pasan, se saltea R10 (fallback compatible).
 
     **Filtro de falsos positivos**: la relajación independiente
     sufre de un problema conocido — cuando hay una restricción
@@ -1684,6 +1887,41 @@ def _run_iis_relajacion(
             "- **Cargar más laboratorios compatibles** para esa "
             "materia (página Materias → laboratorios)."
         ),
+        "R10": (
+            "El **filtro de sede por grupo** (modo DURO) deja a "
+            "algunos horarios sin aulas suficientes en las sedes "
+            "admisibles del grupo. La demanda dentro de esas sedes "
+            "supera la oferta. Acciones:\n"
+            "- **Pasar algún grupo a modo BLANDO** desde el panel del "
+            "asignador → las sedes fuera del set siguen contando "
+            "como admisibles con costo.\n"
+            "- **Agregar aulas** a la sede saturada (página Aulas).\n"
+            "- **Ampliar el set DURO** del grupo (Materias → Grupos "
+            "de materias) para admitir sedes adicionales.\n"
+            "- **Reasignar materias** a un grupo con más sedes "
+            "admisibles si están mal clasificadas."
+        ),
+        "R13": (
+            "El **margen intersede** (traslados entre sedes) impide "
+            "combinar comisiones simultáneas de la misma comisión "
+            "con horarios contiguos. Acciones:\n"
+            "- **Bajar el margen** en el panel del asignador (0 "
+            "desactiva la restricción).\n"
+            "- **Separar los horarios** con más gap en el cronograma "
+            "para que quepa un traslado."
+        ),
+        "R14": (
+            "**Forzar misma sede por comisión** (toggle del panel) "
+            "obliga a que todos los horarios de una comisión caigan "
+            "en la misma sede. Combinado con set DURO o falta de "
+            "aulas en una sola sede, puede volver el modelo "
+            "infactible. Acciones:\n"
+            "- **Apagar el toggle** para permitir que una comisión "
+            "reparta horarios entre sedes.\n"
+            "- **Ampliar el set DURO** del grupo de las materias "
+            "involucradas para que haya al menos una sede que "
+            "aguante todos los horarios."
+        ),
     }
 
     # Pre-checks para detectar falsos positivos a priori.
@@ -1704,7 +1942,14 @@ def _run_iis_relajacion(
         for h in horarios_sin_tipo
     )
 
-    for ri in ("R4", "R5", "R6"):
+    # Reglas del modelo (build_model reconoce la clave `relax`).
+    reglas_del_modelo = ["R4", "R5", "R6", "R13"]
+    if config.forzar_misma_sede_por_comision:
+        # Sólo tiene sentido probar R14 si está activo — sino ya no hay
+        # nada que relajar en el modelo por esa vía.
+        reglas_del_modelo.append("R14")
+
+    for ri in reglas_del_modelo:
         prob_r, vars_r = build_model(inputs, config, relax={ri})
         sol_r = solve(prob_r, vars_r, config)
         feas = sol_r.status == "optimal"
@@ -1824,29 +2069,299 @@ def _run_iis_relajacion(
 
         detalles[ri] = item
 
+    # R10 se aplica en `build_inputs` (filtro de sede sobre `compat`).
+    # Para probarlo, reconstruimos los inputs con `relax_r10=True` y
+    # corremos el modelo original. Sólo tiene sentido si tenemos
+    # session/plan_id — sino saltamos.
+    if session is not None and plan_id is not None:
+        try:
+            inputs_r10 = build_inputs(
+                session, plan_id, config, relax_r10=True,
+            )
+            prob_r10, vars_r10 = build_model(inputs_r10, config)
+            sol_r10 = solve(prob_r10, vars_r10, config)
+            feas_r10 = sol_r10.status == "optimal"
+            item_r10: dict = {
+                "feasible_relajado": feas_r10,
+                "es_falso_positivo": False,
+                "explicacion": (
+                    explicaciones["R10"] if feas_r10 else
+                    "Sin el filtro de sede el modelo sigue infactible "
+                    "— la sede no es la causa por sí sola."
+                ),
+            }
+            # Cuando R10 es culpable, refinamos: probamos pasar cada
+            # grupo DURO a BLANDO por separado para identificar QUÉ
+            # grupo específico está causando la infactibilidad. La
+            # UI usa esta lista para recomendar acciones concretas
+            # ("pasá el grupo X a BLANDO").
+            if feas_r10:
+                grupos_rescate = _iss_r10_grupos_rescate(
+                    session=session,
+                    plan_id=plan_id,
+                    base_config=config,
+                )
+                if grupos_rescate:
+                    item_r10["grupos_rescate"] = grupos_rescate
+            detalles["R10"] = item_r10
+        except Exception:  # pragma: no cover
+            # Si algo falla al reconstruir, marcamos R10 como no probado.
+            detalles["R10"] = {
+                "feasible_relajado": False,
+                "es_falso_positivo": False,
+                "explicacion": (
+                    "No se pudo probar la relajación de R10 (error al "
+                    "reconstruir inputs)."
+                ),
+            }
+
     # Construir la lista de culpables reales (excluyendo falsos
     # positivos) y elegir la principal.
+    reglas_probadas = list(detalles.keys())
     culpables = [
-        ri for ri in ("R4", "R5", "R6")
+        ri for ri in reglas_probadas
         if detalles[ri]["feasible_relajado"]
         and not detalles[ri]["es_falso_positivo"]
     ]
-    # Prioridad: R4 prevalece sobre R5/R6 cuando aparece. Sino, la
-    # primera en orden R5 → R6.
+    # Prioridad: primero las restricciones "de sede" nuevas (R10, R14,
+    # R13) porque suelen ser las que el usuario controla directamente
+    # desde el panel — accionables inmediatas. Después R4 (saturación
+    # global). Después R5/R6 (que muchas veces son efecto secundario).
+    orden_prioridad = ("R10", "R14", "R13", "R4", "R5", "R6")
     principal: Optional[str]
-    if "R4" in culpables:
-        principal = "R4"
+    principal_candidatos = [ri for ri in orden_prioridad if ri in culpables]
+    if principal_candidatos:
+        principal = principal_candidatos[0]
     elif culpables:
         principal = culpables[0]
     else:
         principal = None
+
+    # Análisis combinado: cuando NINGUNA regla individual rescata, el
+    # modelo es infactible por combinación. Probamos pares comunes
+    # (grupo DURO→BLANDO + relajar R14 / bajar margen) para dar
+    # recomendaciones accionables. Sólo si el usuario nos dio session
+    # y plan_id.
+    combinaciones_rescate: list[dict] = []
+    if principal is None and session is not None and plan_id is not None:
+        try:
+            combinaciones_rescate = _iss_combinaciones_rescate(
+                session=session,
+                plan_id=plan_id,
+                base_config=config,
+            )
+        except Exception:  # pragma: no cover
+            combinaciones_rescate = []
 
     return {
         "ran": True,
         "culpables": culpables,
         "principal": principal,
         "detalles": detalles,
+        "combinaciones_rescate": combinaciones_rescate,
     }
+
+
+def _iss_combinaciones_rescate(
+    *,
+    session: Session,
+    plan_id: str,
+    base_config: LPConfig,
+) -> list[dict]:
+    """Cuando ninguna regla individual rescata el modelo, prueba
+    combinaciones de a pares: cada grupo DURO → BLANDO junto con
+    relajar R14 o bajar margen intersede a 0. Devuelve la lista de
+    combinaciones que resuelven, para que la UI las presente como
+    recomendaciones accionables.
+
+    Cada item:
+      {"grupo_id", "grupo_nombre", "n_materias_plan",
+       "extra": "sin_forzar_misma_sede" | "margen_cero",
+       "extra_label": str (para mostrar)}
+
+    Cap superior de pruebas para no colgarse: 40 combinaciones
+    (~20 grupos × 2 ejes extra). Si el LP tarda mucho puede pasarse.
+    """
+    from src.database.models import (
+        GrupoMateriaDB, ComisionDB, MateriaDB,
+    )
+    from src.services.grupo_materia_service import get_config_grupo
+
+    # Ejes "extra" que tiene sentido combinar. Sólo activos si la
+    # config actual los tiene "prendidos" (sino son no-ops).
+    ejes_extra: list[tuple[str, str, LPConfig]] = []
+    if base_config.forzar_misma_sede_por_comision:
+        cfg_sin_forzar = replace(
+            base_config, forzar_misma_sede_por_comision=False,
+        )
+        ejes_extra.append((
+            "sin_forzar_misma_sede",
+            "desactivar 'Forzar misma sede por comisión'",
+            cfg_sin_forzar,
+        ))
+    if base_config.margen_min_intersede_minutos > 0:
+        cfg_margen_0 = replace(
+            base_config, margen_min_intersede_minutos=0,
+        )
+        ejes_extra.append((
+            "margen_cero",
+            "poner margen intersede en 0 min",
+            cfg_margen_0,
+        ))
+
+    if not ejes_extra:
+        # Sin ejes que combinar — no hay nada que probar acá.
+        return []
+
+    modos_actuales = dict(base_config.modos_por_grupo or {})
+    grupos = list(session.exec(
+        select(GrupoMateriaDB).order_by(GrupoMateriaDB.nombre)  # type: ignore[arg-type]
+    ).all())
+
+    resultados: list[dict] = []
+    n_pruebas = 0
+    CAP_PRUEBAS = 40
+
+    for g in grupos:
+        if n_pruebas >= CAP_PRUEBAS:
+            break
+        modo_actual = modos_actuales.get(g.id, "DURO")
+        if modo_actual != "DURO":
+            continue
+        cfg_g = get_config_grupo(session, g.id)
+        if not cfg_g.sedes_blandas_ordenadas:
+            continue
+
+        # Materias del grupo con comisiones en el plan.
+        n_mat = session.exec(
+            select(func.count(func.distinct(MateriaDB.codigo)))
+            .join(
+                ComisionDB,
+                ComisionDB.materia_codigo == MateriaDB.codigo,  # type: ignore[arg-type]
+            )
+            .where(
+                MateriaDB.grupo_id == g.id,
+                ComisionDB.plan_cursada_id == plan_id,
+            )
+        ).one() or 0
+        if n_mat == 0:
+            continue
+
+        # Combinaciones: g→BLANDO + cada eje extra.
+        for eje_key, eje_label, cfg_eje in ejes_extra:
+            if n_pruebas >= CAP_PRUEBAS:
+                break
+            n_pruebas += 1
+            try:
+                nuevos_modos = dict(modos_actuales)
+                nuevos_modos[g.id] = "BLANDO"
+                cfg_prueba = replace(
+                    cfg_eje, modos_por_grupo=nuevos_modos,
+                )
+                inputs_p = build_inputs(session, plan_id, cfg_prueba)
+                prob_p, vars_p = build_model(inputs_p, cfg_prueba)
+                sol_p = solve(prob_p, vars_p, cfg_prueba)
+                if sol_p.status == "optimal":
+                    resultados.append({
+                        "grupo_id": g.id,
+                        "grupo_nombre": g.nombre,
+                        "n_materias_plan": int(n_mat),
+                        "extra": eje_key,
+                        "extra_label": eje_label,
+                    })
+            except Exception:  # pragma: no cover
+                continue
+
+    return resultados
+
+
+def _iss_r10_grupos_rescate(
+    *,
+    session: Session,
+    plan_id: str,
+    base_config: LPConfig,
+) -> list[dict]:
+    """Cuando el IIS detecta que R10 es culpable, prueba pasar cada
+    grupo DURO a BLANDO por separado. Devuelve la lista de grupos
+    cuyo cambio individual rescata el modelo — son recomendaciones
+    directas para el usuario.
+
+    Sólo prueba grupos que:
+    - Están actualmente en DURO en ``base_config.modos_por_grupo``
+      (o no aparecen ahí, que equivale a DURO por default).
+    - Tienen al menos una sede blanda cargada (sino pasarlo a BLANDO
+      no cambia nada — sigue sin restricción efectiva).
+
+    Cada item devuelto:
+      {"grupo_id": str, "grupo_nombre": str,
+       "n_materias_plan": int,
+       "modo_actual": "DURO", "modo_propuesto": "BLANDO"}
+
+    Nota: cada prueba corre el LP completo, así que el costo es
+    O(n_grupos_duros × tiempo_solver). Para catálogos de <20 grupos
+    con solver rápido queda en segundos; si crece, considerar cachear
+    o paralelizar.
+    """
+    from src.database.models import GrupoMateriaDB
+    from src.services.grupo_materia_service import get_config_grupo
+
+    resultados: list[dict] = []
+    modos_actuales = dict(base_config.modos_por_grupo or {})
+
+    # Grupos DURO candidatos.
+    grupos = list(session.exec(
+        select(GrupoMateriaDB).order_by(GrupoMateriaDB.nombre)  # type: ignore[arg-type]
+    ).all())
+    for g in grupos:
+        modo_actual = modos_actuales.get(g.id, "DURO")
+        if modo_actual != "DURO":
+            continue
+        cfg = get_config_grupo(session, g.id)
+        if not cfg.sedes_blandas_ordenadas:
+            # Pasar a BLANDO sin sedes blandas no restringe nada
+            # (equivale a "cualquier sede"), pero no soluciona el
+            # problema real de saturación por sede. Lo saltamos para
+            # no dar falsas recomendaciones.
+            continue
+
+        # Materias del grupo con comisiones en el plan (para
+        # priorizar recomendaciones que efectivamente impactan).
+        from src.database.models import ComisionDB, MateriaDB
+        n_mat = session.exec(
+            select(func.count(func.distinct(MateriaDB.codigo)))
+            .join(
+                ComisionDB,
+                ComisionDB.materia_codigo == MateriaDB.codigo,  # type: ignore[arg-type]
+            )
+            .where(
+                MateriaDB.grupo_id == g.id,
+                ComisionDB.plan_cursada_id == plan_id,
+            )
+        ).one() or 0
+        if n_mat == 0:
+            continue
+
+        # Correr el LP con este grupo pasado a BLANDO.
+        try:
+            nuevos_modos = dict(modos_actuales)
+            nuevos_modos[g.id] = "BLANDO"
+            cfg_test = replace(base_config, modos_por_grupo=nuevos_modos)
+            inputs_test = build_inputs(session, plan_id, cfg_test)
+            prob_test, vars_test = build_model(inputs_test, cfg_test)
+            sol_test = solve(prob_test, vars_test, cfg_test)
+            if sol_test.status == "optimal":
+                resultados.append({
+                    "grupo_id": g.id,
+                    "grupo_nombre": g.nombre,
+                    "n_materias_plan": int(n_mat),
+                    "modo_actual": "DURO",
+                    "modo_propuesto": "BLANDO",
+                })
+        except Exception:  # pragma: no cover
+            # Si algo falla en la prueba individual, saltamos.
+            continue
+
+    return resultados
 
 
 def run_lp(
@@ -1928,7 +2443,9 @@ def run_lp(
         solution.status == "infeasible"
         and not diagnosis.is_infeasible()
     ):
-        iis_result = _run_iis_relajacion(inputs, cfg)
+        iis_result = _run_iis_relajacion(
+            inputs, cfg, session=session, plan_id=plan_id,
+        )
 
     # Resolver fecha_desde: explícita > fecha más antigua del plan > hoy.
     if cfg.fecha_desde is not None:
@@ -1951,6 +2468,7 @@ def run_lp(
             apply_result = apply_solution(
                 session, plan_id, solution, fecha_desde,
                 respetar_manuales=cfg.respetar_ediciones_manuales,
+                no_ocupa_aula_ids=inputs.no_ocupa_aula_ids,
             )
     else:
         apply_result = ApplyResult()

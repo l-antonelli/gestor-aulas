@@ -476,6 +476,7 @@ def _build_horario_rows_v2(
             "aula_id": h.aula_id,
             "aula_obj": aula_map.get(h.aula_id) if h.aula_id else None,
             "es_virtual": es_virtual,
+            "aula_manual": bool(h.aula_asignada_manualmente),
             **carr_info,
         })
     dia_idx = {d: i for i, d in enumerate(DOW_NAMES)}
@@ -643,9 +644,13 @@ def _render_horario_expander(
     horario_id = r["horario_id"]
 
     # Título condensado. En un renglón, evitando emojis para no ruidear.
+    # Badge 🔒 cuando el aula del patrón fue seteada manualmente — el
+    # asignador la respeta por default y hay que ser explícito para
+    # cambiarla.
+    manual_badge = " · 🔒 aula manual" if r.get("aula_manual") else ""
     titulo = (
         f"{dia} {hi}–{hf} · {materia} · {codigo} · "
-        f"{comision} · {aula_label}"
+        f"{comision} · {aula_label}{manual_badge}"
     )
 
     with st.expander(titulo, expanded=False):
@@ -659,10 +664,14 @@ def _render_horario_expander(
                 f"**Día y horario:** {dia} {hi}–{hf}"
             )
         with c2:
+            _aula_extra = (
+                " · 🔒 asignada manualmente"
+                if r.get("aula_manual") else ""
+            )
             st.markdown(
                 f"**Carreras:** {carrera_lbl}  \n"
                 f"**Año/Cuatri:** {anio_lbl} · {cuatri_lbl}  \n"
-                f"**Aula actual:** {aula_label}  \n"
+                f"**Aula actual:** {aula_label}{_aula_extra}  \n"
                 f"**Tipo:** {r.get('tipo_clase') or 'sin determinar'}"
             )
 
@@ -1662,6 +1671,155 @@ def _confirmar_cascada(
 
 
 
+def _render_panel_fuera_sede_preferida(
+    *,
+    session: Session,
+    plan_id: str,
+    horarios_db: list,
+    com_map: dict,
+    aula_map: dict,
+    sede_map: dict,
+    key_ns: str,
+) -> None:
+    """Panel colapsable que lista los horarios asignados a un aula
+    que **NO** es la de la sede preferida del grupo BLANDO.
+
+    Sólo aplica a grupos de materia corridos en modo BLANDO en la
+    última corrida del LP: en DURO no hay concepto de "preferida"
+    (todas las sedes del set duro son equivalentes al objetivo). En
+    BLANDO la primera sede de la lista blanda del grupo es la
+    preferida y el LP paga ``λ_sede_pref`` cada vez que asigna una
+    alternativa. Esto expone esos casos para revisión.
+    """
+    import json as _json
+    from src.database.models import LPRunDB, GrupoMateriaDB
+    from src.services.grupo_materia_service import (
+        get_config_grupo,
+        resolver_grupo_de_materia,
+    )
+
+    # Buscar la config de modos_por_grupo de la última corrida.
+    last_run = session.exec(
+        select(LPRunDB)
+        .where(LPRunDB.plan_cursada_id == plan_id)
+        .order_by(LPRunDB.run_at.desc())  # type: ignore[attr-defined]
+        .limit(1)
+    ).first()
+    modos_por_grupo: dict[str, str] = {}
+    if last_run is not None:
+        try:
+            d = _json.loads(last_run.details_json or "{}")
+            ra = (d.get("veredicto", {}) or {}).get(
+                "restricciones_activas", {},
+            )
+            modos_por_grupo = dict(ra.get("modos_por_grupo") or {})
+        except (ValueError, TypeError):
+            pass
+
+    # Resolver, por cada materia del plan, si su grupo estaba BLANDO
+    # y cuál era su sede preferida (primera sede de la lista blanda).
+    materias_del_plan = sorted({
+        c.materia_codigo for c in com_map.values()
+    })
+    sede_pref_por_materia: dict[str, str] = {}
+    for mc in materias_del_plan:
+        grupo = resolver_grupo_de_materia(session, mc)
+        if grupo is None:
+            continue
+        modo = modos_por_grupo.get(grupo.id, "DURO")
+        if modo != "BLANDO":
+            continue
+        cfg = get_config_grupo(session, grupo.id)
+        if cfg.sedes_blandas_ordenadas:
+            sede_pref_por_materia[mc] = cfg.sedes_blandas_ordenadas[0]
+
+    # Contar horarios asignados a un aula cuya sede NO es la
+    # preferida (para materias en grupo BLANDO).
+    fuera: list[dict] = []
+    for h in horarios_db:
+        if h.aula_id is None:
+            continue
+        sede_pref = sede_pref_por_materia.get(h.codigo_materia)
+        if sede_pref is None:
+            continue
+        aula = aula_map.get(h.aula_id)
+        if aula is None or aula.sede_id == sede_pref:
+            continue
+        com = com_map.get(h.comision_id)
+        fuera.append({
+            "horario": h,
+            "aula": aula,
+            "sede_asignada": aula.sede_id,
+            "sede_preferida": sede_pref,
+            "comision_num": com.numero if com else None,
+            "comision_nombre": com.nombre if com else "?",
+        })
+
+    n = len(fuera)
+    if n == 0:
+        # No mostrar el panel si no hay nada — evita ruido en planes
+        # sin BLANDO configurado o con toda la asignación en sede
+        # preferida.
+        return
+
+    with st.expander(
+        f"🎯 Fuera de sede preferida ({n})",
+        expanded=False,
+    ):
+        st.caption(
+            "Horarios asignados a una sede **alternativa** en lugar "
+            "de la preferida de su grupo (modo BLANDO). El LP pagó "
+            "`λ_sede_pref` por cada uno, típicamente porque la sede "
+            "preferida estaba saturada o no admitía el tipo de aula."
+        )
+        # Agrupar por (materia, sede alternativa) para lectura rápida.
+        from collections import defaultdict
+        por_sede: defaultdict = defaultdict(list)
+        for item in fuera:
+            key = (
+                item["horario"].codigo_materia,
+                item["sede_asignada"],
+                item["sede_preferida"],
+            )
+            por_sede[key].append(item)
+
+        rows = []
+        for (mc, sede_asig, sede_pref), items in sorted(por_sede.items()):
+            sede_asig_nom = sede_map.get(sede_asig, sede_asig)
+            sede_pref_nom = sede_map.get(sede_pref, sede_pref)
+            franjas = ", ".join(
+                f"{i['horario'].dia[:3]} "
+                f"{i['horario'].hora_inicio.strftime('%H:%M')}-"
+                f"{i['horario'].hora_fin.strftime('%H:%M')}"
+                f" [C{i['comision_num']}]"
+                for i in sorted(
+                    items,
+                    key=lambda x: (
+                        x["horario"].dia, x["horario"].hora_inicio,
+                    ),
+                )
+            )
+            rows.append({
+                "Materia": mc,
+                "Franjas": franjas,
+                "Sede asignada": sede_asig_nom,
+                "Sede preferida": sede_pref_nom,
+                "N°": len(items),
+            })
+        st.dataframe(
+            rows,
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.caption(
+            "Para forzar la sede preferida en la próxima corrida, "
+            "podés: (a) agregar aulas del tipo necesario a la sede "
+            "preferida, (b) subir *λ sede* en el asignador para "
+            "castigar más las alternativas, o (c) revisar si el "
+            "grupo debería quedar en modo DURO."
+        )
+
+
 def render_aula_cronograma(
     session: Session, plan_id: str, key_ns: str = "aula_crono",
 ) -> None:
@@ -1694,6 +1852,71 @@ def render_aula_cronograma(
         "todavía no corriste la asignación, los horarios aparecen "
         "como 'Sin asignar' y podés editarlos a mano."
     )
+
+    # Banner de colisiones de aula (doble booking físico). Se dispara
+    # típicamente cuando el operador mueve un horario a otra franja
+    # después de correr el asignador y el aula asignada queda pisando
+    # otro horario. La UI permite liberar el aula del horario
+    # correspondiente para que el LP la reasigne en la próxima corrida.
+    from src.services.plan_actions_service import (
+        detectar_colisiones_aula_plan,
+        liberar_aula_horario,
+    )
+    colisiones = detectar_colisiones_aula_plan(session, plan_id)
+    if colisiones:
+        st.error(
+            f"🚨 **{len(colisiones)} colisión(es) de aula** detectada(s) "
+            "en el plan: hay clases con la misma aula asignada en "
+            "franjas que se pisan. Suele pasar después de mover un "
+            "horario manualmente. Liberá el aula de una de las dos "
+            "clases y re-corré el asignador."
+        )
+        for i, c in enumerate(colisiones):
+            aula = aula_map.get(c["aula_id"]) if False else None  # noqa
+            with st.expander(
+                f"🔴 {c['dia']} · "
+                f"{c['codigo_materia_a']} vs {c['codigo_materia_b']}",
+                expanded=(i < 2),
+            ):
+                st.markdown(
+                    f"- **{c['codigo_materia_a']}** — "
+                    f"{c['hora_inicio_a']}–{c['hora_fin_a']}"
+                    + (" · aula manual" if c["manual_a"] else "")
+                )
+                st.markdown(
+                    f"- **{c['codigo_materia_b']}** — "
+                    f"{c['hora_inicio_b']}–{c['hora_fin_b']}"
+                    + (" · aula manual" if c["manual_b"] else "")
+                )
+                cols = st.columns(2)
+                if cols[0].button(
+                    f"🧹 Liberar aula de {c['codigo_materia_a']}",
+                    key=f"{key_ns}_lib_a_{i}",
+                    help=(
+                        "Deja este horario sin aula asignada. El LP "
+                        "la reasigna en la próxima corrida."
+                    ),
+                ):
+                    liberar_aula_horario(session, c["horario_a_id"])
+                    st.toast(
+                        f"Aula liberada para {c['codigo_materia_a']}. "
+                        "Re-corré el asignador."
+                    )
+                    st.rerun()
+                if cols[1].button(
+                    f"🧹 Liberar aula de {c['codigo_materia_b']}",
+                    key=f"{key_ns}_lib_b_{i}",
+                    help=(
+                        "Deja este horario sin aula asignada. El LP "
+                        "la reasigna en la próxima corrida."
+                    ),
+                ):
+                    liberar_aula_horario(session, c["horario_b_id"])
+                    st.toast(
+                        f"Aula liberada para {c['codigo_materia_b']}. "
+                        "Re-corré el asignador."
+                    )
+                    st.rerun()
 
     # Comisiones del plan.
     coms = list(session.exec(
@@ -1742,6 +1965,21 @@ def render_aula_cronograma(
     aulas_con_uso.sort(key=lambda a: (a.sede_id, a.nombre))
 
     sede_map = _sede_nombre_map(session)
+
+    # Panel de "horarios asignados fuera de la sede preferida". Sólo
+    # cuenta los horarios cuyo grupo se corrió en modo BLANDO en la
+    # última corrida — en modo DURO no hay concepto de "preferida"
+    # (todas las sedes del set son equivalentes). Ver la config de la
+    # corrida más reciente para saber qué grupos estaban en BLANDO.
+    _render_panel_fuera_sede_preferida(
+        session=session,
+        plan_id=plan_id,
+        horarios_db=horarios_db,
+        com_map=com_map,
+        aula_map=aula_map,
+        sede_map=sede_map,
+        key_ns=key_ns,
+    )
 
     # Precargar virtualidad del dictado por materia del ciclo del plan
     # para resolver `resolve_virtual` en cada fila.

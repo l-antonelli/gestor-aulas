@@ -259,16 +259,27 @@ class CambioHorarioPreview:
     # la comisión ya tiene otra clase ese día. Cada item:
     # {"horario_id", "dia", "hora_inicio", "hora_fin"}.
     duplicados_mismo_dia: list[dict] = field(default_factory=list)
+    # Colisiones de aula: otros HorarioDB con la MISMA aula asignada
+    # que caerían en simultáneo con el nuevo horario. Cada item:
+    # {"horario_id", "codigo_materia", "dia", "hora_inicio",
+    # "hora_fin", "aula_id", "aula_manual", "otro_manual"}.
+    # `aula_manual`: si el horario editado tiene el flag
+    # `aula_asignada_manualmente=True`. `otro_manual`: idem para el
+    # horario colisionante. Ambos ayudan a la UI a decidir qué pin
+    # limpiar.
+    colisiones_aula: list[dict] = field(default_factory=list)
     error: str | None = None  # Si la validación cruda falla.
 
     @property
     def es_seguro(self) -> bool:
         """True si el cambio no agrega ningún conflicto nuevo NI
-        coincide con otro horario de la misma comisión en el día destino."""
+        coincide con otro horario de la misma comisión en el día destino
+        NI genera colisiones de aula con horarios existentes."""
         return (
             self.error is None
             and not self.conflictos_agregados
             and not self.duplicados_mismo_dia
+            and not self.colisiones_aula
         )
 
 
@@ -378,6 +389,40 @@ def preview_cambio_horario(
                 "hora_fin": oh.hora_fin.strftime("%H:%M"),
             })
 
+    # Colisiones de aula: si el horario tiene aula asignada, buscar
+    # otros HorarioDB con la MISMA aula que caerían en simultáneo en
+    # la nueva franja. Reporta doble booking físico — riesgo real.
+    colisiones_aula: list[dict] = []
+    if horario.aula_id is not None:
+        aula_id = horario.aula_id
+        otros_en_aula = list(session.exec(
+            select(HorarioDB).where(
+                HorarioDB.aula_id == aula_id,
+                HorarioDB.dia == nuevo_dia,
+                HorarioDB.id != horario.id,
+            )
+        ).all())
+        for oh in otros_en_aula:
+            # Overlap: dos rangos [a, b) se solapan si a1 < b2 y a2 < b1.
+            if not (
+                nuevo_hora_fin <= oh.hora_inicio
+                or oh.hora_fin <= nuevo_hora_inicio
+            ):
+                colisiones_aula.append({
+                    "horario_id": oh.id,
+                    "codigo_materia": oh.codigo_materia,
+                    "dia": oh.dia,
+                    "hora_inicio": oh.hora_inicio.strftime("%H:%M"),
+                    "hora_fin": oh.hora_fin.strftime("%H:%M"),
+                    "aula_id": aula_id,
+                    "aula_manual": bool(
+                        horario.aula_asignada_manualmente
+                    ),
+                    "otro_manual": bool(
+                        oh.aula_asignada_manualmente
+                    ),
+                })
+
     # Conflictos antes del cambio.
     conflictos_antes_objs = validar_conflictos_horarios_plan_estructurados(
         session, plan_id,
@@ -427,6 +472,7 @@ def preview_cambio_horario(
         conflictos_agregados=agregados,
         conflictos_resueltos=resueltos,
         duplicados_mismo_dia=duplicados,
+        colisiones_aula=colisiones_aula,
     )
 
 
@@ -474,6 +520,94 @@ def aplicar_cambio_horario(
     session.commit()
 
     # Invalidar pool por si hay sesiones cacheadas.
+    from src.database.connection import engine as _engine
+    _engine.dispose()
+    return True
+
+
+def detectar_colisiones_aula_plan(
+    session: Session, plan_id: str,
+) -> list[dict]:
+    """Devuelve todas las colisiones de aula en el plan.
+
+    Una colisión es un par de HorarioDB del plan con la MISMA aula
+    asignada y overlap horario en el mismo día. Puede aparecer por
+    ediciones manuales de horario que dejaron el aula asignada
+    apuntando a la franja vieja, o por pins manuales incompatibles.
+
+    Cada item:
+      {
+        "horario_a_id", "horario_b_id",
+        "aula_id",
+        "codigo_materia_a", "codigo_materia_b",
+        "dia",
+        "hora_inicio_a", "hora_fin_a",
+        "hora_inicio_b", "hora_fin_b",
+        "manual_a": bool, "manual_b": bool,
+      }
+    """
+    horarios = list(session.exec(
+        select(HorarioDB)
+        .join(
+            ComisionDB,
+            ComisionDB.id == HorarioDB.comision_id,  # type: ignore[arg-type]
+        )
+        .where(
+            ComisionDB.plan_cursada_id == plan_id,
+            HorarioDB.aula_id.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all())
+    # Agrupar por (aula, dia).
+    por_aula_dia: dict[tuple[str, str], list[HorarioDB]] = {}
+    for h in horarios:
+        if h.aula_id is None:
+            continue
+        por_aula_dia.setdefault((h.aula_id, h.dia), []).append(h)
+
+    colisiones: list[dict] = []
+    for (aula_id, dia), hs in por_aula_dia.items():
+        # Ordenar para chequear pares una vez.
+        hs_sorted = sorted(hs, key=lambda x: (x.hora_inicio, x.hora_fin))
+        for i, h1 in enumerate(hs_sorted):
+            for h2 in hs_sorted[i + 1:]:
+                # Overlap: h1.fin > h2.inicio (dado que están ordenados).
+                if h1.hora_fin <= h2.hora_inicio:
+                    break  # ya no puede haber overlap con siguientes
+                colisiones.append({
+                    "horario_a_id": h1.id,
+                    "horario_b_id": h2.id,
+                    "aula_id": aula_id,
+                    "codigo_materia_a": h1.codigo_materia,
+                    "codigo_materia_b": h2.codigo_materia,
+                    "dia": dia,
+                    "hora_inicio_a": h1.hora_inicio.strftime("%H:%M"),
+                    "hora_fin_a": h1.hora_fin.strftime("%H:%M"),
+                    "hora_inicio_b": h2.hora_inicio.strftime("%H:%M"),
+                    "hora_fin_b": h2.hora_fin.strftime("%H:%M"),
+                    "manual_a": bool(h1.aula_asignada_manualmente),
+                    "manual_b": bool(h2.aula_asignada_manualmente),
+                })
+    return colisiones
+
+
+def liberar_aula_horario(
+    session: Session, horario_id: str,
+) -> bool:
+    """Libera el ``aula_id`` del horario (y baja el flag manual si
+    estaba puesto). Sirve como shortcut cuando un cambio generó una
+    colisión de aula y el operador quiere que el LP reasigne.
+
+    Returns:
+        True si el horario existía y se limpió (aunque no tuviera
+        aula previa). False si el horario no existe.
+    """
+    horario = session.get(HorarioDB, horario_id)
+    if horario is None:
+        return False
+    horario.aula_id = None
+    horario.aula_asignada_manualmente = False
+    session.add(horario)
+    session.commit()
     from src.database.connection import engine as _engine
     _engine.dispose()
     return True
