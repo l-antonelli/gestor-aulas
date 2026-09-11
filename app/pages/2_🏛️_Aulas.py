@@ -104,6 +104,14 @@ def _render_tab_listado(session) -> None:
 
 
 def _render_tab_crear(session) -> None:
+    # Toast pendiente de un rerun previo (creación OK o error). Se
+    # setea abajo antes del rerun para que este render lo consuma
+    # una sola vez.
+    _pending_toast = st.session_state.pop("_aula_create_toast", None)
+    if _pending_toast:
+        _msg, _icon = _pending_toast
+        st.toast(_msg, icon=_icon)
+
     sede_ids, sede_nombres = _sede_options(session)
     if not sede_ids:
         st.warning(
@@ -197,23 +205,49 @@ def _render_tab_crear(session) -> None:
                 select(AulaDB).where(AulaDB.codigo_aula == codigo_final)
             ).first()
             if existing is not None:
-                st.error(
+                st.session_state["_aula_create_toast"] = (
                     f"Ya existe un aula con código '{codigo_final}'. "
-                    "Editalo a mano para usar otro."
+                    "Cambiá el nombre o el código y volvé a intentar.",
+                    "⚠️",
                 )
-                return
+                st.rerun()
 
-            aula = AulaDB(
-                sede_id=sede_id,
-                codigo_aula=codigo_final,
-                nombre=nombre.strip(),
-                capacidad=int(capacidad),
-                tipo=tipo,
-                descripcion=descripcion or "",
+            try:
+                aula = AulaDB(
+                    sede_id=sede_id,
+                    codigo_aula=codigo_final,
+                    nombre=nombre.strip(),
+                    capacidad=int(capacidad),
+                    tipo=tipo,
+                    descripcion=descripcion or "",
+                )
+                session.add(aula)
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                st.session_state["_aula_create_toast"] = (
+                    f"No se pudo crear el aula: {exc}",
+                    "🔺",
+                )
+                st.rerun()
+
+            # Limpiar los campos específicos del aula recién creada
+            # (nombre, código, capacidad, descripción). Sede y tipo
+            # se preservan porque suele crearse varias aulas seguidas
+            # de la misma sede/tipo. Cada key se elimina de
+            # session_state ANTES del rerun para que streamlit
+            # reconstruya el widget con su default.
+            for _k in (
+                "aula_create_nombre",
+                "aula_create_codigo",
+                "aula_create_capacidad",
+                "aula_create_desc",
+            ):
+                st.session_state.pop(_k, None)
+            st.session_state["_aula_create_toast"] = (
+                f"Aula '{codigo_final}' creada.",
+                "✅",
             )
-            session.add(aula)
-            session.commit()
-            st.success(f"Aula '{codigo_final}' creada.")
             st.rerun()
 
 

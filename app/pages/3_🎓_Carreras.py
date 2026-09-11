@@ -649,34 +649,107 @@ def render_custom_carrera_page():
                             plan_version_id=selected_version_id,
                         )
 
-                        anuales = [(m, a, c) for m, a, c in materias_anuales if c == "anual"]
-                        primer_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "1C"]
-                        segundo_cuatri = [(m, a, c) for m, a, c in materias_anuales if c == "2C"]
+                        # Segunda query para conocer el flag `optativa`
+                        # por (materia, plan_version). El getter genérico
+                        # no lo expone; acá lo necesitamos para separar
+                        # obligatorias y optativas en la UI.
+                        from sqlmodel import select as _select
+                        from src.database.models import PlanEstudioDB
+                        _pe_rows = list(session.exec(
+                            _select(
+                                PlanEstudioDB.materia_codigo,
+                                PlanEstudioDB.optativa,
+                            ).where(
+                                PlanEstudioDB.carrera_codigo == selected_carrera,
+                                PlanEstudioDB.anio_plan == selected_year,
+                                PlanEstudioDB.plan_version_id == selected_version_id,
+                            )
+                        ).all())
+                        _optativas_set = {
+                            mc for mc, opt in _pe_rows if opt
+                        }
+
+                        def _split_ob_opt(items):
+                            _ob = [t for t in items if t[0].codigo not in _optativas_set]
+                            _op = [t for t in items if t[0].codigo in _optativas_set]
+                            return _ob, _op
+
+                        # Filtro case-insensitive: la DB persiste
+                        # "Anual" (A mayúscula) — comparar en lower
+                        # evita perder las materias anuales de la
+                        # columna izquierda por typo de casing.
+                        anuales_ob, anuales_op = _split_ob_opt([
+                            (m, a, c) for m, a, c in materias_anuales
+                            if (c or "").lower() == "anual"
+                        ])
+                        primer_ob, primer_op = _split_ob_opt([
+                            (m, a, c) for m, a, c in materias_anuales if c == "1C"
+                        ])
+                        segundo_ob, segundo_op = _split_ob_opt([
+                            (m, a, c) for m, a, c in materias_anuales if c == "2C"
+                        ])
 
                         col1, col2, col3 = st.columns(3)
 
+                        # Helper que rendea una única lista de materias
+                        # (obligatorias o el bloque de optativas dentro
+                        # de su expander). Extraído para no duplicar el
+                        # bucle de filas + botón desasociar.
+                        def _render_materia_rows(
+                            materias_list, period_key, empty_msg,
+                        ):
+                            if not materias_list:
+                                st.info(empty_msg)
+                                return
+                            for materia, anio, cuatri in materias_list:
+                                col_mat, col_del = st.columns([4, 1])
+                                with col_mat:
+                                    st.markdown(f"**{materia.codigo}**")
+                                    st.caption(f"{materia.nombre}")
+                                with col_del:
+                                    if st.button(
+                                        "X",
+                                        key=f"del_{period_key}_{materia.codigo}",
+                                        help="Desasociar",
+                                    ):
+                                        try:
+                                            carrera_service.remove_materia(
+                                                session, selected_carrera, materia.codigo,
+                                                plan_version_id=selected_version_id,
+                                            )
+                                            st.success("Desasociada")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
+
                         # Helper to render a column
-                        def _render_period_column(title, materias_list, period_key, cuatrimestre_plan_value, periodo_filter):
-                            with st.expander(f"{title} ({len(materias_list)})", expanded=True):
-                                if materias_list:
-                                    for materia, anio, cuatri in materias_list:
-                                        col_mat, col_del = st.columns([4, 1])
-                                        with col_mat:
-                                            st.markdown(f"**{materia.codigo}**")
-                                            st.caption(f"{materia.nombre}")
-                                        with col_del:
-                                            if st.button("X", key=f"del_{period_key}_{materia.codigo}", help="Desasociar"):
-                                                try:
-                                                    carrera_service.remove_materia(
-                                                        session, selected_carrera, materia.codigo,
-                                                        plan_version_id=selected_version_id,
-                                                    )
-                                                    st.success("Desasociada")
-                                                    st.rerun()
-                                                except Exception as e:
-                                                    st.error(f"Error: {e}")
-                                else:
-                                    st.info(f"Sin materias {period_key}")
+                        def _render_period_column(
+                            title, obligatorias, optativas,
+                            period_key, cuatrimestre_plan_value,
+                            periodo_filter,
+                        ):
+                            total = len(obligatorias) + len(optativas)
+                            with st.expander(
+                                f"{title} ({total})", expanded=True,
+                            ):
+                                _render_materia_rows(
+                                    obligatorias, period_key,
+                                    f"Sin materias {period_key}",
+                                )
+
+                                # Optativas separadas, expander cerrado
+                                # por default. Sólo se muestra si hay al
+                                # menos una — evita ruido.
+                                if optativas:
+                                    with st.expander(
+                                        f"Optativas ({len(optativas)})",
+                                        expanded=False,
+                                    ):
+                                        _render_materia_rows(
+                                            optativas,
+                                            f"{period_key}_opt",
+                                            f"Sin optativas {period_key}",
+                                        )
 
                                 st.markdown("---")
                                 st.markdown(f"**Asociar Materia {period_key}**")
@@ -709,11 +782,20 @@ def render_custom_carrera_page():
                                     st.caption(f"No hay materias disponibles")
 
                         with col1:
-                            _render_period_column("Anuales", anuales, "anual", "anual", "anual")
+                            _render_period_column(
+                                "Anuales", anuales_ob, anuales_op,
+                                "anual", "anual", "anual",
+                            )
                         with col2:
-                            _render_period_column("1er Cuatrimestre", primer_cuatri, "1C", "1C", "cuatrimestral")
+                            _render_period_column(
+                                "1er Cuatrimestre", primer_ob, primer_op,
+                                "1C", "1C", "cuatrimestral",
+                            )
                         with col3:
-                            _render_period_column("2do Cuatrimestre", segundo_cuatri, "2C", "2C", "cuatrimestral")
+                            _render_period_column(
+                                "2do Cuatrimestre", segundo_ob, segundo_op,
+                                "2C", "2C", "cuatrimestral",
+                            )
 
 
 # Render the custom page
