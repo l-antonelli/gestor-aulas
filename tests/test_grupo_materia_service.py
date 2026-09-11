@@ -745,6 +745,216 @@ class TestChequeoConsistenciaTransversal:
         assert ajenas[0].sugerencia_grupo_id is None
 
 
+class TestChequeoConsistenciaFlags:
+    """Matriz de flags configurables por grupo (2026-09-10).
+
+    ``GrupoMateriaDB`` expone 3 flags que gobiernan el chequeo eje-por-eje:
+
+    1. ``chequear_pertenencia_asociadas``: si ON, exige que cada
+       materia del grupo pertenezca a al menos una carrera asociada.
+       En régimen transversal (≥2 asociadas), la interpretación es
+       más fuerte: exige que aparezca en al menos 2 asociadas.
+    2. ``chequear_exclusividad_no_asociadas``: si ON, exige que las
+       materias del grupo NO aparezcan en el plan de carreras no
+       asociadas.
+    3. ``chequear_completitud``: si ON, computa faltantes. Si OFF,
+       nunca hay faltantes (sólo se validan ajenas).
+    """
+
+    def _seed_plan(
+        self, session, carrera_codigo: str, materias: list[str],
+        plan_id: str | None = None,
+    ) -> str:
+        if session.get(CarreraDB, carrera_codigo) is None:
+            session.add(CarreraDB(
+                codigo=carrera_codigo, nombre=f"Carrera {carrera_codigo}",
+            ))
+        pv_id = plan_id or f"pv-{carrera_codigo}"
+        session.add(PlanCarreraVersionDB(
+            id=pv_id,
+            carrera_codigo=carrera_codigo,
+            nombre=f"Plan {carrera_codigo}",
+            fecha_creacion=date(2026, 1, 1),
+            active=True,
+        ))
+        session.commit()
+        for mc in materias:
+            if session.get(MateriaDB, mc) is None:
+                session.add(MateriaDB(codigo=mc, nombre=f"Mat {mc}"))
+            session.add(PlanEstudioDB(
+                id=f"{pv_id}-{mc}",
+                plan_version_id=pv_id,
+                materia_codigo=mc,
+                carrera_codigo=carrera_codigo,
+                anio_plan=1,
+                cuatrimestre_plan="1C",
+            ))
+        session.commit()
+        return pv_id
+
+    def test_completitud_off_no_reporta_faltantes(self, session):
+        """Con ``chequear_completitud=False`` no se computan faltantes
+        aunque haya materias que deberían estar en el grupo."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA1", "MA2"])
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A"],
+            chequear_completitud=False,
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g.id)
+        assert faltantes == []
+
+    def test_completitud_on_reporta_faltantes(self, session):
+        """Verificación positiva contra el test anterior: con el mismo
+        setup pero ``chequear_completitud=True`` sí reporta."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["MA1", "MA2"])
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A"],
+            chequear_completitud=True,
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g.id)
+        assert {f.codigo for f in faltantes} == {"MA1", "MA2"}
+
+    def test_pertenencia_off_transversal_faltante_con_1_asociada(
+        self, session,
+    ):
+        """En régimen transversal con ``chequear_pertenencia_asociadas
+        =False``, se relaja el umbral: una materia que aparece en 1
+        sola asociada también se reporta como faltante (basta con
+        pertenecer a alguna, no a al menos 2)."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["SOLO_A"], plan_id="pv-A")
+        self._seed_plan(session, "B", [], plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B"],
+            chequear_pertenencia_asociadas=False,
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g.id)
+        assert {f.codigo for f in faltantes} == {"SOLO_A"}
+
+    def test_exclusividad_off_transversal_faltante_incluso_si_en_no_asociada(
+        self, session,
+    ):
+        """Caso F/A/M/E con Industrial: F asociado a A, M, E. FIII
+        aparece en A, M, E (≥ 2 asociadas) y también en I (no
+        asociada). Con ``chequear_exclusividad_no_asociadas=False``,
+        FIII debe reportarse como faltante — el operador quiere
+        agregarla al grupo aunque también aparezca en otras carreras
+        que no le importan."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FIII"], plan_id="pv-A")
+        self._seed_plan(session, "M", ["FIII"], plan_id="pv-M")
+        self._seed_plan(session, "E", ["FIII"], plan_id="pv-E")
+        self._seed_plan(session, "I", ["FIII"], plan_id="pv-I")
+        g_f = create_grupo(
+            session, "F", sedes_duras=["S1"],
+            carreras_asociadas=["A", "M", "E"],
+            chequear_exclusividad_no_asociadas=False,
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g_f.id)
+        assert {f.codigo for f in faltantes} == {"FIII"}
+
+    def test_exclusividad_off_transversal_no_ajena_si_en_no_asociadas(
+        self, session,
+    ):
+        """Idem: con ``chequear_exclusividad_no_asociadas=False``, una
+        materia asignada al grupo que aparece en no-asociadas no se
+        marca como ajena (siempre que cumpla pertenencia)."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["FIII"], plan_id="pv-A")
+        self._seed_plan(session, "M", ["FIII"], plan_id="pv-M")
+        self._seed_plan(session, "E", ["FIII"], plan_id="pv-E")
+        self._seed_plan(session, "I", ["FIII"], plan_id="pv-I")
+        g_f = create_grupo(
+            session, "F", sedes_duras=["S1"],
+            carreras_asociadas=["A", "M", "E"],
+            chequear_exclusividad_no_asociadas=False,
+        )
+        asignar_materia_a_grupo(session, "FIII", g_f.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_f.id)
+        assert ajenas == []
+
+    def test_pertenencia_off_no_ajena_si_no_esta_en_ninguna_asociada(
+        self, session,
+    ):
+        """Con ``chequear_pertenencia_asociadas=False``, una materia
+        asignada al grupo que no aparece en ninguna asociada NO se
+        marca ajena (aunque sí puede marcarse por exclusividad si el
+        otro flag está ON)."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", [], plan_id="pv-A")
+        self._seed_plan(session, "B", ["FUERA"], plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A"],
+            chequear_pertenencia_asociadas=False,
+            chequear_exclusividad_no_asociadas=False,
+        )
+        asignar_materia_a_grupo(session, "FUERA", g.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert ajenas == []
+
+    def test_los_dos_flags_ajena_off_no_reporta_ajenas(self, session):
+        """Con los dos flags de detección de ajenas apagados, ninguna
+        materia se marca ajena aunque esté mal clasificada."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", [], plan_id="pv-A")
+        self._seed_plan(session, "B", ["MAL"], plan_id="pv-B")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A"],
+            chequear_pertenencia_asociadas=False,
+            chequear_exclusividad_no_asociadas=False,
+        )
+        asignar_materia_a_grupo(session, "MAL", g.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g.id)
+        assert ajenas == []
+
+    def test_exclusividad_off_pertenencia_on_transversal_ajena_por_pertenencia(
+        self, session,
+    ):
+        """Régimen transversal, con ``exclusividad=OFF`` y
+        ``pertenencia=ON``: si una materia asignada al grupo aparece
+        en 1 sola asociada (falla la regla "≥ 2 asociadas"), sigue
+        siendo ajena — el operador quería relajar la exclusividad,
+        no la pertenencia."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["SOLO_A"], plan_id="pv-A")
+        self._seed_plan(session, "M", [], plan_id="pv-M")
+        self._seed_plan(session, "E", [], plan_id="pv-E")
+        g_f = create_grupo(
+            session, "F", sedes_duras=["S1"],
+            carreras_asociadas=["A", "M", "E"],
+            chequear_pertenencia_asociadas=True,
+            chequear_exclusividad_no_asociadas=False,
+        )
+        asignar_materia_a_grupo(session, "SOLO_A", g_f.id)
+        _, ajenas, _ = chequear_consistencia_grupo(session, g_f.id)
+        assert {a.codigo for a in ajenas} == {"SOLO_A"}
+
+    def test_faltante_respeta_pertenencia_off_y_exclusividad_off(
+        self, session,
+    ):
+        """Con los dos flags de umbral apagados, una faltante puede
+        aparecer en 1 sola asociada Y también en no-asociadas."""
+        _seed_sedes(session)
+        self._seed_plan(session, "A", ["X"], plan_id="pv-A")
+        self._seed_plan(session, "B", [], plan_id="pv-B")
+        self._seed_plan(session, "C", ["X"], plan_id="pv-C")
+        g = create_grupo(
+            session, "G", sedes_duras=["S1"],
+            carreras_asociadas=["A", "B"],
+            chequear_pertenencia_asociadas=False,
+            chequear_exclusividad_no_asociadas=False,
+        )
+        faltantes, _, _ = chequear_consistencia_grupo(session, g.id)
+        assert {f.codigo for f in faltantes} == {"X"}
+
+
 class TestPlanActivo:
 
     def test_get_plan_activo_devuelve_el_activo(self, session):

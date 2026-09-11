@@ -2194,6 +2194,133 @@ class TestRestriccionSedesConsecutivas:
         assert inputs.pares_intersede_riesgo == []
 
 
+class TestR13ParesEntreMaterias:
+    """R13 debe forzar el margen intersede **también** entre horarios
+    de materias distintas del mismo (carrera, año, cuatri).
+
+    Motivación: aunque una comisión no tenga traslado interno (el
+    profesor no cambia de sede), un alumno del grupo curricular sí
+    tiene que trasladarse si dos materias contiguas caen en sedes
+    distintas. Reproduce el caso real de Mecánica 5° 1C: M25 en
+    Pellegrini termina 19:00 y F15 (otra materia del grupo) empieza
+    19:00 en Siberia — gap 0, imposible para el alumno.
+    """
+
+    def _seed_dos_materias_contiguas(
+        self, session: Session, *,
+        h1_ini: int = 8, h1_fin: int = 10,
+        h2_ini: int = 10, h2_fin: int = 12,
+    ) -> dict:
+        """Dos materias M1 y M2 del mismo (A, 1, 1C). M1 lunes 8-10,
+        M2 lunes 10-12. Dos sedes disponibles, cada carrera con acceso
+        a ambas."""
+        from src.services.carrera_sede_service import set_sedes_de_carrera
+        from src.database.models import (
+            CarreraDB, PlanCarreraVersionDB, PlanEstudioDB,
+        )
+        from datetime import date as _date
+        ctx = _seed_basic(session)
+        # Ajustar M1 al horario del test.
+        h1_existente = session.exec(
+            select(HorarioDB).where(HorarioDB.codigo_materia == "M1")
+        ).first()
+        h1_existente.hora_inicio = time(h1_ini, 0)
+        h1_existente.hora_fin = time(h1_fin, 0)
+        session.add(h1_existente)
+        # Ajustar hteo de M1.
+        m1 = session.get(MateriaDB, "M1")
+        m1.horas_teoria = float(h1_fin - h1_ini)
+        m1.horas_laboratorio = 0.0
+        m1.horas_semanales = float(h1_fin - h1_ini)
+        session.add(m1)
+        # Segunda sede + aulas.
+        session.add(SedeDB(id="S2", nombre="Sede 2"))
+        session.add(AulaDB(
+            id="a_S1", sede_id="S1", codigo_aula="a_S1",
+            nombre="A S1", capacidad=30,
+        ))
+        session.add(AulaDB(
+            id="a_S2", sede_id="S2", codigo_aula="a_S2",
+            nombre="A S2", capacidad=30,
+        ))
+        # Carrera + plan version + M1 en el plan.
+        session.add(CarreraDB(codigo="A", nombre="Car A"))
+        session.add(PlanCarreraVersionDB(
+            id="pv-A", carrera_codigo="A", nombre="Plan A",
+            fecha_creacion=_date(2026, 1, 1), active=True,
+        ))
+        session.commit()
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-A",
+            materia_codigo="M1", carrera_codigo="A",
+            anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        # Bridge para que el chequeo camino tome este plan version.
+        from src.database.models import CicloPlanVersionDB
+        session.add(CicloPlanVersionDB(
+            ciclo_id=ctx["ciclo"].id, plan_version_id="pv-A",
+        ))
+        # M2 en el mismo grupo curricular.
+        _add_materia_con_serie(session, "M2", ctx["ciclo"], esperados=20)
+        session.add(PlanEstudioDB(
+            id=str(uuid.uuid4()), plan_version_id="pv-A",
+            materia_codigo="M2", carrera_codigo="A",
+            anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        _add_comision_horario(session, "plan-1", "M2", "Lunes", h2_ini, h2_fin)
+        # Ajustar hteo de M2 acorde.
+        m2 = session.get(MateriaDB, "M2")
+        m2.horas_teoria = float(h2_fin - h2_ini)
+        m2.horas_laboratorio = 0.0
+        m2.horas_semanales = float(h2_fin - h2_ini)
+        session.add(m2)
+        session.commit()
+        # Ambas sedes admisibles para la carrera A.
+        set_sedes_de_carrera(session, "A", ["S1", "S2"])
+        return ctx
+
+    def test_pares_riesgo_entre_materias_distintas_detectados(
+        self, session,
+    ):
+        """M1 y M2 contiguas del mismo (A, 1, 1C) con gap=0 y
+        margen=30 → deben aparecer como par de riesgo."""
+        self._seed_dos_materias_contiguas(session)
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        # Hoy la función sólo mira misma comisión: falla → 0 pares.
+        # Con el fix debería ser 1 par (entre M1 y M2).
+        assert len(inputs.pares_intersede_riesgo) >= 1, (
+            "R13 debería detectar el par intercomisión del mismo "
+            "grupo curricular con gap corto"
+        )
+
+    def test_lp_no_asigna_sedes_distintas_a_materias_contiguas(
+        self, session,
+    ):
+        """Con el par de riesgo bien detectado, el LP debe asignar
+        M1 y M2 a la misma sede aunque sean comisiones distintas."""
+        self._seed_dos_materias_contiguas(session)
+        _inputs, sol = run_lp_dry(session, "plan-1", LPConfig())
+        assert sol.status == "optimal"
+        aulas_db = list(session.exec(select(AulaDB)).all())
+        aula_sede = {a.id: a.sede_id for a in aulas_db}
+        sedes_asignadas = {
+            aula_sede[a] for a in sol.x_assignments.values()
+        }
+        assert len(sedes_asignadas) == 1, (
+            f"El LP asignó M1 y M2 a sedes distintas: "
+            f"{sedes_asignadas}. Debería respetar R13 intercomisión."
+        )
+
+    def test_lp_gap_suficiente_puede_dividir_sedes(self, session):
+        """Con gap >= margen, R13 no aplica → el LP puede elegir
+        libremente (aunque la preferencia blanda pueda influir)."""
+        self._seed_dos_materias_contiguas(
+            session, h2_ini=11, h2_fin=13,  # gap = 60 min
+        )
+        inputs = build_inputs(session, "plan-1", LPConfig())
+        assert inputs.pares_intersede_riesgo == []
+
+
 # =============================================================================
 # Fase 8.1: R5 completa (teoría + laboratorio) — nuevas ecuaciones
 # =============================================================================

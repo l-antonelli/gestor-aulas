@@ -494,3 +494,323 @@ class TestGruposNoRelevantes:
         assert [
             b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
         ] != []
+
+
+class TestCaminoCursadaSolapamiento:
+    """Chequeo de camino cursada debe descartar combinaciones donde
+    dos comisiones de distintas materias se solapan horariamente
+    (no sólo por margen intersede). Reproducido a partir del caso
+    real de Electrónica 3° 1C donde FB12 tenía 3 comisiones y todas
+    quedaban descartadas por solapar con otras obligatorias del
+    cuatrimestre — el pre-check anterior no lo detectaba y el LP
+    resolvía como si nada.
+    """
+
+    def test_dos_materias_con_unica_comision_solapada_bloquean(
+        self, session,
+    ):
+        """M1 y M2 ambas Lunes 10-12 (misma sede DURO). No hay
+        margen intersede que rescate (mismo grupo de sede). El chequeo
+        debe bloquear por 'ninguna combinación cursable' — no puede
+        cursarse dos materias en la misma franja."""
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_SOLAP1", sedes_duras=[ctx["pel"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_comision(
+            session, "M1", "plan-1", horarios=[("Lunes", 10, 12)],
+        )
+        _add_comision(
+            session, "M2", "plan-1", horarios=[("Lunes", 10, 12)],
+        )
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        assert len(camino_bloqueos) == 1, (
+            "Dos materias obligatorias solapadas deberían bloquear "
+            "el camino de cursada"
+        )
+        assert not reporte.factible
+
+    def test_todas_las_comisiones_de_una_materia_solapan_con_otras(
+        self, session,
+    ):
+        """Reproduce el caso Electrónica 3° 1C: FB12 tiene 3
+        comisiones, cada una solapa con al menos otra materia
+        obligatoria del mismo (carrera, año, cuatri). El chequeo
+        debe bloquear porque no hay ninguna comisión de FB12 que
+        deje cursar todas las obligatorias."""
+        ctx = _seed_ciclo_y_carrera(session)
+        # Todas Pellegrini (no importan intersede — sólo solapamiento).
+        g_pel = create_grupo(
+            session, "G_PEL_SOLAP2", sedes_duras=[ctx["pel"]],
+        )
+        for mc in ("FB12", "FB20", "E4", "E5"):
+            _add_materia_al_plan(
+                session, mc, ctx["pv_id"], "A", 1, "1C", g_pel.id,
+            )
+        # FB12 tiene 3 comisiones, cada una solapa con alguna otra:
+        # com 1 Lunes 10-12 solapa con FB20 Lunes 10:30-13
+        # com 2 Lunes 14:45-16:45 solapa con E4 Lunes 13:45-17:45
+        # com 3 Lunes 18:15-20:15 solapa con E5 Lunes 17-20
+        _add_comision(
+            session, "FB12", "plan-1", numero=1,
+            horarios=[("Lunes", 10, 12)],
+        )
+        _add_comision(
+            session, "FB12", "plan-1", numero=2,
+            horarios=[("Lunes", 14, 16)],
+        )
+        _add_comision(
+            session, "FB12", "plan-1", numero=3,
+            horarios=[("Lunes", 18, 20)],
+        )
+        # FB20 Lunes 10:30-13 (solapa con FB12 com 1).
+        _add_comision(
+            session, "FB20", "plan-1",
+            horarios=[("Lunes", 10, 13)],
+        )
+        # E4 Lunes 13-17 (solapa con FB12 com 2).
+        _add_comision(
+            session, "E4", "plan-1",
+            horarios=[("Lunes", 13, 17)],
+        )
+        # E5 Lunes 17-20 (solapa con FB12 com 3).
+        _add_comision(
+            session, "E5", "plan-1",
+            horarios=[("Lunes", 17, 20)],
+        )
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        assert len(camino_bloqueos) == 1
+        assert not reporte.factible
+        # El detalle debe mencionar FB12 (la materia sin escape).
+        det = camino_bloqueos[0].detalle
+        assert "FB12" in det
+
+    def test_solapamiento_evitable_por_comision_alternativa_no_bloquea(
+        self, session,
+    ):
+        """M1 tiene 2 comisiones: com 1 solapa con M2, com 2 no.
+        El DFS debe encontrar la combinación viable."""
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_SOLAP3", sedes_duras=[ctx["pel"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        # M1 com 1 solapa; M1 com 2 no.
+        _add_comision(
+            session, "M1", "plan-1", numero=1,
+            horarios=[("Lunes", 10, 12)],
+        )
+        _add_comision(
+            session, "M1", "plan-1", numero=2,
+            horarios=[("Martes", 10, 12)],
+        )
+        _add_comision(
+            session, "M2", "plan-1",
+            horarios=[("Lunes", 10, 12)],
+        )
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        assert [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ] == []
+
+    def test_solapamiento_parcial_bloquea(self, session):
+        """Solapamiento no tiene que ser exacto — basta con que las
+        franjas se pisen en algún instante."""
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_SOLAP4", sedes_duras=[ctx["pel"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        # M1 Lunes 10-12, M2 Lunes 11-13 → solapan 11-12.
+        _add_comision(
+            session, "M1", "plan-1", horarios=[("Lunes", 10, 12)],
+        )
+        _add_comision(
+            session, "M2", "plan-1", horarios=[("Lunes", 11, 13)],
+        )
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+        assert [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ] != []
+
+
+class TestCaminoCursadaExcepcionesIgnoradas:
+    """Cuando el par bloqueante figura en ``IgnoredConflictDB`` para el
+    plan, el chequeo camino lo saltea. Reutiliza la misma tabla que
+    usa el detalle del plan para "conflictos ignorados" — permite
+    modelar casos reales donde dos materias del mismo (carrera, año,
+    cuatri) se dictan en paralelo porque en la práctica las cursan
+    grupos de alumnos distintos (ej. IA-1.2 vs IA0 en el plan de IA).
+    """
+
+    def test_par_ignorado_no_bloquea(self, session):
+        """M1 y M2 se solapan pero el par (M1, M2) está en
+        IgnoredConflictDB para el plan → sin bloqueo."""
+        from src.database.models import IgnoredConflictDB
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_IGN1", sedes_duras=[ctx["pel"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_comision(session, "M1", "plan-1", horarios=[("Lunes", 10, 12)])
+        _add_comision(session, "M2", "plan-1", horarios=[("Lunes", 10, 12)])
+        # Registrar excepción explícita.
+        a, b = sorted(("M1", "M2"))
+        session.add(IgnoredConflictDB(
+            plan_cursada_id="plan-1",
+            materia_a=a, materia_b=b,
+            razon="Grupos de alumnos distintos por año de plan",
+        ))
+        session.commit()
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        assert camino_bloqueos == []
+
+    def test_par_ignorado_de_otro_plan_no_afecta(self, session):
+        """La excepción está registrada pero para OTRO plan → el
+        chequeo del plan actual sigue bloqueando."""
+        from src.database.models import IgnoredConflictDB
+        ctx = _seed_ciclo_y_carrera(session)
+        # Segundo plan al que le vamos a asociar la excepción.
+        session.add(PlanificacionCursadaDB(
+            id="plan-otro", nombre="Otro", ciclo_id="2026-1C",
+        ))
+        session.commit()
+        g_pel = create_grupo(
+            session, "G_PEL_IGN2", sedes_duras=[ctx["pel"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_comision(session, "M1", "plan-1", horarios=[("Lunes", 10, 12)])
+        _add_comision(session, "M2", "plan-1", horarios=[("Lunes", 10, 12)])
+        # Excepción registrada para OTRO plan.
+        a, b = sorted(("M1", "M2"))
+        session.add(IgnoredConflictDB(
+            plan_cursada_id="plan-otro",
+            materia_a=a, materia_b=b,
+            razon="Excepción de otro plan",
+        ))
+        session.commit()
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        assert len(camino_bloqueos) == 1
+
+    def test_par_ignorado_no_afecta_otros_pares_bloqueantes(self, session):
+        """Ignorar (M1, M2) no debería salvar un bloqueo entre M1 y
+        M3 (par distinto)."""
+        from src.database.models import IgnoredConflictDB
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_IGN3", sedes_duras=[ctx["pel"]],
+        )
+        for mc in ("M1", "M2", "M3"):
+            _add_materia_al_plan(
+                session, mc, ctx["pv_id"], "A", 1, "1C", g_pel.id,
+            )
+        # M1 solapa con M2 (ignorado) y con M3 (no ignorado).
+        _add_comision(session, "M1", "plan-1", horarios=[("Lunes", 10, 12)])
+        _add_comision(session, "M2", "plan-1", horarios=[("Lunes", 10, 12)])
+        _add_comision(session, "M3", "plan-1", horarios=[("Lunes", 11, 13)])
+        a, b = sorted(("M1", "M2"))
+        session.add(IgnoredConflictDB(
+            plan_cursada_id="plan-1",
+            materia_a=a, materia_b=b,
+            razon="test",
+        ))
+        session.commit()
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        # M1-M3 sigue bloqueando; M2-M3 no chocan (10-12 vs 11-13 se
+        # solapan sólo si están ambas activas, pero como M1-M2 está
+        # ignorado y M1-M3 sigue chocando, el DFS no encuentra
+        # combinación viable de todas modos → 1 bloqueo).
+        assert len(camino_bloqueos) == 1
+
+    def test_par_ignorado_no_afecta_bloqueo_intersede(self, session):
+        """El par ignorado sólo aplica a solapamientos horarios
+        (donde el concepto 'los cursan distintos alumnos' tiene
+        sentido). Un bloqueo por margen intersede sigue disparándose
+        aunque el par esté marcado como ignorado — el traslado físico
+        entre sedes es un problema del cronograma, no de alumnos."""
+        from src.database.models import IgnoredConflictDB
+        ctx = _seed_ciclo_y_carrera(session)
+        g_pel = create_grupo(
+            session, "G_PEL_IGN4", sedes_duras=[ctx["pel"]],
+        )
+        g_sib = create_grupo(
+            session, "G_SIB_IGN4", sedes_duras=[ctx["sib"]],
+        )
+        _add_materia_al_plan(
+            session, "M1", ctx["pv_id"], "A", 1, "1C", g_pel.id,
+        )
+        _add_materia_al_plan(
+            session, "M2", ctx["pv_id"], "A", 1, "1C", g_sib.id,
+        )
+        # Contiguos con gap 0 (< margen 30). Sedes disjuntas.
+        _add_comision(session, "M1", "plan-1", horarios=[("Lunes", 8, 10)])
+        _add_comision(session, "M2", "plan-1", horarios=[("Lunes", 10, 12)])
+        a, b = sorted(("M1", "M2"))
+        session.add(IgnoredConflictDB(
+            plan_cursada_id="plan-1",
+            materia_a=a, materia_b=b,
+            razon="test",
+        ))
+        session.commit()
+
+        reporte = check_factibilidad_estructural(session, "plan-1")
+
+        # Debe bloquear igual: la excepción sólo cubre solapamiento.
+        camino_bloqueos = [
+            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+        ]
+        assert len(camino_bloqueos) == 1

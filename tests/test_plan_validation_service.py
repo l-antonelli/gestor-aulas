@@ -323,3 +323,132 @@ class TestStaleness:
         assert is_validation_stale(
             session, record, current_exclude_optativas=True,
         ) is True
+
+
+class TestCleanupStaleIgnoredPairs:
+    """Auto-limpieza de excepciones IgnoredConflictDB cuando cambia el
+    plan de estudio.
+
+    Un par se considera stale si las dos materias del par ya no
+    coexisten en ningún grupo curricular ``(carrera, año, cuatri)``
+    del ciclo del plan.
+    """
+
+    def test_par_vivo_no_se_borra(self, session, setup_basic):
+        """MAT101 y FIS101 siguen en el mismo (ING, 1, 1C) → el par
+        permanece."""
+        from src.services.plan_validation_service import (
+            cleanup_stale_ignored_pairs,
+            get_ignored_pairs,
+        )
+        plan = setup_basic["plan"]
+        add_ignored_pair(
+            session, plan.id, "MAT101", "FIS101", razon="test",
+        )
+
+        eliminadas = cleanup_stale_ignored_pairs(session, plan.id)
+
+        assert eliminadas == []
+        assert ("FIS101", "MAT101") in get_ignored_pairs(session, plan.id)
+
+    def test_par_stale_se_borra_cuando_materia_sale_del_plan(
+        self, session, setup_basic,
+    ):
+        """Si FIS101 se saca del plan de estudio, la excepción
+        (MAT101, FIS101) queda huérfana → se limpia."""
+        from sqlmodel import delete
+        from src.services.plan_validation_service import (
+            cleanup_stale_ignored_pairs,
+            get_ignored_pairs,
+        )
+        plan = setup_basic["plan"]
+        pv = setup_basic["pv"]
+        add_ignored_pair(
+            session, plan.id, "MAT101", "FIS101", razon="test",
+        )
+
+        # Sacar FIS101 del plan de estudio.
+        session.exec(
+            delete(PlanEstudioDB).where(
+                PlanEstudioDB.plan_version_id == pv.id,
+                PlanEstudioDB.materia_codigo == "FIS101",
+            )
+        )
+        session.commit()
+
+        eliminadas = cleanup_stale_ignored_pairs(session, plan.id)
+
+        assert len(eliminadas) == 1
+        assert eliminadas[0]["materia_a"] == "FIS101"
+        assert eliminadas[0]["materia_b"] == "MAT101"
+        assert eliminadas[0]["razon"] == "test"
+        # La excepción efectivamente se borró.
+        assert get_ignored_pairs(session, plan.id) == set()
+
+    def test_par_stale_se_borra_cuando_materia_cambia_de_cuatri(
+        self, session, setup_basic,
+    ):
+        """Si FIS101 pasa de 1C a 2C, ya no coexiste con MAT101 en
+        ningún grupo curricular → excepción stale → se limpia."""
+        from sqlmodel import select
+        from src.services.plan_validation_service import (
+            cleanup_stale_ignored_pairs,
+            get_ignored_pairs,
+        )
+        plan = setup_basic["plan"]
+        pv = setup_basic["pv"]
+        add_ignored_pair(
+            session, plan.id, "MAT101", "FIS101", razon="test",
+        )
+
+        # Cambiar FIS101 a 2C.
+        pe_fis = session.exec(
+            select(PlanEstudioDB).where(
+                PlanEstudioDB.plan_version_id == pv.id,
+                PlanEstudioDB.materia_codigo == "FIS101",
+            )
+        ).first()
+        pe_fis.cuatrimestre_plan = "2C"
+        session.add(pe_fis)
+        session.commit()
+
+        eliminadas = cleanup_stale_ignored_pairs(session, plan.id)
+
+        assert len(eliminadas) == 1
+        assert get_ignored_pairs(session, plan.id) == set()
+
+    def test_validar_plan_reporta_stale_removidas(
+        self, session, setup_basic,
+    ):
+        """El summary de validar_plan expone
+        ``excepciones_stale_removidas`` para que la UI las muestre."""
+        from sqlmodel import delete
+        from src.services.plan_validation_service import validar_plan
+        plan = setup_basic["plan"]
+        pv = setup_basic["pv"]
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        add_ignored_pair(
+            session, plan.id, "MAT101", "FIS101", razon="test",
+        )
+        # Sacar FIS101 → excepción stale.
+        session.exec(
+            delete(PlanEstudioDB).where(
+                PlanEstudioDB.plan_version_id == pv.id,
+                PlanEstudioDB.materia_codigo == "FIS101",
+            )
+        )
+        session.commit()
+
+        _add_comision_with_horario(
+            session, plan.id, "MAT101", "MAT101-001",
+            "Lunes", time(8, 0), time(10, 0),
+        )
+        summary = validar_plan(session, plan.id)
+
+        assert len(summary.excepciones_stale_removidas) == 1
+        removida = summary.excepciones_stale_removidas[0]
+        assert {removida["materia_a"], removida["materia_b"]} == {
+            "MAT101", "FIS101",
+        }
