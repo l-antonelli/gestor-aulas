@@ -1,6 +1,6 @@
 # Anexo — Documentacion Tecnica de la Base de Datos
 
-> **Version del anexo**: 2026-09-03
+> **Version del anexo**: 2026-09-11
 > **Fuentes de verdad**: `src/database/models.py`, `src/database/connection.py`, `src/database/crud.py`, `src/services/*`
 > **Formato**: Este anexo es un documento tecnico independiente. Puede leerse en forma secuencial o utilizarse como referencia consultando la seccion correspondiente.
 
@@ -203,14 +203,17 @@ Datos base estables y de larga vigencia.
 | `virtual` | `bool` | — | `False` | Modalidad virtual por default. |
 | `optativa` | `bool` | — | `False` | Materia optativa (opcional en el plan). |
 | `dicta_recursado` | `Optional[bool]` | — | `None` | Override de `CarreraDB.dicta_recursado`. `None` = usar el de la carrera. |
+| `grupo_id` | `str` | FK `grupo_materia.id`, `NOT NULL` | — | **Grupo de Materias al que pertenece (2026-09)**. Particion estricta: cada materia pertenece a exactamente un grupo. Alimenta R10/R12 del LP via `resolver_sedes_admisibles_por_materia`. |
 
 **Invariantes**:
 
 - **INV-MAT-1**: `horas_teoria + horas_laboratorio ≤ horas_semanales` cuando ambos estan definidos. No hay CHECK a nivel schema; se valida en `validar_factibilidad_particion_horas`.
 - **INV-MAT-2**: Si `periodo = "anual"`, el sistema generara **dos dictados por año academico** (uno por cuatri), linkeados al mismo `DictadoDB` via `DictadoCicloDB`.
+- **INV-MAT-3**: `grupo_id NOT NULL`. Cada materia pertenece a **exactamente un** `GrupoMateriaDB`. Enforzado por el schema (post-migracion) y por el service layer.
 
 **Relaciones**:
 
+- N:1 con `GrupoMateriaDB` (particion estricta).
 - 1:N con `ComisionDB`, `DictadoDB`, `HorarioDB`, `ClaseDB`, `ScheduleEntryDB`.
 - N:M con `CarreraDB` via `PlanEstudioDB`.
 - N:M con `AulaDB` via `MateriaLaboratorioDB` (laboratorios compatibles).
@@ -248,7 +251,7 @@ Datos base estables y de larga vigencia.
 
 #### 5.1.3 `SedeDB` — tabla `sedes`
 
-**Proposito**: sede fisica donde se ubican las aulas. Modelada como entidad propia (y no como string libre en `AulaDB.sede`) para permitir referenciarla desde otras tablas (`carrera_sede`, `es_default_comunes`).
+**Proposito**: sede fisica donde se ubican las aulas. Modelada como entidad propia (y no como string libre en `AulaDB.sede`) para permitir referenciarla desde las restricciones del LP.
 
 **Schema**:
 
@@ -256,19 +259,17 @@ Datos base estables y de larga vigencia.
 |---------|------|------------|---------|-------------|
 | `id` | `str` | PK, UUID | `uuid4()` | Identificador opaco. |
 | `nombre` | `str` | `unique=True`, `index=True`, `min_length=1` | — | Nombre unico globalmente. |
-| `es_default_comunes` | `bool` | `index=True` | `False` | `True` en **a lo sumo una** sede. Marca destino default para materias comunes. |
+| `es_default_comunes` | `bool` | `index=True` | `False` | **Deprecado (2026-09)**. Reemplazado por Grupos de Materias. Se conserva como columna legacy; ningun flujo del LP ni de la UI lo consulta. |
 
 **Invariantes**:
 
-- **INV-SEDE-1**: A lo sumo una fila tiene `es_default_comunes=True`. Garantizado por el servicio `set_sede_default_comunes` que primero desactiva el flag en las otras sedes.
-- **INV-SEDE-2**: `nombre` es unico globalmente (constraint fisico).
+- **INV-SEDE-1**: `nombre` es unico globalmente (constraint fisico).
 
 **Relaciones**:
 
 - 1:N con `AulaDB`.
-- N:M con `CarreraDB` via `CarreraSedeDB`.
-
-**Auditoria**: mutaciones sobre `es_default_comunes` se auditan.
+- N:M con `GrupoMateriaDB` via `GrupoMateriaSedeDB` (con tipo DURO/BLANDO y orden).
+- N:M con `CarreraDB` via `CarreraSedeDB` (legacy deprecado).
 
 **Seeding**: si la tabla `sedes` esta vacia al inicializar la base y la tabla `aulas` tambien lo esta, se inserta automaticamente una sede `Pellegrini` (`_seed_default_sede_if_empty`).
 
@@ -335,7 +336,77 @@ Datos base estables y de larga vigencia.
 | `materia_codigo` | `str` | PK, FK `materias.codigo` |
 | `aula_id` | `str` | PK, FK `aulas.id` |
 
-**Uso en el LP**: el asignador consulta esta tabla para armar el conjunto de aulas admisibles para horarios de tipo `"laboratorio"`. Los horarios teoricos ignoran la tabla y pueden asignarse a cualquier aula compatible por tipo/sede.
+**Uso en el LP**: el asignador consulta esta tabla para armar el conjunto de aulas admisibles para horarios de tipo `"laboratorio"`. Los horarios teoricos ignoran la tabla y pueden asignarse a cualquier aula compatible por tipo/sede. Habilita ademas la **excepcion de laboratorio compatible** de R10: un aula listada en `MateriaLaboratorioDB` para una materia se acepta aunque su sede no pertenezca al set duro del grupo, porque la compatibilidad fisica del laboratorio prevalece sobre la preferencia curricular.
+
+---
+
+#### 5.1.7 `GrupoMateriaDB` — tabla `grupo_materia`
+
+**Proposito**: agrupar materias que comparten el mismo criterio de sedes admisibles. Reemplaza (2026-09) a la vieja `CarreraSedeDB` como fuente de verdad para la resolucion R10/R12 del LP. Cada `MateriaDB` pertenece a **exactamente un** grupo (particion estricta).
+
+**Schema**:
+
+| Columna | Tipo | Constraint | Default | Descripcion |
+|---------|------|------------|---------|-------------|
+| `id` | `str` | PK, UUID | `uuid4()` | Identificador opaco. |
+| `nombre` | `str` | `unique=True`, `index=True` | — | Ej. `FB`, `F`, `FI`, `CE`, `Específicas de Ing. Electrónica`, `Sin clasificar`. |
+| `descripcion` | `str` | — | `""` | Descripcion libre. |
+| `es_sin_clasificar` | `bool` | `index=True` | `False` | Marca el grupo *fallback*. Solo uno con `True` a la vez. |
+| `chequear_pertenencia_asociadas` | `bool` | — | `True` | Flag del chequeo de consistencia por grupo. |
+| `chequear_exclusividad_no_asociadas` | `bool` | — | `True` | Idem. |
+| `chequear_completitud` | `bool` | — | `True` | Idem. |
+
+**Invariantes**:
+
+- **INV-GRUPO-1**: `nombre` unico globalmente (constraint fisico).
+- **INV-GRUPO-2**: A lo sumo una fila con `es_sin_clasificar=True` (invariante en service layer).
+- **INV-GRUPO-3**: Toda materia tiene grupo (`MateriaDB.grupo_id NOT NULL`). Enforzado por schema despues de la migracion inicial. Las materias sin clasificar caen en el grupo *fallback*.
+- **INV-GRUPO-4**: No se puede borrar un grupo con materias asignadas (verificado por `grupo_materia_service.delete_grupo`).
+
+**Semantica**: cada grupo declara **dos configuraciones simultaneas** de sedes, persistidas en `GrupoMateriaSedeDB`:
+
+- **Set duro** (`tipo=DURO`): sedes admisibles cuando el grupo corre en modo DURO. R10 del LP filtra la matriz `compat` a esas sedes.
+- **Lista blanda ordenada** (`tipo=BLANDO`): sedes preferidas cuando el grupo corre en modo BLANDO. La primera (`orden=0`) es la preferida; el resto son alternativas con costo `λ_sede_pref`.
+
+El modo con el que corre cada grupo en una corrida especifica se elige desde `LPConfig.modos_por_grupo` en el panel del asignador. Los grupos declaran ambas configs; el LP elige cual usar en cada corrida.
+
+**Relaciones**:
+
+- 1:N con `MateriaDB` (particion estricta).
+- 1:N con `GrupoMateriaSedeDB` (cascade).
+- 1:N con `GrupoMateriaCarreraDB` (cascade).
+
+---
+
+#### 5.1.8 `GrupoMateriaSedeDB` — tabla `grupo_materia_sede`
+
+**Proposito**: tabla M:N ordenada entre `GrupoMateriaDB` y `SedeDB`, con `tipo` (DURO/BLANDO) como parte de la PK compuesta.
+
+**Schema**:
+
+| Columna | Tipo | Constraint | Descripcion |
+|---------|------|------------|-------------|
+| `grupo_id` | `str` | PK, FK `grupo_materia.id` | |
+| `sede_id` | `str` | PK, FK `sedes.id` | |
+| `tipo` | `str` | PK | `"DURO"` o `"BLANDO"`. Permite que una misma sede aparezca en ambos sets del mismo grupo. |
+| `orden` | `int` | `ge=0` | Default 0. Semantico solo en BLANDO (0 = preferida). En DURO solo estabilidad visual. |
+
+**Uso en el LP**: `resolver_sedes_admisibles_por_materia(session, materia_codigo)` en `grupo_materia_service.py` devuelve `(sedes_ordenadas, modo)` a partir de la configuracion del grupo. Con modo DURO se aplica R10 (filtro); con modo BLANDO se aplica R12 (preferencia blanda al objetivo).
+
+---
+
+#### 5.1.9 `GrupoMateriaCarreraDB` — tabla `grupo_materia_carrera`
+
+**Proposito**: M:N grupo ↔ carrera, utilizada exclusivamente para el chequeo de consistencia por grupo. No afecta al LP.
+
+**Schema**:
+
+| Columna | Tipo | Constraint |
+|---------|------|------------|
+| `grupo_id` | `str` | PK, FK `grupo_materia.id` |
+| `carrera_codigo` | `str` | PK, FK `carreras.codigo` |
+
+**Semantica**: el servicio `chequear_consistencia_grupo` compara las materias del grupo contra las materias del plan vigente de las carreras asociadas, aplicando los tres flags de `GrupoMateriaDB` (pertenencia, exclusividad, completitud) para reportar `faltantes` y `ajenas`. Se usa para curacion asistida de la particion, no para bloquear al LP.
 
 ---
 
@@ -722,24 +793,18 @@ Planificacion trabajable generada a partir de un cronograma.
 
 ---
 
-#### 5.6.2 `CarreraSedeDB` — tabla `carrera_sede`
+#### 5.6.2 `CarreraSedeDB` — tabla `carrera_sede` (DEPRECADA)
 
-**Proposito**: tabla puente M:N entre carreras y sedes habilitadas para sus materias exclusivas.
+> **Deprecada desde 2026-09**. Reemplazada por `GrupoMateriaDB` + `GrupoMateriaSedeDB`. La preferencia de una carrera queda modelada por su grupo `Específicas de <Carrera>` (typo DURO). La tabla se conserva en el schema para no romper migraciones viejas, pero ningun flujo del LP ni de la UI la lee ni la escribe.
 
-**Schema**:
+**Schema historico** (referenciado durante el bootstrap de grupos):
 
 | Columna | Tipo | Constraint |
 |---------|------|------------|
 | `carrera_codigo` | `str` | PK, FK `carreras.codigo` |
 | `sede_id` | `str` | PK, FK `sedes.id` |
 
-**Regla R10 del LP**:
-
-- Materia **exclusiva** (aparece en 1 sola carrera): solo puede asignarse a aulas cuya sede este en `CarreraSedeDB` para esa carrera.
-- Materia **comun** (aparece en ≥2 carreras): ignora esta tabla y se rige por `SedeDB.es_default_comunes`.
-- Si una carrera no tiene fila en la tabla: fallback "todas las sedes admisibles".
-
-Ver `src/services/carrera_sede_service.py` para el helper `sedes_admisibles_para_materia`.
+**Bootstrap de migracion**: la migracion `_migrate_grupos_materia` en `connection.py` crea, por cada carrera existente, un grupo `Específicas de <Carrera>` DURO con las sedes que la carrera tenia en `CarreraSedeDB`. Despues de la migracion la tabla queda vacia de significado pero se mantiene por compatibilidad. El retiro definitivo se trackea aparte.
 
 ---
 
@@ -801,6 +866,10 @@ Ver `src/services/carrera_sede_service.py` para el helper `sedes_admisibles_para
 
 **Invariante**: `materia_a < materia_b` lexicograficamente. Deduplica pares en cualquier orden de creacion.
 
+**Alcance**: la excepcion aplica al chequeo de **solapamiento horario** (`validar_conflictos_horarios_plan`). **No aplica** al chequeo de **intersede** (R13, R13-camino): el traslado fisico es independiente de que alumnos cursen que materia.
+
+**Auto-limpieza**: `plan_validation_service.cleanup_stale_ignored_pairs` elimina las excepciones huerfanas cuando las materias del par ya no coexisten en ningun grupo curricular `(carrera, año, cuatri)` del plan. Se corre automaticamente en cada `validate_plan` y se reporta al usuario en el summary (`excepciones_stale_removidas`).
+
 ---
 
 ### 5.7 Tabla resumen del catalogo
@@ -814,7 +883,10 @@ Ver `src/services/carrera_sede_service.py` para el helper `sedes_admisibles_para
 | Catalogo maestro | `aulas` | `AulaDB` | Espacio fisico |
 | Catalogo maestro | `correlativas` | `CorrelativaDB` | Precedencia entre materias |
 | Catalogo maestro | `materia_laboratorio` | `MateriaLaboratorioDB` | Compatibilidad materia↔lab |
-| Catalogo maestro | `carrera_sede` | `CarreraSedeDB` | Sedes habilitadas por carrera |
+| Catalogo maestro | `grupo_materia` | `GrupoMateriaDB` | Grupo de materias (R10/R12) |
+| Catalogo maestro | `grupo_materia_sede` | `GrupoMateriaSedeDB` | Sedes DURO/BLANDO por grupo |
+| Catalogo maestro | `grupo_materia_carrera` | `GrupoMateriaCarreraDB` | Carreras asociadas al grupo (chequeo consistencia) |
+| Catalogo maestro | `carrera_sede` | `CarreraSedeDB` | **Deprecada**: sedes habilitadas por carrera (legacy) |
 | Estructura curricular | `plan_carrera_version` | `PlanCarreraVersionDB` | Version del plan |
 | Estructura curricular | `plan_estudio` | `PlanEstudioDB` | Celda del plan |
 | Ciclo lectivo | `ciclos` | `CicloDB` | Cuatrimestre concreto |
@@ -835,7 +907,7 @@ Ver `src/services/carrera_sede_service.py` para el helper `sedes_admisibles_para
 | Plan de cursada | `lp_runs` | `LPRunDB` | Snapshot de corrida del LP |
 | Auditoria | `change_log` | `ChangeLogDB` | Log de mutaciones |
 
-**Total: 22 tablas.**
+**Total: 25 tablas** (22 activas + 3 nuevas: `grupo_materia`, `grupo_materia_sede`, `grupo_materia_carrera`).
 
 ---
 
@@ -1049,36 +1121,39 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 
 **Interfaz con la base**:
 
-- **Inputs**: lee `HorarioDB` (todos los del plan), `AulaDB` (todas las activas), `ComisionDB`, `MateriaLaboratorioDB`, `CarreraSedeDB`, `SedeDB`, `PlanEstudioDB`, `DictadoDB`, `MateriaDB`. Todo en memoria via un `LPInputs`.
-- **Config**: se pasa como `LPConfig` (dataclass), no lee ninguna tabla de configuracion runtime.
+- **Inputs**: lee `HorarioDB` (todos los del plan), `AulaDB` (todas las activas), `ComisionDB`, `MateriaLaboratorioDB`, `GrupoMateriaDB` + `GrupoMateriaSedeDB` (via `grupo_materia_service`), `SedeDB`, `PlanEstudioDB`, `DictadoDB`, `MateriaDB`. Todo en memoria via un `LPInputs`.
+- **Config**: se pasa como `LPConfig` (dataclass) que incluye `modos_por_grupo: dict[grupo_id, "DURO"|"BLANDO"]`. No lee ninguna tabla de configuracion runtime.
+- **Chequeo pre-solve**: antes de instanciar el modelo, `check_factibilidad_estructural` (de `factibilidad_service.py`) corre las siete familias de bloqueos y, si detecta al menos uno, saltea el solver y devuelve status `infeasible_estructural`.
 - **Outputs si `apply=True`**:
   - Actualiza `HorarioDB.aula_id` para los horarios asignados por el LP.
-  - Respeta `HorarioDB.aula_asignada_manualmente=True` si `config.respetar_ediciones_manuales=True` (los agrega como restricciones `x[h,a]=1` en vez de sobreescribirlos).
+  - Respeta `HorarioDB.aula_asignada_manualmente=True` si `config.respetar_ediciones_manuales=True` (los agrega como restriccion dura `x[h,a]=1` de R11 en vez de sobreescribirlos).
+  - Sanea horarios virtuales stale: si un horario paso a virtual entre corridas, se libera su `aula_id` para preservar la invariante "horario virtual ⇒ sin aula".
   - Inserta una fila `LPRunDB` con el snapshot completo de la corrida.
 - **Outputs si `apply=False`** (dry-run): devuelve el resultado sin tocar la base. Util para test y CLI.
 
-**Restricciones del modelo** (formalizacion completa en `project/1. Diseño/asignacion-aulas-LP.md`):
+**Restricciones del modelo** (formalizacion completa en `project/1. Diseño/asignacion-aulas-LP.md` § 4):
 
-- **R1**: cada horario se asigna a **exactamente una** aula.
-- **R3**: capacidad + tolerancias. `aula.capacidad ≥ insc[h] * (1 - tol_under)` y `aula.capacidad ≤ insc[h] * (1 + tol_over)` con penalidades lineales fuera del rango.
-- **R4**: no solapamiento por aula: dentro de un grupo de simultaneidad (horarios que comparten dia y overlap horario), a lo sumo un horario por aula.
-- **R5/R6**: reserva de aulas segun tipo: si horario es `"laboratorio"`, solo se elige entre aulas compatibles del `MateriaLaboratorioDB`.
-- **R10**: sede admisible: la carrera de la materia (o `carrera_asignada` de la comision) determina las sedes admisibles.
+- **R1**: cada horario se asigna a exactamente una aula.
+- **R3**: compatibilidad por tipo (teoricas ↔ aulas teoricas/anfiteatros; laboratorios ↔ labs compatibles con la materia).
+- **R4**: no solapamiento por aula, formulado por grupos de simultaneidad maximales.
+- **R5**: particion teoria/laboratorio por comision; con `strict_r5=True` ademas cierra la ecuacion de teoria.
+- **R6**: consistencia tipo↔pool cuando el horario tiene `tipo_clase=None`.
+- **R7**: definicion lineal de sobre/sub-ocupacion.
+- **R9**: redistribucion `α[k]` de coeficientes entre comisiones del mismo dictado (opcional).
+- **R10**: sede admisible vía grupo de la materia en modo DURO. Excepcion de lab compatible.
+- **R11**: pins manuales.
+- **R12**: preferencia blanda de sede vía grupo de la materia en modo BLANDO.
+- **R13**: continuidad de sede en pares en riesgo (docente y alumno).
+- **R14**: forzar misma sede por comision (opcional).
 
-**Diagnostico de infactibilidad**: si el LP devuelve `infeasible`, `diagnose_infeasibility` intenta identificar la causa relajando restricciones una a una. Cinco secciones:
-
-1. Horarios sin aula compatible (R5/R10).
-2. Franjas con faltante de aulas de un tipo especifico (R4 + R5).
-3. Cuellos de botella (grupos de horarios compitiendo por pocas aulas).
-4. Franjas saturadas globalmente (R4 sin distinguir tipo).
-5. Diagnostico cruzado (relajar de a una).
+**Chequeo estructural pre-solve** (`factibilidad_service.py`) y **diagnostico post-solve por relajacion selectiva** (`_run_iis_relajacion`): documentados en detalle en `2. Desarrollo/ASIGNACION_IMPL.md` § 4.
 
 **Persistencia del snapshot** (`LPRunDB`):
 
-- Guarda config aplicada (pesos, tolerancias, timeout).
-- Guarda status: `"optimal"`, `"infeasible"`, `"timeout"`, `"error"`.
+- Guarda config aplicada (pesos, tolerancias, timeout, `modos_por_grupo`, `strict_r5`, `forzar_misma_sede_por_comision`).
+- Guarda status: `"optimal"`, `"infeasible"`, `"infeasible_estructural"`, `"timeout"`, `"error"`.
 - Guarda contadores agregados: `n_horarios_asignados`, `n_horarios_reasignados`, `n_clases_sobreocupadas`, etc.
-- Guarda detalle por horario serializado en `details_json` (aula_id, insc, cap, delta, estado).
+- Guarda `details_json` con: detalle por horario (aula_id, insc, cap, delta, estado), heatmap por sede en cuatro vistas, veredicto humano-legible (`status`, `resumen`, `causa_infactibilidad`, `bloqueos_diagnosticados`, `horarios_sin_asignar`, `restricciones_activas`), diagnostico estructural y IIS si corrio.
 
 ### 7.10 Servicio de forecast (`forecast_service.py`)
 
@@ -1100,19 +1175,36 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 
 **Persistencia**: el valor calculado NO se persiste. Solo la config (`MateriaForecastConfigDB`) vive en la base. Si la serie cambia, el forecast queda actualizado automaticamente sin invalidacion manual.
 
-### 7.11 Servicio de sedes (`carrera_sede_service.py`)
+### 7.11 Servicio de Grupos de Materias (`grupo_materia_service.py`)
 
-**Rol**: gestiona la restriccion R10 del LP (sedes admisibles por carrera).
+**Rol**: gestiona la particion estricta materia ↔ grupo y la resolucion de sedes admisibles/preferidas que alimenta R10 y R12 del LP. Reemplaza (2026-09) al viejo `carrera_sede_service.py`.
 
-**Operaciones**:
+**Operaciones principales**:
 
-- `set_sedes_de_carrera(session, carrera_codigo, sede_ids)`: reemplaza (no acumula) el set de sedes habilitadas. Borra las filas previas e inserta las nuevas.
-- `set_sede_default_comunes(session, sede_id)`: desactiva `es_default_comunes` en todas las sedes y lo activa en la sede indicada. Preserva INV-SEDE-1.
-- `materia_es_comun(session, materia_codigo) -> bool`: True si la materia aparece en ≥2 carreras en cualquier plan activo.
-- `sedes_admisibles_para_materia(session, materia_codigo, carrera_asignada=None) -> set[str]`:
-  - Si hay override via `carrera_asignada` → usa esa carrera.
-  - Si la materia es comun → devuelve la sede con `es_default_comunes=True`.
-  - Sino → devuelve las sedes de `CarreraSedeDB` para la carrera de la materia. Fallback: todas las sedes.
+- `list_grupos(session) -> list[GrupoMateriaDB]`, `get_grupo(session, id)`, `get_grupo_sin_clasificar(session)`.
+- `create_grupo(session, nombre, sedes_duro, sedes_blando_ordenadas, ...) -> GrupoMateriaDB`: crea el grupo con sus filas en `GrupoMateriaSedeDB` (ambos sets).
+- `update_grupo(session, id, ...)`: reemplaza ambos sets de sedes en atomica.
+- `delete_grupo(session, id)`: rechaza si el grupo tiene materias asignadas (invariante de particion estricta).
+- `asignar_materia_a_grupo(session, materia_codigo, grupo_id)`: reasigna una materia. Emite evento al `ChangeLogDB`.
+- `resolver_sedes_admisibles_por_materia(session, materia_codigo) -> tuple[list[sede_id], "DURO"|"BLANDO"]`:
+  - Consulta el grupo de la materia y devuelve `(sedes_ordenadas, modo)` segun `LPConfig.modos_por_grupo` de la corrida.
+  - Modo DURO con lista vacia → fallback permisivo (todas admisibles).
+  - Modo BLANDO → todas admisibles; el orden define la preferencia (R12).
+- `chequear_consistencia_grupo(session, grupo_id) -> InconsistenciasGrupo`: aplica los tres flags configurables (pertenencia, exclusividad, completitud) y devuelve `faltantes` y `ajenas`. Herramienta de curacion; no afecta al LP.
+
+**Bootstrap** (`_migrate_grupos_materia` en `connection.py`): idempotente. Crea el grupo `Sin clasificar` y los grupos transversales (`FB`, `F`, `FI`, `CE`) + un `Específicas de <Carrera>` por cada carrera. Asigna materias por prefijo de codigo o por "exclusiva de una carrera".
+
+### 7.11b Servicio de factibilidad estructural (`factibilidad_service.py`)
+
+**Rol**: consolidar el chequeo pre-solve del LP. Detecta bloqueos que garantizan infactibilidad sin encender el solver.
+
+**Operaciones principales**:
+
+- `check_factibilidad_estructural(session, plan_id, config) -> ReporteFactibilidad`: corre todas las familias de bloqueo (R1 sin aula compatible, R3+R4 saturacion por tipo, R5 particion, R11 pin incompatible, R13 pares intersede, R13-camino, compat-pigeonhole, compat-hall) y devuelve la lista de `Bloqueo`s por regla.
+- `check_camino_cursada(session, plan_id, margen_min)`: chequea que para cada terna `(carrera, año, cuatri)` exista al menos una combinacion de comisiones viable respetando solapamiento y margen intersede. Consulta `IgnoredConflictDB` para saltar excepciones de solapamiento (no de intersede). Cap `MAX_COMBINACIONES_CAMINO = 10 000`.
+- `_add_bloqueos_camino_cursada(...)`: helper interno que integra el chequeo con el reporte global.
+
+**Consumidores**: `run_lp` corre esto antes de instanciar el modelo LP; el panel del asignador expone un boton "🚦 Chequear factibilidad" que lo dispara aislado.
 
 ### 7.12 Servicio de validaciones cruzadas (`validations.py`)
 
@@ -1156,11 +1248,13 @@ Se separaron en un modulo propio para poder testearlos sin acoplar a la base.
 
 | Entidad | Campos auditados |
 |---------|------------------|
-| `MateriaDB` | `virtual`, `active`, `dicta_recursado`, `optativa`, `horas_teoria`, `horas_laboratorio` |
+| `MateriaDB` | `virtual`, `active`, `dicta_recursado`, `optativa`, `horas_teoria`, `horas_laboratorio`, `grupo_id` |
 | `CarreraDB` | `dicta_recursado` |
 | `DictadoDB` | `virtual`; alta/baja completa |
 | `DictadoCicloDB` | alta/baja (aparicion/desaparicion) |
-| `SedeDB` | `es_default_comunes` |
+| `SedeDB` | (sin cambios auditables; `es_default_comunes` deprecado) |
+| `GrupoMateriaDB` | alta/baja + cambios de flags de consistencia |
+| `GrupoMateriaSedeDB` | alta/baja de sedes por grupo (DURO y BLANDO) |
 
 `HorarioDB`, `ComisionDB`, `ClaseDB` **no** se auditan (demasiado ruido, son datos de operacion).
 
@@ -1205,22 +1299,34 @@ Restricciones que **no** existen fisicamente pero se garantizan en la capa de se
 |----|-----------|-----------------|
 | INV-COM-XOR | `ComisionDB`: exactamente uno de `schedule_id` o `plan_cursada_id` esta seteado. | `comision_service.create_comision`, `update_comision` |
 | INV-COM-COEF | Suma de `coef_asignacion` sobre comisiones del mismo dictado ≈ 1.0. | `comision_service` (warning) |
-| INV-SEDE-1 | A lo sumo una `SedeDB` con `es_default_comunes=True`. | `carrera_sede_service.set_sede_default_comunes` |
 | INV-CIC-1 | `CicloDB.id = f"{anio}-{numero}C"`. | UI antes de insercion |
 | INV-MAT-1 | `horas_teoria + horas_laboratorio ≤ horas_semanales`. | `validar_factibilidad_particion_horas` |
+| INV-MAT-3 | `MateriaDB.grupo_id NOT NULL`. Cada materia pertenece a exactamente un `GrupoMateriaDB` (particion estricta). | Schema + `grupo_materia_service.asignar_materia_a_grupo` |
 | INV-COR-2 | `materia_codigo != materia_correlativa_codigo`. | Convencion, no validado |
 | INV-ICF-1 | `IgnoredConflictDB`: `materia_a < materia_b` lexicograficamente. | Servicio antes de insertar |
+| INV-ICF-2 | Auto-limpieza: se eliminan pares que ya no coexisten en ningun grupo curricular. | `plan_validation_service.cleanup_stale_ignored_pairs` |
 | INV-HOR-CLA | Si `HorarioDB.aula_asignada_manualmente=True`, el LP respeta esa asignacion salvo config explicita. | `asignacion_aulas_service.build_inputs` |
+| INV-HOR-VIRT | Un horario virtual (resuelto via `resolve_virtual`) **no** tiene aula asignada. | `apply_solution` sanea via `no_ocupa_aula_ids` |
+| INV-GRUPO-1..4 | Nombre unico globalmente; a lo sumo un `es_sin_clasificar=True`; toda materia tiene grupo; no se borra un grupo con materias. | `grupo_materia_service` |
 
-### 8.3 Restricciones del LP (R1..R10)
+### 8.3 Restricciones del LP (R1..R14)
 
 Formalizacion resumida (detalle completo en `project/1. Diseño/asignacion-aulas-LP.md`):
 
 - **R1**: `∀ h: Σ_a x[h, a] = 1`.
-- **R3**: capacidad con penalidad lineal asimetrica (sobreocupacion penalizada mas que subutilizacion).
+- **R3**: compatibilidad por tipo (pre-filtrado de variables).
 - **R4**: `∀ grupo_simultaneidad G, ∀ aula a: Σ_{h ∈ G} x[h, a] ≤ 1`.
-- **R5/R6**: si `horario.tipo_clase = "laboratorio"`, `x[h, a] = 0` para toda `a ∉ MateriaLaboratorioDB[materia]`.
-- **R10**: `x[h, a] = 0` para toda `a` cuya sede no este en `sedes_admisibles(materia, carrera_asignada)`.
+- **R5**: particion teoria/laboratorio por comision (con `strict_r5=True` cierra ambas ecuaciones).
+- **R6**: consistencia tipo↔pool para horarios con `tipo_clase=None`.
+- **R7**: definicion lineal de sobre/sub-ocupacion con penalidad asimetrica.
+- **R9**: redistribucion `α[k]` entre comisiones del mismo dictado (opcional).
+- **R10**: `x[h, a] = 0` para toda `a` cuya sede no este en `S_D(grupo(materia(h)))` cuando el grupo corre en modo DURO (con excepcion de lab compatible).
+- **R11**: pins manuales (`x[h, aula_pin] = 1`).
+- **R12**: preferencia blanda de sede vía costo `λ_sede_pref` cuando el grupo corre en modo BLANDO.
+- **R13**: continuidad de sede en pares en riesgo (docente + alumno).
+- **R14**: forzar misma sede por comision (opcional, con variables auxiliares `y[c, s]`).
+
+Chequeo pre-solve **R13-camino**: fuera del modelo LP. Verifica que exista al menos una combinacion de comisiones viable por grupo curricular `(carrera, año, cuatri)`.
 
 ---
 
@@ -1287,6 +1393,8 @@ Ordenadas cronologicamente (extracto de `_run_migrations` y helpers en `src/data
 | 26 | `_migrate_aulas_drop_legacy_sede` | Elimina columna legacy `sede` (string). |
 | 27 | `_migrate_horario_entries_drop_carrera_asignada` | Elimina columnas legacy de un intento previo del refactor R10. |
 | 28 | `_migrate_planificacion_cursada_drop_activo` | Elimina `activo` del plan (concepto obsoleto). |
+| 29 | `_migrate_grupos_materia` (2026-09) | Crea `grupo_materia`, `grupo_materia_sede` y `grupo_materia_carrera`. Bootstrapea grupos `Sin clasificar`, `FB`, `F`, `FI`, `CE` y `Específicas de <Carrera>` por cada carrera, asignando materias por prefijo o exclusividad. Marca `MateriaDB.grupo_id` como NOT NULL. |
+| 30 | `_migrate_ignored_conflicts` | Crea `ignored_conflicts` con PK compuesta y auto-limpieza al validar plan. |
 
 ### 9.4 Data migrations relevantes
 

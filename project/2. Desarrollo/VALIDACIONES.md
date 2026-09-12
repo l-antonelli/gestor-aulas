@@ -185,6 +185,16 @@ Espejo del cronograma sobre `PlanificacionCursadaDB`. Diferencias:
   completa con `ignored_pairs=set()` y filtra los que coinciden con los
   pares ignorados. Eso permite mostrarlos en una tabla aparte.
 - **No tiene lab breakdown** (los labs viven a nivel cronograma).
+- **Auto-limpieza de excepciones stale**: antes de calcular el
+  resumen, corre `cleanup_stale_ignored_pairs(session, plan_id)`
+  que elimina las filas de `IgnoredConflictDB` cuyas materias ya
+  no coexisten en ningún grupo curricular `(carrera, año, cuatri)`
+  del plan. Los pares limpiados se reportan en
+  `summary.excepciones_stale_removidas` para que el usuario sepa
+  qué dejó de aplicar.
+- **Camino de cursada**: incorpora los bloqueos de
+  `check_camino_cursada` cuando corresponde (ver § 2.5).
+  Los bloqueos aparecen en `summary.camino_bloqueos`.
 
 **Persistencia**: `PlanValidationDB`.
 
@@ -201,6 +211,130 @@ materia_b` lexicográficamente.
   horarios cambian, el par sigue ignorado.
 - **CRUD**: `add_ignored_pair(plan_id, mat_a, mat_b, razon)`,
   `remove_ignored_pair(...)`, `get_ignored_pairs(plan_id) -> set`.
+- **Alcance de la excepción**: sólo aplica al chequeo de
+  **solapamiento horario**. El chequeo de **intersede**
+  (R13, R13-camino) las ignora, porque el traslado físico entre
+  sedes es un problema independiente de qué alumnos cursen qué.
+- **Auto-limpieza**: `cleanup_stale_ignored_pairs` en
+  `plan_validation_service.py`. Se ejecuta en cada `validate_plan`.
+  Elimina pares cuyas materias ya no coexisten curricularmente en
+  ningún `(carrera, año, cuatri)` del plan. Devuelve la lista de
+  pares removidos para el summary.
+
+### 2.4. Chequeo estructural pre-solve del LP (`factibilidad_service.py`)
+
+Además de las validaciones "clásicas" del cronograma y del plan,
+existe una capa de chequeo **pre-solve** que corre antes de encender
+al asignador de aulas. Su rol es detectar situaciones que
+garantizan infactibilidad del LP sin gastar tiempo del solver.
+
+Punto de entrada: `check_factibilidad_estructural(session, plan_id,
+config) -> ReporteFactibilidad`. Devuelve un `ReporteFactibilidad`
+con `factible: bool` y `bloqueos: list[Bloqueo]`. Cada `Bloqueo`
+lleva `codigo_regla`, `severidad`, `titulo`, `detalle` y
+`entidades_a_revisar`.
+
+Familias implementadas:
+
+- **R1** — Horarios sin aula compatible (falta lab compatible, R10
+  dejó cero sedes admisibles, tipo desalineado).
+- **R3+R4** — Saturación por tipo dentro de una franja
+  (refinamiento del *pigeonhole* clásico por pools disjuntos
+  teóricas / labs).
+- **R5** — Partición teoría / laboratorio infactible.
+- **R11** — Pin manual apunta a un aula ya no compatible.
+- **R13** — Par de horarios en riesgo sin sede común factible.
+- **R13-camino** — No existe combinación de comisiones viable
+  para algún grupo curricular (ver § 2.5).
+- **compat-pigeonhole** — Pigeonhole por celda del mapa (unión de
+  labs compatibles < demanda simultánea).
+- **compat-hall** — Hall violator: subconjunto `T` con
+  `|N(T)| < |T|`.
+
+Consumidores:
+
+- `run_lp(session, plan_id, config)` corre esto antes de instanciar
+  el modelo. Si hay bloqueos, se saltea el solver y se persiste una
+  corrida `infeasible_estructural` con el detalle en el veredicto.
+- El panel del asignador ofrece un botón **"🚦 Chequear
+  factibilidad"** que dispara el reporte aislado, para que el
+  operador pueda descartar bloqueos antes de correr.
+
+### 2.5. R13-camino — Camino de cursada intersede factible
+
+`check_camino_cursada(session, plan_id, margen_min_intersede_minutos)`
+en `factibilidad_service.py`. Verifica que para cada terna
+`(carrera, año, cuatri)` del plan exista al menos una combinación
+de comisiones (una por materia obligatoria) que un alumno pueda
+cursar sin conflictos horarios ni traslados imposibles entre sedes.
+
+**Algoritmo**:
+
+1. Se agrupan las materias del plan por `(carrera, año, cuatri)`
+   reusando el patrón de `validations.py:validar_factibilidad_horarios_carrera`.
+   Se incluyen las anuales del mismo carrera × año en los dos
+   cuatris. Se saltean optativas.
+2. Para cada grupo con ≥ 2 materias con comisiones, se enumeran
+   las comisiones disponibles y se corre backtracking DFS buscando
+   **al menos una** combinación viable.
+3. Para cada par `(cid_a, cid_b)` de comisiones candidatas se cachea
+   el resultado de compatibilidad (`_par_es_compatible`) evitando
+   recomputar. Compatibilidad = solapamiento horario nulo (con
+   excepciones ignoradas) **y** margen intersede respetado.
+4. Cap `MAX_COMBINACIONES_CAMINO = 10 000`. Si el espacio a explorar
+   lo excede, se emite advertencia (no bloqueo).
+
+**Ejemplo canónico**: Electrónica 3° 1C tiene específicas en Siberia
+(grupo DURO) + FB12 en Pellegrini (grupo DURO). Si el cronograma
+coloca FB12 y una específica contigua sin margen suficiente, el
+alumno no puede cursar ambas → bloqueo `R13-camino`.
+
+**Diferencia con R13 en el LP**: R13 (por-comisión) sólo cubre pares
+de horarios de la **misma comisión** o de materias distintas del
+mismo grupo curricular donde ambos horarios están en el modelo. El
+chequeo camino garantiza que, aún después de que el LP asigne,
+exista al menos una elección de comisiones que el alumno pueda
+sostener. Ver `1. Diseño/asignacion-aulas-LP.md` § 4 (R13-camino).
+
+**Excepciones ignoradas**: los pares en `IgnoredConflictDB` se
+saltan del chequeo de solapamiento (§ 2.3). El chequeo de intersede
+**no** consulta las excepciones.
+
+### 2.6. Veredicto de la corrida del LP
+
+Cada `LPRunDB` persistida incluye en `details_json` un bloque
+**`veredicto`** con la forma:
+
+```jsonc
+{
+  "status": "optimal" | "infeasible_estructural" | "infeasible" | "timeout" | "error",
+  "resumen": "✅ Plan resuelto. Se asignó aula a los N horarios...",
+  "causa_infactibilidad": "R10 dura: sedes del grupo Específicas..." | null,
+  "bloqueos_diagnosticados": [
+    {"codigo_regla": "R10", "severidad": "blocker", "titulo": "...",
+     "detalle": "...", "entidades_a_revisar": [...]}
+  ],
+  "horarios_sin_asignar": ["h1", "h2", ...],
+  "restricciones_activas": {
+    "strict_r5": true, "lambda_over": 10, "lambda_under": 1,
+    "lambda_sede_pref": 5, "tol_over": 0, "tol_under": 0.20,
+    "margen_min_intersede_minutos": 30,
+    "activar_alpha": false, "respetar_ediciones_manuales": true,
+    "timeout_seconds": 300,
+    "forzar_misma_sede_por_comision": false,
+    "modos_por_grupo": {"grupo_1": "DURO", "grupo_2": "BLANDO", ...}
+  }
+}
+```
+
+El veredicto lo consume el panel de resultado del asignador
+(`asignacion_resultado_ui.py`) para renderizar el estado, causa,
+bloqueos y config completa. Permite reproducir cualquier corrida
+vieja con exactitud y auditar la evolución de configuraciones.
+
+Cuando el status es `infeasible`, el veredicto se acompaña de una
+estructura `iis` con el diagnóstico por relajación selectiva (ver
+`2. Desarrollo/ASIGNACION_IMPL.md` § 4.2).
 
 ---
 

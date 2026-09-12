@@ -1,6 +1,6 @@
 # Workflow End-to-End del sistema (referencia técnica interna)
 
-> **Última actualización**: 2026-07-12
+> **Última actualización**: 2026-09-11.
 >
 > ⚙️ **Este documento es la referencia técnica interna**: usa nombres
 > de tablas, servicios y detalles de implementación. Es útil para el
@@ -9,16 +9,6 @@
 > Para uso operativo por usuarios finales no técnicos, consultar el
 > **manual de usuario** en `project/3. Manual de Usuario/`, que cubre
 > los mismos flujos en lenguaje coloquial y con foco en tareas.
->
-> **Advertencia**: este documento tiene contenido desactualizado
-> respecto del código actual. Ver `HALLAZGOS_AUDITORIA.md` (H23-H26)
-> para el detalle. Cuando haya divergencia entre este documento y el
-> código, prevalece el código.
->
-> Documento operativo que describe el flujo completo del usuario en
-> `gestor-aulas` desde la carga inicial hasta la asignación de aulas.
-> Sirve como guía de uso y como referencia al describir el sistema en
-> el informe.
 >
 > **Cambios clave a tener en cuenta al leer este documento**:
 >
@@ -42,6 +32,36 @@
 >    edita como fila (nombre, cupo, carrera asignada, descripción).
 >    Al generar el plan desde un cronograma, las comisiones template
 >    se **clonan** al plan. Ver `COMISIONES_POR_CARRERA.md`.
+> 4. **Grupos de Materias reemplazan `CarreraSedeDB`** (2026-09). La
+>    resolución de sedes admisibles del LP (R10) y la preferencia
+>    blanda (R12) van exclusivamente por el grupo de la materia.
+>    Cada grupo declara set duro + lista blanda ordenada; el modo
+>    por-grupo se elige por corrida (`LPConfig.modos_por_grupo`).
+>    `CarreraSedeDB` y `SedeDB.es_default_comunes` quedan deprecados.
+>    `ComisionDB.carrera_asignada` sobrevive como etiqueta visual sin
+>    efecto en el LP. Ver `ASIGNACION_IMPL.md` § 5.
+> 5. **R13 extendida y R13-camino** (2026-09). R13 detecta pares
+>    intersede en riesgo tanto por traslado del docente (misma
+>    comisión) como por traslado del alumno (materias distintas del
+>    mismo grupo curricular). Un chequeo pre-solve **R13-camino**
+>    verifica que para cada `(carrera, año, cuatri)` exista al menos
+>    una combinación de comisiones viable. Ver `VALIDACIONES.md` § 2.5.
+> 6. **Toggle R14 y veredicto estructurado** (2026-09). Nuevo toggle
+>    `forzar_misma_sede_por_comision` en el panel del asignador.
+>    Cada corrida persiste un veredicto humano-legible en
+>    `LPRunDB.details_json` con status, causa, bloqueos y config
+>    completa. Ver `RESTRICCIONES_LP.md` § 4.
+> 7. **Excepciones ignoradas con auto-limpieza** (2026-09).
+>    `IgnoredConflictDB` marca pares de materias que la validación de
+>    solapamiento debe saltar. La auto-limpieza en `validate_plan`
+>    quita excepciones que ya no aplican. No afectan al chequeo de
+>    intersede.
+> 8. **Colisiones de aula al editar horario** (2026-09). La edición
+>    manual de aula detecta colisiones con otros horarios y ofrece
+>    liberar el ocupante desde la UI compartida
+>    `horario_edit_shared.py`. `apply_solution` sanea horarios
+>    virtuales stale para preservar la invariante "virtual → sin
+>    aula".
 >
 > Vínculos:
 > - Modelo de datos: [modelo-planificacion-cursada.md](../1.%20Diseño/modelo-planificacion-cursada.md)
@@ -185,6 +205,32 @@ Los `DictadoDB` representan **qué materia se dicta y cómo en este
 ciclo concreto**. Crear dictados es necesario antes de cargar
 cronogramas y planes — sin dictados no hay set de "materias
 esperadas" contra el cual validar.
+
+### 3.0 Los ciclos son unidades operativas independientes
+
+Vale explicitar el modelo mental antes de entrar en el detalle:
+**cada ciclo se crea y opera de manera autónoma**. Crear el 1C **no**
+crea ni pre-declara nada del 2C, y viceversa. Los dictados
+cuatrimestrales del 1C viven linkeados sólo al 1C, y los del 2C
+sólo al 2C; no se propagan horarios, comisiones ni planes de
+cursada entre ciclos.
+
+La única entidad que se comparte entre dos ciclos es el `DictadoDB`
+de una materia **anual**: se materializa como una única fila
+linkeada a ambos ciclos del año lectivo vía dos filas de
+`DictadoCicloDB`. Al crear el 1C, un dictado anual nace con
+`fin_dictado=None`; al crear después el 2C del mismo año,
+`_link_anual_dictado_2c` reutiliza ese dictado, le agrega el bridge
+al 2C y completa `fin_dictado`. Si el 2C se crea sin que exista
+todavía el 1C previo, se crea un dictado anual fresco. Formalizado
+como RN19 en `modelo-planificacion-cursada.md`.
+
+Para la guía operativa completa (crear un ciclo desde cero, cargar
+horarios, checklist previo al asignador, escenarios recurrentes),
+ver el runbook **[CICLOS_Y_DICTADOS.md](CICLOS_Y_DICTADOS.md)**.
+Para la semántica formal de las tres puertas de decisión de un
+dictado (pertenencia, recursado, virtualidad),
+[`RECURSADO_Y_VIRTUAL.md § 1`](RECURSADO_Y_VIRTUAL.md).
 
 ### 3.1 Crear los dictados
 

@@ -1,0 +1,192 @@
+{
+  "timestamp": "2026-09-11_114154",
+  "carrera": "PF",
+  "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+  "plan_version_nombre": "Plan Original",
+  "rows_before": [
+    {
+      "id": "84cfe07b-97b8-4dc6-937f-8ab8a2f222f9",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.3",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "946ef5d2-d8ea-4ba8-a81c-f123cf09bfe4",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.4",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "1da6c8e2-69c3-4d76-a951-684f8f71b41d",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.5",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "90503b90-0886-4119-8766-e6edd80912fc",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.6",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "cd558acf-e499-46a0-bb7b-71e3ddcc65a8",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.7",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "a372d64c-c9a2-42bd-8065-818ba16a4c89",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.8",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "f84baac0-288c-4c3a-910b-cdb816c4b013",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF3.9",
+      "carrera_codigo": "PF",
+      "anio_plan": 3,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "a2fed55d-0697-433d-9fa7-4d3ed46222b5",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.2",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "314161fa-b370-4cf0-b734-16cd7def0467",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.3",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "ec7a4490-4012-4704-a602-3fda1320c7e1",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.4",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "aa0ba620-27d1-47ea-b532-c9f072b60afe",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.5",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "92a27e1a-b1ad-4938-bed6-a70f92619153",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.6",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    },
+    {
+      "id": "52ec817b-cdb7-40de-b184-e762bedd7fc6",
+      "plan_version_id": "34ee40ed-052b-434f-b5a5-2cc39e4aa3ee",
+      "materia_codigo": "PF4.7",
+      "carrera_codigo": "PF",
+      "anio_plan": 4,
+      "cuatrimestre_plan": null,
+      "optativa": false
+    }
+  ],
+  "changes_applied": [
+    {
+      "materia_codigo": "PF3.3",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF3.4",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF3.5",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF3.6",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF3.7",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "PF3.8",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "PF3.9",
+      "nuevo_anio": 3,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "PF4.2",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF4.3",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF4.4",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "PF4.5",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "PF4.6",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "PF4.7",
+      "nuevo_anio": 4,
+      "nuevo_cuatri": "2C"
+    }
+  ]
+}

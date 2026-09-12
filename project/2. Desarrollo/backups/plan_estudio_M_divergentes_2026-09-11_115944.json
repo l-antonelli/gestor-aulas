@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-09-11_115944",
+  "carrera": "M",
+  "plan_version_id": "2737e332-ffcc-41ef-8307-9d44409ad852",
+  "plan_version_nombre": "Plan Original",
+  "rows_before": [
+    {
+      "id": "86fa3c3f-5f5c-45ad-bdf6-aa33716a7378",
+      "plan_version_id": "2737e332-ffcc-41ef-8307-9d44409ad852",
+      "materia_codigo": "ELM11",
+      "carrera_codigo": "M",
+      "anio_plan": 5,
+      "cuatrimestre_plan": null,
+      "optativa": true
+    },
+    {
+      "id": "eb77fdbe-193b-4348-a174-d8d817ac4d14",
+      "plan_version_id": "2737e332-ffcc-41ef-8307-9d44409ad852",
+      "materia_codigo": "ELM12",
+      "carrera_codigo": "M",
+      "anio_plan": 5,
+      "cuatrimestre_plan": null,
+      "optativa": true
+    }
+  ],
+  "changes_applied": [
+    {
+      "materia_codigo": "ELM11",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "ELM12",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "1C"
+    }
+  ]
+}

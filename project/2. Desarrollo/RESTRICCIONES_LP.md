@@ -1,1271 +1,881 @@
-# Auditoría de restricciones del LP de asignación de aulas
+# Guía operativa del asignador de aulas
 
-> **Objetivo.** Documentar exhaustivamente el modelo de programación
-> lineal entera que asigna aulas al plan: variables, restricciones,
-> función objetivo, parámetros configurables, condiciones que lo
-> vuelven infactible, y hallazgos abiertos que motivan las próximas
-> fases (fix de doble conteo, preferencia blanda, restricción de
-> sedes consecutivas, panel de restricciones en la UI).
+> **Estado**: guía viva, actualizada a medida que evoluciona la
+> interfaz del asignador. Este documento es la **referencia
+> operativa** del programa lineal: cómo se corre, cómo se configura,
+> cómo se interpretan sus resultados y cómo se diagnostican los
+> casos que no cierran. Para el **planteo formal** (conjuntos,
+> variables, restricciones, función objetivo, chequeo estructural,
+> IIS) ver `project/1. Diseño/asignacion-aulas-LP.md`. El presente
+> documento asume conocido ese planteo y remite a él cuando la
+> discusión requiere la formulación matemática.
 >
-> Fecha de escritura: 2026-09-04. Autor: sesión de auditoría previa
-> a rediseñar la semántica de sedes. **Snapshot del código** en
-> commit `6220522` (main).
-
-Referencias primarias:
-
-- `src/services/asignacion_aulas_service.py` — armado de inputs,
-  construcción del modelo (`build_model`), corrida
-  (`solve`, `run_lp_dry`), aplicación al patrón (`apply_solution`).
-- `src/services/asignacion_aulas_helpers.py` — funciones puras
-  reutilizables: compatibilidad, grupos de simultaneidad,
-  diagnóstico estructural, heatmaps.
-- `src/services/carrera_sede_service.py` — resolución de sedes
-  admisibles por carrera y por materia.
-- `project/1. Diseño/asignacion-aulas-LP.md` — planteo matemático
-  original. Sigue vigente como referencia teórica.
+> **Última actualización**: 2026-09-11.
 
 ---
 
-## Qué tiene en cuenta el asignador (versión en criollo)
+## Índice
 
-Esta sección es una guía rápida para el operador o para quien
-lea el informe: qué mira el sistema al elegir aulas, qué datos
-alimentan cada decisión y dónde tocar cuando algo no da como
-uno esperaba. Los detalles técnicos y el detrás de escena
-matemático están en las secciones siguientes.
+1. [Qué hace el asignador en criollo](#1-qué-hace-el-asignador-en-criollo)
+2. [Parámetros del panel del asignador](#2-parámetros-del-panel-del-asignador)
+3. [Grupos de materias: modos DURO y BLANDO](#3-grupos-de-materias-modos-duro-y-blando)
+4. [Veredicto de la corrida y sus estados](#4-veredicto-de-la-corrida-y-sus-estados)
+5. [Diagnóstico y recomendaciones ante infactibilidad](#5-diagnóstico-y-recomendaciones-ante-infactibilidad)
+6. [Ediciones manuales y consistencia con el LP](#6-ediciones-manuales-y-consistencia-con-el-lp)
+7. [Excepciones de conflicto ignorado](#7-excepciones-de-conflicto-ignorado)
+8. [Panel de resultado: cómo se lee](#8-panel-de-resultado-cómo-se-lee)
+9. [Persistencia de corridas y multi-pestaña](#9-persistencia-de-corridas-y-multi-pestaña)
+10. [Troubleshooting común](#10-troubleshooting-común)
 
-### Qué elige el asignador
+---
 
-Para cada **horario semanal** (materia + comisión + día + rango
-horario) del plan, el asignador decide **qué aula ocupa**.
-Después esa asignación se propaga a las clases concretas del
-cuatrimestre.
+## 1. Qué hace el asignador en criollo
 
-### Qué mira para decidir
+Cerrada la grilla horaria del cuatrimestre — es decir, definidos
+los `HorarioDB` que van a dictarse y a qué comisión pertenecen — el
+asignador decide **a qué aula va cada horario semanal presencial**.
+Adicionalmente, cuando el cronograma no predetermina si un horario
+es teoría o laboratorio, el asignador también lo resuelve, y si el
+operador lo pide puede redistribuir los inscriptos esperados entre
+comisiones de un mismo dictado. Todo esto se decide en simultáneo
+resolviendo un **programa lineal entero** con el resolutor CBC.
 
-En orden de prioridad:
+### 1.1 Lo que decide
 
-1. **Compatibilidad del tipo de aula con el tipo de clase.** Si
-   la clase es teórica, sólo la puede meter en aulas teóricas o
-   anfiteatros. Si es de laboratorio, sólo en aulas de laboratorio
-   listadas como compatibles para esa materia.
-2. **Sedes admisibles.** Cada materia puede dictarse solamente en
-   ciertas sedes: las habilitadas para la carrera si la materia es
-   específica, la sede default para comunes si la materia es
-   compartida. Excepción: si un laboratorio compatible con la
-   materia vive físicamente en otra sede, esa sede también entra
-   como admisible (para poder usar ese lab).
-3. **No superponer clases en la misma aula.** Dos horarios que se
-   solapan en el tiempo no pueden compartir aula.
-4. **Respetar la carga teoría/laboratorio declarada por la
-   materia.** Si la materia tiene por ejemplo 3h de teoría y 6h
-   de lab, la suma de duraciones de cada tipo tiene que dar
-   exactamente eso a nivel de la comisión.
-5. **Ediciones manuales del operador.** Si en la UI se fijó a
-   mano el aula de un horario (marcada como "asignada
-   manualmente"), el asignador respeta esa decisión y no la
-   pisa (salvo que se apague ese toggle).
-6. **Preferencia de sede.** Entre las sedes admisibles, prefiere
-   la "sede preferida" de cada materia: donde vive el laboratorio
-   compatible si la materia tiene lab, o la sede habilitada para
-   la carrera si no. No es una restricción dura: si la sede
-   preferida se satura, el asignador acepta otra sede admisible.
-7. **Margen mínimo entre sedes distintas de una misma comisión.**
-   Si dos horarios de una misma comisión son contiguos el mismo
-   día con un gap menor al margen configurado (30 min por
-   default), el asignador los deja en la misma sede para que los
-   alumnos puedan llegar del uno al otro sin correr.
-8. **Ajuste de capacidad al forecast de inscriptos.** Entre las
-   aulas que cumplen todo lo anterior, prefiere las que entran
-   con margen razonable a la cantidad esperada de inscriptos.
-   Penaliza fuerte quedarse corto (aula chica que rebalsa) y
-   penaliza suave quedarse con mucho sobrante.
+- **El aula de cada horario presencial**. Un aula por horario, ni
+  más ni menos.
+- **El tipo de cada horario** (teoría o laboratorio) cuando el
+  cronograma no lo predeterminó.
+- **La distribución de inscriptos entre comisiones** de un mismo
+  dictado (opcional, apagado por defecto).
 
-### Qué **no** mira todavía
+### 1.2 Lo que no decide
 
-- **No** puede reservar o bloquear aulas puntualmente (por
-  mantenimiento, evento externo, etc.).
-- **No** considera preferencias de docentes ni de estudiantes:
-  los horarios los toma como fijos del cronograma.
+- **No crea ni elimina comisiones** ni horarios. Esos son datos de
+  entrada.
+- **No asigna aulas a horarios virtuales**. Los virtuales no ocupan
+  aula por diseño; cuentan sólo para el balance de horas teoría / lab.
+- **No decide reservas o bloqueos puntuales de aula**. No hay
+  manera hoy de bloquear un aula para una fecha específica desde
+  el LP.
+- **No considera preferencias horarias de docentes**. Los horarios
+  vienen fijos.
 
-### Datos que alimentan cada decisión
+### 1.3 Cómo se corre en la UI
 
-| Decisión | Datos que la controlan | Dónde se editan |
+El asignador vive en **Planes → seleccionar plan → Aulas**. La
+página tiene tres componentes principales:
+
+- **Panel de asignación** (§ 2). Donde se configura la corrida y se
+  aprieta el botón para lanzar el solver.
+- **Panel de resultado** (§ 8). Aparece después de correr o al abrir
+  un plan que ya tiene corridas persistidas.
+- **Mapa de saturación** por sede. Vista analítica independiente
+  del LP; se puede consultar antes o después de correr.
+
+El flujo típico es:
+
+1. Ajustar parámetros del panel (o dejar los defaults / la última
+   corrida).
+2. Apretar **"🚦 Chequear factibilidad"** para descartar bloqueos
+   estructurales antes de gastar tiempo del solver.
+3. Apretar **"⚙ Correr asignador"**.
+4. Leer el **veredicto** (§ 4).
+5. Si es `optimal`, revisar la solución en el panel de resultado.
+   Si es infactible, seguir el **diagnóstico** (§ 5).
+
+### 1.4 Qué mira para decidir, en orden de prioridad
+
+1. **Compatibilidad tipo aula ↔ tipo clase**. Teóricas van a aulas
+   teóricas o anfiteatros; laboratorios van a laboratorios
+   compatibles con la materia (definidos en
+   `MateriaLaboratorioDB`).
+2. **Sedes admisibles** según el **grupo de la materia** (§ 3).
+3. **No solapamiento por aula**. Dos clases simultáneas nunca
+   comparten aula.
+4. **Balance teoría / laboratorio** declarado por la materia.
+5. **Ediciones manuales**, si el toggle "respetar ediciones
+   manuales" está activo (§ 6).
+6. **Continuidad de sede intersede** (R13) para pares de horarios
+   contiguos en riesgo — profesor de la misma comisión o alumno de
+   materias distintas del mismo grupo curricular.
+7. **Preferencia de sede** (grupos en modo BLANDO — § 3).
+8. **Ajuste de capacidad al forecast** de inscriptos. Penaliza
+   fuerte quedarse corto (sobrecupo, `λ_over`) y penaliza suave
+   quedarse con mucho sobrante (subutilización, `λ_under`).
+
+---
+
+## 2. Parámetros del panel del asignador
+
+El panel de asignación está organizado en **cuatro contenedores** que
+agrupan los parámetros por temática. Cada parámetro se persiste al
+correr y se prefill desde la última corrida al reabrir la página
+(§ 9).
+
+### 2.1 Alcance temporal
+
+| Parámetro | Default | Efecto |
 |---|---|---|
-| Qué tipo de aula acepta cada clase. | `tipo_clase` del horario, `tipo` del aula. | Cronogramas → Editar horario · Aulas → Ver detalle. |
-| Qué laboratorios sirven para una materia. | Lista `MateriaLaboratorioDB` (relación materia ↔ aula). | Aulas → Ver detalle de un laboratorio → "Materias que usan este laboratorio". |
-| Sedes habilitadas para una carrera. | Multiselect en Carreras. | Carreras → carrera → "Sedes habilitadas". |
-| Sede por defecto para materias comunes. | Marca `es_default_comunes` en la sede. | Aulas → Sedes → "Sede por defecto para materias comunes". |
-| Excepción: comisión pensada para una carrera en particular. | Campo `carrera_asignada` de la comisión. | Cronogramas / Planes → editar comisión. |
-| Cuántos inscriptos esperar. | Serie histórica + método de forecast por plan. | Inscriptos (para cargar datos) · Planes → Detalle (para ajustar el método). |
-| Horas de teoría / laboratorio de la materia. | Campos `horas_teoria`, `horas_laboratorio`. | Materias → Ficha de la materia. |
-| Respetar un aula fijada a mano. | Flag `aula_asignada_manualmente` del horario. | Panel de asignación → editar aula → "Mantener manual". |
+| **Fecha desde** | primer día del ciclo | Fecha a partir de la cual se propaga la solución a las clases puntuales. Las clases anteriores quedan intactas. Útil para reasignar mitad del cuatrimestre sin pisar lo dictado. |
+| **Timeout del solver (segundos)** | 300 | Cota máxima de tiempo que el solver puede tardar. Si vence sin resolver, el veredicto queda en `timeout`. |
 
-### Casos típicos y qué revisar
+### 2.2 Ajuste de capacidad
 
-- **El asignador no encuentra solución (infactible).** Revisar en
-  orden: (1) horarios sin ninguna aula compatible (falta lab
-  compatible, tipo desalineado, o R10 dejó cero sedes admisibles);
-  (2) franjas con más clases simultáneas que aulas del tipo
-  requerido; (3) partición teoría/lab que no cierra con las horas
-  declaradas por la materia. El panel de validación del plan
-  reporta las tres.
-- **Una clase queda en una sede que no es la preferida.** El
-  asignador prioriza la sede preferida (donde vive el lab si la
-  materia tiene lab, o la sede habilitada por la carrera si no)
-  pero acepta otra si esa se satura. Habitualmente es porque la
-  sede preferida no tenía aula del tipo o la capacidad necesaria
-  en esa franja, y el asignador encontró una alternativa
-  admisible en otra sede. Revisar las sedes habilitadas de la
-  carrera, la capacidad del aula esperada y la carga simultánea
-  en esa franja. En las próximas fases este caso va a quedar
-  marcado explícitamente en las métricas de calidad del plan.
-- **Un aula queda subutilizada.** El asignador tolera hasta 20 %
-  de asientos vacíos sin penalidad. Si querés apretar más las
-  aulas, se puede bajar `tol_under` en la configuración del LP.
-- **Un aula queda con sobrecupo.** El sistema penaliza sobrecupo
-  10× más que subutilización, pero si no hay aula grande
-  disponible en la franja puede pasar. Ampliar aulas o partir la
-  comisión en más grupos.
-- **¿Cómo veo si el resultado es bueno globalmente?** El panel
-  **📊 Calidad del resultado** en Planes → Detalle muestra 4
-  familias de métricas: cobertura (asignados vs faltantes,
-  preferida vs alternativa), ajuste al forecast (sobre/sub
-  ocupación con totales en asientos y peor caso), uso del
-  catálogo (aulas usadas/ociosas, concentración por sede) y
-  estado del asignador (objetivo del LP, tiempo, traslados
-  intersede). Ver §8 para el detalle del catálogo.
-- **Cambié el forecast y no veo diferencia.** Los cambios de
-  forecast recién impactan al correr de nuevo el asignador desde
-  el panel de Aulas del plan.
+| Parámetro | Default | Efecto |
+|---|---|---|
+| **Peso de sobre-ocupación (`λ_over`)** | 10 | Multiplicador del término `over[h]` en el objetivo. Cuanto más alto, más castiga cada inscripto que excede la capacidad del aula. |
+| **Peso de sub-utilización (`λ_under`)** | 1 | Multiplicador del término `under[h]`. Cuanto más alto, más castiga cada asiento vacío respecto al umbral. |
+| **Tolerancia de sobre-ocupación (`tol_over`)** | 0 | Fracción de la capacidad que se admite exceder sin penalidad. Con 0, cualquier exceso cuenta. Con 0.1, se admite un 10 % sin castigo. |
+| **Tolerancia de sub-utilización (`tol_under`)** | 0.20 | Fracción de la capacidad que se admite dejar vacía sin penalidad. Con 0.20 (default) se acepta perder hasta un 20 % de asientos sin castigo. |
 
-### Diferencia entre "saturación" y "ocupación" en los mapas
+**Regla mnemotécnica**: `λ_over = 10 · λ_under` codifica que
+sobrecupo es un problema físico (los alumnos no entran al aula)
+mientras que subutilización es un problema económico (aula grande
+desaprovechada). Bajar `λ_over` o subir `tol_over` afloja la
+prioridad — a usar con criterio.
 
-- **Saturación**: cuenta la **demanda proyectada** (horarios que
-  la sede podría recibir según las reglas). Es una cota de
-  presión sobre la sede antes de resolver.
-- **Ocupación**: cuenta las **aulas efectivamente usadas** por el
-  asignador en el estado actual del plan.
+### 2.3 Preferencia de sede
 
-### Fuentes de infactibilidad y cómo detectarlas antes de correr el LP
+| Parámetro | Default | Efecto |
+|---|---|---|
+| **Peso de preferencia de sede (`λ_sede_pref`)** | 5 | Multiplicador del término R12. Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Cuanto más alto, más fuerte la preferencia por la primera sede de la lista blanda; con 0 se desactiva completamente. |
+| **Margen mínimo intersede (minutos)** | 30 | Umbral para detectar pares de horarios contiguos "en riesgo" que no dan tiempo para un traslado. Se aplica a R13 (pares de la misma comisión y pares de alumno del mismo grupo curricular). Con 0 se desactiva. |
+| **Forzar misma sede por comisión** | Off | Toggle que activa R14: todos los horarios de una misma comisión deben caer en la misma sede. Utíl cuando el docente no viaja entre sedes a mitad de semana. |
+| **Modos por grupo (DURO/BLANDO)** | Todos DURO | Sección desplegable donde por cada grupo de materias se elige el modo con el que corre en esta corrida. Se detalla en § 3. |
 
-Antes de correr el asignador conviene entender qué situaciones lo
-vuelven **estructuralmente infactible** — o sea, no importa qué
-solver se use, el problema no tiene solución con la configuración
-actual y hay que ajustar datos. Estas son las causas típicas, en
-orden de frecuencia:
+### 2.4 Configuración avanzada
 
-#### 1. Un horario sin ninguna aula compatible (R1 + R3 + R10)
+| Parámetro | Default | Efecto |
+|---|---|---|
+| **Estricto R5 (`strict_r5`)** | On | Valida horas de teoría y horas de laboratorio por separado (ver R5 en el planteo). Con Off, sólo valida laboratorio (modo legacy). |
+| **Respetar ediciones manuales** | On | Fija como restricción dura las aulas marcadas manualmente. Con Off, el LP reasigna libremente incluso las aulas con pin manual (§ 6). |
+| **Redistribuir inscriptos entre comisiones (`activar_alpha`)** | Off | Activa R9: variables `α[k]` que reasignan la matrícula entre comisiones del mismo dictado. Experimental. |
+| **Peso intersede blanda (`λ_intersede`)** | 0 | Cableado en el modelo pero no activo hoy. Reservado para una variante blanda de R13. |
 
-Un horario individual no tiene ninguna aula del catálogo que
-pueda aceptarlo. Puede pasar por:
+### 2.5 Botones
 
-- **Falta de laboratorio compatible** para una materia cuyo tipo
-  de clase es "laboratorio" (o inferido como tal por R6). Se
-  arregla en **Aulas → laboratorio → "Materias que usan este
-  laboratorio"**.
-- **Sedes admisibles vacías**: la carrera no tiene sedes
-  habilitadas y la materia no tiene labs en otras sedes. Se
-  arregla en **Carreras → Sedes habilitadas** o marcando una
-  **Sede por defecto para materias comunes** (Aulas → Sedes).
-- **Tipo de aula incorrecto**: un horario teórico sin aulas
-  teóricas ni anfiteatros en el catálogo. Se arregla creando
-  aulas del tipo correcto.
-
-**Cómo lo detecta el sistema**: `diagnose_infeasibility` reporta
-esto como `horarios_sin_aula_compatible`. También aparece en el
-mapa de saturación como celda **con demanda pero oferta = 0**.
-
-#### 2. Franja saturada (pigeonhole global — R4)
-
-Más horarios simultáneos que aulas compatibles con la unión. Por
-ejemplo: 4 clases teóricas al mismo tiempo, pero sólo hay 3
-aulas teóricas + anfiteatros en las sedes admisibles.
-
-- Se arregla ampliando el catálogo de aulas o reordenando el
-  cronograma para reducir simultaneidad.
-- **En el mapa de saturación**: aparece como celda **roja** con
-  demanda > oferta.
-
-#### 3. Saturación por tipo dentro de una franja (R3 + R4 + R6)
-
-Refinamiento del anterior: la unión general de aulas puede ser
-suficiente, pero al separar por tipo no. Por ejemplo, 3
-laboratorios simultáneos con sólo 2 aulas de laboratorio (aunque
-haya 5 teóricas libres, no sirven).
-
-- Se arregla igual que (2) pero mirando **por tipo** en el mapa.
-- El mapa lo hace visible con la **Categoría** "Sólo aulas
-  laboratorio" o "Sólo aulas teóricas / anfiteatros".
-
-#### 4. Compatibilidad de laboratorios (pigeonhole + Hall)
-
-Cuando 2+ horarios de laboratorio ocurren en simultáneo y los
-labs compatibles con esas materias no alcanzan para todos.
-
-- **Pigeonhole**: si `demanda > |unión de labs compatibles|`.
-  Ejemplo: 3 horarios, entre las 3 materias sólo comparten 2
-  labs compatibles → infactible seguro.
-- **Hall** (más fino): existe un subconjunto de materias que sólo
-  puede ir a un pool más chico que el subconjunto. Ejemplo: M1
-  puede ir a {A, B, C}, M2 sólo a {A}, M3 sólo a {A}. Unión = 3,
-  demanda = 3, pigeonhole OK, pero M2 y M3 pelean por A y una
-  queda sin aula.
-
-**Cómo verlo**: en el mapa de saturación, cambiar el sub-control
-**Oferta de labs a considerar** a **"🧪 Sólo compatibles"**. Las
-celdas donde falla pigeonhole quedan **rojas**; las que fallan
-Hall (aunque pigeonhole cierre) llevan ⚠️ y también quedan rojas.
-El tooltip lista las materias del subconjunto conflictivo.
-
-Se arregla:
-- Ampliar la lista de labs compatibles de las materias
-  problemáticas (Aulas → lab → "Materias que usan este
-  laboratorio").
-- Cambiar el cronograma para desolapar esos labs.
-- Agregar aulas de laboratorio al catálogo.
-
-#### 5. Partición teoría/lab infactible (R5)
-
-La suma de duraciones de los horarios de una comisión no permite
-bipartir exactamente en las horas de teoría + horas de laboratorio
-declaradas por la materia. Por ejemplo, materia con 3h teoría +
-6h lab (9h totales) y sólo 2 horarios de 2h = 4h totales.
-
-- Se arregla ajustando los horarios del cronograma o las horas
-  declaradas de la materia (**Materias → editar → Horas de
-  teoría/laboratorio**).
-- **En el mapa no aparece**, pero `diagnose_infeasibility` lo
-  reporta como `particion_problemas`.
-
-#### 6. Sedes consecutivas irresolubles (R13)
-
-Dos horarios de la misma comisión con gap < margen intersede
-donde no existe una sede común admisible para ambos.
-
-- Se arregla bajando el `margen_min_intersede_minutos` o
-  agregando labs compatibles en una sede en común.
-
-#### 7. Pin manual apunta a un aula incompatible (R11)
-
-Un horario tiene `aula_asignada_manualmente=True` con un aula que
-ya no es compatible (cambió el tipo, la sede quedó fuera de las
-admisibles, etc.).
-
-- Se arregla desmarcando el pin en el editor de horarios o
-  reasignando manualmente a un aula válida.
-
-#### Estrategia de troubleshooting recomendada
-
-1. **Antes de correr el LP**, apretar el botón **"🚦 Chequear
-   factibilidad"** en Planes → Aulas. Consolida en un único
-   reporte todas las causas de infactibilidad estructural (R1,
-   R3+R4, R5, R11, R13, compat-pigeonhole, compat-hall). Si el
-   semáforo está en 🔴 rojo, corregir los datos antes de correr
-   el asignador.
-2. **Complementariamente**, mirar el mapa de saturación en las
-   4 vistas para labs con el modo **"Sólo compatibles"** activado.
-   Cualquier celda roja o con ⚠️ ahí es una alerta que el chequeo
-   estructural también capta.
-3. **Después de correr el LP** infactible (raro si el chequeo dio
-   verde), revisar el panel de diagnóstico interno del LP que
-   reporta cada una de las causas con detalles concretos.
-4. **Iterativamente**: arreglar la causa de mayor severidad
-   (usualmente falta de compatibilidad estructural o R5), re-correr
-   el chequeo, re-correr el LP.
-
-**Nota sobre la garantía del semáforo verde**: si el chequeo dice
-factible, quiere decir que las causas *estructurales* típicas están
-resueltas. El LP todavía puede resultar infactible por combinaciones
-inusuales o por límites del solver (timeout, precisión numérica),
-pero esas situaciones son mucho menos frecuentes.
+- **🚦 Chequear factibilidad**. Corre el chequeo estructural
+  pre-solve (§ 7 del Doc 1) sin encender el solver. Devuelve un
+  semáforo (verde / rojo) con detalle por bloqueo. Recomendado
+  antes de cada corrida.
+- **⚙ Correr asignador**. Lanza la corrida completa: chequeo
+  pre-solve + solver + diagnóstico si aplica + persistencia.
 
 ---
 
-### Preferencia de sede: Grupos de Materias + modo DURO/BLANDO
+## 3. Grupos de materias: modos DURO y BLANDO
 
-El manejo de sedes se apoya en una única entidad — **el Grupo de
-Materias** — que define para un conjunto de materias qué sedes son
-admisibles y con qué criterio. Es el mismo lugar donde se
-configuran las duras (R10) y las blandas (R12) del LP.
+La preferencia y admisibilidad de sedes se modela a través de la
+entidad **`GrupoMateriaDB`**, definida en el módulo Materias. Cada
+materia pertenece a exactamente un grupo (partición estricta), y
+cada grupo declara **dos configuraciones simultáneas** de sedes:
+un set duro y una lista blanda ordenada. El modo con el que corre
+un grupo se elige por corrida desde el panel del asignador.
 
-**Concepto**: cada `MateriaDB` pertenece a exactamente un
-`GrupoMateriaDB` (partición estricta). Cada grupo tiene:
+### 3.1 Estructura de un grupo
 
-- Un nombre (`FB`, `F`, `FI`, `CE`, `Específicas de Electrónica`,
-  `Sin clasificar`, o cualquier nombre custom).
-- Un `modo` ∈ `{DURO, BLANDO}`.
-- Una **lista ordenada** de sedes.
+Cada grupo tiene:
 
-**Modo DURO** (restricción dura, R10):
+- **Nombre** (`FB`, `F`, `FI`, `CE`, `Específicas de <Carrera>`,
+  `Sin clasificar`, o custom).
+- **Set duro de sedes** (`S_D(g)`): las únicas admisibles cuando el
+  grupo corre en modo DURO.
+- **Lista blanda ordenada de sedes** (`S_B(g)`): la primera es la
+  preferida (paga cero al objetivo); el resto son alternativas
+  con costo `λ_sede_pref` por horario asignado a ellas.
 
-- Las sedes de la lista son las **únicas** admisibles para las
-  materias del grupo.
-- El orden no tiene semántica interna a nivel objetivo (todas las
-  sedes del set son equivalentes).
-- **Lista vacía** ⇒ fallback permisivo "todas las sedes admisibles"
-  (útil sólo para el grupo `Sin clasificar` durante la transición).
+Ambas configuraciones se editan en **Materias → 📦 Grupos de
+materias**. Una misma sede puede aparecer con ambos tipos: son
+listas independientes.
 
-**Modo BLANDO** (preferencia blanda, R12):
+### 3.2 Modo DURO
 
-- Todas las sedes de la lista son admisibles.
-- La **primera** sede es la **preferida** — el LP la elige gratis.
-- Las **alternativas** (resto de la lista) suman `λ_sede_pref` por
-  horario que caiga ahí (penalidad plana — todas las alternativas
-  cuestan lo mismo).
+- Las sedes del set duro son las **únicas** admisibles para las
+  materias del grupo. R10 filtra las variables `x[h, a]` a esas
+  sedes antes de instanciar el modelo.
+- El orden no tiene efecto: todas las sedes del set son
+  equivalentes a nivel objetivo.
+- **Excepción de laboratorio compatible**: un aula listada en
+  `MateriaLaboratorioDB` para la materia se acepta aunque su sede
+  no esté en el set duro. Refleja que la compatibilidad física del
+  laboratorio es más restrictiva que la preferencia curricular.
+- **Set duro vacío = fallback permisivo**: todas las sedes se
+  consideran admisibles. Se usa en el grupo "Sin clasificar" y
+  emite un warning en la UI para que se cure.
 
-**Excepción de lab compatible** (siempre aplica, independiente del
-modo): un aula listada en `MateriaLaboratorioDB` para la materia se
-acepta aunque no esté en las sedes del grupo. La compatibilidad de
-laboratorio es una restricción física más fuerte que la preferencia
-curricular.
+### 3.3 Modo BLANDO
 
-**Dónde se configuran los grupos**:
+- **Todas** las sedes son admisibles (R10 no filtra).
+- La primera sede de la lista blanda es la preferida: cero costo
+  al objetivo.
+- El resto son alternativas: cada horario asignado a una de ellas
+  suma `λ_sede_pref` al objetivo. La penalidad es **plana**: da lo
+  mismo la segunda que la quinta.
+- Con `S_B(g) = ∅`, todas las sedes son admisibles y no hay sede
+  preferida (el modo se comporta como "cualquier sede vale sin
+  costo").
 
-**Materias → 📦 Grupos de materias**. La pestaña permite:
+### 3.4 Cómo se eligen los modos por corrida
 
-- Editar el modo del grupo, la lista de sedes y el orden.
-- Crear grupos nuevos o borrar los que quedaron vacíos.
-- Reasignar materias entre grupos (filtro rápido "Sólo Sin
-  clasificar" para atacar el backlog).
+En el panel del asignador, dentro del contenedor "Preferencia de
+sede", hay una sección desplegable **"Modos por grupo"** que lista
+todos los grupos activos con un radio DURO / BLANDO por grupo.
+Debajo de cada radio se muestra el efecto textual:
 
-**Grupos bootstrapeados automáticamente** al inicializar la DB:
+- **DURO**: "Sólo se aceptan aulas en las sedes `S_D(g)`."
+- **BLANDO**: "Todas las sedes son admisibles. Preferida:
+  `S_B(g)[0]`. Alternativas con costo `λ_sede_pref` por horario."
 
-- `Sin clasificar` — DURO con todas las sedes activas. Todas las
-  materias que la migración no logró clasificar caen acá y aparecen
-  con warning en la UI.
-- `FB` — DURO Pellegrini. Materias con código `FB*` (ciclo básico).
-- `FI` — DURO Pellegrini. Materias con código `FI*` (Inglés).
-- `CE` — DURO Pellegrini. Materias con código `CE*` (comunes lics/profs).
-- `F` — DURO Siberia. Materias con código `F*` (excluye `FB*`/`FI*`).
-- `Específicas de <Nombre Carrera>` — DURO con las sedes que estaba
-  configurada para la carrera en el modelo viejo. Se llena con las
-  materias exclusivas de esa carrera.
+Al correr, cada radio se persiste en `LPConfig.modos_por_grupo` y
+se guarda con la corrida en `LPRunDB.details_json`. La próxima vez
+que se abra el panel, los modos vuelven a hidratarse desde la
+última corrida (§ 9).
 
-**Regla mnemotécnica**: "R10 dice **dónde puede caer** (modo DURO);
-R12 dice **dónde debería preferir caer** (primera sede en modo
-BLANDO)". Ambas salen del mismo grupo.
+### 3.5 Grupos bootstrapeados al inicializar la base
 
-**Parámetros del LP**:
+La primera vez que se carga la base, la migración crea
+automáticamente los siguientes grupos y les asigna materias por
+prefijo de código:
 
-| Parámetro | Default | Efecto | Se edita en |
-|---|---|---|---|
-| `lambda_sede_pref` | 5.0 | Peso del término blando de preferencia de sede. Con 0 desactiva (BLANDO se comporta como "cualquier sede vale sin costo"). | Panel del asignador → "Preferencia de sede" → "Peso de preferencia de sede (λ sede)". |
-| `forzar_misma_sede_por_comision` | False | Si ON, todos los horarios de una comisión caen en la misma sede (R14). | Panel del asignador → "Preferencia de sede" → toggle "Forzar misma sede por comisión". |
+| Grupo | Modo default | Set duro | Prefijo | Motivación |
+|---|---|---|---|---|
+| `Sin clasificar` | DURO | todas las sedes activas (fallback permisivo) | ninguno | Recibe las materias que la migración no logró clasificar. Se muestra con warning. |
+| `FB` | DURO | Pellegrini | `FB*` | Ciclo básico de ingenierías. |
+| `F` | DURO | Siberia | `F*` (excluye `FB*` y `FI*`) | Troncal de ingenierías. |
+| `FI` | DURO | Pellegrini | `FI*` | Inglés, todas las ingenierías. |
+| `CE` | DURO | Pellegrini | `CE*` | Comunes de licenciaturas y profesorados. |
+| `Específicas de <Carrera>` | DURO | según `CarreraSedeDB` original | ninguno | Uno por carrera. Recibe materias que aparecen sólo en el plan de esa carrera. |
 
-**Ejemplo: materia A5 (Informática Aplicada, Electrónica)**
+Después de la migración inicial se puede editar libremente: agregar
+sedes, cambiar el modo default de un grupo, reasignar materias
+entre grupos, crear grupos nuevos, etcétera.
 
-- A5 pertenece al grupo `Específicas de Ingeniería Electrónica`.
-- Modo DURO con sedes `[Siberia]`.
-- A5 también tiene lab compatible en Pellegrini
+### 3.6 Chequeo de consistencia (opcional, no bloquea el LP)
+
+Cada grupo puede asociarse a 0..N carreras (`GrupoMateriaCarreraDB`).
+Esa asociación sirve para el **chequeo de consistencia**, que
+compara qué materias hay en el grupo contra qué materias aparecen
+en el plan vigente de las carreras asociadas. El chequeo tiene tres
+flags configurables por-grupo:
+
+- **Pertenencia a asociadas** (default On). Toda materia del grupo
+  debe aparecer en el plan de al menos una carrera asociada.
+- **Exclusividad frente a no asociadas** (default On). Ninguna
+  materia del grupo puede aparecer en el plan de carreras no
+  asociadas.
+- **Completitud (faltantes)** (default On). Busca materias que
+  corresponderían al grupo pero están en otro.
+
+Estos flags no afectan al LP. Son una herramienta de curación para
+mantener la partición estricta materia ↔ grupo alineada con los
+planes de estudio vigentes. La UI del editor de grupos reporta las
+inconsistencias en dos listas (`faltantes`, `ajenas`) y permite
+reasignar materias con un clic.
+
+### 3.7 Ejemplo: A5 (Informática Aplicada, Electrónica)
+
+- A5 pertenece al grupo `Específicas de Ing. Electrónica`.
+- Grupo en modo DURO con `S_D = {Siberia}`.
+- A5 tiene laboratorios compatibles en Pellegrini
   (`MateriaLaboratorioDB`).
 
 Resultado: R10 admite aulas de Siberia + los labs compatibles en
-Pellegrini (por la excepción de lab). El LP arma solución
-usando cualquiera de esas aulas. Si se quisiera empujar toda A5 a
-Pellegrini como preferida, se pasaría el grupo a modo BLANDO con
-sedes `[Pellegrini, Siberia]` — Pellegrini gratis, Siberia
-suma `λ_sede_pref`.
+Pellegrini (por la excepción de laboratorio). El LP puede usar
+cualquiera.
+
+Si se quisiera empujar toda A5 a Pellegrini como preferida, se
+pasaría el grupo a modo BLANDO con `S_B = [Pellegrini, Siberia]`:
+Pellegrini gratis, Siberia suma `λ_sede_pref`. El LP elegiría
+Pellegrini salvo que se sature.
 
 ---
 
-### ¿Cómo interpreto el veredicto de una corrida?
+## 4. Veredicto de la corrida y sus estados
 
-Después de correr el asignador, en el panel de resultado aparece un
-container **📋 Veredicto de la corrida** con cuatro estados
-posibles:
+Después de correr, el panel de resultado muestra un contenedor
+**"📋 Veredicto de la corrida"** con el estado final. Son cuatro
+estados posibles:
 
-- **✅ optimal** — El plan se resolvió completo. Todos los horarios
-  presenciales recibieron aula. Los horarios virtuales quedan sin
-  aula por diseño (no ocupan aula pero cuentan hacia las horas
-  declaradas de la materia).
+### 4.1 ✅ `optimal`
 
-- **❌ infeasible_estructural** — El chequeo pre-solve detectó
-  bloqueos ANTES de correr el solver. No se gastó tiempo del solver
-  porque ya sabíamos que no iba a resolver. El veredicto lista cada
-  bloqueo con su regla (R1, R3+R4, R5, R11, R13, compat-pigeonhole,
-  compat-hall) y las entidades a revisar. **Acción**: corregir los
-  datos (aulas, materias, carreras, horarios) según el detalle y
-  volver a intentar.
+El solver encontró la solución óptima. Todos los horarios
+presenciales recibieron aula. Los horarios virtuales quedan sin
+aula por diseño (no ocupan aula pero cuentan hacia las horas
+declaradas de la materia por R5 estricta).
 
-- **❌ infeasible** — El solver corrió pero no encontró solución.
-  El chequeo pre-solve no había detectado bloqueos, pero alguna
-  combinación de restricciones vuelve el problema imposible. Se
-  ejecuta automáticamente un diagnóstico cruzado (IIS por
-  relajación selectiva) para identificar la restricción culpable.
-  **Acción**: revisar la sección "Diagnóstico cruzado" del veredicto.
+**Qué mirar después**:
 
-- **⏱ timeout** — El solver alcanzó el timeout sin resolver. Suele
-  significar que el modelo es muy grande o que hay ambigüedades
-  costosas de resolver. **Acción**: subir el timeout en la
-  configuración avanzada, o revisar si hay bloqueos estructurales
-  ocultos.
+- **Panel de calidad** en Planes → Detalle (métricas de cobertura,
+  ajuste al forecast, uso del catálogo, estado del LP).
+- **Horarios fuera de sede preferida**: expander dentro del
+  veredicto que lista los horarios asignados a una sede alternativa
+  (aplica sólo a grupos BLANDO).
+- **Mapa de saturación** para chequear si alguna sede quedó al
+  borde.
 
-**Restricciones activas** — El veredicto también incluye un
-expander con los valores concretos que se usaron en la corrida
-(λ over, λ under, λ sede pref, margen intersede, strict_r5, etc.).
-Esto es útil para reproducir una corrida o comparar dos corridas
-con configuraciones distintas.
+### 4.2 ❌ `infeasible_estructural`
 
----
+El **chequeo pre-solve** detectó bloqueos antes de encender el
+solver. No se gastó tiempo de CBC. El veredicto enumera cada
+bloqueo con su regla (R1, R3+R4, R5, R11, R13, R13-camino,
+compat-pigeonhole, compat-hall) y las entidades involucradas.
 
-### Restricciones duras vs. blandas y dónde se configura cada una
+**Acción**: corregir los datos según el detalle del bloqueo. Ver
+§ 10.4 para causas típicas y § 7 del Doc 1 para la lista completa
+de chequeos pre-solve.
 
-El asignador combina **reglas duras** (que definen qué asignaciones
-son válidas — si no se cumplen, no hay solución) y **preferencias
-blandas** (costos en la función objetivo — cuanto más alto el peso,
-más fuerza la preferencia; con peso 0, desaparece). Cada regla se
-alimenta de datos que viven en **entidades del sistema**
-(Materias, Aulas, Carreras, Sedes, Comisiones) o en **parámetros
-del asignador** editables desde el panel de configuración.
+### 4.3 ❌ `infeasible`
 
-Este es el mapa completo:
+El solver corrió pero no encontró solución. El chequeo pre-solve
+no había detectado bloqueos, pero alguna combinación de
+restricciones vuelve el problema imposible. Se dispara
+automáticamente el **diagnóstico por relajación selectiva** (§ 5)
+que identifica qué restricción o combinación de restricciones es
+la culpable.
 
-#### 🔒 Duras (bloquean asignaciones inválidas)
+**Acción**: leer la sección "Diagnóstico cruzado" del veredicto y
+aplicar la recomendación accionable.
 
-| # | Regla | ¿Qué garantiza? | ¿Dónde se configura? |
-|---|---|---|---|
-| **R1** | Asignación única | Cada horario recibe exactamente una aula. | Automática, no configurable. |
-| **R3** | Compatibilidad de tipo | Teóricas → aulas teóricas o anfiteatros; laboratorios → aulas de laboratorio en la lista de compatibles de la materia. | **Aulas → Ver detalle → "Tipo de aula"** (define teórica/anfiteatro/laboratorio) + **Aulas → Ver detalle del laboratorio → "Materias que usan este laboratorio"** (define compatibilidad materia↔lab). |
-| **R4** | No solapamiento por aula | Dos horarios que se solapan no pueden compartir aula. | Automática, se deriva de los horarios del cronograma. |
-| **R5** | Partición teoría/lab por comisión | La suma de duraciones de horarios de teoría y de laboratorio en una comisión coincide con las horas declaradas por la materia. | **Materias → editar → "Horas de teoría" y "Horas de laboratorio"**. |
-| **R6** | Consistencia tipo↔pool | Un horario con tipo indefinido cae en un aula del pool correcto (teóricas o labs compatibles). | Derivada, alimentada por R3. |
-| **R10** | Sedes admisibles (Grupos DURO) | Un horario sólo puede caer en aulas de las sedes del grupo de la materia, cuando el modo del grupo es DURO. | **Materias → 📦 Grupos de materias**: elegir modo DURO y la lista de sedes admisibles del grupo. En modo BLANDO R10 no filtra. |
-| **R11** | Pins manuales | El asignador respeta aulas fijadas a mano por el operador. | **Planes → Aulas → panel de asignación → toggle "Respetar ediciones manuales"** + el usuario marca cada aula como manual en el editor de horarios. |
-| **R13** | Sedes consecutivas por comisión | Dos horarios contiguos de una misma comisión (mismo día, gap corto) caen en la misma sede. | **Planes → Aulas → panel de asignación → "Margen mínimo entre sedes (minutos)"**. Con 0 se desactiva. |
-| **R13-camino** | Camino de cursada intersede factible (pre-check estructural) | Para cada `(carrera, año, cuatri)` existe al menos una combinación de comisiones que respete margen intersede. | Mismo `margen_min_intersede_minutos` que R13. Pre-check fuera del LP; aparece como bloqueo en el semáforo de factibilidad. |
-| **R14** | Misma sede por comisión (opcional) | Todos los horarios de una comisión caen en la misma sede. | **Planes → Aulas → panel de asignación → toggle "Forzar misma sede por comisión"**. |
+### 4.4 ⏱ `timeout`
 
-#### 🎯 Blandas (preferencias en la función objetivo)
+El solver alcanzó el timeout sin resolver ni certificar
+infactibilidad. Suele significar que el modelo es muy grande o que
+hay ambigüedades costosas de resolver.
 
-| # | Regla | ¿Qué prefiere? | ¿Dónde se configura? |
-|---|---|---|---|
-| **R7 over** | Evitar sobrecupo | Aulas donde los inscriptos esperados no rebalsan la capacidad. | **Planes → Aulas → panel de asignación → "Peso de sobre-ocupación (λ over)"** y **"Tolerancia de sobre-ocupación"**. Se alimenta también de Inscriptos (forecast) y de Aulas → capacidad. |
-| **R7 under** | Evitar aulas mucho más grandes que la demanda | Aulas ajustadas al forecast. | **Planes → Aulas → panel de asignación → "Peso de sub-utilización (λ under)"** y **"Tolerancia de sub-utilización"**. |
-| **R12** | Sede preferida (Grupos BLANDO) | Primera sede del grupo BLANDO. Alternativas admisibles pero con costo. | Fuente de la preferencia: **Materias → 📦 Grupos de materias** (modo BLANDO + orden de sedes). Peso: **Planes → Aulas → panel de asignación → "Peso de preferencia de sede (λ sede)"**. Con λ = 0 se desactiva el término. |
+**Acción**:
 
-#### ¿Qué edito para arreglar cada síntoma?
+- Subir `timeout_seconds` en la configuración avanzada.
+- Revisar si hay bloqueos estructurales ocultos (correr chequeo
+  pre-solve).
+- Simplificar la config (menos grupos BLANDO, R14 apagado, margen
+  intersede más bajo).
 
-| Síntoma | Qué revisar (en orden) |
-|---|---|
-| Un horario no encuentra aula (infactible R1) | ¿La materia tiene labs compatibles configurados? (Aulas → detalle lab → materias que lo usan). ¿La carrera tiene sedes habilitadas y hay aulas del tipo correcto en esas sedes? (Carreras → sedes; Aulas por sede). |
-| Una clase cae en una sede inesperada | Revisar sede preferida (regla lab-first). Si querés forzar otra, ajustar la lista de labs compatibles o cambiar el peso `λ sede`. |
-| El plan no cabe en la sede preferida | Verificar que aumentando `λ sede` o bajando `λ under` cambie la solución. Si no cambia, es cuestión de capacidad — falta aula grande en la sede. |
-| Un aula queda sobreocupada | Chequear si hay aulas más grandes libres en esa franja (mapa de saturación, vista Preferida). Si no, ampliar el catálogo o bajar `tol_under` para aceptar aulas mayores. |
-| Alumnos con clases contiguas en sedes distintas | Bajar `margen_min_intersede_minutos` a 0 desactiva; subirlo a 60 refuerza. Si genera infactibilidad, el cronograma tiene comisiones inviables. |
-| El LP tarda mucho | Subir `timeout_seconds` en la config avanzada. |
+### 4.5 Restricciones activas — expander de auditoría
+
+El veredicto siempre incluye un expander **"🔧 Restricciones
+activas"** con los valores concretos que se usaron en la corrida:
+`λ_over`, `λ_under`, `λ_sede_pref`, `margen_min_intersede_minutos`,
+`strict_r5`, `respetar_ediciones_manuales`, `activar_alpha`,
+`forzar_misma_sede_por_comision` y los modos por grupo. Esto es
+crítico para:
+
+- **Reproducir** una corrida vieja con la misma config.
+- **Comparar** dos corridas con configs distintas.
+- **Auditar** qué se estaba usando cuando algo falló.
 
 ---
 
-Cuando saturación > ocupación en una celda, indica que había
-demanda que la sede podía absorber pero el asignador la mandó a
-otra sede admisible (típicamente por capacidad o por combinación
-de restricciones). Cada teórica se cuenta una sola vez, en su
-**sede preferida** (la del lab compatible si tiene lab; si no, la
-sede de la carrera). Ya no aparece inflada por conectividad de
-laboratorios en sedes distintas.
+## 5. Diagnóstico y recomendaciones ante infactibilidad
 
-Más adelante el mapa de saturación va a soportar varias vistas
-para analizar factibilidad de antemano: **demanda dura** (lo que
-no tiene alternativa de sede — si supera la oferta es
-infactibilidad segura), **demanda preferida** (la actual),
-**demanda máxima** (todo lo que podría caer en la sede) y
-**demanda total sin sede** (cota global). Ver §8 para el detalle
-de cada vista.
+Cuando el veredicto es `infeasible` (no `infeasible_estructural`),
+el asignador ejecuta automáticamente un **diagnóstico por
+relajación selectiva** — descripto formalmente en § 8 del Doc 1.
+Esta sección explica cómo interpretarlo desde la UI y qué acciones
+tomar.
+
+### 5.1 Diagnóstico cruzado — lectura general
+
+El panel muestra tres bloques:
+
+1. **Restricciones que rescatan al modelo** cuando se las relaja
+   individualmente. Cada una viene con `feasible_relajado = true`.
+2. **Causa principal**. La restricción con mayor prioridad
+   accionable, elegida con el orden `R10 → R14 → R13 → R4 → R5 → R6`.
+   Es la que la UI recomienda revisar primero.
+3. **Falsos positivos filtrados**. Las restricciones que rescatan
+   al modelo pero por un artefacto conocido (típicamente R5 y R6
+   se marcan como culpables espurias cuando la causa real es R4).
+
+### 5.2 Recomendaciones específicas por regla
+
+- **R10 (filtro DURO de sedes)** — Cuando R10 es la principal, el
+  diagnóstico refina el análisis probando **cada grupo DURO a
+  BLANDO por separado** (`_iss_r10_grupos_rescate`) y lista los que
+  rescatan al modelo individualmente. Cada uno viene con:
+  - Nombre del grupo.
+  - Cantidad de materias del grupo que tienen comisiones en el plan.
+  - Modo actual (DURO) y modo propuesto (BLANDO).
+  
+  La recomendación de la UI es del estilo "pasá el grupo *X* a modo
+  BLANDO". El usuario elige cuál pasar (típicamente el de menor
+  cantidad de materias — menos invasivo).
+
+- **R14 (forzar misma sede por comisión)** — Si estaba On, la
+  recomendación es apagarlo. La UI lo señaliza con un botón directo
+  en el diagnóstico.
+
+- **R13 (margen intersede)** — Recomendación: bajar
+  `margen_min_intersede_minutos` (por ejemplo de 30 a 15 o 0). El
+  diagnóstico indica cuántos pares están efectivamente en riesgo
+  con el margen actual.
+
+- **R4 (doble asignación)** — Es la más difícil de accionar porque
+  requiere agregar aulas al catálogo o mover horarios del
+  cronograma. El diagnóstico apunta a la franja saturada y a la
+  cantidad de aulas del tipo requerido en la unión de sedes
+  admisibles.
+
+- **R5 (partición teoría / lab)** — Cuando la causa es real (no
+  falso positivo), indica que las horas declaradas por la materia
+  no cierran con las duraciones de los horarios cargados en el
+  cronograma. Se arregla en Materias → editar → horas de teoría /
+  laboratorio o ajustando los horarios.
+
+- **R6 (consistencia tipo ↔ pool)** — Cuando la causa es real,
+  indica que un horario con `tipo_clase = ⊥` no tiene ni aula
+  teórica ni laboratorio compatible disponible. Se arregla
+  agregando laboratorios compatibles a la materia.
+
+### 5.3 Combinaciones de rescate
+
+Cuando ninguna regla individual rescata al modelo, la UI muestra
+"⚠️ No se pudo identificar una causa única" y por debajo aparece
+un bloque **"Combinaciones que rescatan"**. Se probaron pares de
+relajaciones:
+
+- Cada grupo DURO → BLANDO **combinado con** desactivar R14.
+- Cada grupo DURO → BLANDO **combinado con** poner margen intersede
+  en 0.
+
+Cada combinación viene ordenada por menor impacto (el grupo con
+menos materias en el plan primero) para facilitar la elección. El
+costo del análisis está acotado por `CAP_PRUEBAS = 40`
+combinaciones.
+
+**Cuándo ocurre esto**: típicamente cuando el problema es
+saturación combinada entre un grupo DURO estricto y un margen
+intersede alto, o entre un grupo DURO y R14 activo. Rara vez
+requiere relajar tres o más restricciones simultáneamente.
+
+### 5.4 Flujo recomendado ante `infeasible`
+
+1. Leer la **causa principal** que reporta el veredicto.
+2. Si es R10, mirar los **grupos de rescate** y pasar el que menos
+   materias afecte a BLANDO.
+3. Si es R14, apagar el toggle.
+4. Si es R13, bajar el margen.
+5. Si no hay causa individual, mirar las **combinaciones** y
+   aplicar la de menor impacto.
+6. Re-correr. Si el veredicto sigue siendo `infeasible`, iterar
+   con la segunda opción o combinar dos relajaciones.
+
+**Regla práctica**: relajar de a una a la vez. Cambiar varios
+parámetros simultáneamente hace que sea difícil identificar cuál
+fue el que resolvió.
 
 ---
 
-## 1. Variables de decisión
+## 6. Ediciones manuales y consistencia con el LP
 
-| Variable | Tipo | Dominio | Semántica |
-|---|---|---|---|
-| `x[h, a]` | binaria | 0/1 | 1 si el horario `h` se asigna al aula `a`, 0 si no. Sólo existe para pares `(h, a)` **compatibles** (ver §3, R3+R6+R10). |
-| `t[h]` | binaria | 0/1 | 1 = laboratorio, 0 = teórica. Sólo se crea para horarios con `tipo_clase=None`. Los demás son constantes (`t_const[h]`). |
-| `α[k]` | continua | [0, 1] | Coeficiente de asignación de inscriptos a la comisión `k`. Sólo se crea cuando `config.activar_alpha=True` (hoy off). |
-| `over[h]` | continua | ≥ 0 | Cuántos inscriptos excedieron la capacidad del aula asignada. |
-| `under[h]` | continua | ≥ 0 | Cuántos asientos sobraron respecto de los inscriptos. |
+El operador puede fijar manualmente el aula de un horario desde
+distintos puntos de la UI (Cronogramas, Detalle del plan, Aulas
+por sede). Cuando lo hace, el horario queda marcado con
+`HorarioDB.aula_asignada_manualmente = True` — R11 en el planteo.
 
-Notas de implementación:
+### 6.1 Toggle "Respetar ediciones manuales"
 
-- `t[h]` **no se crea** si el horario ya tiene `tipo_clase` fijo
-  (el LP no tiene que decidir). Se lee como constante en R5 y R6.
-  Además, `build_inputs` infiere el tipo en memoria (sin persistir)
-  cuando la materia declara sólo teoría **o** sólo laboratorio,
-  reduciendo variables innecesarias.
-- `α[k]` está detrás de un flag (`config.activar_alpha`). Cuando
-  está apagado (default), `insc[h]` se toma del forecast persistido
-  (`get_inscriptos_esperados_por_comision`) como constante.
+En el panel del asignador está el toggle **"Respetar ediciones
+manuales"** (default On). Con On, las aulas manuales quedan fijas
+como restricción dura R11. Con Off, el LP las reasigna libremente y
+borra el flag manual.
+
+El flujo típico es dejarlo On: las decisiones manuales del operador
+son fuente de verdad para el LP. Se pasa a Off sólo cuando se
+quiere que el LP haga una reasignación completa desde cero (por
+ejemplo, después de cambios grandes en el catálogo o en el
+cronograma).
+
+### 6.2 Colisiones de aula al editar un horario
+
+Cuando el operador cambia el aula de un horario manualmente y esa
+aula ya está ocupada por otro horario en la misma franja, la UI
+detecta la colisión y ofrece un panel para resolverla:
+
+- **Ver quién ocupa el aula** con el otro horario en conflicto.
+- **Liberar el otro horario** (poner `aula_id = None`) con un botón
+  directo, dejando que el LP lo reasigne en la próxima corrida.
+- **Cancelar la edición** y buscar otra aula.
+
+Este panel aparece en tres lugares:
+
+- Detalle del plan → editar horario del grilla → preview de impacto.
+- Detalle del plan → editar horario desde materia.
+- Aulas por sede → cronograma del aula → editar horario.
+
+Todas comparten el mismo componente (`horario_edit_shared.py`) para
+mantener el flujo idéntico.
+
+### 6.3 Badge "manual" en el detalle del plan
+
+Los horarios con `aula_asignada_manualmente = True` aparecen con un
+badge visual "manual" en el expander correspondiente. Esto sirve
+para distinguirlos rápidamente de los horarios que el LP resolvió
+automáticamente.
+
+### 6.4 Pin apunta a un aula incompatible
+
+Si el aula pinneada dejó de ser compatible con el horario (cambió
+el tipo del aula, la sede quedó fuera de las admisibles del grupo
+en modo DURO, etc.), la corrida devuelve infactibilidad estructural
+en R11. La UI reporta el pin problemático y sugiere dos acciones:
+
+- **Editar el horario** para elegir un aula compatible.
+- **Desmarcar el pin** (bajar el flag `aula_asignada_manualmente`)
+  y dejar que el LP asigne libremente.
+
+### 6.5 Saneamiento de horarios virtuales stale
+
+Cuando un horario era presencial en una corrida previa y se cambia
+a virtual antes de la siguiente corrida, el LP no lo incluye en su
+modelo (los virtuales no participan de las variables `x[h, a]`).
+Sin saneamiento activo, el `aula_id` viejo quedaría stale y
+generaría falsas colisiones en las vistas de aula.
+
+`apply_solution` recibe el conjunto `no_ocupa_aula_ids` de los
+horarios que dejaron de ocupar aula y libera activamente su
+`aula_id` (lo pone en `None` y baja `aula_asignada_manualmente`).
+Esto se propaga a las clases puntuales del plan. El operador no
+tiene que hacer nada — se hace en cada corrida.
 
 ---
 
-## 2. Función objetivo
+## 7. Excepciones de conflicto ignorado
 
-```
-minimizar  λ_over  · Σ over[h]
-         + λ_under · Σ under[h]
-         + λ_sede_pref · Σ_{(h,a): sede(a) ≠ sede_pref(h)} x[h, a]
-```
+`IgnoredConflictDB` es una tabla que registra pares de materias que
+la validación del plan **ignora** para el chequeo de solapamiento
+horario. Se usa cuando en la práctica una comisión de la materia A
+y una de la materia B nunca son cursadas por el mismo alumno — por
+ejemplo, materias homónimas de distintos años del plan.
 
-Parámetros:
+### 7.1 Cuándo agregar una excepción
 
-- `λ_over = 10.0` (default en `LPConfig`). Penaliza sobrecupo con
-  peso alto.
-- `λ_under = 1.0`. Penaliza subutilización con peso 10× menor.
-- `λ_sede_pref = 5.0` (**agregado en Fase 3**). Penaliza cada
-  horario asignado a una sede distinta a su preferida.
+Sólo cuando el conflicto es formalmente reportado por la
+validación pero **operativamente falso**. Un caso típico: dos
+materias con nombres similares que aparecen en dos años distintos
+del plan y comparten franja horaria en las comisiones actuales.
+Los alumnos que cursan una no cursan la otra porque están en
+momentos distintos del plan.
 
-Interpretación: preferimos aulas que caben **con margen** antes
-que aulas apretadas, y dentro de las que caen bien, preferimos
-las que están en la sede natural de la materia. Cuando el margen
-no alcanza, preferimos apretar antes que rebalsar; y cuando la
-sede preferida no tiene capacidad, aceptamos otra sede admisible.
+**Cuándo NO agregar una excepción**: si el conflicto es entre
+materias que un alumno podría cursar simultáneamente (por ejemplo
+recursando), la excepción esconde un problema real. Preferir mover
+comisiones o ajustar horarios.
 
-Los pesos son parametrizables desde `LPConfig` pero **no están
-expuestos en la UI hoy** — Fase 5 (panel de restricciones) los va
-a hacer editables.
+### 7.2 Alcance de la excepción
+
+Las excepciones **sólo se aplican al chequeo de solapamiento**. El
+chequeo de intersede (R13, R13-camino) las **ignora**: el traslado
+físico entre sedes es un problema independiente de qué alumnos
+cursen qué. Un alumno que teóricamente no cursa las dos materias
+igual puede necesitar el traslado, por lo que la excepción no
+aplica.
+
+### 7.3 Cómo se gestionan
+
+Las excepciones se agregan y quitan desde el panel de validación
+del plan, en la sección de conflictos detectados. Cada conflicto
+tiene un botón "Ignorar este par" que crea el registro; los
+ignorados aparecen en una lista separada con un botón para quitar
+la excepción.
+
+### 7.4 Auto-limpieza de excepciones stale
+
+Cuando el plan de estudio cambia y una materia deja de coexistir
+con la otra en algún grupo curricular `(carrera, año, cuatri)`, la
+excepción registrada queda huérfana. `cleanup_stale_ignored_pairs`
+la limpia automáticamente en la próxima validación del plan
+(`validate_plan`) y reporta la limpieza al usuario en el summary,
+así el operador sabe qué pares dejaron de aplicar.
 
 ---
 
-## 3. Restricciones
-
-### R1 — Asignación única
-**Fuente:** `asignacion_aulas_service.py:576-587`.
-
-Para cada horario `h`:
-
-```
-Σ_{a compatible con h} x[h, a] = 1
-```
-
-Cada horario debe recibir exactamente una aula. Si el conjunto de
-aulas compatibles está vacío, `build_model` emite
-`R1_sin_aulas_compat_<hid>` (una restricción imposible) para que
-el solver reporte infactibilidad con nombre parlante.
-
-- **Tipo:** dura.
-- **Parámetros:** ninguno.
-- **Infactible si:** existe un horario sin ninguna aula compatible
-  (falta lab en `MateriaLaboratorioDB`, R10 dejó cero admisibles,
-  el tipo de la materia no coincide con el catálogo, etc.).
-  Detectado en `diagnose_infeasibility → horarios_sin_aula_compatible`.
-
-### R3 — Compatibilidad horario ↔ aula (por tipo)
-**Fuente:** `asignacion_aulas_helpers.py:134-167` (`compute_compat`).
-
-Determina si el par `(h, a)` puede formar una variable `x[h, a]`:
-
-- Si `h.tipo_clase == "teorica"`: `a.tipo ∈ {"teorica", "anfiteatro"}`.
-- Si `h.tipo_clase == "laboratorio"`: `a.id ∈ materia_lab_map[h.materia]`
-  (aulas listadas en `MateriaLaboratorioDB` para esa materia).
-- Si `h.tipo_clase is None`: cualquier aula pasa **pre-modelo**; la
-  consistencia real se fuerza por R6 usando `t[h]`.
-
-- **Tipo:** dura, pre-modelo (filtra variables antes de crearlas).
-- **Parámetros:** ninguno.
-- **Infactible si:** ver R1 (compatibilidad vacía).
-
-### R4 — No solapamiento por aula (grupos de simultaneidad)
-**Fuente:** `asignacion_aulas_service.py:608-621` +
-`asignacion_aulas_helpers.py:57-127` (`compute_simultaneidad_groups`).
-
-Para cada grupo maximal de horarios que se solapan en el tiempo `G`,
-y cada aula `a`:
-
-```
-Σ_{h ∈ G} x[h, a] ≤ 1
-```
-
-Los grupos se calculan con barrido de eventos por día (O(N log N)).
-Sólo se emiten grupos de tamaño ≥ 2 y maximales (no subconjuntos
-de otros).
-
-- **Tipo:** dura. Relajable en `build_model(relax={"R4"})` sólo
-  para diagnóstico IIS.
-- **Parámetros:** ninguno.
-- **Infactible si:** pigeonhole clásico — más horarios simultáneos
-  que aulas compatibles con la unión (`franjas_saturadas`) o que
-  aulas admiten a un subconjunto Hall-violador (`hall_violators`).
-
-### R5 — Partición teoría / lab por comisión
-**Fuente:** `asignacion_aulas_service.py:build_model → sección R5`.
-
-Para cada comisión `k` con materia `m`:
-
-```
-Σ_{h ∈ k} dur[h] · t[h]     = hlab[m]     (laboratorio)
-Σ_{h ∈ k} dur[h] · (1-t[h]) = hteo[m]     (teoría, sólo con strict_r5)
-```
-
-Ambas ecuaciones aplican simultáneamente cuando
-`LPConfig.strict_r5=True` (default desde Fase 8.1). En modo legacy
-(`strict_r5=False`) sólo se instancia la ecuación de laboratorio y
-la de teoría queda implícita — permite que la suma de horas de
-teoría sea menor que hteo sin generar infactibilidad, comportamiento
-previo al fix.
-
-Los horarios con `tipo_clase` fijo contribuyen con `t_const` como
-constante. Los horarios virtuales (marcados como `no_ocupa_aula`)
-**sí participan** de esta ecuación con su duración, aunque no toman
-aula — así, si la teoría se dicta parte presencial y parte virtual,
-ambas partes suman correctamente.
-
-- **Tipo:** dura. Relajable con `relax={"R5"}` para diagnóstico.
-- **Parámetros:** `LPConfig.strict_r5` (bool). Default True.
-- **Datos que alimentan:** `MateriaDB.horas_teoria`,
-  `MateriaDB.horas_laboratorio` (editables en Materias → editar
-  materia); duraciones de los horarios cargados en el cronograma.
-- **Infactible si:** la suma de duraciones no cierra contra
-  `hteo + hlab`, o alguna de las ecuaciones no cierra por
-  separado. Detectado por `validar_particion_factible` antes del
-  solve y también por el chequeo estructural de Fase 7.
-
-### R6 — Consistencia tipo ↔ pool de aulas (para tipos indefinidos)
-**Fuente:** `asignacion_aulas_service.py:655-689`.
-
-Sólo aplica a horarios con `t[h]` variable (`tipo_clase=None`):
-
-- **R6a (teórica):** si `t[h] = 0`, sólo puede caer en aulas teóricas:
-  `Σ_{a ∈ A_teoricas} x[h, a] ≥ 1 - t[h]`.
-- **R6b (laboratorio):** si `t[h] = 1`, sólo puede caer en labs
-  compatibles con la materia: `Σ_{a ∈ A_lab(m)} x[h, a] ≥ t[h]`.
-
-Casos degenerados:
-
-- Sin aulas teóricas: fuerza `t[h] = 1`.
-- Sin labs compatibles: fuerza `t[h] = 0`.
-
-- **Tipo:** dura. Relajable con `relax={"R6"}`.
-- **Parámetros:** ninguno.
-- **Infactible si:** ambos casos degenerados aplican simultáneamente
-  para el mismo horario.
-
-### R7 — Penalty de capacidad lineal asimétrico
-**Fuente:** `asignacion_aulas_service.py:691-723`.
-
-Linealización de `|cap - insc|` con dos tolerancias:
-
-```
-over[h]  ≥ insc[h] − Σ x[h, a] · cap[a] · (1 + tol_over)
-under[h] ≥ Σ x[h, a] · cap[a] · (1 − tol_under) − insc[h]
-```
-
-Cuando `α` está activo, `insc[h]` se reemplaza por
-`total_esp[materia(h)] · α[comision(h)]` (expresión lineal).
-
-- **Tipo:** blanda (aparece en el objetivo).
-- **Parámetros de `LPConfig`:**
-  - `lambda_over = 10.0`, `lambda_under = 1.0` (pesos).
-  - `tol_over = 0.0` (por default, sobrecupo puro cuenta).
-  - `tol_under = 0.20` (permitimos 20 % de subutilización sin
-    penalidad — pensado para no forzar aulas chicas cuando la
-    demanda oscila).
-- **Nunca vuelve el problema infactible** (over, under ≥ 0).
-
-### R9 — Toggle α de redistribución de coeficientes (opcional, hoy off)
-**Fuente:** `asignacion_aulas_service.py:523-553`.
-
-Cuando `config.activar_alpha=True`:
-
-- Se crea `α[k]` continua por comisión.
-- Por dictado `d`, `Σ_{k ∈ d} α[k] = 1` — los coeficientes de
-  asignación entre comisiones del mismo dictado deben sumar 1.
-- Comisiones sin dictado quedan con `α = 1` forzado.
-
-- **Tipo:** dura cuando el toggle está on.
-- **Parámetros:** `LPConfig.activar_alpha` (bool). No expuesto en UI.
-
-### R10 — Sedes admisibles por horario (Grupos de Materias)
-**Fuente:** `asignacion_aulas_service.py:build_inputs` (filtro sobre
-`compat`) + `grupo_materia_service.py:resolver_sedes_admisibles_por_materia`.
-
-Filtra `compat[(h, a)]` post-R3 según la configuración del **Grupo de
-Materias** al que pertenece la materia del horario. Cada materia
-pertenece a un único grupo (partición estricta enforzada por schema
-y service). Cada grupo tiene:
-
-- `modo` ∈ `{DURO, BLANDO}`.
-- Lista **ordenada** de sedes `[s_0, s_1, ..., s_{n-1}]`.
-
-**Regla del filtro R10 por horario `h` de materia `m`**:
-
-1. Se resuelve `(sedes, modo) = resolver_sedes_admisibles_por_materia(m)`
-   consultando el grupo de `m`.
-2. Filtro:
-
-    ```
-    compat[h, a] = False   si   modo = DURO  ∧  sedes ≠ ∅
-                              ∧  aula_sede(a) ∉ set(sedes)
-                              ∧  a ∉ MateriaLaboratorioDB(m)
-    ```
-
-3. **Modo `BLANDO`**: R10 **no filtra** — todas las sedes son
-   admisibles. La preferencia (primera de la lista) alimenta R12
-   con costo blando.
-4. **Modo `DURO` con lista vacía**: fallback permisivo (equivalente
-   a "todas las sedes admisibles"). Útil sólo para el grupo
-   "Sin clasificar" durante la transición.
-
-**Excepción de lab compatible** (preservada del modelo anterior):
-un aula en `MateriaLaboratorioDB` de la materia se acepta aunque su
-sede no esté en el set del grupo. Esto refleja que la compatibilidad
-de laboratorio es una restricción física más fuerte que la
-preferencia curricular.
-
-**`ComisionDB.carrera_asignada` es sólo etiqueta visual**: no
-interviene en la resolución. Antes tenía semántica de override
-(usar sedes de la carrera indicada en vez de la default de
-comunes); ahora la resolución depende exclusivamente de la materia.
-
-- **Tipo:** dura (sólo en modo DURO con lista no vacía).
-- **Parámetros:**
-  - `GrupoMateriaDB.modo` por grupo.
-  - `GrupoMateriaSedeDB(grupo_id, sede_id, orden)` — sedes ordenadas
-    del grupo.
-  - `MateriaDB.grupo_id` — pertenencia de la materia.
-- **Configuración UI:** **Materias → 📦 Grupos de materias**. Editar
-  el modo, agregar/reordenar/quitar sedes, o reasignar materias
-  entre grupos.
-- **Infactible si:** después de aplicar R10 un horario queda sin
-  aulas compatibles (`horarios_sin_aula_compatible` con razón
-  "R10 · sede del grupo <nombre>").
-
-**Bootstrap automático** (`_migrate_grupos_materia` en `connection.py`):
-
-- Grupo "Sin clasificar" (DURO con todas las sedes) — fallback.
-- Grupos por prefijo de código: `FB → Pellegrini`, `FI → Pellegrini`,
-  `CE → Pellegrini`, `F → Siberia` (excluye FB/FI).
-- Un grupo "Específicas de \<Carrera\>" por cada carrera, DURO con
-  las sedes que estaba en `CarreraSedeDB` para esa carrera.
-- Las materias se asignan al grupo que corresponda por prefijo o
-  por "materia exclusiva de una sola carrera". El resto cae en
-  "Sin clasificar".
-
-### R13 — Sedes consecutivas por comisión (Fase 4, 2026-09-05)
-**Fuente:** `asignacion_aulas_service.py:817-871` (restricciones en
-`build_model`) + `asignacion_aulas_helpers.py:compute_pares_intersede_riesgo`.
-
-Para cada par de horarios `(h1, h2)` de la misma **comisión** el
-mismo día, con `gap = hora_inicio(h2) - hora_fin(h1) <
-margen_min_intersede_minutos`, y para cada par de sedes distintas
-`(s1, s2)`:
-
-```
-Σ_{a ∈ aulas(s1)} x[h1, a] + Σ_{a ∈ aulas(s2)} x[h2, a] ≤ 1
-```
-
-Significa: "si `h1` va a `s1`, entonces `h2` no puede ir a `s2`".
-Como R1 fuerza que cada horario tenga exactamente un aula, la
-restricción se traduce en "los dos van a la misma sede o el segundo
-no va a `s2`".
-
-Los pares se detectan en `compute_pares_intersede_riesgo` con un
-algoritmo O(N²) por (comisión, día); en la práctica cada comisión
-tiene pocos horarios por día así que el costo es despreciable.
-
-- **Tipo:** dura por default. Setear
-  `margen_min_intersede_minutos = 0` desactiva completamente.
-- **Alcance:** por **comisión**, no por carrera+año. Justificación:
-  la comisión es el grupo real de alumnos que se mueve físicamente;
-  carrera+año es una vista curricular que agrupa comisiones que
-  típicamente no comparten aula.
-- **Parámetros de `LPConfig`:**
-  - `margen_min_intersede_minutos = 30`. Umbral por default. Cubre
-    traslados cortos; sedes muy alejadas pueden requerir 60.
-  - `lambda_intersede = 0.0`. Reservado para versión blanda futura
-    (hoy sólo se cablea la infraestructura del `intersede_pares`
-    en vars_dict).
-- **Infactible si:** para algún par de riesgo, la única sede
-  común donde ambos pueden dictarse está bloqueada por otras
-  restricciones (R3, R6, R10). El diagnóstico estructural puede
-  extenderse en el futuro (`pares_intersede_bloqueados`) para
-  detectarlo antes del solve.
-- **Verificación empírica** (Plan v0, ciclo 2026-1C, 2026-09-05):
-  - Con `margen=30`: 2 pares de riesgo detectados (C4 y A6, ambos
-    con gap=0). Solver factible; los 2 pares terminan en la misma
-    sede como se esperaba.
-  - Con `margen=60`: mismos 2 pares (no hay pares con gap 30-60).
-  - Con `margen=0`: 0 pares (restricción off).
-
-### R12 — Preferencia blanda de sede (Grupos BLANDO)
-**Fuente:** `asignacion_aulas_service.py:build_model` (término en el
-objetivo).
-
-Añade al objetivo un término blando:
-
-```
-+ λ_sede_pref · Σ_{(h, a) ∈ x, sede(a) ≠ sede_pref(h)} x[h, a]
-```
-
-**Semántica de `sede_pref(h)`** en el modelo nuevo:
-
-- Sea `(sedes, modo) = resolver_sedes_admisibles_por_materia(m)`
-  del grupo de la materia de `h`.
-- Si `modo = BLANDO` y `sedes ≠ ∅` → `sede_pref(h) = sedes[0]`
-  (la primera de la lista ordenada).
-- En cualquier otro caso (`modo = DURO`, o lista vacía) →
-  `sede_pref(h) = None` (no aporta término al objetivo).
-
-En modo `DURO` **no hay preferencia interna**: todas las sedes del
-set son equivalentes a nivel objetivo. En modo `BLANDO` la primera
-es "gratis" y el resto suman `λ_sede_pref` por horario asignado a
-esa sede.
-
-La penalidad es **plana**: da igual si un horario cae en la 2da o
-en la 5ta sede alternativa — todas cuestan `λ_sede_pref`. Diseño
-consciente para evitar sobre-parametrizar; si más adelante se
-necesita ordenar por preferencia decreciente, se agrega
-`λ_sede_pref · orden(sede)`.
-
-- **Tipo:** blanda. Aparece en el objetivo, no como restricción.
-- **Parámetros de `LPConfig`:**
-  - `lambda_sede_pref = 5.0` — peso del término.
-    Calibración de defaults:
-    - `λ_over = 10.0` (sobrecupo domina).
-    - `λ_sede_pref = 5.0` (sede alternativa es peor que
-      desperdiciar 5 asientos, pero mejor que dejar 1 sin lugar).
-    - `λ_under = 1.0` (subutilización es lo más permisivo).
-  - `lambda_sede_pref = 0` desactiva el término (recupera
-    comportamiento sin preferencia).
-- **Nunca vuelve el problema infactible** (sólo agrega un costo).
-
-### R14 — Forzar misma sede por comisión (opcional)
-**Fuente:** `asignacion_aulas_service.py:build_model` (bloque
-`R14_sum_`, `R14_link_`) + `LPConfig.forzar_misma_sede_por_comision`.
-
-Cuando el toggle está activo, todos los horarios de una misma
-comisión deben caer en aulas de la **misma sede**. Se introducen
-variables auxiliares `y[c, s] ∈ {0, 1}` con la interpretación
-"comisión `c` va a sede `s`":
-
-```
-∀ c ∈ C_active, Σ_s y[c, s] = 1                    (R14_sum)
-∀ h ∈ c, ∀ a ∈ compat(h),
-    x[h, a] ≤ y[c, sede(a)]                         (R14_link)
-```
-
-**Optimizaciones**:
-
-- Sólo se crean `y[c, s]` para sedes `s` con al menos una aula
-  candidata para algún horario de `c` (evita variables muertas).
-- Comisiones con un único horario tienen R14 trivial (satisfecha
-  por R1) → no se crean variables auxiliares.
-- Si el toggle está OFF, `y_vars = {}` y no se agrega ninguna
-  restricción.
-
-**Motivación**: los profesores generalmente no viajan entre sedes a
-mitad de semana. Sin R14, el LP podría fragmentar una comisión
-(una clase en Pellegrini, otra en Siberia) para minimizar
-`λ_sede_pref` — matemáticamente óptimo, operativamente inviable.
-
-**Impacto en tamaño del modelo**: con `|C_active| ≈ 500` y
-`|S| = 4`, agrega ≈ 2 000 variables binarias + 500 restricciones
-`R14_sum` + `Σ_c |horarios(c)| · |aulas_compat(c)|` restricciones
-`R14_link`. Manejable para el solver.
-
-- **Tipo:** dura, opcional.
-- **Parámetro de `LPConfig`:** `forzar_misma_sede_por_comision`
-  (bool, default `False`). Persistido en `details_json.restricciones_activas`.
-- **Configuración UI:** toggle en el panel del asignador,
-  bloque "Preferencia de sede".
-- **Infactible si:** ninguna sede tiene aulas compatibles para
-  todos los horarios de alguna comisión simultáneamente.
-
-### R13-camino — Camino de cursada intersede factible
-**Fuente:** `factibilidad_service.py:_add_bloqueos_camino_cursada`.
-**Pre-check estructural**, **NO aparece en el LP**. Corre antes de
-llamar al solver como parte de `check_factibilidad_estructural`.
-
-R13 (por-comisión) asegura que dos horarios contiguos de una misma
-comisión no queden en sedes incompatibles. Pero eso no basta:
-puede pasar que **individualmente** cada comisión respete R13 y
-sin embargo un alumno **no pueda combinar** una comisión por
-materia sin cruzarse.
-
-R13-camino cubre ese caso a nivel curricular:
-
-1. Agrupa materias por `(carrera, año, cuatri)` reusando el patrón
-   de `validations.py:354-410`. Skipping optativas. Incluye
-   Anuales del mismo carrera+año.
-2. Para cada grupo con ≥2 materias con comisiones:
-   - Enumera comisiones por materia.
-   - DFS backtracking buscando **al menos una** combinación (una
-     comisión por materia) tal que **todos** los pares del mismo
-     día con gap < margen tengan intersección no vacía de sedes
-     admisibles.
-3. Si ninguna combinación funciona → `Bloqueo(codigo_regla="R13-camino")`.
-4. Si el espacio de combinaciones excede `MAX_COMBINACIONES_CAMINO
-   = 10 000`, corta y reporta como `advertencia` (no bloqueante).
-
-**Semántica de sedes admisibles a nivel camino**: unión de duras y
-blandas del grupo (`DURO` con lista no vacía → set del grupo;
-`BLANDO` o vacía → "cualquier sede vale"). Modo BLANDO nunca
-bloquea camino porque siempre hay sede alternativa; sólo el DURO
-estrictamente disjunto entre dos materias puede bloquear.
-
-**Ejemplo canónico**: Electrónica 3° 1C tiene específicas en Siberia
-(DURO) + FB12 en Pellegrini (DURO). Si el cronograma coloca FB12 y
-una específica contigua sin margen suficiente → sin combinación
-factible → bloqueo.
-
-- **Tipo:** pre-check, no aparece como restricción del LP.
-- **Parámetros:**
-  - `margen_min_intersede_minutos` (compartido con R13 por-comisión).
-  - `MAX_COMBINACIONES_CAMINO = 10 000` (cap del backtracking).
-- **Ignora `ComisionDB.carrera_asignada`** — la resolución usa
-  siempre el grupo de la materia.
-
-**Alternativas si dispara**:
-
-1. Ampliar la lista de sedes del grupo de alguna de las materias
-   involucradas.
-2. Ajustar horarios del cronograma para separar contiguas
-   problemáticas.
-3. Bajar `margen_min_intersede_minutos` (si es realista).
-4. Activar R14 con estrategia de sedes distinta.
-
-### R11 — Pins de ediciones manuales
-**Fuente:** `asignacion_aulas_service.py:589-606`.
-
-Cuando `config.respetar_ediciones_manuales=True` y
-`HorarioDB.aula_asignada_manualmente=True`:
-
-```
-x[h, aula_manual] = 1
-```
-
-Si el aula pinneada ya no es compatible (cambió tipo, sede, etc.),
-se emite una restricción imposible con nombre `R11_pin_incompat_<hid>`.
-
-- **Tipo:** dura, opcional (controlada por
-  `config.respetar_ediciones_manuales`).
-- **Parámetros:** `LPConfig.respetar_ediciones_manuales` (bool).
-  Toggle expuesto en UI.
-- **Infactible si:** el pin apunta a un aula incompatible.
-
----
-
-## 4. Restricciones NO implementadas hoy
-
-### Sedes consecutivas / margen de viaje
-No existe restricción alguna sobre secuencia de sedes a lo largo del
-día de una comisión, carrera o año. El LP puede asignar la primera
-clase de una comisión en Pellegrini y la contigua (misma comisión,
-sin gap) en Siberia sin ninguna penalidad.
-
-Este es uno de los focos de Fase 4: definir semántica (¿por
-comisión? ¿por carrera+año?) + parámetro de margen mínimo entre
-sedes distintas y agregarlo al modelo.
-
-### Preferencia de sede blanda
-No existe. Hoy R10 es dura y admite cualquier sede del set. No hay
-noción de "sede preferida" ni penalidad por caer en otra. Fase 3.
-
-### Reservas / bloqueos manuales de aulas
-No existe. No hay forma hoy de decir "aula X no disponible el lunes
-por mantenimiento".
-
-### Preferencia horaria de docentes
-Fuera del alcance del LP actual (los horarios ya vienen fijos desde
-el cronograma).
-
----
-
-## 5. Función objetivo — resumen y parámetros
-
-```python
-# asignacion_aulas_service.py:565-569
-prob += (
-    config.lambda_over * pulp.lpSum(over_vars.values())
-    + config.lambda_under * pulp.lpSum(under_vars.values())
-), "objetivo"
-```
-
-Sólo hay dos términos (R7 over y under). Todo lo demás son
-restricciones duras.
-
-Parámetros de `LPConfig` (`asignacion_aulas_service.py:66-84`):
-
-| Parámetro | Default | Semántica | Expuesto en UI |
-|---|---|---|---|
-| `lambda_over` | 10.0 | Peso del sobrecupo. | ✅ Sí (Fase 5) |
-| `lambda_under` | 1.0 | Peso de la subutilización. | ✅ Sí (Fase 5) |
-| `lambda_sede_pref` | 5.0 | Peso de la preferencia blanda de sede (R12). Setear a 0 para desactivar. | ✅ Sí (Fase 5) |
-| `margen_min_intersede_minutos` | 30 | Margen mínimo en minutos entre horarios contiguos de la misma comisión que caen en sedes distintas (R13). Setear a 0 para desactivar. | ✅ Sí (Fase 5) |
-| `lambda_intersede` | 0.0 | Peso reservado para variante blanda futura de R13. Hoy sin efecto (la restricción es dura). | No (reservado) |
-| `tol_over` | 0.0 | Fracción de cap[a] permitida sobre insc antes de penalizar. | ✅ Sí (Fase 5) |
-| `tol_under` | 0.20 | Fracción de cap[a] permitida bajo insc antes de penalizar (20 %). | ✅ Sí (Fase 5) |
-| `activar_alpha` | False | Habilita R9 (redistribución de coeficientes). | ✅ Sí (toggle experimental) |
-| `timeout_seconds` | 300 | Timeout de CBC. | ✅ Sí (Fase 5) |
-| `respetar_ediciones_manuales` | True | Habilita R11. | ✅ Sí (toggle en panel de asignación) |
-| `fecha_desde` | None | Fecha desde la que propagar la solución a ClaseDB. | ✅ Sí (implícito, por default = mín) |
-
----
-
-## 6. Semántica de "sede admisible" y el bug de doble conteo
-
-> **Estado (2026-09-05)**: el bug descripto en esta sección está
-> corregido. Ver "Fix implementado" al final. Se conserva el
-> planteo original porque describe el problema y el razonamiento
-> que llevó a la solución (base del criterio de "sede preferida"
-> que se reutiliza en Fases 3 y 4).
-
-`compute_heatmap_por_sede`
-(`asignacion_aulas_helpers.py:898-1137`) cuenta la demanda teórica
-de una sede iterando **todas las sedes** por horario:
-
-```python
-# líneas 1032-1069 (simplificado)
-for h in horarios:
-    admis = sedes_admisibles_por_materia[h.materia]
-    labs = materia_lab_map[h.materia]
-    for sede in sedes_con_aulas:
-        tiene_lab_en_sede = any(aula_sede_id[a] == sede for a in labs)
-        if admis is None:
-            sede_admisible = True
-        else:
-            sede_admisible = (sede in admis) or tiene_lab_en_sede
-        if not sede_admisible:
-            continue
-        if h.tipo_clase == "teorica":  # ← se suma a cada sede admisible
-            ... demanda_teorica[sede] += 1
-```
-
-Efecto: para materias con carrera en sede X pero labs compatibles
-físicamente ubicados en sede Y, **la teórica se cuenta como
-demanda de X y de Y simultáneamente**. Ejemplo verificado:
-
-- Materia `A5` (Informática Aplicada), carrera `A`.
-- Sedes habilitadas de `A` = {Siberia}.
-- Labs compatibles de `A5` = {LAB-004, LAB-005}, ambos en
-  **Pellegrini**.
-- La regla `sede in admis OR tiene_lab_en_sede` marca Pellegrini
-  como admisible por el lab.
-- La clase teórica de A5 en Lunes 08:00 se cuenta como demanda
-  teórica de **Pellegrini** (14/22) y de **Siberia** (parte del
-  17 total de Siberia teórica). El solver la manda a una sola
-  (Siberia, IMAE-Aula-13), y la ocupación de Pellegrini queda en
-  13/22 → gap de 1.
-
-Nota: para categoría `laboratorio` **no** hay doble conteo
-(líneas 1054-1055 filtran: si la sede no tiene lab compatible con
-la materia, no cuenta como demandante de labs). El bug es
-específico de la categoría teórica.
-
-**Decisión de la Fase 2 (según acuerdo con el usuario 2026-09-04):**
-la "sede preferida" para el conteo de saturación de una teórica es:
-
-1. **Si la materia tiene labs compatibles**: la sede del(los) lab(s)
-   — coherente con "las teóricas deberían darse donde está el lab
-   para minimizar desplazamientos".
-2. **Si no tiene labs**: cualquiera de las sedes habilitadas para
-   su carrera (o `None` si no hay restricción — se cuenta en todas
-   igual que hoy en las materias comunes).
-
-Cuando el lab está en una sede distinta de las de la carrera, la
-teórica sigue "prefiriendo" la del lab: eso hace que el mapa de
-saturación refleje la realidad esperada (donde el solver la va a
-querer poner) sin inflar sedes por conectividad de lab.
-
-### Fix implementado (Fase 2, 2026-09-05)
-
-Se agregó la función pura `sede_preferida_para_horario` en
-`asignacion_aulas_helpers.py` con las reglas descriptas arriba, y
-se modificó `compute_heatmap_por_sede` para consumirla:
-
-- La **categoría teórica** se contabiliza una sola vez, en la sede
-  preferida devuelta por la función. Nunca se suma en más de una
+## 8. Panel de resultado: cómo se lee
+
+El panel de resultado del asignador vive en Planes → Aulas debajo
+del panel de configuración. Se compone de varios bloques que
+aparecen según el estado de la corrida.
+
+### 8.1 📋 Veredicto de la corrida
+
+Ya descripto en § 4. Es el primer bloque que aparece. En el
+expander "Restricciones activas" se ve la config completa.
+
+### 8.2 Diagnóstico cruzado (sólo `infeasible`)
+
+Descripto en § 5. Aparece sólo cuando el veredicto es `infeasible`
+(no `infeasible_estructural`). Lista la causa principal, los grupos
+de rescate (si R10 es la culpable) y las combinaciones de rescate
+(si ninguna regla individual funciona).
+
+### 8.3 Bloqueos estructurales (sólo `infeasible_estructural`)
+
+Aparece cuando el chequeo pre-solve detectó bloqueos. Cada bloqueo
+viene con:
+
+- **Regla** (R1, R3+R4, R5, R11, R13, R13-camino, compat-pigeonhole,
+  compat-hall).
+- **Descripción** en lenguaje natural.
+- **Entidades involucradas** (horarios, materias, aulas, franjas).
+- **Sugerencia de acción** concreta.
+
+### 8.4 Horarios asignados
+
+Tabla con todos los horarios asignados en la corrida. Columnas:
+
+- Materia, comisión, día, hora inicio y fin.
+- Aula asignada (con badge "manual" si aplica).
+- Sede.
+- Tipo resuelto (`teoria` / `laboratorio` / `⊥`).
+- Inscriptos esperados vs capacidad.
+- Sobrecupo (`over`) y subutilización (`under`).
+- Flag "sede alternativa" si el grupo corría en BLANDO y el aula
+  quedó en una sede distinta de la preferida.
+
+### 8.5 Horarios fuera de sede preferida
+
+Expander que lista los horarios cuyo grupo corría en BLANDO y
+terminaron en una sede alternativa. Cada uno muestra la sede
+preferida, la sede efectiva y una razón hipotética (típicamente
+capacidad o combinación con R14). Sirve para auditar rápido el
+impacto de la preferencia blanda.
+
+### 8.6 Mapa de saturación
+
+Independiente de la corrida del LP. Puede mirarse antes de correr
+para prevenir infactibilidades, o después para comparar la
+solución contra la demanda estructural.
+
+Cada celda del mapa (sede × día × franja × categoría teoría / lab)
+tiene **cuatro vistas** seleccionables desde un radio button:
+
+- **Dura**. Horarios cuya única sede admisible es ésta. Si `dura >
+  oferta`, es infactibilidad segura — configurable en Materias →
+  Grupos de materias.
+- **Preferida**. Horarios cuya sede preferida es ésta (primera del
+  grupo BLANDO o única del DURO). Si `preferida > oferta`, el LP
+  desplaza a alternativas.
+- **Máxima**. Horarios que **podrían** caer aquí (unión de
+  admisibles). Muestra el margen del LP.
+- **Total sin sede**. Cota inferior global. Si supera oferta
+  agregada, el plan no cabe.
+
+Además, para las celdas de laboratorio hay un sub-control **Oferta
+de labs a considerar** con dos opciones:
+
+- **Todo el catálogo** (default). Compara demanda contra todas las
+  aulas de laboratorio de la sede.
+- **Sólo compatibles**. Compara demanda contra las aulas
+  compatibles con las materias con demanda en la celda. Detecta
+  pigeonhole y Hall — las celdas Hall-violadoras se marcan con ⚠️.
+
+### 8.7 Panel de calidad (en Planes → Detalle)
+
+Vive en la página Detalle del plan (no en Aulas). Muestra 4
+familias de métricas de la última corrida:
+
+- **Cobertura**: asignados / totales, sede preferida / alternativa,
+  comisiones completas.
+- **Ajuste al forecast**: sobrecupo total, subutilización total,
+  ratio promedio / mediana / P90, peor caso.
+- **Uso del catálogo**: aulas usadas / ociosas, concentración por
   sede.
-- La **categoría laboratorio** se sigue contabilizando en la(s)
-  sede(s) donde vive un aula de lab compatible (sin cambio). Nunca
-  hubo doble conteo acá — el lab físicamente se dicta donde está
-  el aula.
-- **Fallback**: si la materia no tiene ni labs compatibles ni set
-  de sedes admisibles restringido (caso común sin default para
-  comunes), la teórica se cuenta en todas las sedes admisibles.
-  Es el mismo comportamiento previo, aplicable sólo a ese caso
-  residual.
+- **Estado del LP**: valor de la función objetivo, tiempo del
+  solver, ediciones manuales respetadas, traslados intersede.
 
-Verificación empírica sobre el caso A5 (Lunes 08:00-08:15,
-Plan v0, ciclo 2026-1C):
-
-| Sede | Teórica antes | Teórica ahora |
-|---|---|---|
-| Pellegrini | 14/22 | 14/22 |
-| Siberia | 4/20 | 3/20 |
-
-A5 ahora se contabiliza **sólo en Pellegrini** (donde viven los
-labs LAB-004 y LAB-005). La divergencia visible entre saturación
-14 y ocupación 13 en Pellegrini deja de ser doble conteo y pasa a
-ser **una divergencia real y accionable**: el LP mandó A5 a
-Siberia (IMAE-Aula-13) aunque su sede preferida era Pellegrini,
-típicamente por capacidad o combinación con otras restricciones.
-Esa clase de casos es lo que las Fases 3 y 4 van a capturar y
-señalizar.
-
-Tests agregados en `tests/test_asignacion_aulas_helpers.py`:
-
-- `TestHeatmapPorSede.test_teorica_no_duplica_conteo_si_lab_esta_en_otra_sede`
-- `TestHeatmapPorSede.test_teorica_va_a_sede_de_carrera_cuando_no_hay_lab`
-- `TestHeatmapPorSede.test_lab_no_cambia_su_conteo_por_el_fix_de_teoricas`
-- `TestHeatmapPorSede.test_materia_con_lab_en_misma_sede_que_carrera`
-- `TestSedePreferidaParaHorario.*` (5 tests dedicados a la función pura).
+Se computa a partir de `HorarioDB.aula_id` + forecast al momento
+de abrir la vista, por lo que refleja el estado vigente aunque no
+se haya corrido el LP recientemente.
 
 ---
 
-## 7. Diagnóstico de infactibilidad estructural
+## 9. Persistencia de corridas y multi-pestaña
 
-Antes de correr el solver, `diagnose_infeasibility` detecta 5
-familias de causas (`asignacion_aulas_helpers.py:276-414`):
+### 9.1 `LPRunDB` como registro completo
 
-1. **Horarios sin aula compatible** (R1 + R3, + R10 si aplica).
-2. **Franjas saturadas** (pigeonhole sobre la unión de aulas
-   compatibles del grupo de simultaneidad).
-3. **Saturación por tipo** dentro de una franja (refina 2 con
-   pools separados teóricas / labs).
-4. **Hall violators** — para cada grupo, matching bipartito.
-   Detecta subconjuntos S donde `|N(S)| < |S|`, más informativo
-   que pigeonhole.
-5. **Partición teoría/lab infactible** (R5).
+Cada corrida se persiste como un registro `LPRunDB` con:
 
-Este diagnóstico corre **antes** del solve (sin costar tiempo de
-CBC) y devuelve mensajes accionables via
-`InfeasibilityDiagnosis.to_messages()`. Se puede reforzar en Fase 5
-con un panel dedicado en la UI.
+- Referencia al plan (`plan_cursada_id`), fecha de corrida
+  (`run_at`), fecha desde propagación (`fecha_desde`).
+- Copia de todos los parámetros de la config (`lambda_over`,
+  `lambda_under`, `tol_over`, `tol_under`, `timeout_seconds`,
+  `respetar_ediciones_manuales`, `activar_alpha`, `lambda_sede_pref`,
+  `margen_min_intersede_minutos`, `strict_r5`,
+  `forzar_misma_sede_por_comision`).
+- Resultado agregado: `status`, `objective_value`, cantidad de
+  horarios asignados / reasignados, `solver_seconds`,
+  `error_message`.
+- **`details_json`** con la solución completa: lista de horarios
+  asignados con aula y tipo resuelto, diagnóstico estructural, IIS
+  si corrió, veredicto humano-legible, modos por grupo, y las
+  restricciones activas de la corrida.
 
-Fase 5 (panel de restricciones) puede reutilizar este diagnóstico
-como fuente principal para responder al usuario "por qué el LP dio
-infactible".
+### 9.2 Prefill del panel con la última corrida
+
+Al abrir Planes → Aulas, el panel del asignador se **prefill** con
+los parámetros de la última corrida del plan. Esto permite iterar
+sobre una misma configuración sin re-configurar todo cada vez.
+
+El prefill es **idempotente por-plan**: se apoya en un
+*fingerprint* calculado desde la última corrida en la base. Si el
+usuario cambia parámetros en la UI y no corre, los cambios se
+persisten en `session_state`. Al volver a apretar el botón, la
+corrida usa los valores del panel (no los del prefill).
+
+### 9.3 Advertencia sobre pestañas múltiples
+
+Cuando el operador tiene varias pestañas abiertas del mismo plan
+(por ejemplo, una en el panel de asignación y otra en Materias),
+cada pestaña mantiene su propio `session_state`. Al apretar botones
+en una, la otra puede estar mostrando estado desactualizado.
+
+El prefill del panel se re-hidrata desde la base al recargar la
+página. Es decir: si en otra pestaña se agregó una corrida nueva,
+al refrescar la pestaña actual el panel se hidrata con los últimos
+parámetros de la base.
+
+**Recomendación operativa**: cerrar pestañas viejas antes de
+trabajar sobre el plan. Si aparecen inconsistencias entre lo que
+muestra la UI y lo que hay en la base, refrescar la página fuerza
+la re-hidratación.
+
+### 9.4 Historial de corridas
+
+El panel de asignación muestra siempre la corrida más reciente,
+pero se pueden consultar corridas anteriores (a modo de auditoría)
+desde el panel de historial que lista todas las `LPRunDB` del
+plan con su fecha y su status. Es útil para:
+
+- Reproducir una corrida vieja: leer sus parámetros y volver a
+  correr con esa config.
+- Comparar dos corridas: ver cómo cambió el objetivo o la
+  distribución de sedes al ajustar parámetros.
+- Auditar la evolución de la infactibilidad a medida que se
+  corregían datos.
 
 ---
 
-## 8. Puntos abiertos que motivan las próximas fases
+## 10. Troubleshooting común
 
-| Fase | Estado | Problema | Cambio |
-|---|---|---|---|
-| 2 | ✅ Hecho (2026-09-05) | Doble conteo en saturación teórica cuando lab está en otra sede. | Introducida `sede_preferida_para_horario`; `compute_heatmap_por_sede` cuenta cada teórica una vez. |
-| 3 | ✅ Hecho (2026-09-05) | R10 es dura → un horario puede volver infactible el plan por sede aunque haya aula en otra sede admisible. | R10 se mantiene dura tal cual. Se sumó **R12** al objetivo: `λ_sede_pref · Σ x[h,a]` sobre pares donde `sede(a) ≠ sede_pref(h)`. Sin variables nuevas; sólo coeficientes en el objetivo. Verificación empírica: 530/546 horarios en sede preferida (97 %). |
-| 3.5 | ✅ Hecho (2026-09-05) | El mapa de saturación es una sola vista estática y no distingue "demanda dura" de "demanda preferida"; una vez introducida la blanda va a mentir todavía más. | Selector de vista con 4 opciones: **dura**, **preferida** (default, alias del campo `demanda`), **máxima**, y **total sin sede**. `compute_heatmap_por_sede` computa las 3 vistas por-sede en paralelo (`demanda_dura`, `demanda_preferida`, `demanda_maxima` + sus ratios). Nueva función `compute_heatmap_total_sin_sede` para el heatmap agregado. Verificación empírica sobre Plan v0: `dura ≤ preferida ≤ maxima` en cada celda; el caso A5 aparece correctamente contado en las 3 vistas. |
-| 3.5-labs | ✅ Hecho (2026-09-07) | El mapa contaba labs contra el catálogo global aunque las materias sólo pudieran usar labs específicos. No detectaba infactibilidades por compatibilidad estructural. | Sub-control **"Oferta de labs a considerar"** con opciones **🌐 Todo el catálogo** (default) y **🧪 Sólo compatibles**. En modo compatibles, cada celda usa la unión de labs compatibles de las materias con demanda ahí como oferta (`oferta_compat`, `ratio_compat`). Nueva función pura `check_lab_compatibilidad_en_celda` que detecta **pigeonhole** y **Hall** por celda. Las celdas con Hall violation se marcan con ⚠️ y quedan rojas aunque el ratio numérico esté por debajo de 1; tooltip lista las materias del subconjunto conflictivo. |
-| 7 | ✅ Hecho (2026-09-07) | Faltaba una forma de saber si el plan iba a resolver antes de correr el LP. El mapa cubría labs y capacidad pero no otras causas de infactibilidad. | Nuevo `factibilidad_service.py` con `check_factibilidad_estructural`, que consolida chequeos de todas las familias de bloqueo (R1, R3+R4, R5, R11, R13, compat-pigeonhole, compat-hall). Devuelve un `ReporteFactibilidad` con bloqueos categorizados por regla + detalle concreto. Panel de UI con semáforo + botón explícito arriba del form del asignador. Verificación empírica sobre Plan v0: detectó 3 casos R5 (partición teoría/lab imposible) antes de correr el solve. |
-| 8.1 | ✅ Hecho (2026-09-07) | R5 sólo validaba `Σ dur·t == hlab` (laboratorio). No había ecuación análoga para teoría — el LP permitía cronogramas con horas de teoría incompletas silenciosamente. Los horarios virtuales se filtraban completamente y no contaban hacia hteo/hlab. | Nuevo flag `LPConfig.strict_r5=True` (default). Cuando está activo, el LP añade la ecuación `Σ dur·(1-t) == hteo` en R5, garantizando que la teoría también cierre. Los horarios virtuales ahora entran al modelo con flag `no_ocupa_aula` (no toman `x[h,a]`, no participan de R1/R3/R4/R6/R7/R10/R11/R12/R13) pero sí contribuyen a la ecuación R5. Comportamiento legacy disponible via `strict_r5=False`. Tests que reproducen el escenario mixto: LP infactible con hteo incompleta; LP óptimo con virtual que cierra hteo. |
-| 8.2 | ✅ Hecho (2026-09-07) | Falta transparencia sobre por qué el LP dio factible o infactible. Los detalles quedaban dispersos en `error_message`, `diagnosis`, `iis` y el panel. Además, correr el solver ante un plan estructuralmente infactible gastaba hasta 5 min de timeout inútil. | Antes de correr el solver, `run_lp` ahora ejecuta `check_factibilidad_estructural`. Si hay bloqueos, se saltea el solve y se devuelve status `infeasible_estructural` con la causa. En todos los casos, el `details_json` del `LPRunDB` incluye un bloque `veredicto` con `status`, `resumen` humano-legible, `causa_infactibilidad`, `bloqueos_diagnosticados`, `horarios_sin_asignar` y `restricciones_activas` (dump completo de `LPConfig`). La UI del summary del panel del asignador tiene un container 📋 "Veredicto de la corrida" que muestra todo esto con expanders. |
-| 8.3 | ✅ Hecho (2026-09-07) | `LPConfig` tenía parámetros no expuestos en la UI (strict_r5, lambda_intersede) — quedaban ocultos y no configurables sin editar código. | Auditoría completa: cada campo de `LPConfig` tiene ahora widget en el form del asignador con help detallado. Nueva sección "Configuración avanzada" agrupa strict_r5 y lambda_intersede. `activar_alpha` sigue como experimental. Todos los widgets escriben al `LPConfig` que devuelve `_render_config_form`. |
-| 8.4 | ✅ Hecho (2026-09-07) | Documentación dispersa: los cambios de Fases 2-7 no habían quedado consolidados en un único lugar. | Esta sección actualizada: cada regla con formulación matemática, datos que la alimentan, parámetros configurables, casos de infactibilidad. Sección nueva "¿Cómo interpreto el veredicto?" en la parte criolla. |
-| 4 | ✅ Hecho (2026-09-05) | No hay restricción de sedes consecutivas. | Nueva **R13**: para cada par de horarios contiguos de la misma comisión con gap < `margen_min_intersede_minutos` (default 30), no pueden asignarse a sedes distintas. Dura por default; peso `lambda_intersede` reservado para variante blanda. Verificación empírica: 2 pares en Plan v0 correctamente asignados a la misma sede. |
-| 5 | ✅ Hecho (2026-09-05) | El operador no tiene visibilidad de qué restricciones están activas ni de sus parámetros al debuggear una infactibilidad. | Rediseñado el form de configuración en `asignacion_panel.py` con **4 containers** (alcance temporal, ajuste de capacidad, preferencias de sede, avanzado). Cada parámetro nuevo de Fases 2–4 tiene su input y su help correspondiente. Los inputs se propagan a `LPConfig` en el submit. |
-| 6 | ✅ Hecho (2026-09-05) | Las métricas de calidad del resultado están dispersas: hoy no se ve a simple vista si hubo sobreocupación / subutilización, cuántas aulas quedaron sin usar, ni cuánto respetó el LP las preferencias. | Nuevo `metricas_calidad_service.py` con `compute_metricas_calidad` que devuelve un `MetricasCalidad` con 4 familias: cobertura, sobre/sub ocupación, distribución de aulas, LP + traslados. Panel `_render_panel_calidad` en Planes → Detalle con 4 containers y métricas grandes + expanders de detalle. |
+### 10.1 El LP dice `infeasible_estructural`, ¿qué reviso?
 
-La función pura `sede_preferida_para_horario` (Fase 2) queda
-disponible en `asignacion_aulas_helpers` y va a ser reutilizada
-por Fases 3, 3.5 y 4 para calcular la sede preferida por horario
-sin duplicar lógica.
+Leer los bloqueos que reporta el veredicto en orden de aparición.
+Cada bloqueo tiene una regla y una descripción concreta. Las causas
+típicas:
 
-### Anatomía de las 4 vistas del mapa (Fase 3.5)
+- **R1 con "sin aula compatible por R10"**: la materia del horario
+  tiene un grupo con set duro vacío o con sedes donde no hay aulas
+  del tipo requerido. Revisar en Materias → Grupos de materias.
+- **R1 con "sin aula compatible por tipo"**: la materia declara
+  laboratorio pero no tiene ninguna aula en `MateriaLaboratorioDB`.
+  Revisar en Aulas → laboratorio → "Materias que usan este
+  laboratorio".
+- **R5 con "particion imposible"**: las horas declaradas por la
+  materia no cierran con las duraciones de los horarios cargados
+  en el cronograma. Revisar Materias → editar → horas de teoría y
+  laboratorio, o el cronograma.
+- **R11 con "pin incompatible"**: un horario tiene aula manual que
+  ya no cumple las restricciones. Desmarcar o reasignar.
+- **R13 con "pares intersede"**: dos horarios contiguos de la misma
+  comisión sin sede común factible. Bajar margen o cambiar
+  cronograma.
+- **R13-camino con "sin combinación viable"**: no existe
+  combinación de comisiones que un alumno de la carrera-año-cuatri
+  pueda cursar sin conflictos. Revisar horarios de las materias
+  involucradas.
 
-Cada vista responde una pregunta distinta sobre la factibilidad
-del plan. Los 4 números se computan para la misma celda
-(sede × día × franja × categoría) y el usuario elige cuál mirar.
+### 10.2 El LP dice `infeasible` sin bloqueos estructurales, ¿qué hago?
 
-- **Demanda dura por sede.** Cuenta los horarios cuya única sede
-  admisible es ésta (no tienen alternativa). Si este número
-  supera la oferta de la sede, es **infactibilidad estructural**:
-  el LP no puede resolverlo pase lo que pase.
-- **Demanda preferida por sede.** Cuenta los horarios cuya sede
-  preferida es ésta (regla `sede_preferida_para_horario`). Es la
-  vista que ya existe hoy — refleja el "plan feliz" donde cada
-  materia va a la sede natural.
-- **Demanda máxima por sede.** Cuenta los horarios que podrían
-  caer en esta sede aunque prefieran otra (todo el set de sedes
-  admisibles). Cota superior: si esto es menor que la oferta,
-  hay margen; si es mayor, el LP eligirá desplazar algunos a
-  otras sedes.
-- **Demanda total sin sede.** Ignora la sede: cuenta cuántos
-  horarios simultáneos hay en cada franja del sistema entero.
-  Es la cota inferior global. Si supera la oferta agregada
-  (todas las sedes juntas), el plan no cabe ni redistribuyendo.
+Leer el diagnóstico cruzado (§ 5). La UI recomienda una acción
+concreta. Regla general: aplicar la recomendación **menos
+invasiva** primero (grupo con menos materias a BLANDO, apagar R14,
+bajar margen).
 
-La lectura conjunta es la que da información accionable:
+### 10.3 El LP resolvió pero muchos horarios quedaron en sede alternativa
 
-- `dura ≤ oferta ≤ preferida`: el plan feliz no cabe pero hay
-  espacio para desplazar. La Fase 3 (preferencia blanda) va a
-  poder resolverlo minimizando desplazamientos.
-- `dura > oferta`: bloqueante. Hay que revisar configuración
-  (sedes habilitadas, labs compatibles) o el catálogo de aulas.
-- `preferida ≤ oferta ≤ máxima`: la sede tiene margen; el LP
-  puede recibir más carga si otra sede se satura.
-- `total_sin_sede > sum(oferta)`: infactibilidad global por
-  cantidad simultánea. Repartir sedes no lo salva.
+Revisar el mapa de saturación en vista **preferida** y **máxima**:
 
-**Estado (Fase 3.5, hecha 2026-09-05):** las 4 vistas están
-disponibles en la UI del panel de asignación (radio button "Vista"
-arriba del heatmap por sede). El dict retornado por
-`compute_heatmap_por_sede` incluye `demanda_dura`, `demanda_preferida`
-(= alias del campo `demanda` de siempre, backwards-compat),
-`demanda_maxima` y sus respectivos ratios; el heatmap agregado
-"Total sin sede" viene en `heatmap["total"]` computado por
-`compute_heatmap_total_sin_sede`. Ejemplo empírico Plan v0 · Lunes
-08:00-08:15 · teóricas:
+- Si la sede preferida está muy saturada, es un problema de
+  capacidad — hay que sumar aulas o mover horarios.
+- Si la máxima no está saturada, es que otras restricciones (R13,
+  R14) empujaron a alternativas. Revisar si conviene relajarlas.
 
-| Sede | Dura | Preferida | Máxima | Oferta |
-|---|---|---|---|---|
-| Pellegrini | 13 | 14 | 14 | 22 |
-| Siberia | 3 | 3 | 4 | 20 |
-| **Total sin sede** | — | — | **17** | **42** |
+También revisar el expander **"Horarios fuera de sede preferida"**
+del panel de resultado. Lista uno por uno con razón hipotética.
 
-A5 aparece: en la dura de ninguna sede (admite 2), en la preferida
-de Pellegrini (por lab), en la máxima de Pellegrini y Siberia, y en
-el total agregado una sola vez.
+### 10.4 El LP tarda mucho
 
-### Catálogo de métricas de calidad (Fase 6)
+- Subir `timeout_seconds` en la configuración avanzada.
+- Bajar cantidad de grupos BLANDO (menos flexibilidad = menos
+  búsqueda).
+- Apagar R14.
+- Bajar `margen_min_intersede_minutos`.
+- Revisar si hay bloqueos estructurales que estén generando
+  búsqueda inútil (correr chequeo pre-solve primero).
 
-Objetivo: que el operador pueda evaluar a simple vista la calidad
-de una corrida del LP y compararla contra corridas previas o
-contra otras configuraciones. Todo se computa a partir de la
-solución vigente (`HorarioDB.aula_id` + forecast).
+### 10.5 Cambié algo en Materias / Aulas y el panel no refleja el cambio
 
-**A. Cobertura global.**
+El panel toma los parámetros de la última corrida al abrir la
+página. Los cambios en Materias, Aulas o grupos afectan a la
+**próxima** corrida, no a la última corrida cacheada. Basta con
+volver a apretar "Correr asignador" para que el LP use los datos
+actualizados.
 
-- Horarios asignados / total (¿el LP resolvió todo?).
-- Horarios sin aula (falla dura).
-- Horarios asignados a sede **preferida** vs a sede **alternativa**
-  admisible (requiere Fase 3 estable).
-- Porcentaje de comisiones "completas" (todos sus horarios
-  asignados).
+### 10.6 El detalle del plan muestra "Sin aula" pero yo ya asigné
 
-**B. Sobre y sub ocupación.**
+Si el aula fue asignada manualmente y no se corrió el LP después,
+la asignación ya está en `HorarioDB.aula_id`. Si aparece "Sin
+aula" en la vista, chequear:
 
-- Cantidad de horarios sobreocupados (`cap < insc`) y
-  subocupados (`cap > insc · (1 + tol_under)`).
-- **Sobrecupo total**: `Σ max(0, insc - cap)` en asientos
-  faltantes. Traduce "cuántos alumnos no entran" globalmente.
-- **Subutilización total**: `Σ max(0, cap - insc)` en asientos
-  ociosos.
-- Ratio de ocupación (`insc / cap`): promedio, mediana (P50) y
-  P90 sobre los horarios asignados.
-- Peor caso: horario más sobrecargado y horario más ocioso, con
-  nombre visible (materia, comisión, día/hora).
+- Que el horario no esté en modalidad virtual (`resolve_virtual`).
+  Los virtuales aparecen sin aula por diseño.
+- Que el filtro de la vista no esté ocultando la fila.
+- Que la última corrida del LP no haya sobrescrito la asignación
+  (revisar el badge "manual" en el expander).
 
-**C. Distribución de aulas.**
+### 10.7 Aparecen colisiones fantasma en el cronograma de un aula
 
-- Aulas usadas / total del catálogo (por plan).
-- Aulas nunca usadas (huérfanas del plan).
-- Aulas con carga alta (≥ umbral configurable de franjas
-  ocupadas — por default 70 %).
-- Concentración de ocupación por sede: qué % de la carga total
-  cae en cada sede.
+Si el operador cambió un horario a virtual sin correr el LP
+después, el `aula_id` viejo queda stale. En la próxima corrida el
+saneamiento automático (§ 6.5) los libera. Alternativa manual:
+editar el horario y limpiar la asignación.
 
-**D. Estabilidad del LP.**
+### 10.8 Cambié el forecast de inscriptos y la solución no refleja el cambio
 
-- Valor de la función objetivo de la última corrida.
-- Tiempo de resolución del solver.
-- Ediciones manuales respetadas / totales.
-- Sedes distintas por comisión y día (soporta el análisis de la
-  restricción de sedes consecutivas de Fase 4: cuántas comisiones
-  saltan de sede el mismo día).
+Los cambios de forecast recién impactan al correr de nuevo el
+asignador. El forecast entra al LP como parámetro `insc(h)` — no
+se recalcula automáticamente. Volver a apretar "Correr asignador".
 
-Muchas de estas métricas ya se computan parcialmente hoy en
-`_build_details_json` y en el panel de asignación
-(`asignacion_resultado_ui.py`), pero están dispersas y no se ven a
-simple vista. La Fase 6 las consolida en un componente único al
-tope del Detalle del Plan, con tarjetas grandes para las métricas
-clave y expansores para el detalle.
+### 10.9 El chequeo dice verde pero el LP da infactible
+
+Es raro pero puede pasar por combinaciones inusuales que el chequeo
+estructural no captura (por ejemplo, saturación combinada entre R13
+y R10 muy específica). El diagnóstico cruzado post-solve va a
+identificar la causa. Si aparece "combinaciones que rescatan", la
+recomendación de menor impacto es la que hay que probar primero.
+
+### 10.10 Quiero comparar dos configuraciones sin perder la corrida anterior
+
+Cada corrida se persiste como `LPRunDB` con snapshot completo de
+parámetros. Para comparar:
+
+1. Correr con la config A. Anotar mentalmente el objetivo y las
+   métricas de calidad.
+2. Cambiar parámetros. Correr con la config B.
+3. Consultar el historial de corridas (§ 9.4) para ver ambos
+   registros lado a lado.
+
+No hace falta guardar nada manualmente. Los `LPRunDB` viejos no se
+borran salvo que el operador los elimine explícitamente.
+
+---
+
+## Referencias cruzadas
+
+- **Planteo formal completo**: `project/1. Diseño/asignacion-aulas-LP.md`.
+- **Validaciones del plan y camino de cursada**: `project/2.
+  Desarrollo/VALIDACIONES.md`.
+- **Recursado y modalidad virtual**: `project/2. Desarrollo/RECURSADO_Y_VIRTUAL.md`.
+- **Implementación por servicio**: `project/2. Desarrollo/ASIGNACION_IMPL.md`.
+- **Métricas de calidad y catálogo de indicadores**: § 8.7 y el
+  documento de diseño del panel de calidad.

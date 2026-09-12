@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-09-11_115703",
+  "carrera": "LM",
+  "plan_version_id": "1b6f57ed-26a5-4f4f-a0fd-394fe8bd6a3d",
+  "plan_version_nombre": "Plan Original",
+  "rows_before": [
+    {
+      "id": "e35b6b08-4e38-4b53-a124-7b5b35e64b2f",
+      "plan_version_id": "1b6f57ed-26a5-4f4f-a0fd-394fe8bd6a3d",
+      "materia_codigo": "ECE33",
+      "carrera_codigo": "LM",
+      "anio_plan": 5,
+      "cuatrimestre_plan": null,
+      "optativa": true
+    },
+    {
+      "id": "124b81bf-99c7-42c4-b6aa-6164ab8bbfd4",
+      "plan_version_id": "1b6f57ed-26a5-4f4f-a0fd-394fe8bd6a3d",
+      "materia_codigo": "EF11",
+      "carrera_codigo": "LM",
+      "anio_plan": 5,
+      "cuatrimestre_plan": null,
+      "optativa": true
+    }
+  ],
+  "changes_applied": [
+    {
+      "materia_codigo": "ECE33",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "EF11",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "2C"
+    }
+  ]
+}

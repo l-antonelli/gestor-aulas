@@ -1,0 +1,66 @@
+{
+  "timestamp": "2026-09-11_113812",
+  "carrera": "A",
+  "plan_version_id": "e74cd1d2-165a-4026-8298-73ffcabd9313",
+  "plan_version_nombre": "Plan Original",
+  "rows_before": [
+    {
+      "id": "a29b4c14-aca9-43d5-b470-1d9e072c894a",
+      "plan_version_id": "e74cd1d2-165a-4026-8298-73ffcabd9313",
+      "materia_codigo": "F14",
+      "carrera_codigo": "A",
+      "anio_plan": 1,
+      "cuatrimestre_plan": "1C",
+      "optativa": false
+    },
+    {
+      "id": "a791979f-4baa-4429-adbd-4e2ce59cc9d3",
+      "plan_version_id": "e74cd1d2-165a-4026-8298-73ffcabd9313",
+      "materia_codigo": "F15",
+      "carrera_codigo": "A",
+      "anio_plan": 5,
+      "cuatrimestre_plan": "2C",
+      "optativa": false
+    },
+    {
+      "id": "6af0e184-6fb5-42ec-ac82-9133a703646b",
+      "plan_version_id": "e74cd1d2-165a-4026-8298-73ffcabd9313",
+      "materia_codigo": "F17",
+      "carrera_codigo": "A",
+      "anio_plan": 1,
+      "cuatrimestre_plan": "2C",
+      "optativa": false
+    },
+    {
+      "id": "61f960d3-2d38-4147-aff3-5ca6dd24a5df",
+      "plan_version_id": "e74cd1d2-165a-4026-8298-73ffcabd9313",
+      "materia_codigo": "F18",
+      "carrera_codigo": "A",
+      "anio_plan": 5,
+      "cuatrimestre_plan": "1C",
+      "optativa": false
+    }
+  ],
+  "changes_applied": [
+    {
+      "materia_codigo": "F14",
+      "nuevo_anio": 1,
+      "nuevo_cuatri": "2C"
+    },
+    {
+      "materia_codigo": "F15",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "F17",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "1C"
+    },
+    {
+      "materia_codigo": "F18",
+      "nuevo_anio": 5,
+      "nuevo_cuatri": "2C"
+    }
+  ]
+}

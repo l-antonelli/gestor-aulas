@@ -39,6 +39,184 @@ volver a crear el dictado.
 **Campos eliminados de `DictadoDB`**: `activo`, `activo_override_manual`.
 También el parámetro `activo` del helper `update_dictado`.
 
+### 1.1 Independencia entre ciclos
+
+De la semántica "existencia = activación" se deriva un corolario que
+conviene explicitar: **cada ciclo es una unidad operativa autónoma**.
+Crear el ciclo 1C no crea ni pre-declara nada del 2C, y viceversa.
+Cada corrida de `create_dictados_for_ciclo` opera sobre las materias
+del plan asignado al ciclo actual y aplica la regla de recursado
+sólo a ese ciclo. Los dictados **cuatrimestrales** viven cada uno
+linkeado a un único ciclo; no hay propagación entre ciclos ni
+efectos cruzados.
+
+La única entidad que se comparte entre dos ciclos es el `DictadoDB`
+de una materia **anual**, que se materializa como una fila única
+con dos filas de `DictadoCicloDB` (una por ciclo del año lectivo).
+Al crear el 1C, un dictado anual nace con `fin_dictado=None`;
+cuando después se crea el 2C del mismo año, `_link_anual_dictado_2c`
+reutiliza ese dictado, le agrega el bridge al 2C y completa
+`fin_dictado`. Si el 2C se crea sin que exista todavía el 1C
+previo, se crea un dictado anual fresco (con las dos filas de
+`DictadoCicloDB` aún por completarse cuando aparezca el 1C
+correspondiente).
+
+Ninguna otra información se propaga entre ciclos: horarios,
+comisiones, planes de cursada, asignaciones de aula y validaciones
+son estrictamente por ciclo. Formalizado como RN19 en
+`modelo-planificacion-cursada.md`.
+
+### 1.2 Las tres puertas de decisión de un dictado
+
+Cuando uno se pregunta "¿esta materia se dicta este ciclo? y si sí,
+¿cómo?", en realidad está atravesando **tres puertas de decisión
+distintas**, cada una con su propio mecanismo y su propia jerarquía.
+Confundirlas es fuente de errores frecuente cuando se carga un
+ciclo por primera vez, así que conviene tenerlas explícitas.
+
+#### Puerta 1: pertenencia estructural (¿la materia está en el ciclo?)
+
+La materia tiene que estar declarada en alguna versión de plan de
+estudios que esté asignada al ciclo. Concretamente:
+
+```text
+MateriaDB → PlanEstudioDB → PlanCarreraVersionDB
+                                    ↑
+                            CicloPlanVersionDB
+                                    ↓
+                                 CicloDB
+```
+
+Si la materia no aparece en ningún `PlanEstudioDB` cuya
+`plan_version_id` esté enganchada al ciclo vía `CicloPlanVersionDB`,
+el ciclo ni siquiera la considera. `create_dictados_for_ciclo`
+directamente no la ve.
+
+En la práctica esto significa que **la configuración inicial más
+importante de un ciclo es qué versiones de plan le asignás**. Un
+error habitual: asignar la versión del plan de una carrera y
+olvidarse de otra, con lo cual las materias exclusivas de esa
+segunda carrera quedan fuera del ciclo sin previo aviso.
+
+#### Puerta 2: regla de recursado (¿esta materia se dicta al recursado?)
+
+Aplica **solo a materias cuatrimestrales cuyo cuatrimestre en el
+plan es opuesto al del ciclo** (por ejemplo, una materia declarada
+como "2C" en el plan cuando estamos creando un ciclo "1C"). Para
+esas materias, la pregunta operativa es: "¿la facultad quiere
+ofrecerla como recursado en el cuatrimestre opuesto?".
+
+La resolución es **jerárquica materia > carrera**, implementada en
+`resolve_dicta_recursado`:
+
+- `MateriaDB.dicta_recursado` es `Optional[bool]`:
+  - `None` (default) → heredar de la carrera.
+  - `True` → forzar recursado, ignorando la carrera.
+  - `False` → forzar NO recursado, ignorando la carrera.
+- `CarreraDB.dicta_recursado` es `bool` (default `True`).
+
+Si el valor resuelto es `True`, la materia queda en el ciclo. Si es
+`False`, `_should_skip_for_recursado` la excluye y el dictado
+no se crea.
+
+**Matiz importante — materias compartidas por múltiples carreras**:
+si una materia aparece en `PlanEstudioDB` con más de un
+`carrera_codigo`, `_should_skip_for_recursado` **nunca la
+skippea**, porque no hay una "carrera dueña" única de la cual
+heredar el flag. Se dicta en ambos cuatrimestres siempre. Este
+comportamiento es intencional (las materias compartidas suelen ser
+de primer año y son las de mayor demanda) pero conviene saberlo
+para no sorprenderse.
+
+**Materias anuales**: la regla de recursado **no se aplica** a las
+anuales. Se dictan siempre y en ambos ciclos del año lectivo.
+
+#### Puerta 3: modalidad virtual (¿los horarios consumen aula?)
+
+La modalidad virtual no decide si la materia se dicta o no. Decide
+si los horarios de la materia **participan del LP de asignación de
+aulas**. Si un horario es virtual efectivo, se filtra antes de
+armar el modelo (no consume aula) pero el dictado sigue existiendo
+y la validación del cronograma lo cuenta como cubierto.
+
+La resolución es **jerárquica horario > dictado > materia**,
+implementada en `resolve_virtual`:
+
+- `HorarioDB.virtual` es `Optional[bool]` (default `None` = heredar).
+- `DictadoDB.virtual` es `Optional[bool]` (default `None` = heredar).
+- `MateriaDB.virtual` es `bool` (default `False`, raíz de la cadena).
+
+Casos típicos de uso:
+
+| Ubicación del override | Alcance | Caso de uso |
+|---|---|---|
+| `MateriaDB.virtual=True` | Todos los dictados y horarios de esa materia, en todos los ciclos | Materia declarada virtual por diseño en el plan (ej. asincrónicas del ciclo superior). |
+| `DictadoDB.virtual=True` | Todos los horarios de una materia en un ciclo puntual | Recursado por Zoom, o modalidad puntual del ciclo sin tocar el catálogo. |
+| `HorarioDB.virtual=True` | Un horario específico de una comisión | Comisión híbrida (algunas franjas presenciales, otras virtuales). |
+
+#### Cómo se combinan las tres puertas
+
+Ante una configuración concreta, el orden lógico de resolución es:
+
+```text
+1. ¿La materia está en algún plan asignado al ciclo?
+      ├── No → la materia queda fuera del ciclo (ni dictado se
+      │       intenta crear).
+      └── Sí → seguir.
+
+2. ¿Es cuatrimestral del cuatrimestre opuesto al ciclo?
+      ├── No (anual, o cuatrimestral del mismo cuatri) →
+      │       se crea el dictado.
+      └── Sí → resolver dicta_recursado (jerárquico materia >
+              carrera). ¿Compartida por múltiples carreras?
+              ├── Sí → se crea el dictado (nunca se skippea).
+              └── No, y dicta_recursado resuelto es:
+                  ├── True  → se crea el dictado.
+                  └── False → NO se crea el dictado (skipped).
+
+3. Para cada horario del dictado creado, al correr el LP:
+      ¿es virtual efectivo? (jerárquico horario > dictado > materia)
+      ├── Sí → se filtra del LP (no consume aula, pero el dictado
+      │       existe y cubre el cronograma).
+      └── No → participa del LP normalmente.
+```
+
+Las puertas 1 y 2 se evalúan **al crear el ciclo** (o al correr
+`sync_dictados_para_ciclo`), y su resultado se materializa como
+"existe o no existe la fila de `DictadoDB` + `DictadoCicloDB`".
+La puerta 3 se evalúa **al correr el LP de asignación**, sobre los
+horarios ya cargados, y su resultado es "el horario entra al modelo
+o se filtra".
+
+### 1.3 Configuraciones a revisar antes de correr el asignador
+
+Del mapa anterior se deriva un checklist operativo. Antes de correr
+el LP sobre un ciclo, conviene verificar:
+
+1. **Versiones de plan asignadas al ciclo (`CicloPlanVersionDB`)**.
+   ¿Están todas las carreras que deberían participar? ¿La versión
+   asignada de cada carrera es la vigente para ese cuatrimestre?
+2. **Flags `dicta_recursado` de carreras**. ¿Alguna carrera
+   configurada por defecto en `True` corresponde en realidad a
+   una carrera que no ofrece recursado? (o viceversa).
+3. **Overrides `MateriaDB.dicta_recursado`**. ¿Alguna materia
+   marcada explícitamente como `True` o `False` refleja aún la
+   política actual? Suelen ser overrides puntuales que envejecen.
+4. **Modalidad virtual del catálogo (`MateriaDB.virtual`)**. ¿Están
+   marcadas como virtuales solo las materias que efectivamente lo
+   son en el plan?
+5. **Modalidad virtual del ciclo (`DictadoDB.virtual`)**. ¿Hay
+   dictados marcados como virtuales de un ciclo previo que se
+   arrastraron sin querer? (Los dictados nuevos heredan de la
+   materia, pero uno editado a mano en un ciclo previo puede
+   confundir al lector si busca por ese lado.)
+6. **Cronograma cargado del ciclo**. El cronograma debe cubrir
+   todos los dictados no virtuales. La prevalidación del cronograma
+   contrasta contra los dictados del ciclo (`RN15`).
+
+El detalle operativo paso-a-paso, con ejemplo concreto de carga
+del 2C 2026 para demo, vive en `CICLOS_Y_DICTADOS.md`.
+
 ---
 
 ## 2. Virtualidad jerárquica (regla "el nivel más específico manda")

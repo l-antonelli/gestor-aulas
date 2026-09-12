@@ -89,6 +89,41 @@ Los cambios más importantes desde el diseño inicial son:
    `emit_event(...)` y `change_context(...)`. Ver
    `2. Desarrollo/RECURSADO_Y_VIRTUAL.md` § 4.
 
+9. **Grupos de Materias reemplazan `CarreraSedeDB`** (2026-09).
+   Nueva entidad `GrupoMateriaDB` con partición estricta materia ↔
+   grupo (`MateriaDB.grupo_id NOT NULL`). Cada grupo declara **dos
+   configuraciones simultáneas** de sedes: un set duro (R10) y una
+   lista blanda ordenada (R12). El modo con el que corre cada grupo
+   se elige por corrida desde `LPConfig.modos_por_grupo`. `CarreraSedeDB`
+   y `MateriaDB.es_default_comunes` quedan **deprecados**: sobreviven
+   como columnas legacy pero ningún flujo las consume.
+   `ComisionDB.carrera_asignada` pasa a ser sólo etiqueta visual sin
+   efecto en el LP. Ver `2. Desarrollo/ASIGNACION_IMPL.md` § 5.
+
+10. **Excepciones de conflicto ignoradas** (2026-09).
+    `IgnoredConflictDB` registra pares de materias que la validación
+    del plan debe saltar para el chequeo de solapamiento horario
+    (no para el chequeo de intersede R13, que es físico y no depende
+    de qué alumnos cursen qué). El servicio `plan_validation_service`
+    corre `cleanup_stale_ignored_pairs` en cada validación para
+    limpiar excepciones huérfanas cuando cambia la coexistencia
+    curricular de las materias involucradas.
+
+11. **Modelo LP extendido con Grupos, R13-alumno, R13-camino, R14 y
+    veredicto estructurado** (2026-09). El LP consume la resolución
+    de sedes por grupo. R13 detecta pares en riesgo tanto por
+    traslado del docente (misma comisión) como por traslado del
+    alumno (materias distintas del mismo grupo curricular
+    `(carrera, año, cuatri)`). Se sumó un chequeo estructural
+    pre-solve **R13-camino** que verifica la existencia de al menos
+    una combinación de comisiones viable por grupo curricular. R14
+    (`forzar_misma_sede_por_comision`) es toggleable. Cada corrida
+    persiste un veredicto humano-legible en `LPRunDB.details_json`
+    con `status`, `resumen`, `causa_infactibilidad`,
+    `bloqueos_diagnosticados`, `horarios_sin_asignar` y
+    `restricciones_activas`. Ver `Informe/anexos/Anexo_Base_de_Datos.md`
+    y `1. Diseño/asignacion-aulas-LP.md`.
+
 Para el detalle exacto del esquema actual, la referencia definitiva
 es siempre `src/database/models.py`. Este documento resume el
 propósito de cada entidad y las decisiones de diseño.
@@ -112,6 +147,16 @@ El modelo original (v1) incluia entidades que quedaron fuera de alcance y usaba 
 | Ciclos y ofertas | Ciclo y Dictado definidos pero sin uso | Ciclo + Dictado + PlanificacionCursada: gestion completa del ciclo de vida |
 
 ### 1.2 Objetivo del modelo
+
+> ⚠️ **Nota (diseño inicial vs vigente)**: la lista siguiente refleja
+> el diseño original de la v1 (mencionaba un flag `activo` en el
+> dictado). En el modelo vigente rige la semántica "existencia =
+> activación" (`§0.1` punto 1 y RN19): el dictado existe **si y solo
+> si** la materia se dicta en ese ciclo. No hay flag `activo`.
+> Además, si la regla de recursado dice omitir una materia
+> cuatrimestral del cuatrimestre opuesto, **no se crea** el dictado
+> (no se crea con `activo=False`). Ver `RECURSADO_Y_VIRTUAL.md § 1`
+> para la semántica actual.
 
 Permitir:
 
@@ -201,6 +246,7 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 | virtual | bool | Default para `Dictado.virtual`. Las virtuales no requieren aula |
 | optativa | bool | Si la materia es optativa/electiva |
 | **dicta_recursado** | **bool nullable** | **Override del flag de recursado de la carrera. `None` = usar el de la carrera. `True`/`False` fuerza el comportamiento para esta materia ignorando lo que diga la carrera. Ver RN16** |
+| **grupo_id** | **str FK NOT NULL** | **Grupo de Materias al que pertenece (2026-09). Partición estricta: cada materia pertenece a exactamente un grupo. Enforzado en service layer + migración. Alimenta R10/R12 del LP vía `resolver_sedes_admisibles_por_materia`.** |
 
 > `active` es ahora un campo puramente informativo. La creacion de dictados se controla
 > mediante las versiones de plan asignadas al ciclo (CicloPlanVersion -> PlanCarreraVersion -> PlanEstudio).
@@ -210,13 +256,13 @@ Catalogo estatico de asignaturas. Persiste entre ciclos.
 
 Sede física donde se ubican las aulas. Modelada como entidad propia
 (antes era un string libre dentro de `Aula.sede`) para permitir
-referenciarla desde futuras restricciones del LP del tipo "esta materia
-sólo se puede cursar en estas sedes".
+referenciarla desde las restricciones del LP.
 
 | Campo | Tipo | Notas |
 |-------|------|-------|
 | id | str PK | UUID auto-generado |
 | nombre | str unique | Único globalmente (ej. "Pellegrini") |
+| es_default_comunes | bool | **Deprecado (2026-09)**. Reemplazado por Grupos de Materias. Se conserva como columna legacy; ni el LP ni la UI lo consultan. |
 
 #### Aula
 
@@ -253,6 +299,101 @@ son compatibles con cada materia para dictar clases de lab.
 > Sin orden de preferencia. Una materia puede tener 0, 1 o mas labs compatibles.
 > A la hora de asignar aulas a clases de laboratorio, el algoritmo debe elegir un
 > lab de la lista compatible con la materia.
+
+#### GrupoMateria (nueva, 2026-09)
+
+Entidad que agrupa materias que comparten el mismo criterio de sedes
+admisibles. Cada `MateriaDB` pertenece a **exactamente un**
+`GrupoMateriaDB` (partición estricta, `MateriaDB.grupo_id NOT NULL`).
+Reemplaza a la vieja tabla `CarreraSedeDB` como fuente de verdad
+para la resolución R10/R12 del LP.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| id | str PK | UUID auto-generado |
+| nombre | str unique | Ej. `FB`, `F`, `FI`, `CE`, `Específicas de Ing. Electrónica`, `Sin clasificar`. |
+| descripcion | str | Opcional. |
+| es_sin_clasificar | bool | Marca el grupo *fallback*. Sólo uno con True a la vez (invariante). Recibe las materias que la migración no logró clasificar. |
+| chequear_pertenencia_asociadas | bool | Flag del chequeo de consistencia (default True). Ver `2. Desarrollo/ASIGNACION_IMPL.md` § 5. |
+| chequear_exclusividad_no_asociadas | bool | Idem, default True. |
+| chequear_completitud | bool | Idem, default True. |
+
+Cada grupo declara **dos configuraciones simultáneas** de sedes,
+persistidas en `GrupoMateriaSedeDB`:
+
+- **Set duro** (`tipo = DURO`): sedes admisibles cuando el grupo
+  corre en modo DURO. R10 filtra `x[h, a]` a esas sedes.
+- **Lista blanda ordenada** (`tipo = BLANDO`): sedes preferidas
+  cuando el grupo corre en modo BLANDO. La primera (`orden = 0`)
+  es la preferida; el resto son alternativas con costo
+  `λ_sede_pref` (R12).
+
+Una misma sede puede aparecer con ambos tipos: son configuraciones
+independientes. El modo con el que corre cada grupo en una corrida
+específica se elige desde `LPConfig.modos_por_grupo` en el panel
+del asignador (default DURO).
+
+**Excepción de laboratorio compatible**: un aula listada en
+`MateriaLaboratorioDB` para una materia se acepta aunque su sede
+no esté en el set duro del grupo. La compatibilidad física del
+laboratorio prevalece sobre la preferencia curricular.
+
+#### GrupoMateriaSede (nueva, 2026-09)
+
+Tabla M:N ordenada entre `GrupoMateriaDB` y `SedeDB`, con tipo
+DURO / BLANDO como parte de la PK compuesta.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| grupo_id | str PK, FK -> GrupoMateriaDB | |
+| sede_id | str PK, FK -> SedeDB | |
+| tipo | str PK | `"DURO"` o `"BLANDO"`. Permite que una misma sede aparezca en ambos sets del mismo grupo. |
+| orden | int | 0 = primera. Semántico sólo en BLANDO (0 = preferida); en DURO sólo estabilidad visual. |
+
+#### GrupoMateriaCarrera (nueva, 2026-09)
+
+M:N grupo ↔ carrera, usada exclusivamente para el chequeo de
+consistencia. No afecta al LP ni a la resolución de sedes.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| grupo_id | str PK, FK -> GrupoMateriaDB | |
+| carrera_codigo | str PK, FK -> CarreraDB | |
+
+#### IgnoredConflict (nueva, 2026-09)
+
+Par de materias cuyo conflicto de horarios el usuario decidió
+ignorar en el chequeo de solapamiento del plan. Granularidad por
+par: si una vez se ignoró, queda ignorado aunque cambien los
+horarios. Se almacena con `materia_a < materia_b` lexicográficamente
+para deduplicación.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| plan_cursada_id | str PK, FK -> PlanificacionCursada | Cascade al borrar el plan. |
+| materia_a | str PK | Materia menor lexicográficamente. |
+| materia_b | str PK | Materia mayor lexicográficamente. |
+| razon | str | Opcional. Justificación textual del usuario. |
+| fecha_creacion | datetime | |
+
+**Alcance de la excepción**: sólo aplica al chequeo de
+**solapamiento horario**. El chequeo de **intersede** (R13,
+R13-camino) las ignora — el traslado es un problema físico
+independiente de qué alumnos cursen qué materia.
+
+**Auto-limpieza**: `plan_validation_service.cleanup_stale_ignored_pairs`
+elimina las excepciones que quedaron huérfanas cuando las materias
+del par ya no coexisten en ningún grupo curricular `(carrera, año,
+cuatri)` del plan. Se corre automáticamente en cada
+`validate_plan` y se reporta al usuario en el summary
+(`excepciones_stale_removidas`).
+
+#### CarreraSede (deprecada 2026-09)
+
+Tabla M:N legacy entre carreras y sedes habilitadas. Reemplazada
+por `GrupoMateriaSedeDB` con el grupo `Específicas de <Carrera>`.
+Se conserva en el schema para no romper migraciones viejas, pero
+ningún flujo la lee ni la escribe.
 
 #### Carrera
 
@@ -836,6 +977,7 @@ Varios campos se denormalizan para evitar joins profundos en queries frecuentes:
 | RN16 | Override de recursado por materia | `MateriaDB.dicta_recursado` (nullable) es un override que gana sobre `CarreraDB.dicta_recursado`. `None` = usar el flag de la carrera. `True` = la materia se ofrece (activo=True) siempre, sin importar carrera. `False` = la materia no se ofrece (activo=False) si su cuatrimestre del plan es opuesto al ciclo |
 | RN17 | Edición manual del flag activo por dictado | `DictadoDB.activo_override_manual` (nullable) registra cualquier edición manual del toggle "Activo" en el panel de dictados. `None` = el dictado se alinea a la regla en cada recompute. `True/False` = el usuario lo editó a mano. La función `recompute_activo_for_ciclo` respeta las ediciones manuales por default (las lista en `overrides_respetados`). Con el flag `pisar_overrides=True` la recalculación las descarta y aplica la regla a todos los dictados. Esta granularidad permite registrar excepciones puntuales (materias comodín, recursados especiales) sin que el siguiente recompute las pise |
 | RN18 | Modalidad virtual del dictado del ciclo | `DictadoDB.virtual` marca el dictado como virtual *sólo en este ciclo* (modalidad puntual), independiente de `MateriaDB.virtual` (catálogo). Default heredado de la materia al crear el dictado, pero editable después. Cuando `virtual=True`: (i) `build_inputs` del LP filtra los horarios de la materia con un warning explícito, (ii) el cronograma del plan los renderea con ícono virtual, (iii) la cobertura del cronograma vs ciclo los cuenta como cubiertos. Las clases de `ClaseDB` se generan igualmente con `aula_id=None`. Caso de uso central: recursados o materias dictadas por Zoom este cuatrimestre, sin tocar el catálogo ni desactivar el dictado completo |
+| RN19 | Independencia entre ciclos | Cada `CicloDB` es una unidad operativa autónoma: se crea, se le asignan versiones de plan (`CicloPlanVersionDB`) y se corren sus dictados (`create_dictados_for_ciclo`) sin depender del estado de otros ciclos. En particular, crear el ciclo 1C **no** crea ni pre-declara nada del ciclo 2C, y viceversa. Los dictados **cuatrimestrales** viven cada uno linkeado a un único ciclo vía `DictadoCicloDB`. La única entidad que se comparte entre dos ciclos es el `DictadoDB` de una materia **anual**, que se materializa como una fila única linkeada a dos ciclos del mismo año lectivo (una fila de `DictadoCicloDB` por ciclo). Al crear el 1C, un dictado anual se instancia con `fin_dictado=None`; cuando después se crea el 2C del mismo año, `_link_anual_dictado_2c` reutiliza ese dictado y le agrega el bridge al 2C completando `fin_dictado`. Si el 2C se crea sin que exista el 1C previo, se crea un dictado anual fresco. Ninguna otra información se propaga entre ciclos: horarios, comisiones, planes de cursada, asignaciones de aula son estrictamente por ciclo. Ver `dictado_service.create_dictados_for_ciclo`, `_link_anual_dictado_2c`. Guía operativa: `2. Desarrollo/CICLOS_Y_DICTADOS.md`. Semántica de las tres puertas de decisión: `2. Desarrollo/RECURSADO_Y_VIRTUAL.md § 1.2` |
 
 ---
 

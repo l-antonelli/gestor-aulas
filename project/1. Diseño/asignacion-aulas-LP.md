@@ -1,45 +1,56 @@
 # Programa Lineal de Asignación de Aulas
 
-> **Estado**: planteo formal cerrado, implementación en curso. Esta versión documenta el modelo en su variante actual: el programa lineal asigna aulas al **patrón semanal** y las clases puntuales heredan automáticamente.
-> **Última actualización**: 2026-06-12.
+> **Estado**: modelo formalizado y en producción. Este documento es la **referencia técnica** del planteo matemático — cubre conjuntos, variables, función objetivo, restricciones, chequeo estructural pre-solve y diagnóstico por relajación selectiva. Para la **guía operativa** (cómo se usa desde la UI, qué significan los parámetros, cómo interpretar cada mensaje del veredicto), ver `project/2. Desarrollo/RESTRICCIONES_LP.md`.
+>
+> **Última actualización**: 2026-09-11.
 
-## Glosario inicial
+## Glosario
 
-Antes de entrar al planteo, fijamos los términos técnicos que aparecen a lo largo del documento. La idea es que un lector que no sea especialista pueda seguirlo sin tener que adivinar significados.
+Antes de entrar al planteo, fijamos los términos técnicos que aparecen a lo largo del documento. La idea es que un lector que no sea especialista pueda seguirlo sin adivinar significados. Los términos que originalmente vienen en inglés se introducen en castellano con el original entre paréntesis la primera vez.
 
 | Término | Definición |
 |---|---|
-| **Programación lineal entera** (PLE) | Familia de problemas de optimización en los que se busca maximizar o minimizar una función lineal (objetivo) sujeta a restricciones lineales, donde algunas o todas las variables están obligadas a tomar valores enteros (típicamente 0 o 1). En el ámbito anglosajón se la llama *Integer Linear Programming* (ILP); usamos PLE como abreviatura en castellano. |
+| **Programación lineal entera** (*integer linear programming*, PLE) | Familia de problemas de optimización donde se busca minimizar (o maximizar) una función lineal sujeta a restricciones lineales, con algunas o todas las variables obligadas a tomar valores enteros. Es una de las herramientas más antiguas y estudiadas de la investigación operativa; existen resolutores libres y comerciales altamente optimizados. |
 | **Programa lineal** | Cada instancia concreta de un problema de programación lineal entera. En este documento se usa indistintamente "programa lineal", "modelo" o "problema". |
-| **Resolutor** | Programa informático que recibe un programa lineal entero y devuelve la solución óptima (o un certificado de infactibilidad). En la literatura anglosajona se lo llama *solver*. Ejemplos: CBC (libre), Gurobi, CPLEX (comerciales). |
+| **Resolutor** (*solver*) | Programa informático que recibe un programa lineal y devuelve la solución óptima o un certificado de infactibilidad. Ejemplos: CBC (libre, la que usa este proyecto), Gurobi y CPLEX (comerciales). |
 | **Variable de decisión** | Las incógnitas del modelo cuyos valores el resolutor decide. En este planteo son binarias (0 o 1) y continuas (reales no negativas). |
-| **Función objetivo** | La expresión lineal que el resolutor minimiza (o maximiza). |
+| **Función objetivo** | La expresión lineal que el resolutor minimiza. |
 | **Restricción** | Igualdad o desigualdad lineal que toda solución factible debe satisfacer. |
 | **Factible** | Cualquier asignación de valores a las variables que cumple **todas** las restricciones. |
-| **Óptimo** | La solución factible que minimiza (o maximiza) la función objetivo. |
+| **Óptimo** | La solución factible que minimiza la función objetivo. |
 | **Infactible** | Estado del modelo cuando no existe ninguna asignación que cumpla todas las restricciones simultáneamente. |
 | **Relajación lineal** | Versión "ablandada" del programa lineal entero en la que las variables binarias se reemplazan por variables continuas en `[0, 1]`. La resuelve el resolutor internamente para obtener cotas y guiar la búsqueda. |
-| **Ramificación y acotación** | Algoritmo estándar para resolver programas lineales enteros. Recursivamente parte el problema en subproblemas (ramifica) y descarta los que no pueden contener al óptimo (acota). En la literatura anglosajona se lo llama *branch-and-bound*. |
-| **Patrón semanal** | El conjunto de horarios (materia / comisión / día / hora de inicio / hora de fin) que se repite todas las semanas del cuatrimestre. Es el sujeto sobre el que decide el programa lineal. |
-| **Clase puntual** | Una instancia concreta del patrón en una fecha específica (por ejemplo, "lunes 22 de marzo, 14 a 18 hs"). Hereda el aula del patrón salvo override manual del operador. |
+| **Ramificación y acotación** (*branch-and-bound*) | Algoritmo estándar para resolver programas lineales enteros. Recursivamente parte el problema en subproblemas (ramifica) y descarta los que no pueden contener al óptimo (acota). |
+| **Patrón semanal** | El conjunto de horarios (materia / comisión / día / hora de inicio / hora de fin) que se repite todas las semanas del cuatrimestre. Es el sujeto sobre el que decide el programa lineal. Cada patrón corresponde a un registro `HorarioDB`. |
+| **Clase puntual** | Una instancia concreta del patrón en una fecha específica (por ejemplo, "lunes 22 de marzo, 14 a 18 hs"). Hereda el aula del patrón salvo *override* manual del operador. En el schema es un registro `ClaseDB`. |
 | **Sobre-ocupación** | Cantidad de inscriptos esperados que excede la capacidad efectiva del aula asignada. |
 | **Sub-ocupación** | Cantidad de lugares vacíos en el aula asignada respecto a un umbral mínimo de aprovechamiento. |
-| **Ventana operativa** | Rango horario en el que la facultad opera (por ejemplo, de 8 a 23 hs). Ningún horario puede caer fuera de ella. |
-| **Doble asignación** | Situación prohibida en la que un mismo aula recibe dos horarios que se dictan al mismo tiempo. En la literatura anglosajona se la suele llamar *double booking*. |
-| **Modalidad virtual** | Horario que se dicta en forma remota o asincrónica. No consume aula y se excluye del modelo. |
-| **Restricción dura** y **restricción blanda** | Una restricción dura no admite violación: o se cumple o el modelo es infactible. Una restricción blanda admite violación pero la castiga con un peso en la función objetivo. En este modelo, capacidad es blanda (vía sobre/sub-ocupación). |
+| **Ventana operativa** | Rango horario en el que la facultad opera. Por defecto de 7 a 23 hs, configurable en `ConfiguracionHoraria`. Ningún horario puede caer fuera. |
+| **Doble asignación** (*double booking*) | Situación prohibida en la que un mismo aula recibe dos horarios que se dictan al mismo tiempo. |
+| **Modalidad virtual** | Horario que se dicta en forma remota o asincrónica. No consume aula. Cuando la restricción R5 está en modo estricto, entra al modelo pero sin ocupar aula (contribuye al balance de horas teoría/lab); cuando no, se filtra completamente. |
+| **Restricción dura** vs **restricción blanda** | Una restricción dura no admite violación: o se cumple o el modelo es infactible. Una restricción blanda admite violación pero la castiga con un peso en la función objetivo. En este modelo, capacidad (sobre-ocupación y sub-ocupación) es blanda; el resto son duras salvo que se indique. |
+| **Grupo de materias** | Entidad del dominio (`GrupoMateriaDB`) que agrupa materias que comparten el mismo criterio de sedes admisibles. Cada materia pertenece a exactamente un grupo (partición estricta). Cada grupo declara dos configuraciones simultáneas: un **set duro** de sedes admisibles cuando corre en modo DURO, y una **lista blanda ordenada** de sedes preferidas cuando corre en modo BLANDO. El modo se elige por-grupo al momento de correr el asignador. |
+| **Camino de cursada** | Chequeo estructural que verifica que, para cada terna `(carrera, año, cuatrimestre)`, exista al menos una combinación de comisiones — una por materia obligatoria — que un alumno pueda cursar sin conflictos horarios ni de traslado entre sedes. |
+| **Grupo de simultaneidad** | Conjunto maximal de horarios activos en un mismo instante del cuatrimestre. Se calcula analizando la grilla semanal y sirve para modelar la restricción de doble asignación de aula (R4) sin necesidad de comparar todos los pares de horarios. |
+| **Sedes admisibles por horario** | Conjunto de sedes en las que un horario particular puede ser asignado. Se resuelve consultando el grupo de la materia del horario y el modo elegido en la corrida (DURO o BLANDO). En modo BLANDO todas las sedes son admisibles pero la primera de la lista es preferida (paga cero al objetivo); las alternativas suman un costo `λ_sede_pref` por cada horario que caiga en ellas. En modo DURO sólo las sedes del set duro son admisibles; la lista vacía se interpreta como *fallback* permisivo. |
+| **Excepción de conflicto ignorado** | Registro en `IgnoredConflictDB` que marca un par de materias como no bloqueante para el chequeo de camino de cursada. Se usa cuando en la práctica una comisión de la materia A y una de la materia B nunca son cursadas por el mismo alumno (por ejemplo, materias homónimas de distintos años del plan). |
+| **IIS** (*Irreducible Infeasible Subsystem*) | Subconjunto mínimo de restricciones cuya interacción produce la infactibilidad. En este proyecto no computamos el IIS teórico exacto sino un **diagnóstico por relajación selectiva**: se relaja cada restricción "candidata" por separado y se re-corre el modelo para ver cuál rescata la solución. Cuando ninguna funciona, se prueban combinaciones de a pares. |
 
 ## Resumen ejecutivo
 
-Una vez cerrada la grilla horaria de un cuatrimestre (qué materia/comisión se da qué día y a qué hora), queda un problema combinatorio: **a qué aula va cada uno de esos horarios semanales**. Lo modelamos como un **programa lineal entero (PLE)** y lo resolvemos con un resolutor clásico (CBC, accedido desde Python a través de la biblioteca PuLP).
+Una vez cerrada la grilla horaria de un cuatrimestre —es decir, definidos los `HorarioDB` que se van a dictar y a qué comisión pertenecen—, queda un problema combinatorio: **a qué aula va cada uno de esos horarios semanales**. Lo modelamos como un programa lineal entero y lo resolvemos con CBC accedido desde Python a través de la biblioteca PuLP.
 
-El programa lineal decide tres cosas:
+El programa lineal decide tres cosas simultáneamente:
 
-1. **El aula de cada horario** (variables `x[h, a] ∈ {0, 1}`, una por cada par horario-aula compatible).
-2. **El tipo de cada horario** cuando no viene predeterminado (variables `t[h] ∈ {0, 1}`: 1 = laboratorio, 0 = teoría).
-3. **Cómo se reparten los inscriptos esperados entre las comisiones de un mismo dictado** (variables `α[k] ∈ [0, 1]`, opcional según una opción configurable por el usuario).
+1. **El aula de cada horario presencial** (variables `x[h, a] ∈ {0, 1}`, una por cada par horario-aula compatible).
+2. **El tipo de cada horario** cuando el cronograma no lo predetermina (variables `t[h] ∈ {0, 1}`: 1 = laboratorio, 0 = teoría).
+3. **Cómo se reparten los inscriptos esperados entre las comisiones de un mismo dictado**, opcionalmente (variables `α[k] ∈ [0, 1]` sólo activas si el usuario tilda "redistribuir pesos entre comisiones").
 
-El **objetivo** es lineal y asimétrico: minimizar la sobre-ocupación con un peso `λ_over` (valor por defecto 10) y la sub-ocupación con un peso `λ_under` (valor por defecto 1). Las **restricciones** garantizan asignación única, no doble asignación, compatibilidad de tipo aula↔clase, partición teoría/laboratorio coherente con la materia, y consistencia de los coeficientes cuando la opción de redistribución está activa.
+El **objetivo** es lineal y asimétrico: minimizar la sobre-ocupación con peso `λ_over` (default 10), la sub-ocupación con peso `λ_under` (default 1) y la asignación a una sede alternativa —cuando el grupo corre en modo BLANDO— con peso `λ_sede_pref` (default 5). Todos los pesos son configurables desde la UI.
+
+Las **restricciones duras** garantizan asignación única, ausencia de doble asignación, compatibilidad del tipo del aula con la clase, balance correcto entre horas de teoría y de laboratorio declaradas por la materia, filtro por sedes admisibles según el grupo de la materia (R10), continuidad de sede para pares de horarios contiguos en riesgo intersede (R13), y opcionalmente misma sede para todos los horarios de una comisión (R14).
+
+Antes de correr el resolutor se ejecuta un **chequeo estructural pre-solve** que detecta situaciones que garantizan infactibilidad sin necesidad de encender el modelo entero. Si el solver da infactible pese al chequeo, se corre un **diagnóstico por relajación selectiva** que identifica qué restricciones son las culpables. Ambos mecanismos están descriptos en detalle en las secciones §7 y §8.
 
 ## 1. Contexto y motivación
 
@@ -47,824 +58,664 @@ El **objetivo** es lineal y asimétrico: minimizar la sobre-ocupación con un pe
 
 En una facultad mediana hay típicamente **algunos cientos de horarios semanales** (cada combinación materia-comisión-día-franja es uno) y **algunas decenas de aulas**, repartidas entre teóricas, anfiteatros y laboratorios de distintos tipos. Cada cuatrimestre alguien tiene que decidir, para cada horario, qué aula le toca.
 
-A simple vista parece un problema de "encajar piezas". Pero cuando se mira con detalle aparecen tres complicaciones que lo vuelven no trivial:
+A simple vista parece un problema de "encajar piezas". Pero cuando se mira con detalle aparecen varias complicaciones que lo vuelven no trivial:
 
-- **Conflictos temporales**. Dos horarios que se dictan a la misma hora del mismo día no pueden compartir aula. Cuando son muchos en simultáneo (típico en franjas horarias populares como las 18 a 20), aparece un cuello de botella.
-- **Tipo de aula vs tipo de clase**. Una clase de laboratorio no puede dictarse en cualquier aula: depende del laboratorio compatible con esa materia (el de Química requiere mecheros, el de Electrónica requiere instrumental, etcétera). Esto recorta drásticamente las opciones.
+- **Conflictos temporales**. Dos horarios que se dictan a la misma hora del mismo día no pueden compartir aula.
+- **Tipo de aula vs tipo de clase**. Una clase de laboratorio no puede dictarse en cualquier aula: depende del laboratorio compatible con esa materia (el de Química requiere mecheros, el de Electrónica requiere instrumental, etcétera).
 - **Capacidad vs cantidad de inscriptos**. Si una comisión tiene 80 inscriptos esperados y se la manda a un aula de 30, hay sobre-ocupación; al revés, si va al anfiteatro de 200, hay sub-utilización.
+- **Distribución en sedes**. FCEIA-UNR opera en más de una sede (Pellegrini, Siberia, etc.), pero no todas las materias pueden dictarse en todas las sedes: hay preferencias curriculares y compatibilidades de laboratorio. Además, los alumnos y los profesores no pueden trasladarse instantáneamente entre sedes.
+- **Balance teoría/laboratorio**. Hay materias donde el plan declara horas de teoría y horas de laboratorio por separado, pero los horarios cargados por el cronograma no siempre tienen esa partición resuelta. El asignador debe decidir simultáneamente qué horarios son teoría, cuáles son laboratorio y a qué aula van.
+- **Camino de cursada**. Aunque una comisión individual sea factible, un alumno concreto de una carrera-año-cuatrimestre necesita que exista al menos una combinación de comisiones (una por materia obligatoria) que le permita cursar todo sin solapamientos horarios ni traslados imposibles.
 
-A esto se suma un grado de libertad adicional: hay materias donde el plan declara **horas de teoría y horas de laboratorio** por separado, pero los horarios cargados por el cronograma no siempre tienen esa partición resuelta. El programa lineal decide simultáneamente qué horarios son teoría, cuáles son laboratorio, y a qué aula van — todo de manera consistente.
+### 1.2 Por qué programación lineal entera
 
-### 1.2 Por qué un único modelo en lugar de un encadenamiento de etapas
+La programación lineal entera es una de las herramientas canónicas de la investigación operativa (ver Winston [1], Hillier & Lieberman [2]) para modelizar problemas de asignación combinatoria con restricciones estructuradas. Su atractivo para este proyecto es doble:
 
-La tentación natural es resolverlo en pasos: "primero decido el tipo de cada horario, después le busco aula". Eso falla por una razón simple: el tipo y el aula están **acoplados**. Si decidimos teoría/laboratorio de antemano y después no hay laboratorios disponibles en cierta franja, llegamos a infactibilidad evitable. Un único modelo combinado encuentra el óptimo del problema acoplado o demuestra que no hay solución.
+- **Expresividad**. Restricciones como "un aula no puede recibir dos clases simultáneas" o "las horas de laboratorio de una materia deben cerrar exactamente con las declaradas" son lineales con variables binarias. No necesitamos salir del marco lineal.
+- **Herramientas maduras**. Existen resolutores libres (CBC, GLPK, HiGHS) capaces de resolver instancias de este tamaño en segundos. Delegar la búsqueda combinatoria a un resolutor bien optimizado permite concentrar el esfuerzo en el planteo del modelo, no en el algoritmo.
+
+Alternativas consideradas y descartadas:
+
+- **Programación por restricciones** (*constraint programming*). Más flexible para restricciones no lineales, pero acá no las necesitamos y perderíamos el ecosistema maduro de resolutores enteros.
+- **Metaheurísticas** (búsqueda local, algoritmos genéticos). Escalan mejor a instancias enormes, pero no garantizan óptimo ni certifican infactibilidad. Para el tamaño de FCEIA-UNR, el óptimo exacto es alcanzable.
+- **Encadenamiento de etapas** ("primero decido el tipo, después le busco aula"). Falla porque tipo y aula están acoplados: si decidimos teoría/laboratorio de antemano y después no hay laboratorios disponibles en cierta franja, llegamos a infactibilidad evitable.
 
 ### 1.3 Trabajo exclusivamente sobre el patrón semanal
 
 El programa lineal trabaja exclusivamente sobre el **patrón semanal**: la franja que se repite todas las semanas del cuatrimestre. Por ejemplo: "Análisis Matemático I, Comisión A, lunes de 14 a 18 hs". Asigna un aula a cada patrón; esa asignación aplica a todas las instancias del ciclo.
 
-> **Nota (2026-07-07)**: en versiones tempranas del sistema el usuario
-> podía además editar excepciones a nivel de "clase puntual"
-> (`ClaseDB`) — un día específico podía cambiar de aula sin afectar
-> al patrón. Esa capacidad se deprecó porque agregaba complejidad
-> sin uso operativo real. Hoy el usuario **solo edita el patrón
-> semanal**. `ClaseDB` sigue existiendo en el modelo como cache
-> técnico: al aplicar la solución, la asignación del patrón se
-> propaga a las instancias por fecha. La UI no expone edición por
-> fecha.
+En versiones tempranas del sistema el usuario podía además editar excepciones a nivel de "clase puntual" (`ClaseDB`): un día específico podía cambiar de aula sin afectar al patrón. Esa capacidad se deprecó porque agregaba complejidad sin uso operativo real. Hoy el usuario solo edita el patrón semanal; `ClaseDB` sigue existiendo en el modelo como *cache* técnico que las clases heredan al aplicar la solución.
 
-Trabajar sobre el patrón mantiene el programa lineal chico: un cuatrimestre típico tiene ~600 horarios pero ~10000 clases puntuales (16 semanas × 600 = 9600); resolver por patrón es un orden de magnitud menos.
+Trabajar sobre el patrón mantiene el programa lineal chico: un cuatrimestre típico tiene ~600 horarios pero ~10000 clases puntuales; resolver por patrón es un orden de magnitud menos.
 
 ## 2. Alcance
 
 ### 2.1 Qué decide el programa lineal
 
-- A qué **aula** va cada horario del cuatrimestre.
-- De qué **tipo** es cada horario cuando el cronograma no lo predetermina.
+- A qué **aula** va cada horario presencial del cuatrimestre.
+- De qué **tipo** es cada horario cuando el cronograma no lo predetermina (con restricción R5 estricta activa, que es el default).
 - Cómo se **distribuyen los inscriptos esperados** entre comisiones de un mismo dictado (sólo si el usuario activa la opción "permitir reasignar pesos").
 
 ### 2.2 Qué NO toca el programa lineal
 
-- **No crea ni elimina comisiones**. Las comisiones llegan ya definidas desde el panel de planificación. Si el resultado es malo o infactible, el usuario ajusta comisiones (sumar más, redistribuir pesos, mover horarios) y vuelve a correr.
+- **No crea ni elimina comisiones**. Las comisiones llegan ya definidas desde el panel de planificación.
 - **No reescribe horarios**. Los días, horas y duraciones son datos de entrada fijos.
-- **No asigna aulas a horarios virtuales** (modalidad a distancia o asincrónica). Esos horarios se filtran antes de armar el modelo: no consumen aula.
+- **No asigna aulas a horarios virtuales**. Los horarios que resuelven a virtuales por la cadena `horario > dictado > materia` se filtran del modelo o entran con la marca `no_ocupa_aula`, según el modo de R5.
 - **No decide reservas puntuales de laboratorio**. La reserva se hace a nivel patrón: si un horario semanal debe dictarse en un laboratorio, se marca su `tipo_clase` y el programa lineal le asigna un aula de laboratorio.
-- **No considera horarios ya ejecutados**. Si la corrida del programa lineal es a mitad del cuatrimestre, las clases que ya pasaron quedan intactas.
+- **No considera horarios ya ejecutados**. Si la corrida es a mitad del cuatrimestre, las clases con `fecha < fecha_desde` quedan intactas.
 
 ### 2.3 Supuestos modelados
 
-1. **Inscriptos constantes por comisión**: el número de inscriptos esperados es el mismo para todos los horarios de una comisión (teóricas y laboratorios). Esto refleja que la matrícula es por comisión, no por franja.
-2. **Aulas siempre disponibles**: cada aula está disponible toda la ventana operativa de la facultad (por ejemplo, de 8 a 23 hs). No se modelan indisponibilidades por exámenes, eventos, refacciones, etc.: queda como extensión futura.
-3. **Una corrida por ciclo (cuatrimestre)**: dos cuatrimestres distintos se resuelven en corridas separadas, aun cuando hayan materias anuales que abarquen ambos.
+1. **Inscriptos constantes por comisión**: el número de inscriptos esperados es el mismo para todos los horarios de una comisión. Refleja que la matrícula es por comisión, no por franja.
+2. **Aulas siempre disponibles**: cada aula está disponible toda la ventana operativa. No se modelan indisponibilidades por exámenes, eventos, refacciones, etc.
+3. **Una corrida por ciclo**: dos cuatrimestres distintos se resuelven en corridas separadas, aun cuando haya materias anuales que abarquen ambos.
+4. **Excepción de laboratorio prevalece sobre restricción de sede**: si un aula está en la lista de laboratorios compatibles de una materia (`MateriaLaboratorioDB`), se acepta para esa materia aunque no esté en el set de sedes admisibles del grupo. Refleja que la compatibilidad física del laboratorio es más restrictiva que la preferencia curricular.
 
 ## 3. Planteo matemático formal
 
 ### 3.1 Conjuntos
 
-| Símbolo | Definición |
-|---|---|
-| `H` | Conjunto de **horarios semanales** del plan (no virtuales, no ejecutados). Cada `h ∈ H` representa una franja recurrente: una materia, una comisión, un día de la semana, una hora de inicio y una de fin. |
-| `A` | Conjunto de **aulas** disponibles. |
-| `A_t ⊆ A` | Aulas aptas para clase teórica (incluye anfiteatros). |
-| `A_lab(m) ⊆ A` | Aulas aptas para clase de laboratorio de la materia `m`. Cada materia tiene su propia lista (los laboratorios son específicos por equipamiento). |
-| `K` | Conjunto de **comisiones** del plan. Cada horario pertenece a una única comisión. |
-| `D` | Conjunto de **dictados**. Un dictado agrupa todas las comisiones de una misma materia en el cuatrimestre. |
-| `Sim` | Conjunto de **grupos de simultaneidad**. Cada `S ∈ Sim` es un subconjunto maximal de horarios que se dictan en simultáneo en algún instante de la semana (mismo día, intervalos solapados). |
+Todos los conjuntos se computan una sola vez al inicio de la corrida, dentro de `build_inputs` en `src/services/asignacion_aulas_service.py`.
+
+| Símbolo | Descripción | Origen |
+|---|---|---|
+| `H` | Conjunto de horarios semanales activos del plan de cursada. Se excluyen los virtuales cuando R5 no es estricta; con R5 estricta los virtuales entran a `H` pero se marcan en `H_∅ ⊆ H` como *no ocupan aula*. | `HorarioDB` filtrado por `PlanificacionCursadaDB.id` y resuelto vía `resolve_virtual`. |
+| `H_∅` | Subconjunto de `H` que no ocupa aula física (horarios virtuales bajo R5 estricta). Participa en R5 pero se excluye de R1, R3, R4, R7, R10, R12, R13, R14. | Se calcula al iterar `HorarioDB` en `build_inputs`. |
+| `A` | Conjunto de aulas del catálogo. Cada aula tiene tipo (`teorica`, `anfiteatro`, `laboratorio`), capacidad y sede. | `AulaDB`. |
+| `A_teo ⊆ A` | Aulas de tipo `teorica` o `anfiteatro`. | Derivado. |
+| `A_lab ⊆ A` | Aulas de tipo `laboratorio`. | Derivado. |
+| `A_lab(m) ⊆ A_lab` | Laboratorios compatibles con la materia `m`. La lista la mantiene manualmente el operador. | `MateriaLaboratorioDB`. |
+| `C` | Conjunto de comisiones activas en el plan. | `ComisionDB` filtrado por `plan_cursada_id`. |
+| `H(c) ⊆ H` | Horarios de la comisión `c`. | Derivado. |
+| `M` | Conjunto de materias que aparecen en el plan. | Derivado de `HorarioDB.codigo_materia`. |
+| `S` | Conjunto de sedes. | `SedeDB`. |
+| `sede(a) ∈ S` | Sede física del aula `a`. | `AulaDB.sede_id`. |
+| `G` | Conjunto de grupos de materias. | `GrupoMateriaDB`. |
+| `grupo(m) ∈ G` | Grupo al que pertenece la materia `m` (partición estricta). | `MateriaDB.grupo_id`. |
+| `S_D(g) ⊆ S` | Set duro de sedes del grupo `g`: las únicas admisibles cuando el grupo corre en modo DURO. | `GrupoMateriaSedeDB` con `tipo=DURO`. |
+| `S_B(g)` (lista ordenada) | Lista blanda ordenada de sedes preferidas del grupo `g`. La primera es la preferida (paga cero al objetivo); el resto son alternativas con costo `λ_sede_pref`. | `GrupoMateriaSedeDB` con `tipo=BLANDO` ordenado por `orden`. |
+| `modo(g) ∈ {DURO, BLANDO}` | Modo con el que se corre el grupo `g` en esta corrida. Se elige en el panel del asignador. | `LPConfig.modos_por_grupo` (default DURO). |
+| `Sim` | Conjunto de **grupos de simultaneidad maximales**: subconjuntos `S ⊆ H \ H_∅` tales que existe un instante de la semana en el que todos los horarios de `S` están activos y no puede agregarse ningún horario más manteniendo esa propiedad. | Computado por `compute_simultaneidad_groups` sobre la grilla semanal. |
+| `P_R13` | Conjunto de pares `(h1, h2)` de horarios contiguos el mismo día con gap menor a `margen_min_intersede_minutos`. Incluye pares de la misma comisión (traslado del docente) y pares de distintas materias del mismo grupo curricular `(carrera, año, cuatri)` (traslado del alumno). | Computado por `compute_pares_intersede_riesgo`. |
+| `K` | Conjunto de dictados que agrupan más de una comisión (con `α` activo). | Derivado de `ComisionDB.dictado_id`. |
 
 ### 3.2 Parámetros
 
-| Símbolo | Tipo | Significado |
+| Símbolo | Descripción | Fuente |
 |---|---|---|
-| `cap[a]` | entero positivo | Capacidad del aula `a`. |
-| `total_esp[m]` | real positivo | Inscriptos esperados de la materia `m` en el cuatrimestre, según el módulo de pronóstico de inscripción. |
-| `coef[k]` | real en `[0, 1]` | Coeficiente de asignación de la comisión `k` (qué fracción del total de la materia le corresponde). |
-| `insc[h]` | real positivo | Inscriptos esperados en el horario `h`. Cuando la opción de redistribución está apagada: `insc[h] = total_esp[materia(h)] · coef[comision(h)]`. Cuando está encendida pasa a depender de las variables `α[k]`. |
-| `dur[h]` | real positivo | Duración de la franja semanal en horas. |
-| `hteo[m]`, `hlab[m]` | reales | Horas semanales de teoría y de laboratorio que la materia declara en su plan de estudios. |
-| `fija_lab(h)` | `True` / `False` / `None` | Indicador que viene del cronograma: `True` si el horario está fijado como laboratorio, `False` si está fijado como teórico, `None` si la decisión la hace el programa lineal. |
-| `compat[h, a]` | `0` / `1` | Pre-computado: vale 1 si el aula `a` puede recibir al horario `h` (ver § 3.5 R3). |
-| `λ_over`, `λ_under` | reales positivos | Pesos de los penalizadores de sobre y sub-ocupación. Valores por defecto: 10 y 1. |
-| `tol_over`, `tol_under` | reales en `[0, 1]` | Tolerancias relativas (un `tol_under = 0.20` permite 20% de sub-ocupación gratis). Valores por defecto: 0 y 0.20. |
-| `activar_α` | `0` / `1` | Opción del usuario para permitir redistribución de pesos. Apagada por defecto. |
+| `dur(h)` | Duración del horario `h` en horas. | `HorarioDB.hora_fin - HorarioDB.hora_inicio`. |
+| `cap(a)` | Capacidad del aula `a`. | `AulaDB.capacidad`. |
+| `tipo(h) ∈ {teorica, laboratorio, ⊥}` | Tipo declarado del horario `h`. `⊥` significa que el cronograma no lo predeterminó y el modelo lo decide vía R6. | `HorarioDB.tipo_clase`. |
+| `tipo(a) ∈ {teorica, anfiteatro, laboratorio}` | Tipo del aula. | `AulaDB.tipo`. |
+| `insc(h)` | Inscriptos esperados en `h`. Se propaga desde el forecast de la comisión (con o sin `α[k]`). | `get_inscriptos_esperados_por_comision`. |
+| `hteo(m)` | Horas semanales de teoría declaradas por la materia `m`. | `MateriaDB.horas_teoria`. |
+| `hlab(m)` | Horas semanales de laboratorio declaradas por la materia `m`. | `MateriaDB.horas_laboratorio`. |
+| `sedes_adm(h) ⊆ S` | Conjunto efectivo de sedes admisibles para el horario `h`, resuelto por `grupo(materia(h))` y `modo(grupo)`. **En modo DURO**: `S_D(g)` si no está vacío, todas las sedes si lo está (*fallback* permisivo). **En modo BLANDO**: todas las sedes son admisibles (sin filtro por R10; el sesgo hacia la preferida vive en R12). | Ver §5.2. |
+| `sede_pref(h) ∈ S ∪ {⊥}` | Sede preferida para `h`. En modo BLANDO con `S_B(g)` no vacía, es la primera de la lista. En cualquier otro caso, `⊥` (no aplica R12). | `sede_preferida_por_horario` en `build_inputs`. |
+| `pin(h) ∈ A ∪ {⊥}` | Aula fijada manualmente por el operador si `HorarioDB.aula_asignada_manualmente=True`. `⊥` si no hay pin. Sólo se propaga a R11 cuando `respetar_ediciones_manuales=True`. | `HorarioDB.aula_id`, `aula_asignada_manualmente`. |
+| `tol_over ∈ [0, 1]` | Fracción de la capacidad que la sobre-ocupación puede exceder sin penalidad. Default 0. | `LPConfig.tol_over`. |
+| `tol_under ∈ [0, 1]` | Fracción de la capacidad que la sub-ocupación puede tener sin penalidad. Default 0.20. | `LPConfig.tol_under`. |
+| `λ_over` | Peso de la sobre-ocupación en el objetivo. Default 10. | `LPConfig.lambda_over`. |
+| `λ_under` | Peso de la sub-ocupación en el objetivo. Default 1. | `LPConfig.lambda_under`. |
+| `λ_sede_pref` | Peso del término blando de preferencia de sede (R12). Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Default 5. | `LPConfig.lambda_sede_pref`. |
+| `λ_intersede` | Peso del término blando de intersede (variante blanda de R13, hoy no activa por default). Default 0. | `LPConfig.lambda_intersede`. |
+| `margen_min_intersede_minutos` | Umbral en minutos para considerar dos horarios contiguos "en riesgo" de traslado imposible. Default 30. Con 0 se desactiva R13. | `LPConfig.margen_min_intersede_minutos`. |
+| `forzar_misma_sede_por_comision ∈ {False, True}` | Toggle que activa R14 (todos los horarios de una comisión en la misma sede). | `LPConfig.forzar_misma_sede_por_comision`. |
+| `strict_r5 ∈ {False, True}` | Modo de R5. Con `True` (default) valida horas de teoría y de laboratorio y admite virtuales al modelo con marca `no_ocupa_aula`. Con `False` (legacy) sólo valida laboratorio y filtra virtuales. | `LPConfig.strict_r5`. |
+| `respetar_ediciones_manuales ∈ {False, True}` | Si `True`, los pins manuales se aplican como restricciones duras R11. Default `True`. | `LPConfig.respetar_ediciones_manuales`. |
+| `activar_alpha ∈ {False, True}` | Si `True`, se agregan las variables `α[k]` que redistribuyen inscriptos entre comisiones del mismo dictado. Default `False`. | `LPConfig.activar_alpha`. |
 
 ### 3.3 Variables de decisión
 
-| Variable | Tipo | Cuándo existe | Significado |
-|---|---|---|---|
-| `x[h, a]` | binaria | para cada `(h, a)` con `compat[h, a] = 1` | Vale 1 si al horario `h` le asignamos el aula `a`. |
-| `t[h]` | binaria | para cada `h` con `fija_lab(h) = None` | Vale 1 si el programa lineal decide que `h` es laboratorio, 0 si es teoría. Cuando `fija_lab(h)` viene fijado, `t[h]` es constante. |
-| `α[k]` | continua en `[0, 1]` | para cada `k ∈ K`, sólo si `activar_α = 1` | Coeficiente nuevo de la comisión `k`. |
-| `over[h]` | continua, `≥ 0` | para cada `h ∈ H` | Sobre-ocupación del horario respecto a la capacidad efectiva del aula asignada. |
-| `under[h]` | continua, `≥ 0` | para cada `h ∈ H` | Sub-ocupación. |
+| Variable | Dominio | Semántica |
+|---|---|---|
+| `x[h, a]` | `{0, 1}`, para cada `h ∈ H \ H_∅` y `a ∈ A` con `compat(h, a) = 1` | Toma valor 1 si el horario `h` se asigna al aula `a`. La compatibilidad `compat` se pre-computa aplicando R3 y R10 antes de instanciar las variables (así se reduce el tamaño del modelo). |
+| `t[h]` | `{0, 1}`, para cada `h ∈ H` con `tipo(h) = ⊥` | Toma valor 1 si `h` se resuelve como laboratorio, 0 si se resuelve como teoría. Sólo se instancia para horarios con tipo indefinido. Si `tipo(h) ≠ ⊥`, `t[h]` se fija por R6. |
+| `y[c, s]` | `{0, 1}`, para cada `c ∈ C` con más de un horario y `s ∈ S`, sólo si `forzar_misma_sede_por_comision=True` | Toma valor 1 si la comisión `c` cae en la sede `s`. Se usa para R14. |
+| `over[h]` | `ℝ_{≥0}`, para cada `h ∈ H \ H_∅` | Sobre-ocupación del horario `h`: unidades de inscriptos que exceden `cap(aula(h)) · (1 + tol_over)`. |
+| `under[h]` | `ℝ_{≥0}`, para cada `h ∈ H \ H_∅` | Sub-ocupación del horario `h`: unidades de asientos vacíos respecto al umbral `cap(aula(h)) · (1 − tol_under)`. |
+| `α[k]` | `ℝ ∈ [0, 1]`, para cada `k ∈ K` con `activar_alpha=True` | Fracción de inscriptos del dictado que va a la comisión `k`. |
 
 ### 3.4 Función objetivo
 
-> **Cómo leer las fórmulas que vienen abajo**. Conviene fijar la notación antes de seguir, porque las restricciones siguientes la usan intensivamente.
->
-> | Símbolo | Cómo se lee | Ejemplo |
-> |---|---|---|
-> | `Σ_a expr(a)` | "Suma de `expr(a)` para cada aula `a` del conjunto `A`" | `Σ_a x[h, a]` = `x[h, a₁] + x[h, a₂] + … + x[h, a_n]` |
-> | `Σ_{a ∈ A_t} expr(a)` | "Suma de `expr(a)` sólo para las aulas `a` que pertenecen al subconjunto `A_t` (aulas teóricas)" | si `A_t = {a₁, a₂}`: `x[h, a₁] + x[h, a₂]` |
-> | `Σ_{h ∈ S} expr(h)` | "Suma de `expr(h)` para cada horario `h` del grupo `S`" | si `S = {h₁, h₂, h₃}`: `x[h₁, a] + x[h₂, a] + x[h₃, a]` |
-> | `∀ h ∈ H` | "Para todo horario `h` del conjunto `H`" — la igualdad o desigualdad se replica una vez por cada `h` | una restricción por horario |
-> | `x[h, a]` | "La variable de decisión que vale 1 si al horario `h` le asignamos el aula `a`, y 0 si no" | binaria |
-> | `t[h]` | "La variable que vale 1 si el horario `h` es laboratorio, 0 si es teórica" | binaria |
-> | `dur[h]`, `cap[a]`, `insc[h]`, etc. | parámetros pre-computados, ver § 3.2 | reales |
+$$
+\min_{x, t, y, over, under, \alpha} \quad
+\lambda_{\text{over}} \sum_{h \in H \setminus H_\emptyset} \text{over}[h]
+\;+\;
+\lambda_{\text{under}} \sum_{h \in H \setminus H_\emptyset} \text{under}[h]
+\;+\;
+\lambda_{\text{sede\_pref}} \sum_{h \in H_{\text{BLANDO}}}
+\sum_{\substack{a \in A \\ \text{sede}(a) \neq \text{sede\_pref}(h)}}
+x[h, a]
+$$
 
-```
-min   λ_over · Σ_h over[h]   +   λ_under · Σ_h under[h]
-```
+donde `H_BLANDO = {h ∈ H \ H_∅ : sede_pref(h) ≠ ⊥}` son los horarios cuyo grupo corre en modo BLANDO con lista blanda no vacía.
 
-**Cómo se lee**: "Minimizar la suma ponderada de dos sumatorias: la suma sobre todos los horarios de la sobre-ocupación, multiplicada por su peso `λ_over`, más la suma sobre todos los horarios de la sub-ocupación, multiplicada por su peso `λ_under`". En criollo: penalizar lugares de menos (mucho) y lugares de más (poco).
+El término asimétrico entre `λ_over` y `λ_under` refleja que sobre-ocupación es un problema físico (los alumnos no entran al aula) mientras que sub-ocupación es un problema económico (aula grande desaprovechada). Los defaults `λ_over = 10 · λ_under` codifican esa jerarquía.
 
-Con los valores por defecto (`λ_over = 10`, `λ_under = 1`) la sobre-ocupación se castiga **diez veces más** que la sub-ocupación. Esa asimetría refleja una preferencia operativa concreta: es mucho peor que entren 80 alumnos a un aula de 60 (alguien queda sin lugar) que dejar 30 lugares vacíos en un aula de 80.
+El término de preferencia de sede sólo tiene efecto cuando el grupo del horario corre en modo BLANDO. En modo DURO no aparece porque la restricción R10 hace que sólo las sedes del set duro sean admisibles, y todas se consideran equivalentes al objetivo.
 
-### 3.5 Restricciones
+### 3.5 Salida del programa lineal
 
-#### R1 — Cada horario tiene exactamente un aula
+- **Asignación de aulas**: `x_assignments[h] = a` para cada `h ∈ H \ H_∅` (excluye virtuales).
+- **Resolución de tipo**: `tipo_resuelto[h] = teorica | laboratorio` para cada `h ∈ H` con `tipo(h) = ⊥`.
+- **Diagnóstico de sobre/sub-ocupación**: `over[h]`, `under[h]` para cada horario asignado.
+- **Redistribución de coeficientes** (opcional): `α[k]` para cada `k ∈ K`.
+- **Status**: `optimal`, `infeasible`, `timeout` o `error`. En caso de `infeasible`, se dispara el diagnóstico por relajación selectiva descripto en §8.
 
-```
-Σ_a x[h, a] = 1     ∀ h ∈ H
-```
+## 4. Restricciones
 
-**Cómo se lee**: "Para cada horario `h` del plan, la suma de `x[h, a]` sobre todas las aulas `a` debe ser exactamente 1". Como `x[h, a]` es una variable binaria que vale 1 cuando le asignamos el aula `a` a ese horario y 0 en caso contrario, sumarlas y exigir que dé 1 equivale a decir: "exactamente una de esas variables vale 1, y el resto valen 0". Es decir, **a cada horario le toca exactamente un aula**, ni dos ni cero.
+Cada restricción se identifica con un código (R1, R3, ..., R14, R13-camino). Se describen a continuación en orden de aplicación. Cada una lleva:
 
-#### R2 — Los horarios virtuales no consumen aula
+- **Motivación** en un párrafo.
+- **Formulación matemática** rigurosa.
+- **Detalles de implementación** (dónde vive en el código, cómo se puede relajar en el IIS).
 
-Se filtran del conjunto `H` antes de instanciar el modelo: simplemente no aparecen.
+### R1 — Asignación única
 
-#### R3 — Compatibilidad pre-computada
+**Motivación.** Cada horario presencial que participa del modelo tiene que recibir exactamente un aula. No se admite dejar un horario sin aula (eso sería infactibilidad) ni asignarle dos aulas (contradiría la estructura de la solución).
 
-Para cada par `(h, a)` el sistema calcula previamente, fuera del programa lineal, si esa combinación es admisible:
+**Formulación.**
 
-```
-compat[h, a] = 1   sii   alguno de:
-  (a)  fija_lab(h) = False  ∧  a ∈ A_t
-  (b)  fija_lab(h) = True   ∧  a ∈ A_lab(materia(h))
-  (c)  fija_lab(h) = None
-```
+$$
+\sum_{a \in A} x[h, a] = 1 \qquad \forall\, h \in H \setminus H_\emptyset
+$$
 
-**Cómo se lee**: "El par `(h, a)` es compatible (vale 1) si y sólo si se cumple alguna de estas tres condiciones: **(a)** el horario está fijado como teórica (`fija_lab(h) = False`) y el aula pertenece al conjunto de aulas teóricas; **(b)** el horario está fijado como laboratorio (`fija_lab(h) = True`) y el aula está en la lista de laboratorios compatibles con la materia de ese horario; **(c)** el tipo del horario no está determinado todavía". El símbolo `∧` significa "y" lógico; `sii` se lee "si y sólo si".
+Los horarios en `H_∅` (virtuales bajo R5 estricta) no reciben aula: se saltan de esta restricción.
 
-Cuando el tipo está sin determinar (caso c), la compatibilidad real la termina de aportar R6 más adelante (porque allí se vincula `t[h]` con el aula elegida). Las variables `x[h, a]` con `compat = 0` directamente no se crean — equivale a fijarlas en cero pero achica el modelo de manera dramática.
+**Implementación.** `build_model:820`. No se puede relajar en el IIS: es constitutiva del problema.
 
-#### R4 — No doble asignación en simultáneo
+### R3 — Compatibilidad tipo aula ↔ tipo clase
 
-Para cada aula y cada grupo de horarios que se dictan en simultáneo, a lo sumo uno usa esa aula:
+**Motivación.** Una clase teórica no puede darse en un aula de laboratorio y una clase de laboratorio no puede darse en un aula teórica común. Cuando la clase es de laboratorio, además, tiene que ser un laboratorio compatible con la materia (por instrumental, mesada de trabajo, etc.).
 
-```
-Σ_{h ∈ S} x[h, a] ≤ 1     ∀ a ∈ A,  ∀ S ∈ Sim
-```
+**Implementación.** R3 se aplica **antes** de instanciar las variables `x[h, a]`: se computa la matriz `compat(h, a)` y sólo se crean variables para pares con `compat(h, a) = 1`. Esto reduce dramáticamente el tamaño del modelo.
 
-**Cómo se lee**: "Para cada aula `a` y cada grupo de simultaneidad `S` (un conjunto de horarios que comparten algún instante), la suma de las variables `x[h, a]` sobre los horarios de ese grupo es a lo sumo 1". Es decir: si tres horarios se solapan en un instante y miramos un aula concreta, **como mucho uno de esos tres horarios** puede tener esa aula asignada (`x = 1`); los demás tienen que estar en otras aulas (`x = 0`). Notá que es "≤ 1" y no "= 1": ninguno podría usar esa aula, lo importante es que no se pisen.
+**Formulación (equivalente, si expresáramos R3 con variables completas).**
 
-**Qué es un grupo de simultaneidad**. Si tres horarios `h₁, h₂, h₃` están todos activos a las 18:30 de un mismo lunes (porque sus intervalos `[hora_inicio, hora_fin)` cubren ese instante), forman un grupo de simultaneidad. La restricción para un aula `a` dice: "de esos tres horarios, a lo sumo uno puede usar `a`". El conjunto `Sim` es la unión de todos esos grupos a lo largo de la semana.
+$$
+\begin{aligned}
+x[h, a] &= 0 \quad \text{si } \text{tipo}(h) = \text{teorica} \text{ y } \text{tipo}(a) \notin \{\text{teorica}, \text{anfiteatro}\} \\
+x[h, a] &= 0 \quad \text{si } \text{tipo}(h) = \text{laboratorio} \text{ y } a \notin A_{\text{lab}}(\text{materia}(h)) \\
+x[h, a] &= 0 \quad \text{si } \text{tipo}(h) = \bot \text{ y } a \notin A_{\text{teo}} \cup A_{\text{lab}}(\text{materia}(h))
+\end{aligned}
+$$
 
-**Cómo se computa `Sim`** (barrido de eventos por día):
+**Interacción con R6.** Cuando `tipo(h) = ⊥`, la restricción R6 obliga a que el tipo resuelto sea consistente con la aula asignada (ver R6). Esto significa que las clases sin tipo definido pueden ir a cualquier aula teórica o a cualquier laboratorio compatible con su materia; R6 fuerza la coherencia entre `t[h]` y `tipo(a)`.
 
-```
-para cada día de la semana:
-    eventos = lista ordenada de (hora_inicio, hora_fin) sobre los horarios de ese día
-    activos = ∅
-    para cada evento e en orden:
-        antes de procesar e:
-            si activos no está vacío y todavía no se emitió este conjunto:
-                emitir grupo S = activos (es maximal en este intervalo)
-        si e es un hora_inicio: activos.add(h)
-        si e es un hora_fin:    activos.remove(h)
-```
+### R4 — No doble asignación (grupos de simultaneidad)
 
-La justificación detallada de por qué se usa esta formulación (en lugar de la alternativa "una restricción por cada par solapado") está en § 4.5.
+**Motivación.** Dos horarios que se dictan a la misma hora del mismo día no pueden compartir aula. La formulación por grupos de simultaneidad maximales es preferible a la formulación por pares por dos motivos: genera menos restricciones (una por grupo × aula en lugar de una por par × aula) y tiene una relajación lineal más fuerte (ver §5.3).
 
-#### R5 — Coherencia entre teoría y laboratorio por comisión
+**Formulación.**
 
-Para cada comisión `k`, la suma de duraciones de sus horarios marcados como laboratorio tiene que coincidir con `hlab[materia(k)]` declarado en el plan de estudios:
+$$
+\sum_{h \in S} x[h, a] \le 1 \qquad \forall\, S \in Sim,\ \forall\, a \in A
+$$
 
-```
-Σ_{h ∈ k} dur[h] · t[h]       = hlab[materia(k)]    ∀ k ∈ K
-Σ_{h ∈ k} dur[h] · (1 − t[h]) = hteo[materia(k)]    ∀ k ∈ K
-```
+**Implementación.** `build_model:970`. Los horarios en `H_∅` se excluyen de `Sim` porque no compiten por aula. Se puede relajar en el IIS (permitir sobre-asignación aula por aula) para diagnosticar saturación.
 
-**Cómo se leen**:
+### R5 — Partición teoría/laboratorio por materia
 
-- **Primera línea** (laboratorio): "Para cada comisión `k`, la suma sobre los horarios de esa comisión del producto `dur[h] · t[h]` debe igualar las horas de laboratorio declaradas en la materia". Como `t[h]` vale 1 cuando el horario es laboratorio y 0 cuando es teórica, ese producto **'enciende' la duración sólo si el horario es laboratorio**. Sumar esos productos da las horas semanales totales de laboratorio de la comisión, y se exige que igualen lo que dice el plan de estudios.
-- **Segunda línea** (teoría): análogo, pero con `(1 − t[h])`, que vale 1 cuando el horario **no** es laboratorio (o sea, es teórica). La suma da las horas totales de teoría y debe igualar `hteo[materia(k)]`.
+**Motivación.** Muchas materias declaran cuántas horas semanales corresponden a teoría (`hteo(m)`) y cuántas a laboratorio (`hlab(m)`). El asignador debe respetar esa partición sumando las duraciones de los horarios asignados a cada tipo.
 
-Las dos ecuaciones son redundantes (una sale de la otra más la suma total `Σ dur = hteo + hlab`), pero conviene escribir ambas: hace la formulación más explícita y le da más estructura al resolutor para podar.
+**Formulación con `strict_r5 = True` (default).**
 
-#### R6 — Conjunto de aulas según el tipo decidido
+$$
+\begin{aligned}
+\sum_{h \in H(c),\, \text{tipo}(h)=\text{teorica}} \text{dur}(h)
++ \sum_{h \in H(c),\, \text{tipo}(h)=\bot} (1 - t[h]) \cdot \text{dur}(h)
+&= \text{hteo}(\text{materia}(c)) \\
+\sum_{h \in H(c),\, \text{tipo}(h)=\text{laboratorio}} \text{dur}(h)
++ \sum_{h \in H(c),\, \text{tipo}(h)=\bot} t[h] \cdot \text{dur}(h)
+&= \text{hlab}(\text{materia}(c))
+\end{aligned}
+$$
 
-Cuando `fija_lab(h) = None`, el aula elegida tiene que ser consistente con el valor de `t[h]`:
+por cada comisión `c ∈ C` cuya materia declara `hteo` o `hlab` positivos. Los horarios en `H_∅` **cuentan** para el balance aunque no ocupen aula: reflejan horas dictadas de manera virtual.
 
-```
-Σ_{a ∈ A_t}            x[h, a] ≥ 1 − t[h]   si  fija_lab(h) = None
-Σ_{a ∈ A_lab(materia(h))} x[h, a] ≥ t[h]    si  fija_lab(h) = None
-```
+**Formulación con `strict_r5 = False` (legacy).** Sólo valida el balance de laboratorio; los horarios en `H_∅` se filtran completamente. Se conserva por compatibilidad con planes cargados antes de la Fase 8.1; el default en la UI es `True`.
 
-**Cómo se leen**:
+**Implementación.** `build_model:850`. Se puede relajar en el IIS para diagnosticar desalineaciones entre las horas declaradas y las cargadas en el cronograma.
 
-- **Primera línea**: "La suma de `x[h, a]` sobre las aulas teóricas debe ser al menos `1 − t[h]`". Si el programa lineal decide `t[h] = 0` (el horario es teórico), el lado derecho es `1`, así que **alguna** de las aulas teóricas tiene que tener `x[h, a] = 1`. Si decide `t[h] = 1` (laboratorio), el lado derecho es `0` y la restricción no exige nada (queda inactiva).
-- **Segunda línea**: análogamente, "la suma de `x[h, a]` sobre las aulas que son laboratorios compatibles con la materia del horario debe ser al menos `t[h]`". Si `t[h] = 1`, alguna aula de ese conjunto tiene que estar elegida; si `t[h] = 0`, no se exige nada.
+### R6 — Consistencia tipo ↔ pool de aulas (cuando el tipo es indefinido)
 
-Junto con R1 (que dice "exactamente una aula"), esto garantiza: si `t[h] = 0`, el horario va a aula teórica; si `t[h] = 1`, va a un laboratorio compatible con su materia.
+**Motivación.** Los horarios con `tipo(h) = ⊥` tienen una variable `t[h]` que decide si son teoría o laboratorio. Esa decisión debe ser consistente con el tipo del aula asignada: si `t[h] = 0` (teoría), el aula tiene que ser teórica; si `t[h] = 1` (laboratorio), el aula tiene que ser laboratorio compatible.
 
-#### R7 — Sobre y sub-ocupación lineal
+**Formulación.**
 
-```
-over[h]  ≥ insc[h] − Σ_a x[h, a] · cap[a] · (1 + tol_over)        ∀ h ∈ H
-under[h] ≥ Σ_a x[h, a] · cap[a] · (1 − tol_under) − insc[h]       ∀ h ∈ H
-over[h], under[h] ≥ 0
-```
+$$
+\begin{aligned}
+\sum_{a \in A_{\text{teo}}} x[h, a] &= 1 - t[h] \\
+\sum_{a \in A_{\text{lab}}(\text{materia}(h))} x[h, a] &= t[h]
+\end{aligned}
+\qquad \forall\, h \in H \setminus H_\emptyset \text{ con } \text{tipo}(h) = \bot
+$$
 
-**Cómo se leen**: la expresión `Σ_a x[h, a] · cap[a]` es un truco lineal estándar: como exactamente una `x[h, a]` vale 1 (por R1), la suma colapsa a la **capacidad del aula efectivamente asignada al horario `h`**. La llamamos `cap_asignada(h)`. Con eso:
+**Implementación.** `build_model:920`. Se puede relajar en el IIS.
 
-- **Primera línea**: `over[h] ≥ insc[h] − cap_asignada(h) · (1 + tol_over)`. Es decir, "la sobre-ocupación es al menos la diferencia entre inscriptos esperados y la capacidad efectiva tolerada". Si los inscriptos no superan la capacidad tolerada, el lado derecho da negativo y la restricción se satisface trivialmente con `over[h] = 0` (porque también exigimos `over[h] ≥ 0`). Si la superan, `over[h]` queda forzado al exceso. Como en el objetivo se **minimiza** `over`, el programa lineal la deja siempre lo más chica posible.
-- **Segunda línea**: análogamente, "la sub-ocupación es al menos la diferencia entre la capacidad mínima tolerada y los inscriptos". `under[h]` mide cuánto se desperdicia respecto al umbral inferior `cap · (1 − tol_under)`.
+### R7 — Sobre-ocupación y sub-ocupación (definiciones lineales)
 
-No hay restricción dura "capacidad ≥ inscriptos": la sobre-ocupación se castiga con peso `λ_over` (es una **restricción blanda** linealizada). Si alguien quiere capacidad como restricción dura, basta con poner `λ_over` muy grande.
+**Motivación.** No es una restricción "clásica" sino la definición lineal de las variables `over[h]` y `under[h]` en función de la capacidad del aula asignada y de los inscriptos esperados. Aparece como restricción porque de otra manera las variables serían libres.
 
-#### R8 — Ventana operativa global (defensiva)
+**Formulación.**
 
-```
-hora_inicio(h) ≥ open_h   ∧   hora_fin(h) ≤ close_h     ∀ h ∈ H
-```
+$$
+\begin{aligned}
+\text{over}[h] &\ge \text{insc}[h] - (1 + \text{tol\_over}) \cdot \sum_{a \in A} \text{cap}(a) \cdot x[h, a] \\
+\text{under}[h] &\ge (1 - \text{tol\_under}) \cdot \sum_{a \in A} \text{cap}(a) \cdot x[h, a] - \text{insc}[h] \\
+\text{over}[h], \text{under}[h] &\ge 0
+\end{aligned}
+\qquad \forall\, h \in H \setminus H_\emptyset
+$$
 
-Esto se chequea **antes** de armar el programa lineal, no como restricción del modelo. Si algún horario cae fuera de la ventana operativa de la facultad (por ejemplo, a las 23:30 con cierre a las 23:00), el sistema aborta con un mensaje claro y el operador corrige el cronograma o amplía la ventana.
+Como el objetivo minimiza `over` y `under`, en la solución óptima ambas quedan al valor exacto del exceso o del hueco, según corresponda.
 
-#### R9 — Coeficientes de comisión (sólo si la opción está prendida)
+**Implementación.** `build_model:1000`.
 
-```
-Σ_{k ∈ d} α[k] = 1                          ∀ d ∈ D
-α_min ≤ α[k] ≤ α_max                         ∀ k ∈ K
-insc[h] = total_esp[materia(k)] · α[k]      ∀ h con comision(h) = k
-```
+### R9 — Redistribución de coeficientes (opcional, off por default)
 
-**Cómo se leen**:
+**Motivación.** Cuando un dictado tiene varias comisiones, la matrícula esperada puede distribuirse desigualmente. El toggle `activar_alpha` permite al asignador redistribuir esos pesos si eso mejora la sobre/sub-ocupación agregada. Con `α` desactivado, cada comisión conserva su `coef_asignacion` original.
 
-- **Primera línea**: "Para cada dictado `d` (un dictado agrupa todas las comisiones de una misma materia en el cuatrimestre), la suma de los coeficientes `α[k]` sobre las comisiones de ese dictado debe ser exactamente 1". En criollo: los porcentajes de inscriptos repartidos entre comisiones de la misma materia tienen que sumar el 100%.
-- **Segunda línea**: cota inferior y superior para cada `α[k]`. Por defecto `α_min = 0` y `α_max = 1`, así que cada coeficiente queda en el intervalo `[0, 1]`.
-- **Tercera línea**: "Para cada horario `h` cuya comisión es `k`, los inscriptos esperados se calculan como el total estimado de la materia multiplicado por el coeficiente de la comisión". Acá `insc[h]` deja de ser un parámetro pre-calculado y pasa a ser una **expresión lineal** que depende de las variables `α[k]`. Por eso R7 (que usa `insc[h]`) se reescribe por sustitución cuando la opción está prendida.
+**Formulación con `activar_alpha = True`.** Para cada dictado `k` con `|comisiones(k)| > 1`:
 
-Cuando la opción está apagada, `insc[h]` es un parámetro fijo. Cuando está prendida, pasa a ser una expresión lineal en `α[k]`, y las restricciones R7 se reescriben por sustitución. El producto `α[k] · cap[a]` no aparece (R7 multiplica capacidad por `x[h, a]`, no por `α[k]`), así que la formulación se mantiene lineal.
+$$
+\sum_{c \in \text{comisiones}(k)} \alpha[c] = 1 \qquad
+\text{insc}[h] = \text{total\_esp}(\text{materia}(k)) \cdot \alpha[\text{comisión}(h)] \quad \forall h \in H(c)
+$$
 
-#### R10 — Restricción de sede por carrera y materia
+Con `activar_alpha = False`, `insc[h]` es constante y `α` no aparece.
 
-Cada materia tiene un conjunto de sedes admisibles `Sed(m) ⊆ Sedes` que el LP respeta:
+**Implementación.** `build_model:1050`.
 
-```
-x[h, a] = 0     ∀ h ∈ H,  ∀ a ∈ A   tal que
-                aula_sede(a) ∉ Sed(materia(h))   y   a ∉ A_lab(materia(h))
-```
+### R10 — Sedes admisibles por horario (vía grupo de materias)
 
-**Cómo se lee**: "Para cada horario `h` y cada aula `a`, si la sede del aula no pertenece al conjunto de sedes admisibles de la materia y el aula tampoco es un laboratorio compatible con esa materia, entonces la asignación se prohíbe (`x[h, a] = 0`)".
+**Motivación.** No todas las materias pueden dictarse en todas las sedes. La restricción se modela por-grupo: cada `GrupoMateriaDB` declara dos configuraciones simultáneas (set duro y lista blanda ordenada), y en cada corrida el usuario elige el modo por-grupo (`modo(g) ∈ {DURO, BLANDO}`). La restricción dura R10 sólo se activa en modo DURO.
 
-**Cómo se calcula `Sed(m)`**:
+**Formulación.**
 
-- **Materia común** (pertenece a ≥2 carreras): `Sed(m) = {sede_default_comunes}`. Si no hay sede default configurada, `Sed(m) = Sedes` (sin restricción).
-- **Materia exclusiva** (pertenece a 1 carrera): `Sed(m) = sedes habilitadas para esa carrera` (vía la tabla M:N carrera↔sede). Si la carrera no tiene sedes configuradas, `Sed(m) = Sedes` (sin restricción).
-- **Excepción de laboratorio**: si `a ∈ A_lab(m)`, la restricción de sede no aplica (la compatibilidad de laboratorio prevalece).
+$$
+x[h, a] = 0 \qquad \forall\, h \in H \setminus H_\emptyset,\ \forall\, a \in A
+$$
 
-**Implementación**: en lugar de generar restricciones explícitas en el LP, R10 se aplica como **filtro adicional al cómputo de `compat[h, a]`** (las variables `x[h, a]` con sede inadmisible directamente no se crean). Equivale matemáticamente a la formulación `x[h, a] = 0` pero achica el modelo dramáticamente.
+cuando se cumple lo siguiente:
 
-### 3.6 Salida del programa lineal
+- `modo(grupo(materia(h))) = DURO`,
+- `S_D(grupo(materia(h)))` no vacío,
+- `sede(a) ∉ S_D(grupo(materia(h)))`,
+- **excepción de laboratorio**: `a ∉ A_lab(materia(h))`.
 
-Una vez resuelto, el programa lineal devuelve, para cada horario:
+Es decir, se prohíbe la asignación al aula `a` para el horario `h` a menos que la aula sea un laboratorio compatible con la materia (donde la compatibilidad física prevalece sobre la preferencia curricular).
 
-- el aula asignada (donde `x[h, a]* = 1`);
-- el tipo decidido cuando antes no estaba fijado (`t[h]*`);
-- los coeficientes `α[k]*` reasignados, si la opción estaba prendida y el operador acepta persistirlos.
+**Implementación.** Se aplica **antes** de instanciar las variables: `build_inputs:475` recorre cada horario y anula `compat[(h, a)]` para las aulas prohibidas. En modo BLANDO no se aplica R10 y todas las sedes son admisibles; el sesgo hacia la sede preferida vive en R12.
 
-Esa decisión queda como **patrón semanal**: todas las clases puntuales del cuatrimestre la heredan al generarse o cuando el operador re-corre la generación de clases. Las excepciones puntuales por fecha quedan fuera del alcance del programa lineal.
+**Fallback permisivo.** Si `S_D(g) = ∅` para un grupo en modo DURO, R10 no filtra (todas las sedes son admisibles). Se usa para el grupo "Sin clasificar" durante la transición inicial y se emite un warning en la UI.
 
-## 4. Casos particulares de la función objetivo
+**IIS**. R10 se relaja reconstruyendo `build_inputs` con el flag `relax_r10=True`, que salta el filtro de sede completamente.
 
-| Configuración | Comportamiento |
-|---|---|
-| `λ_over` muy grande, `λ_under = 0` | Capacidad como restricción dura. Si no hay solución factible, infactibilidad. |
-| `λ_over = λ_under`, `tol_over = tol_under = 0` | Penalización simétrica: `\|capacidad − inscriptos\|`. |
-| `λ_over = 10`, `λ_under = 1`, `tol_under = 0.2` (defecto) | Asimétrico: castiga fuerte sobre-ocupación, tolera hasta 20% de sub-ocupación gratis. |
-| `λ_under = 0`, `tol_under = 1.0` | Sólo importa no sobre-asignar; cualquier sub-utilización es gratis. |
+### R11 — Pins de ediciones manuales
 
-## 4.5 Por qué la formulación por grupos de simultaneidad es mejor que la formulación por pares
+**Motivación.** Cuando el operador fija manualmente el aula de un horario y marca la asignación como manual (`HorarioDB.aula_asignada_manualmente = True`), el asignador debe respetar esa elección. Es una restricción dura sólo cuando `respetar_ediciones_manuales = True`.
 
-Esta sección desarrolla la elección de cómo escribir R4. Es una decisión de diseño no obvia y con impacto directo en el tiempo del resolutor, así que vale la pena justificarla en detalle.
+**Formulación.**
 
-### 4.5.1 Las dos formulaciones equivalentes
+$$
+x[h, a] = 1 \qquad \forall\, h \in H \setminus H_\emptyset : \text{pin}(h) = a,\ \text{respetar\_ediciones\_manuales}
+$$
 
-**Formulación por pares** (la primera que uno tiende a escribir): para cada par `(h₁, h₂)` de horarios que se solapan, una restricción por aula:
+Si `respetar_ediciones_manuales = False`, R11 no se activa y el LP reasigna libremente.
 
-```
-x[h₁, a] + x[h₂, a] ≤ 1     ∀ a ∈ A,  ∀ (h₁, h₂) ∈ Conf
-```
+**Implementación.** `build_model:830`.
 
-**Formulación por grupos de simultaneidad** (la elegida): para cada grupo maximal `S` de horarios que están todos activos en algún instante común, una sola restricción por aula:
+### R12 — Preferencia blanda de sede (grupos BLANDO)
 
-```
-Σ_{h ∈ S} x[h, a] ≤ 1     ∀ a ∈ A,  ∀ S ∈ Sim
-```
+**Motivación.** Cuando un grupo corre en modo BLANDO, todas las sedes son admisibles (R10 no aplica) pero la primera de la lista blanda es la preferida. El LP asigna cero costo si el aula elegida está en esa sede y suma `λ_sede_pref` por cada horario que caiga en otra sede admisible.
 
-Sobre variables enteras `x ∈ {0, 1}` ambas describen exactamente el mismo conjunto factible. La diferencia se ve en otro lado.
+**Formulación.** Aparece en el objetivo (ver §3.4), no como restricción. En términos de variables:
 
-### 4.5.2 Diferencia conceptual: cantidad de restricciones
+$$
+\text{costo\_sede}[h] = \sum_{a \in A : \text{sede}(a) \neq \text{sede\_pref}(h)} x[h, a]
+$$
 
-Sea `S` un grupo de tamaño `n`. La formulación por pares genera `n(n−1)/2` restricciones para ese grupo (una por par). La formulación por grupos genera **una sola**.
+Se acumula al objetivo multiplicado por `λ_sede_pref`.
 
-En horarios universitarios reales los grupos en franjas populares (lunes 18 a 20, miércoles 8 a 10) pueden tener fácilmente entre 10 y 30 horarios simultáneos. Con `n = 20`, la formulación por pares produce 190 restricciones por aula contra 1 de la formulación por grupos. Multiplicado por la cantidad de aulas y de grupos a lo largo de la semana, la diferencia en tamaño del modelo es sustancial.
+**Implementación.** `build_model:780`.
 
-### 4.5.3 Diferencia clave: fuerza de la relajación lineal
+### R13 — Continuidad de sede en pares en riesgo
 
-Este es el punto central. Los resolutores de programación entera mixta (CBC, Gurobi, CPLEX) resuelven internamente una sucesión de **relajaciones lineales**, donde las variables `x[h, a] ∈ {0, 1}` se reemplazan por `x[h, a] ∈ [0, 1]`. Cuanto más ajustada sea la cota inferior que devuelve la relajación, más rápido converge la **ramificación y acotación**, porque hay menos puntos fraccionarios que descartar.
+**Motivación.** Cuando dos horarios contiguos el mismo día tienen un gap menor al margen mínimo intersede, no dan tiempo para un traslado entre sedes. Se detectan dos tipos de riesgo:
 
-Una formulación es **más fuerte** que otra cuando su poliedro de soluciones fraccionarias está estrictamente contenido en el de la otra. Las soluciones enteras coinciden, pero la formulación más fuerte recorta puntos fraccionarios que la otra admite.
+- **Traslado del docente**: pares de horarios de la **misma comisión** (el mismo profesor debe estar en los dos).
+- **Traslado del alumno**: pares de horarios de **distintas materias** del mismo grupo curricular `(carrera, año, cuatri)` (un alumno inscripto en las dos materias tiene que hacer el traslado).
 
-**Ejemplo con tres horarios simultáneos**. Sean `h₁, h₂, h₃` activos al mismo instante (forman un grupo de tamaño 3) y consideremos una sola aula `a`:
+R13 impone que, para cada par en riesgo, los dos horarios caigan en la misma sede o al menos en sedes compatibles.
 
-- **Por pares**: tres restricciones, `x[h₁,a] + x[h₂,a] ≤ 1`, `x[h₁,a] + x[h₃,a] ≤ 1`, `x[h₂,a] + x[h₃,a] ≤ 1`. La solución fraccionaria `x[h₁,a] = x[h₂,a] = x[h₃,a] = 1/2` satisface las tres (cada par suma 1) y es factible para la relajación.
-- **Por grupos**: una sola restricción, `x[h₁,a] + x[h₂,a] + x[h₃,a] ≤ 1`. Esa misma solución suma `3/2 > 1` y queda **excluida** de la relajación.
+**Formulación.** Para cada par `(h1, h2) ∈ P_R13` y cada par de sedes distintas `(s1, s2) ∈ S²` con `s1 ≠ s2`:
 
-En el caso general con `n` horarios en un grupo, la formulación por pares admite la solución fraccionaria `x[h, a] = 1/(n−1)` para cada `h` (cada par suma `2/(n−1) ≤ 1`), mientras que la por grupos la rechaza apenas `n ≥ 2`. La brecha entre la relajación y el óptimo entero crece con `n`, y la formulación por grupos la cierra de un saque.
+$$
+\sum_{a \in A : \text{sede}(a) = s_1} x[h_1, a]
++
+\sum_{a \in A : \text{sede}(a) = s_2} x[h_2, a]
+\le 1
+$$
 
-### 4.5.4 Conexión con la teoría
+Dado que R1 fuerza `Σ_a x[h, a] = 1` para todo horario, la restricción equivale a "si `h1` cae en `s1`, entonces `h2` no puede caer en `s2`".
 
-Las restricciones del tipo "a lo sumo una de un conjunto de variables binarias vale 1" se llaman **restricciones de empaquetamiento de conjunto** (en la literatura, *set packing*). Cuando el conjunto corresponde a un grupo maximal de simultáneos, la desigualdad es una **faceta** del poliedro entero asociado (Nemhauser & Wolsey, *Integer and Combinatorial Optimization*, capítulo III.6, "Polyhedra of the Set Packing Problem"). Las facetas son las desigualdades más fuertes posibles: no se las puede ajustar más sin recortar soluciones enteras válidas.
+**Detección de pares (`compute_pares_intersede_riesgo`).** Toma como entrada la lista de horarios, el mapa `comision(h)` y el mapa opcional `grupos_curriculares(h)` (conjuntos `(carrera, año, cuatri)` en los que aparece la materia del horario). Devuelve la lista de pares `(h1, h2, gap)` con `0 ≤ gap < margen_min_intersede_minutos` y `mismo_dia(h1, h2)`, agrupados en:
 
-Las desigualdades por pares, en cambio, son **dominadas** por las desigualdades por grupos: sumando las `n(n−1)/2` desigualdades por pares se obtiene `(n−1) · Σ x_h ≤ n(n−1)/2`, equivalente a `Σ x_h ≤ n/2`, estrictamente más débil que `Σ x_h ≤ 1` para `n ≥ 3`.
+- Pares de la misma comisión (siempre).
+- Pares de materias distintas del mismo grupo curricular (sólo si se provee el mapping).
 
-Esta es la razón teórica por la cual los modelos de planificación con conflictos sobre un recurso compartido (aulas, máquinas, frecuencias) usan formulaciones por grupos siempre que sea razonable enumerarlos.
+**Implementación.** `build_model:995`. Se puede relajar en el IIS. Se desactiva completamente si `margen_min_intersede_minutos = 0`.
 
-### 4.5.5 Costo de obtener los grupos
+### R14 — Forzar misma sede por comisión (opcional)
 
-La objeción natural: "obtener grupos maximales en un grafo arbitrario es **NP-difícil**" (clase de problemas para los cuales no se conoce un algoritmo eficiente; informalmente, "muy difíciles de resolver en general"). Es cierto en general, pero acá el grafo es **de intervalos** (cada horario es un intervalo en una recta de tiempo por día), y los grafos de intervalos tienen estructura especial: los grupos maximales se obtienen en tiempo lineal con un barrido de eventos. Cada vez que se abre un nuevo intervalo, los activos en ese momento forman un grupo maximal candidato; cada vez que se cierra, se reevalúa.
+**Motivación.** Cuando el toggle `forzar_misma_sede_por_comision` está activo, todos los horarios de una misma comisión deben caer en la misma sede. Refleja que el docente no cambia de sede a mitad de semana y que fragmentar una comisión entre sedes es operativamente indeseable, aunque sea técnicamente posible.
 
-El costo total: `O(N log N)` por día (dominado por el ordenamiento de eventos), donde `N` es la cantidad de horarios de ese día. Para una facultad típica con decenas de horarios por día, son milisegundos.
+**Formulación.** Se introducen variables auxiliares `y[c, s] ∈ {0, 1}` para cada comisión `c` con más de un horario y cada sede `s ∈ S`. Las restricciones son:
 
-### 4.5.6 Resumen del beneficio
+$$
+\begin{aligned}
+\sum_{s \in S} y[c, s] &= 1 \\
+x[h, a] &\le y[c, \text{sede}(a)] \qquad \forall\, h \in H(c),\ \forall\, a \in A \text{ con } (h, a) \in x
+\end{aligned}
+$$
 
-| Aspecto | Por pares | Por grupos de simultaneidad |
-|---|---|---|
-| Restricciones para un grupo de `n` | `n(n−1)/2` por aula | `1` por aula |
-| Soluciones fraccionarias `x = 1/(n−1)` | admitidas | rechazadas para `n ≥ 2` |
-| Cota inferior de la relajación | más floja | más ajustada |
-| Ramificación del resolutor | más costosa | más liviana |
-| Estatus teórico | desigualdades dominadas | facetas del poliedro de empaquetamiento |
-| Costo de cómputo previo | trivial (enumerar pares) | `O(N log N)` por día (barrido) |
-| Costo durante la corrida del programa lineal | mayor | menor |
+La primera obliga a que cada comisión con más de un horario caiga en exactamente una sede. La segunda es el vínculo entre `x` y `y`: si `h` se asigna al aula `a` en sede `s`, entonces `y[c, s] = 1`.
 
-La conclusión: la formulación por grupos no es una optimización menor, es la formulación canónica del problema. Para una defensa académica el contraste entre ambas formulaciones ilustra la diferencia entre **modelar correctamente** (la formulación por pares lo hace) y **modelar para que el resolutor pueda aprovecharlo** (la formulación por grupos).
+**Implementación.** `build_model:1070`. Sólo se activa cuando el toggle está prendido. Se puede relajar en el IIS.
 
-## 4.6 El programa lineal en limpio
+### R13-camino — Chequeo estructural de camino de cursada
 
-### 4.6.1 Notación de tamaños
+R13-camino no es una restricción del modelo LP: es un **chequeo pre-solve** que se ejecuta antes de armar el modelo y aborta la corrida si detecta que no hay solución posible desde el punto de vista de un alumno. Se describe en detalle en §7.5. Se menciona acá para la numeración canónica de restricciones.
 
-| Símbolo | Significado |
-|---|---|
-| `\|H\|` | cantidad de horarios |
-| `\|A\|` | cantidad de aulas |
-| `\|K\|` | cantidad de comisiones |
-| `\|D\|` | cantidad de dictados |
-| `\|Sim\|` | cantidad de grupos de simultaneidad maximales |
-| `\|H_∅\|` | cantidad de horarios con `fija_lab(h) = None` |
-| `\|compat\|` | cantidad total de pares `(h, a)` con `compat[h, a] = 1` |
+## 5. Semántica de sedes y grupos de materias
 
-### 4.6.2 Variables del modelo
+### 5.1 Modelo de grupos
 
-| Variable | Tipo | Cantidad |
-|---|---|---|
-| `x[h, a]` | binaria | `\|compat\|` |
-| `t[h]` | binaria | `\|H_∅\|` |
-| `α[k]` | continua en `[0, 1]` | `\|K\|` (sólo si la opción de redistribución está activa) |
-| `over[h]` | continua, `≥ 0` | `\|H\|` |
-| `under[h]` | continua, `≥ 0` | `\|H\|` |
+Cada `GrupoMateriaDB` declara **dos configuraciones simultáneas** de sedes:
 
-**Total con la opción de redistribución apagada**: `\|compat\| + \|H_∅\| + 2·\|H\|` variables, de las cuales `\|compat\| + \|H_∅\|` son binarias.
+- **Set duro** (`S_D(g) ⊆ S`): sedes admisibles cuando el grupo corre en modo DURO.
+- **Lista blanda ordenada** (`S_B(g)`): lista de sedes preferidas cuando el grupo corre en modo BLANDO. El orden es semántico: la primera es la preferida (paga cero al objetivo); el resto son alternativas con costo `λ_sede_pref` por horario que caiga ahí.
 
-### 4.6.3 Restricciones (vista compacta con conteo)
+Ambas configuraciones se declaran en la UI del editor de grupos y se persisten en `GrupoMateriaSedeDB` con `tipo ∈ {DURO, BLANDO}`. Una misma sede puede aparecer con ambos tipos: son independientes.
 
-| ID | Forma | Cantidad | Para qué sirve |
+### 5.2 Resolución de sedes admisibles por horario
+
+Dado un horario `h`, la resolución de sedes admisibles procede así:
+
+1. Obtener `g = grupo(materia(h))` (partición estricta).
+2. Obtener `modo(g)` desde `LPConfig.modos_por_grupo`. Si no aparece, default DURO.
+3. Si `modo(g) = DURO`:
+   - Si `S_D(g) ≠ ∅`: `sedes_adm(h) = S_D(g)`, sede preferida `⊥`.
+   - Si `S_D(g) = ∅`: `sedes_adm(h) = S` (fallback permisivo), sede preferida `⊥`.
+4. Si `modo(g) = BLANDO`:
+   - `sedes_adm(h) = S` (todas admisibles, no aplica R10).
+   - Si `S_B(g) ≠ ∅`: sede preferida `= primera de S_B(g)`.
+   - Si `S_B(g) = ∅`: sede preferida `⊥` (no aplica R12).
+
+**Excepción de laboratorio compatible.** Si `a ∈ A_lab(materia(h))`, entonces `a` es admisible para `h` aunque `sede(a) ∉ sedes_adm(h)`. Refleja que la compatibilidad física del laboratorio es más restrictiva que la preferencia curricular.
+
+Esta resolución la implementa `resolver_config_sedes_por_materia` en `grupo_materia_service.py` y la consume `build_inputs` para armar la matriz `compat`.
+
+### 5.3 Grupos de simultaneidad — motivación de la formulación
+
+R4 se formula por grupos de simultaneidad maximales y no por pares de horarios. Las dos formulaciones son equivalentes en cuanto al conjunto factible, pero difieren en dos aspectos importantes:
+
+- **Cantidad de restricciones**. Un grupo de simultaneidad con `n` horarios genera **una sola** restricción R4 por aula (`Σ_{h ∈ S} x[h, a] ≤ 1`), mientras que la formulación por pares genera `n(n−1)/2` restricciones por aula (una por cada par). Para franjas populares con `n = 20`, la diferencia es de 1 vs 190 restricciones por aula.
+- **Fuerza de la relajación lineal**. La restricción por grupo tiene una relajación lineal más ajustada que las restricciones por pares equivalentes. En la práctica esto se traduce en menos nodos explorados durante el *branch and bound* y tiempos de resolución menores.
+
+La construcción de `Sim` (`compute_simultaneidad_groups`) recorre la grilla semanal detectando maximalidad: en cada instante activo se registra qué horarios están corriendo, y se emite un grupo cuando el conjunto activo cambia (algún horario terminó o algún horario nuevo comenzó).
+
+## 6. Función objetivo — resumen de parámetros
+
+La función objetivo agrega tres términos con pesos distintos:
+
+| Término | Parámetro | Default | Cuándo aparece |
 |---|---|---|---|
-| R1 | `Σ_a x[h, a] = 1` para cada `h` | `\|H\|` | Cada horario tiene un aula |
-| R4 | `Σ_{h ∈ S} x[h, a] ≤ 1` para cada `a, S` | `\|A\| · \|Sim\|` | Un aula no recibe dos horarios simultáneos |
-| R5a | `Σ_{h ∈ k} dur[h] · t[h] = hlab[materia(k)]` | `\|K\|` | Suma de horas de laboratorio por comisión |
-| R5b | `Σ_{h ∈ k} dur[h] · (1 − t[h]) = hteo[materia(k)]` | `\|K\|` | Análogo para teoría |
-| R6a | `Σ_{a ∈ A_t} x[h, a] ≥ 1 − t[h]` para cada `h` con tipo libre | `\|H_∅\|` | Si `t[h] = 0`, el aula es teórica |
-| R6b | `Σ_{a ∈ A_lab(materia(h))} x[h, a] ≥ t[h]` para cada `h` con tipo libre | `\|H_∅\|` | Si `t[h] = 1`, el aula es laboratorio compatible |
-| R7a | `over[h] ≥ insc[h] − Σ_a x[h,a] · cap[a] · (1 + tol_over)` | `\|H\|` | Lineariza la sobre-ocupación |
-| R7b | `under[h] ≥ Σ_a x[h,a] · cap[a] · (1 − tol_under) − insc[h]` | `\|H\|` | Lineariza la sub-ocupación |
-| R9a | `Σ_{k ∈ d} α[k] = 1` (sólo si la opción está activa) | `\|D\|` o 0 | Suma de coeficientes por dictado |
-| R10 | `x[h, a] = 0` cuando `aula_sede(a) ∉ Sed(materia(h))` y `a ∉ A_lab(materia(h))` | 0 (filtro pre-LP, no genera filas) | Materias exclusivas sólo en sedes de su carrera; comunes sólo en sede default |
+| Sobre-ocupación | `λ_over` | 10 | Siempre. |
+| Sub-ocupación | `λ_under` | 1 | Siempre. |
+| Preferencia de sede | `λ_sede_pref` | 5 | Sólo para horarios cuyo grupo corre en modo BLANDO y tiene sede preferida definida. |
 
-**Total** (opción de redistribución apagada): `\|H\| + \|A\| · \|Sim\| + 2·\|K\| + 2·\|H_∅\| + 2·\|H\|`. El término dominante es `\|A\| · \|Sim\|`.
+La asimetría `λ_over = 10 · λ_under` codifica que sobre-ocupación es más grave que sub-ocupación. La razón operativa es que sobre-ocupación es un problema físico (alumnos no entran al aula) mientras que sub-ocupación es un problema económico (aula desaprovechada).
 
-### 4.6.4 El programa lineal en una sola vista
+El término blando de intersede (`λ_intersede`) está cableado en el código pero no se activa por default: con `λ_intersede = 0` no aparece en el objetivo. Se dejó como preparación para una posible variante blanda de R13.
 
-```
-Variables:
-    x[h, a] ∈ {0, 1}        ∀ (h, a) con compat[h, a] = 1
-    t[h]    ∈ {0, 1}        ∀ h ∈ H con fija_lab(h) = None
-    α[k]    ∈ [0, 1]        ∀ k ∈ K          (si redistribución activa)
-    over[h]  ≥ 0             ∀ h ∈ H
-    under[h] ≥ 0             ∀ h ∈ H
+## 7. Chequeo estructural pre-solve
 
-Objetivo:
-    minimizar  λ_over · Σ_h over[h]  +  λ_under · Σ_h under[h]
+Antes de armar el modelo LP, se ejecuta un conjunto de chequeos que detectan situaciones que garantizan infactibilidad. Si alguno detecta un problema, la corrida aborta y reporta el bloqueo sin gastar tiempo del resolutor. La UI muestra el resultado bajo el título "Chequeo de factibilidad estructural".
 
-Sujeto a:
-    R1   Σ_a x[h, a] = 1                                          ∀ h ∈ H
-    R4   Σ_{h ∈ S} x[h, a] ≤ 1                                     ∀ a ∈ A, ∀ S ∈ Sim
-    R5a  Σ_{h ∈ k} dur[h] · t[h]       = hlab[materia(k)]          ∀ k ∈ K
-    R5b  Σ_{h ∈ k} dur[h] · (1 − t[h]) = hteo[materia(k)]          ∀ k ∈ K
-    R6a  Σ_{a ∈ A_t} x[h, a]            ≥ 1 − t[h]                 ∀ h con fija_lab(h) = None
-    R6b  Σ_{a ∈ A_lab(materia(h))} x[h, a] ≥ t[h]                  ∀ h con fija_lab(h) = None
-    R7a  over[h]  ≥ insc[h] − Σ_a x[h,a] · cap[a] · (1 + tol_over) ∀ h ∈ H
-    R7b  under[h] ≥ Σ_a x[h,a] · cap[a] · (1 − tol_under) − insc[h]∀ h ∈ H
-    R9   Σ_{k ∈ d} α[k] = 1   y   insc[h] = total_esp[materia(k)] · α[k]   (si redistribución activa)
-    R10  x[h, a] = 0   ∀ (h, a)   con   aula_sede(a) ∉ Sed(materia(h))   y   a ∉ A_lab(materia(h))
+Los chequeos se implementan en `factibilidad_service.py` y son los siguientes.
 
-Pre-condiciones (verificadas antes de armar el programa lineal):
-    - factibilidad de partición teoría/laboratorio por comisión (suma de subconjunto)
-    - hora_inicio(h) ≥ open_h ∧ hora_fin(h) ≤ close_h               ∀ h ∈ H   (R8)
-```
+### 7.1 R1 — Horarios sin aula compatible
 
-## 5. Ejemplo en miniatura
+Para cada horario `h ∈ H \ H_∅`, verifica que exista al menos un aula `a` con `compat(h, a) = 1`. Si no, el horario es infactible por sí mismo: el LP no tiene dónde asignarlo. El chequeo distingue dos causas:
 
-> Esta sección desarrolla el programa lineal completo sobre un caso pequeño como uno lo escribiría en papel o en LINDO. Sirve para concretar el modelo y mostrar cómo se traducen las restricciones generales a un problema chico.
+- **R1+R3 clásica**: sin `compat_override`, no hay aula compatible por tipo o por lab.
+- **R10**: sin filtro de sede sí habría aula compatible, pero al aplicar R10 el conjunto queda vacío.
 
-### 5.1 Instancia
+### 7.2 Saturación por tipo dentro de una franja
 
-Imaginá una facultad con **un solo día** (digamos lunes) y los siguientes datos.
+Para cada grupo de simultaneidad `S ∈ Sim`, cuenta cuántos horarios de `S` necesitan **estrictamente** un aula teórica y cuántos aulas de laboratorio de una materia específica. Si en alguna franja la demanda de un tipo supera la oferta, la infactibilidad es estructural.
 
-**Horarios** (`H`):
+Este chequeo es una **refinación** del *pigeonhole* clásico: no cuenta contra la unión total de aulas de la franja sino contra los pools disjuntos por tipo. Detecta casos como "en la franja del lunes 18 hs hay 5 clases de laboratorio de Química pero sólo 3 laboratorios de Química", que la cota global de pigeonhole no ve.
 
-| Horario | Comisión | Materia | Día | De | Hasta | Tipo fijado | Inscriptos esperados |
-|---|---|---|---|---|---|---|---|
-| h₁ | A1 | Análisis | Lun | 14:00 | 16:00 | teórico | 80 |
-| h₂ | B1 | Programación | Lun | 14:00 | 16:00 | teórico | 30 |
-| h₃ | C1 | Química | Lun | 15:00 | 17:00 | laboratorio | 25 |
-| h₄ | A1 | Análisis | Lun | 16:00 | 18:00 | sin determinar | 80 |
+### 7.3 Test de Hall (apareamiento bipartito)
 
-Todos los horarios son de la única comisión por materia. La materia "Análisis" declara `hteo = 4`, `hlab = 0`. Como `h₁` ya está fijado como teórico (2 horas), el programa lineal tiene que decidir el tipo de `h₄` (las otras 2 horas) cumpliendo R5: la suma de horas teóricas de A1 tiene que ser 4 y de laboratorio 0, por lo tanto `t[h₄] = 0` (teórica). Es decir, en este ejemplo `h₄` queda forzado a teórica por R5: el tipo se decide indirectamente.
+Para cada grupo de simultaneidad `S ∈ Sim`, construye el grafo bipartito `(S, A)` con arista `(h, a)` si `compat(h, a) = 1` y verifica que exista un apareamiento perfecto que asigne un aula distinta a cada horario de `S`. Por el teorema de Hall, existe apareamiento perfecto si y sólo si para todo subconjunto `T ⊆ S`, el conjunto de vecinos `N(T)` cumple `|N(T)| ≥ |T|`.
 
-**Aulas** (`A`):
+En la práctica:
 
-| Aula | Tipo | Capacidad |
-|---|---|---|
-| a₁ | teórica | 100 |
-| a₂ | teórica | 40 |
-| a₃ | laboratorio (compatible con Química) | 30 |
+- Para `|S| ≤ 8` se enumera exactamente cada subconjunto y se reporta el testigo Hall-violador más chico.
+- Para `|S| > 8` se corre un matching bipartito con búsqueda de caminos aumentantes; si el matching máximo es `< |S|`, se reporta el lado izquierdo no matcheado.
 
-**Parámetros del objetivo**: `λ_over = 10`, `λ_under = 1`, `tol_over = 0`, `tol_under = 0.20`.
+Hall es una condición necesaria y suficiente para la existencia de una asignación válida en cada franja: es la cota más fuerte del chequeo estructural.
 
-### 5.2 Compatibilidades
+### 7.4 Partición teoría/laboratorio infactible
 
-Aplicando R3 horario por horario:
+Para cada comisión `c ∈ C` cuya materia declara horas de teoría y de laboratorio, verifica que la suma total de duraciones de los horarios de `c` sea compatible con `hteo(m) + hlab(m)`, y que exista al menos una partición de los horarios de tipo indefinido que respete R5. Si la partición no cierra —por ejemplo, la materia declara 3 horas de lab pero los horarios cargados sólo suman 2— la infactibilidad es estructural y se reporta antes del solve.
 
-- `h₁`, `h₂`, `h₄` son teóricos → compatibles con `{a₁, a₂}`.
-- `h₃` es laboratorio de Química → compatible con `{a₃}` (única laboratorio compatible).
+### 7.5 R13-camino — Camino de cursada factible
 
-Variables `x[h, a]` que se crean:
+Para cada terna `(carrera, año, cuatri)` del ciclo del plan, verifica que exista al menos una combinación de comisiones (una por materia obligatoria) que un alumno pueda cursar sin conflictos. El chequeo cubre dos ejes:
 
-```
-x[h₁, a₁]   x[h₁, a₂]
-x[h₂, a₁]   x[h₂, a₂]
-x[h₃, a₃]
-x[h₄, a₁]   x[h₄, a₂]
-```
+- **Solapamiento horario**: si dos horarios de dos comisiones distintas se pisan el mismo día, el alumno no puede cursar ambas simultáneamente.
+- **Traslado intersede**: si dos horarios de comisiones distintas tienen gap menor al margen mínimo y las sedes admisibles de sus grupos son disjuntas, no hay traslado factible.
 
-(Variables `x[h₁, a₃]`, `x[h₂, a₃]`, `x[h₃, a₁]`, `x[h₃, a₂]`, `x[h₄, a₃]` no se crean — equivalen a 0.)
+**Algoritmo.** Se agrupan las comisiones del plan por `(carrera, año, cuatri)` obligatorias, se enriquece cada grupo con las materias anuales de la misma `carrera × año`, y se corre backtracking DFS probando combinaciones. Para cada par `(cid_a, cid_b)` de comisiones candidatas se cachea el resultado de compatibilidad (`_par_es_compatible`) para no re-computar. Si el DFS encuentra al menos una combinación viable, el grupo se declara factible. Si no encuentra ninguna, se emite bloqueo.
 
-Variables `t[h]`: sólo `t[h₄]`, las demás están fijadas.
+**Cap de exploración.** El backtracking se detiene si el producto de comisiones por materia supera `MAX_COMBINACIONES_CAMINO = 10 000`, y en ese caso se emite advertencia en lugar de bloqueo.
 
-Variables `over[h]` y `under[h]`: una por cada horario.
+**Excepciones ignoradas.** Los pares `(materia_a, materia_b)` registrados en `IgnoredConflictDB` para el plan se **saltan** del chequeo de solapamiento. Sirven para modelar casos como "materias homónimas de distintos años del plan que en la práctica cursan alumnos distintos". El chequeo de intersede **no** consulta las excepciones: el traslado es un problema físico independiente de qué alumnos cursen qué.
 
-### 5.3 Grupos de simultaneidad
+**Auto-limpieza.** Cuando el plan de estudio cambia y una materia deja de coexistir con la otra en algún grupo curricular, la excepción registrada en `IgnoredConflictDB` queda huérfana y se limpia automáticamente en la próxima validación del plan (`cleanup_stale_ignored_pairs`). Se reporta la limpieza al usuario para que sepa qué pares dejaron de aplicar.
 
-Hacemos el barrido de eventos del lunes:
+## 8. Diagnóstico por relajación selectiva (IIS)
+
+Cuando el solver reporta `infeasible` y el chequeo estructural pre-solve no detectó ninguna causa conocida (o las causas detectadas son insuficientes), se dispara un diagnóstico por relajación selectiva. El objetivo es identificar qué restricciones son las responsables de la infactibilidad y proponer acciones concretas.
+
+Se implementa en `_run_iis_relajacion` en `asignacion_aulas_service.py`.
+
+### 8.1 Relajación individual por regla
+
+Se prueban las siguientes restricciones, una a la vez, y se re-corre el modelo:
+
+- **R4**: doble asignación.
+- **R5**: partición teoría/lab.
+- **R6**: consistencia tipo ↔ pool.
+- **R10**: filtro de sede DURO (se reconstruye `build_inputs` con `relax_r10=True`).
+- **R13**: margen intersede.
+- **R14**: forzar misma sede por comisión (sólo si estaba activo).
+
+Para cada regla que arregla el modelo al relajarse, se registra `feasible_relajado = True`.
+
+### 8.2 Filtros de falsos positivos
+
+La relajación selectiva sufre de un artefacto conocido: cuando la causa real es una restricción fuertemente saturadora (típicamente R4), relajar otras reglas también arregla porque le da al solver más libertad y la restricción real deja de morder. Para evitar reportar culpables espurios:
+
+- **R5** se descarta como culpable si ninguna materia con `hlab_declarado > 0` quedó con desalineación. Es decir: si sólo materias sin lab declarado aparecen con `t[h]` cambiado al relajar R5, el "arreglo" es un efecto secundario de la libertad extra.
+- **R6** se descarta como culpable si todos los horarios con `tipo(h) = ⊥` admiten al menos una alternativa válida (aula teórica o lab compatible). Si todos tienen alternativa, el problema es de saturación (R4) y no de tipo.
+- **R4** se prioriza como causa principal cuando aparece junto con R5/R6 falsos positivos.
+
+### 8.3 Priorización de la causa principal
+
+Cuando hay varios culpables reales, se elige el "principal" con un orden de prioridad accionable:
 
 ```
-14:00  inicio h₁ → activos = {h₁}
-14:00  inicio h₂ → activos = {h₁, h₂}                ← grupo S₁ candidato
-15:00  inicio h₃ → activos = {h₁, h₂, h₃}             ← grupo S₂ candidato
-16:00  fin h₁    → activos = {h₂, h₃}
-16:00  fin h₂    → activos = {h₃}
-16:00  inicio h₄ → activos = {h₃, h₄}                 ← grupo S₃ candidato
-17:00  fin h₃    → activos = {h₄}
-18:00  fin h₄    → activos = ∅
+R10 → R14 → R13 → R4 → R5 → R6
 ```
 
-Filtrando subconjuntos no maximales (S₁ ⊆ S₂ así que S₁ se descarta), quedan los grupos:
+Las restricciones "de sede" (R10, R14, R13) se priorizan porque son las que el usuario controla directamente desde el panel del asignador. R4 (saturación global) es más difícil de accionar porque requiere agregar aulas o mover horarios. R5/R6 son las menos frecuentes como causa real.
 
-```
-S₂ = {h₁, h₂, h₃}    (de 15 a 16)
-S₃ = {h₃, h₄}         (de 16 a 17)
-```
+### 8.4 Análisis refinado cuando R10 es la culpable
 
-### 5.4 Modelo escrito en limpio
+Cuando R10 rescata el modelo al relajarse por completo, se ejecuta un análisis adicional en `_iss_r10_grupos_rescate`: se prueba pasar **cada grupo DURO a BLANDO por separado** y se registra cuáles rescatan el modelo individualmente. Esto permite dar recomendaciones accionables del tipo "pasá el grupo *X* a modo BLANDO" en lugar del genérico "R10 es la culpable".
 
-**Función objetivo**:
+Los grupos candidatos se filtran por:
 
-```
-min   10·(over[h₁] + over[h₂] + over[h₃] + over[h₄])
-      +  1·(under[h₁] + under[h₂] + under[h₃] + under[h₄])
-```
+- Estar en modo DURO en la corrida actual.
+- Tener lista blanda no vacía (pasarlo a BLANDO tiene efecto real).
+- Tener al menos una materia con comisiones en el plan.
 
-**R1 — un aula por horario**:
+### 8.5 Análisis de combinaciones cuando ninguna regla individual rescata
 
-```
-x[h₁, a₁] + x[h₁, a₂] = 1
-x[h₂, a₁] + x[h₂, a₂] = 1
-x[h₃, a₃] = 1
-x[h₄, a₁] + x[h₄, a₂] = 1
-```
+Cuando el IIS no encuentra ninguna causa individual, es porque la infactibilidad es combinada: relajar sólo una restricción no alcanza, hay que relajar dos o más juntas. Se ejecuta `_iss_combinaciones_rescate`, que prueba combinaciones de a pares:
 
-(R1 para h₃ se reduce trivialmente: el programa lineal fuerza `x[h₃, a₃] = 1`.)
+- Cada grupo DURO → BLANDO **combinado con** desactivar R14 (si estaba activo).
+- Cada grupo DURO → BLANDO **combinado con** poner margen intersede en 0 (si era > 0).
 
-**R4 — no doble asignación sobre los grupos S₂ y S₃, por aula**:
+Se registra cada combinación que rescata el modelo. El costo es acotado por `CAP_PRUEBAS = 40` combinaciones. La UI presenta las combinaciones ordenadas por menor impacto (grupos con menos materias en el plan primero) para que el usuario elija la menos invasiva.
 
-Para `S₂ = {h₁, h₂, h₃}`:
+### 8.6 Estructura del resultado del IIS
 
-```
-x[h₁, a₁] + x[h₂, a₁] + 0           ≤ 1     (h₃ no puede ir a a₁)
-x[h₁, a₂] + x[h₂, a₂] + 0           ≤ 1
-0         + 0         + x[h₃, a₃]   ≤ 1     (trivial: equivale a R1 de h₃)
-```
+El diagnóstico se serializa en `LPRunDB.details_json` bajo la clave `iis`:
 
-Para `S₃ = {h₃, h₄}`:
-
-```
-0           + x[h₄, a₁] ≤ 1
-0           + x[h₄, a₂] ≤ 1
-x[h₃, a₃]   + 0         ≤ 1
-```
-
-(Las que tienen sólo un término no aportan nada nuevo en este ejemplo, pero el modelo general las emite. En código se podrían filtrar.)
-
-**R5 — partición teoría/laboratorio por comisión**:
-
-Para A1 (`hteo = 4`, `hlab = 0`, horarios `{h₁, h₄}`, duraciones 2 y 2):
-
-```
-2·t[h₄]              = 0       (la parte de h₁ es 2·0 = 0 porque está fijada teórica)
-2·1 + 2·(1 − t[h₄])  = 4
+```jsonc
+{
+  "ran": true,
+  "culpables": ["R10", "R13"],   // reglas que rescatan y no son falsos positivos
+  "principal": "R10",            // causa principal según prioridad
+  "detalles": {
+    "R4": {"feasible_relajado": false, "es_falso_positivo": false, "explicacion": "..."},
+    "R5": {"feasible_relajado": true, "es_falso_positivo": true, "explicacion": "...", "materias_problema": [...]},
+    // ...
+    "R10": {
+      "feasible_relajado": true,
+      "es_falso_positivo": false,
+      "explicacion": "...",
+      "grupos_rescate": [
+        {"grupo_id": "...", "grupo_nombre": "Específicas de Ing. Eléctrica",
+         "n_materias_plan": 13, "modo_actual": "DURO", "modo_propuesto": "BLANDO"}
+      ]
+    }
+  },
+  "combinaciones_rescate": [
+    {"grupo_id": "...", "grupo_nombre": "Específicas de Ing. Civil",
+     "n_materias_plan": 8, "extra": "sin_forzar_misma_sede",
+     "extra_label": "desactivar 'Forzar misma sede por comisión'"}
+  ]
+}
 ```
 
-De la primera, `t[h₄] = 0`. La segunda queda satisfecha. (En la práctica, conviene escribir las dos para que el resolutor las explote, aunque sean redundantes.)
+La UI del panel de resultado (`asignacion_resultado_ui.py`) consume esta estructura y renderea el "Diagnóstico cruzado" con las recomendaciones accionables.
 
-Para B1 (`hteo = 2`, `hlab = 0`, horario `{h₂}` de duración 2):
+## 9. Aplicación de la solución al plan
 
-```
-2·0 = 0     (trivial, h₂ está fijada teórica)
-2·1 = 2     ✓
-```
+Cuando el solver devuelve `optimal`, la función `apply_solution` (en `asignacion_aulas_service.py`) escribe la asignación al patrón semanal y propaga a las clases puntuales del plan.
 
-Para C1 (`hteo = 0`, `hlab = 2`, horario `{h₃}` de duración 2):
+### 9.1 Escritura al patrón
 
-```
-2·1 = 2     ✓
-2·0 = 0     ✓
-```
+Para cada `(h, a) ∈ x_assignments`:
 
-**R6 — conjunto de aulas para horario con tipo libre**:
+- Si `respetar_ediciones_manuales = True` y `HorarioDB.aula_asignada_manualmente = True`, la solución del LP ya vino con `x[h, a] = 1` fijado por R11, la escritura es idempotente y el flag de manual se preserva.
+- Si no, `HorarioDB.aula_id = a` y se baja el flag manual.
+- Si `t[h]` está definido y `HorarioDB.tipo_clase` era `⊥`, se persiste el tipo resuelto.
 
-Sólo aplica a `h₄`:
+### 9.2 Propagación a clases puntuales
 
-```
-x[h₄, a₁] + x[h₄, a₂]  ≥  1 − t[h₄]
-0                       ≥  t[h₄]
-```
+Para cada `ClaseDB` del plan con `fecha ≥ fecha_desde` y `executed = False`, se propaga el nuevo `aula_id` desde el patrón. Es un *cache* técnico que preserva compatibilidad con la validación por-fecha; ninguna vista de la UI depende de leer directamente de `ClaseDB`.
 
-(La segunda — sumatoria sobre `A_lab(Análisis)` — es 0 porque Análisis no tiene laboratorios compatibles. Esto fuerza `t[h₄] ≤ 0`, es decir `t[h₄] = 0`.)
+### 9.3 Saneamiento de virtuales stale
 
-**R7 — sobre y sub-ocupación lineal**:
+Los horarios en `H_∅` (virtuales bajo R5 estricta) no producen entrada en `x_assignments` porque no participan del modelo. Si arrastraban una `aula_id` de una corrida anterior en la que eran presenciales, quedaría stale. `apply_solution` recibe `no_ocupa_aula_ids` como parámetro y libera esas aulas: `HorarioDB.aula_id = None`, `aula_asignada_manualmente = False`, propagando el cambio a las clases puntuales correspondientes.
 
-Capacidades efectivas con `tol_over = 0`, `tol_under = 0.20`:
+Este saneamiento fue agregado tras detectar que corridas viejas dejaban aulas asignadas a horarios que después se marcaban como virtuales, generando falsas colisiones en las vistas de aulas.
 
-```
-cap_efectiva_over(a)  = cap[a]
-cap_efectiva_under(a) = cap[a] · 0.8
-```
+## 10. Persistencia de corridas
 
-Para `h₁` (insc = 80):
+Cada ejecución del asignador se persiste como un registro `LPRunDB`. La UI puede reconstruir la vista completa de la corrida (heatmap, tabla por horario, diagnóstico) desde el registro sin volver a correr el LP.
 
-```
-over[h₁]  ≥ 80 − (100·x[h₁,a₁] + 40·x[h₁,a₂])
-under[h₁] ≥ (80·x[h₁,a₁] + 32·x[h₁,a₂]) − 80
-```
+Campos principales:
 
-Para `h₂` (insc = 30):
+- `plan_cursada_id`, `run_at`, `fecha_desde`.
+- Copia de parámetros de la config: `lambda_over`, `lambda_under`, `tol_over`, `tol_under`, `timeout_seconds`, `respetar_ediciones_manuales`, `activar_alpha`.
+- Resultado: `status`, `objective_value`, `n_horarios_total`, `n_horarios_asignados`, `n_horarios_reasignados`, `solver_seconds`, `error_message`.
+- `details_json`: dict serializado con la lista completa de horarios asignados, el diagnóstico estructural, el IIS (si corrió) y el veredicto humano.
 
-```
-over[h₂]  ≥ 30 − (100·x[h₂,a₁] + 40·x[h₂,a₂])
-under[h₂] ≥ (80·x[h₂,a₁] + 32·x[h₂,a₂]) − 30
-```
+El panel del asignador lee siempre la corrida más reciente del plan y presenta la última al abrirla. Los parámetros del panel se **prefill** con los de la última corrida, lo que permite iterar sin re-configurar todo cada vez (persistencia de parámetros descripta en la guía operativa).
 
-Para `h₃` (insc = 25, sólo va a a₃ con cap = 30):
+## 11. Decisiones de diseño
 
-```
-over[h₃]  ≥ 25 − 30·x[h₃,a₃] = 25 − 30 = −5  →  over[h₃] = 0
-under[h₃] ≥ 24·x[h₃,a₃] − 25 = 24 − 25 = −1  →  under[h₃] = 0
-```
+Esta sección documenta las principales elecciones estructurales del modelo. Se agrupan por tema.
 
-(Las dos quedan en 0 porque la capacidad de a₃ está cómoda para 25 inscriptos con la tolerancia de 20%.)
+### 11.1 Por qué grupos de materias en lugar de sedes por carrera
 
-Para `h₄` (insc = 80, idéntico planteo que `h₁`).
+Versiones tempranas del sistema modelaban la restricción de sede vía `CarreraSedeDB` — una tabla M:N entre carreras y sedes habilitadas. El problema: una materia común a varias carreras heredaba la unión de sus sedes, lo que en la práctica generaba conflictos entre carreras con criterios distintos. Además, `MateriaDB.es_default_comunes` no soportaba modelizar "materias del ciclo básico" (comunes a varias ingenierías pero con criterio distinto que "una sede para todas las comunes").
 
-### 5.5 Resolución manual
+Los **grupos de materias** invirtieron la relación: cada materia pertenece a exactamente un grupo, y cada grupo declara sus propias sedes. Esto permite:
 
-R1 ya forzó `x[h₃, a₃] = 1`. R5 forzó `t[h₄] = 0`. Quedan `h₁`, `h₂`, `h₄` distribuidos entre `a₁` (cap 100) y `a₂` (cap 40), con la restricción R4: a las 15:00 simultanean `h₁` y `h₂` (no pueden compartir aula), y a las 16:00 simultanean `h₃` y `h₄` (`h₃` está en `a₃`, así que no compite con `h₄` por `a₁/a₂`).
+- Distintos criterios por familia curricular: FB (ciclo básico Pellegrini), F (troncal Siberia), CE (comunes lics/profs Pellegrini), FI (Inglés Pellegrini), y Específicas de cada carrera.
+- Bootstrap por prefijo del código de materia (`FB*`, `FI*`, `CE*`, `F*`) + fallback por carrera única.
+- Curación asistida vía chequeo de consistencia (`chequear_consistencia_grupo`) que reporta materias faltantes y ajenas por grupo.
 
-Las opciones para `(h₁, h₂)` son:
+`CarreraSedeDB` queda como legacy trackeado; no la leen ni el LP ni la UI.
 
-| `h₁` | `h₂` | over[h₁] | under[h₁] | over[h₂] | under[h₂] | Costo parcial |
-|---|---|---|---|---|---|---|
-| `a₁` (cap 100) | `a₂` (cap 40) | 0 | 0 | 0 | 2 (32 − 30) | `0·10 + 2·1 = 2` |
-| `a₂` (cap 40) | `a₁` (cap 100) | 40 | 0 | 0 | 50 (80 − 30) | `40·10 + 50·1 = 450` |
+### 11.2 Por qué dos configuraciones simultáneas (DURO/BLANDO) por grupo
 
-Claramente la primera opción es la buena: `h₁ → a₁`, `h₂ → a₂`. Costo parcial: 2.
+Cada grupo declara set duro y lista blanda al mismo tiempo, y el modo se elige por-grupo en cada corrida. Esta decisión permite:
 
-Para `h₄` (insc 80), las opciones son `a₁` o `a₂` (idéntico análisis que `h₁`):
+- **Iterar sin re-configurar los grupos**. El usuario puede probar la misma corrida en modo DURO (más estricto) o BLANDO (más flexible) sin tocar la config de sedes.
+- **Modelizar preferencia sin rigidez**. En BLANDO la primera sede es preferida pero no obligatoria. El LP paga costo por asignar alternativas pero puede hacerlo si mejora el objetivo global (o resuelve una infactibilidad local).
+- **Facilitar el diagnóstico**. Cuando el IIS detecta que R10 es la causa, propone pasar grupos específicos de DURO a BLANDO — una acción directa del usuario, sin necesidad de tocar la lista de sedes.
 
-| `h₄` | over[h₄] | under[h₄] | Costo |
-|---|---|---|---|
-| `a₁` (cap 100) | 0 | 0 | 0 |
-| `a₂` (cap 40) | 40 | 0 | 400 |
+### 11.3 Por qué R13 aplica al alumno además del profesor
 
-`h₄ → a₁`. Sumando: costo total = 2 + 0 = **2**.
+En el planteo original, la restricción de continuidad de sede (R13) sólo consideraba pares de horarios de la **misma comisión** — modelaba el traslado del docente entre dos clases suyas contiguas. Al analizar casos reales aparecieron infactibilidades desde el punto de vista del alumno: una comisión de FB12 en Pellegrini y una de A6 en Siberia con gap 0 min hacen imposible el traslado, aunque cada comisión aislada sea factible.
 
-### 5.6 Solución
+La extensión de R13 a pares intercomisión del mismo grupo curricular refleja que **cada alumno concreto** debe poder cursar sin traslados imposibles. El LP ahora bloquea también estos pares y el chequeo pre-solve R13-camino lo verifica antes de correr el modelo.
 
-```
-x[h₁, a₁] = 1     (Análisis A1, lunes 14-16, en aula 1 — capacidad 100, 80 inscriptos)
-x[h₂, a₂] = 1     (Programación B1, lunes 14-16, en aula 2 — capacidad 40, 30 inscriptos)
-x[h₃, a₃] = 1     (Química C1, lunes 15-17, en laboratorio 3 — capacidad 30, 25 inscriptos)
-x[h₄, a₁] = 1     (Análisis A1, lunes 16-18, en aula 1 — capacidad 100, 80 inscriptos)
-t[h₄]     = 0     (h₄ es teórico, decidido por R5+R6)
-over[h]   = 0     ∀h
-under[h₂] = 2,    under[h₁] = under[h₃] = under[h₄] = 0
-Costo total = 2
-```
+### 11.4 Por qué R13-camino como chequeo pre-solve y no como restricción del modelo
 
-El óptimo coincide con la intuición operativa: las clases grandes (h₁, h₄) van al aula grande, la clase chica (h₂) va al aula chica, y el laboratorio va al laboratorio compatible. La sub-ocupación residual de 2 alumnos en a₂ con respecto a la capacidad efectiva de 32 (40 · 0.8) es inevitable y aceptable.
+El chequeo de camino de cursada verifica **existencia** de una combinación viable, no la fuerza. En modelo LP, forzarlo requeriría variables adicionales por alumno hipotético — algo que aumentaría dramáticamente el tamaño del modelo sin beneficio directo: si existe al menos una combinación viable, cualquier alumno concreto podrá elegirla al inscribirse. El LP mismo no elige comisiones por alumno.
 
-Este ejemplo ilustra cómo se concretan las restricciones generales sobre una instancia chica. En el caso real con cientos de horarios y decenas de aulas, el programa lineal escala pero la mecánica de cada restricción es exactamente la misma.
+Por eso R13-camino se implementa como **pre-check estructural**: si no existe combinación viable, se aborta antes del solve. Si existe, el LP asigna aulas libremente y cada alumno elige su combinación de manera independiente.
 
-## 6. Diagnóstico estructural de infactibilidad
+### 11.5 Por qué IIS con análisis combinado
 
-Cuando el resolutor declara el modelo **infactible** y no muestra causa, el operador queda sin acción concreta. Para evitarlo, el sistema computa **antes** de la resolución un diagnóstico estructural que identifica las causas más comunes y las reporta con mensajes accionables. Esto se ejecuta también si la corrida resulta óptima: el detalle queda persistido aunque no se muestre en la interfaz.
+Cuando ninguna regla individual rescata el modelo, el diagnóstico simple ("no hay causa única") deja al usuario sin acción concreta. La extensión a combinaciones de a pares refleja la observación empírica de que los casos combinados típicos son: **algún grupo DURO** + **R14 activo** o **margen intersede alto**. Probar todas las combinaciones de tres o más restricciones sería explosivo; con pares se cubren los casos frecuentes sin costo prohibitivo.
 
-Las técnicas se aplican en orden de costo creciente y se reportan separadamente.
+### 11.6 Por qué `apply_solution` sanea virtuales stale
 
-### 6.1 Horarios sin aula compatible
+En el planteo estricto, `apply_solution` sólo escribe lo que el LP resolvió. Los horarios no incluidos en `x_assignments` (virtuales) quedaban con su `aula_id` previo, generando falsas colisiones si eran presenciales antes. La decisión de sanear activamente refleja la invariante deseada del sistema: **un horario virtual no debe tener aula asignada**. La alternativa (validar en cada consulta) diluye la responsabilidad y produce el problema observado de "colisiones fantasma".
 
-Para cada horario `h`, se calcula `|{a : compat[h, a] = 1}|`. Si es 0, ningún aula puede recibirlo y el modelo es infactible por R1. Casos típicos:
+### 11.7 Por qué configuración persistida por-corrida
 
-- Horario de laboratorio de una materia que no tiene laboratorios compatibles cargados.
-- Horario teórico cuando no hay aulas teóricas/anfiteatros suficientes en el inventario.
+Cada `LPRunDB` guarda snapshot completo de sus parámetros. Permite:
 
-Costo: `O(|H| × |A|)`.
+- Reproducir cualquier corrida vieja con la misma config.
+- Prefill del panel con los valores de la última corrida (persistencia entre sesiones de Streamlit y entre reinicios).
+- Análisis comparativo entre corridas con distintas configs.
 
-### 6.2 Saturación por tipo dentro de una franja
+El costo es marginal (unos cientos de bytes de JSON por run) y la trazabilidad ganada es significativa para debugging y para el informe académico.
 
-La cota global del **principio del palomar** (clases vs aulas totales en una franja; en la literatura, *pigeonhole principle*: si hay más palomas que casilleros, alguna casilla queda con más de una paloma) es **necesaria** pero no aprovecha la información de tipos. Una franja con 5 horarios simultáneos y 6 aulas en total puede sonar OK, pero si los 5 son teóricos y sólo 4 aulas son del tipo correcto, el modelo es infactible.
+## 12. Referencias
 
-Para cada grupo de simultaneidad `S` se separa el conteo:
+[1] Winston, W. L. *Operations Research: Applications and Algorithms*. Cengage Learning.
 
-- **Conjunto teórica**: horarios de `S` que estrictamente necesitan aula teórica (por `fija_lab = teórica`, o por `fija_lab = None` con materia sin laboratorios compatibles disponibles, que R6 mandaría a teórica).
-- **Conjunto laboratorio por materia**: cada materia `m` con horarios laboratorio simultáneos en `S` requiere `|S_m| ≤ |A_lab(m)|`.
+[2] Hillier, F. S. y Lieberman, G. J. *Introduction to Operations Research*. McGraw-Hill.
 
-El manejo es **optimista** con los `fija_lab = None`: si tienen laboratorios disponibles para su materia, no se cuentan como teóricos forzados, porque R5+R6 podrían mandarlos a laboratorio. Eso evita falsos positivos.
+[3] Nemhauser, G. L. y Wolsey, L. A. *Integer and Combinatorial Optimization*. Wiley-Interscience.
 
-Costo: `O(|Sim| · |H_grupo| · |A|)`.
+[4] Wolsey, L. A. *Integer Programming*. Wiley-Interscience.
 
-### 6.3 Test de Hall (apareamiento bipartito)
-
-> **Apareamiento bipartito**: dado un conjunto de horarios y un conjunto de aulas con sus compatibilidades, un apareamiento es una asignación uno-a-uno sin conflictos (un horario, un aula, sin repetir). Es **perfecto** si todos los horarios quedan asignados. En la literatura anglosajona se lo llama *bipartite matching*.
-
-La cota del principio del palomar sobre la unión `|N(grupo)| ≥ |grupo|` es necesaria pero no suficiente. Ejemplo:
-
-> Grupo `{h₁, h₂, h₃}`. h₁ admite `{a, b, c}`, h₂ admite `{a}`, h₃ admite `{a}`. La unión es `{a, b, c}` de tamaño 3 ≥ 3, pero el subconjunto `{h₂, h₃}` tiene `N = {a}` de tamaño 1 < 2: infactible.
-
-El test correcto es el **teorema de Hall**: existe un apareamiento perfecto si y sólo si para todo subconjunto `S ⊆ grupo`, `|N(S)| ≥ |S|` (la vecindad de cualquier subconjunto tiene al menos tantos elementos como el subconjunto). Implementación:
-
-- **Grupos chicos** (umbral configurable, ~8): enumeración exacta de los `2^|grupo|` subconjuntos por tamaño creciente. Se reporta el subconjunto Hall-violador **más chico** como testigo.
-- **Grupos más grandes**: algoritmo clásico de apareamiento bipartito por **caminos de aumento** (técnica que parte de un apareamiento parcial e itera buscando trayectorias alternantes que permitan agrandarlo; en la literatura, *augmenting paths*). Costo: `O(V·E)` donde `V` y `E` son los vértices y aristas del grafo bipartito. Si el apareamiento máximo es menor que el grupo, hay infactibilidad. Como testigo se reportan los horarios no apareados (suficiente para señalar la causa).
-
-El reporte incluye los identificadores de las aulas posibles en el lado derecho del subconjunto violador. Eso es accionable: el operador sabe que esos horarios tienen sólo esas opciones y puede ampliar el inventario de laboratorios o sumar aulas del tipo correcto.
-
-### 6.4 Partición teoría/laboratorio infactible
-
-Para cada comisión `k` con materia `m`, se verifica que existe una bipartición de las duraciones de los horarios de `k` que sume exactamente `hteo[m]` y `hlab[m]` respectivamente. Es un problema de **suma de subconjunto** (en la literatura, *subset-sum*: dado un conjunto de números y un objetivo, decidir si algún subconjunto suma exactamente el objetivo) sobre las duraciones de los horarios libres, respetando los fijados.
-
-Si no existe, ningún cumplimiento de R5 es válido y el modelo es infactible. Causa típica: las horas declaradas en el plan no coinciden con la suma de duraciones cargadas, o los horarios fijados ya exceden uno de los dos.
-
-### 6.5 Subconjunto irreducible infactible (SII) por relajación selectiva
-
-> **Subconjunto irreducible infactible (SII)**: dado un modelo infactible, un subconjunto mínimo de restricciones que, tomadas juntas, ya son infactibles, pero que se vuelve factible si se quita cualquiera de ellas. En la literatura anglosajona se lo llama *Irreducible Infeasible Subset* (IIS). Ofrece un "núcleo del problema" mucho más útil que decir simplemente "el modelo es infactible".
-
-Cuando las cotas anteriores vienen vacías y la pre-validación de partición tampoco detecta nada, pero el resolutor declara infactible, el sistema ejecuta automáticamente un **SII por relajación selectiva**. La idea: relajar **una sola restricción del modelo a la vez** y volver a resolver. La que al ser relajada permite que el modelo resuelva es la **culpable** (o una de las culpables, si la infactibilidad es combinada).
-
-Las tres relajaciones que se prueban:
-
-- **R4** (no doble asignación): si arregla, hay saturación temporal residual que las cotas del palomar / Hall no detectaron.
-- **R5** (partición teoría/laboratorio): si arregla, las horas declaradas de alguna materia no admiten partición consistente con las duraciones cargadas.
-- **R6** (consistencia tipo↔aula para horarios sin tipo): si arregla, hay un horario sin tipo que no admite ninguna decisión consistente.
-
-#### Falsos positivos por libertad ganada
-
-La relajación independiente sufre de un problema bien conocido: **cuando hay una restricción fuertemente saturadora (típicamente R4: muchos horarios simultáneos vs pocas aulas), relajar R5 o R6 también arregla el modelo** — pero no porque sean la causa real, sino porque le da al resolutor libertad extra que enmascara el problema.
-
-Ejemplo: 50 horarios simultáneos en una franja con 42 aulas teóricas. R4 los limita a 1 por aula → infactible.
-
-- Relajar R4: arregla (causa real).
-- Relajar R5: el programa lineal gana libertad de marcar horarios como laboratorio para usar las 8 aulas laboratorio → arregla, pero los `hlab` quedan incoherentes.
-- Relajar R6: el programa lineal puede meter horarios teóricos en aulas laboratorio → arregla, pero por motivos no relacionados con horarios sin tipo.
-
-Reportar las tres como culpables confunde al operador.
-
-#### Filtro de falsos positivos
-
-- **R5 → falso positivo si** ninguna materia con `hlab > 0` quedó con desajuste real.
-- **R6 → falso positivo si** todos los horarios con tipo libre tienen alguna alternativa válida (al menos un aula teórica o un laboratorio compatible). Si todos tienen alternativa, R6 no puede ser la causa individual.
-- **R4 → siempre se considera causa real** cuando arregla.
-
-Si tras filtrar quedan varias culpables, se elige una **causa principal** con regla de prioridad: R4 prevalece sobre R5/R6.
-
-#### Reporte al usuario
-
-El SII devuelve culpables genuinas, una causa principal, y por cada Ri probada un detalle con campos `factible_relajado`, `es_falso_positivo` y `explicación`. La interfaz lo presenta con cuatro niveles visuales: **causa principal** (expandida), **causa secundaria** (expandida), **falso positivo** (colapsado con explicación) y **no es problema individualmente** (colapsado).
-
-Costo: hasta 3× tiempo extra de resolutor. Para una instancia típica de la facultad (~600 horarios, ~50 aulas) el modelo infactible se resuelve en 6-8 s, así que el SII suma ~20 s en el peor caso. Se dispara automáticamente sólo cuando el resolutor declara infactible y todas las cotas estructurales vinieron vacías.
-
-## 7. Notas sobre la implementación
-
-Esta sección documenta cómo el modelo abstracto se conecta con la base de datos del sistema. Es la única parte del documento que hace referencia a las entidades concretas; las secciones anteriores se mantienen abstractas a propósito.
-
-### 7.1 Tecnologías
-
-- **Resolutor**: PuLP + CBC. Suficiente para problemas de cientos a pocos miles de variables binarias. Si CBC no escala, OR-Tools como alternativa.
-- **Servicio**: `src/services/asignacion_aulas_service.py`.
-- **Integración con la interfaz**: pestaña "Aulas" en la página de Planes (`app/pages/5_📊_Planes.py`).
-
-### 7.2 Mapeo de entidades
-
-| Entidad de la base | Rol en el programa lineal |
-|---|---|
-| `HorarioDB` (no virtual, comisión del plan activo) | Cada fila es un `h ∈ H`. Su campo `aula_id` es donde el programa lineal escribe el resultado. |
-| `AulaDB` | Cada fila es un `a ∈ A`. Aporta `cap[a]`, `tipo[a]`. |
-| `MateriaLaboratorioDB` | Define `A_lab(m)` para cada materia. |
-| `HorarioDB.tipo_clase` | Aporta `fija_lab(h)`. |
-| `ComisionDB` | Cada fila es un `k ∈ K`. Aporta `coef[k]`. |
-| `DictadoDB` | Define `D`; agrupa comisiones para R9. |
-| `MateriaDB.horas_teoria`, `horas_laboratorio`, `virtual` | Aporta `hteo[m]`, `hlab[m]`; `virtual=True` filtra el horario de `H`. |
-| Servicio de pronóstico de inscripción | Resuelve `total_esp[m]`. |
-| `ConfiguracionHoraria` | `open_h`, `close_h` para R8. |
-
-### 7.3 Flujo de ejecución
-
-```
-1. Pre-condiciones: el plan tiene horarios, hay pronóstico de inscripción
-   resuelto para cada materia, la partición teoría/laboratorio es factible y
-   la ventana operativa se respeta.
-
-2. El usuario configura parámetros (λ_over, λ_under, tolerancias, opción de
-   redistribución α).
-
-3. Botón "Correr LP":
-   a) Construye conjuntos y parámetros desde la base.
-   b) Pre-computa Sim y compat.
-   c) Instancia el modelo en PuLP.
-   d) Resuelve con CBC (límite de tiempo configurable).
-   e) Si resulta infactible: reporta diagnóstico estructural + SII si aplica.
-   f) Si resulta óptimo o subóptimo: persiste HorarioDB.aula_id,
-      HorarioDB.tipo_clase y ComisionDB.coef_asignacion (si la opción de
-      redistribución está activa). Internamente también propaga el aula
-      a las ClaseDB del ciclo como cache técnico; esa capa no se expone
-      al usuario tras la deprecación de clases puntuales (2026-07-07).
-
-4. La interfaz muestra el resultado en el panel de aulas del plan.
-```
-
-### 7.4 Optimizaciones
-
-- **Pre-filtrar `compat[h, a]`**: además del filtro por tipo (R3), se podría descartar aulas con capacidad insuficiente (`cap[a] · (1 + tol_over) < insc[h]`) cuando `λ_over` es grande. Reduce el modelo.
-- **Particionamiento por componentes conexas de `Sim`**: si CBC no escala, partir en sub-problemas independientes.
-- **Arranque en caliente con heurística voraz** (en la literatura, *warm start* con heurística *greedy*): una primera asignación heurística (ordenar horarios por inscriptos descendente y elegir el aula compatible más chica que no esté ocupada en esa franja) puede pasarse al resolutor como punto inicial para acelerar la convergencia.
-
-> **Heurística voraz**: estrategia de asignación que toma decisiones locales óptimas sin reconsiderarlas. En este caso: asignar horario por horario, eligiendo en cada paso la mejor aula libre, sin volver atrás. No garantiza el óptimo global pero sí una solución factible rápida.
->
-> **Arranque en caliente**: técnica que entrega al resolutor una solución factible inicial para que arranque desde ahí en lugar de construirla desde cero. Acelera la convergencia.
-
-### 7.5 Visualización del resultado
-
-- Tabla por horario con columna `Δ = cap − insc` coloreada (verde/amarillo/rojo según la diferencia respecto a las tolerancias).
-- Mapa de calor por franja horaria.
-- Resumen agregado: "X horarios sobre-ocupados (total +N alumnos), Y sub-utilizados".
-- Lista de candidatos a partir comisión: materias con horarios sobre-ocupados ordenadas por exceso.
-- Comparación entre corridas: instantánea de cada corrida persistida en `LPRunDB`.
-
-> **Mapa de calor**: visualización en grilla donde cada celda corresponde a una franja (día × hora) y el color indica la magnitud de un valor (en este caso, la peor diferencia capacidad − inscriptos en esa franja). En la literatura anglosajona, *heatmap*.
->
-> **Instantánea**: copia inmutable del estado de la corrida (parámetros + resultado) usada para auditoría y comparación. En la literatura, *snapshot*.
-
-## 8. Cuestiones abiertas
-
-- **Estabilidad entre re-corridas**: si el operador cambia algo menor, ¿se preferirían asignaciones similares a la anterior? Considerar un término del objetivo que penalice cambios respecto a la corrida previa.
-- **Disponibilidad parcial de aulas**: hoy no se modelan reservas externas (exámenes, eventos). Una tabla `AulaIndisponibleDB` permitiría descartar pares `(h, a)` específicos en franjas concretas.
-- **Ventanas por sede o por aula**: hoy todas las aulas comparten la ventana global. Si en el futuro hay sedes con horarios distintos (nocturnos, fin de semana), agregar atributos por sede o por aula.
-- **Término de continuidad de aula entre horarios consecutivos de una comisión**: idea descartada por ahora, ver § 8.1.
-
-### 8.1 Por qué descartamos la "continuidad de aula"
-
-Una idea natural sería minimizar la cantidad de veces que una comisión cambia de aula entre sus horarios semanales. Se modela con una variable binaria adicional `cambio[k, i]` que vale 1 cuando el horario `i` y el `i+1` de la comisión `k` (ordenados por algún criterio) están en aulas distintas, sumando un término `λ_cambio · Σ cambio` al objetivo.
-
-El término asume que cada comisión es una **cohorte estable**: un grupo de alumnos que se mueve junto entre sus distintas materias. Eso se cumple razonablemente para comisiones de **materias específicas de carrera** en años avanzados (cuarto año primer cuatrimestre tiende a cursar todo en bloque). Pero en el **ciclo básico** las comisiones agrupan estudiantes que después se dispersan a comisiones distintas en sus otras materias. Una comisión de Análisis Matemático I no es una cohorte: es una sub-población heterogénea de alumnos de varias carreras y orientaciones. Forzar al optimizador a "minimizar movimiento" para esa comisión privilegia arbitrariamente a una sub-cohorte a costa del resto.
-
-Si el modelo de datos incorporara explícitamente el concepto de **itinerario de alumno** o **comisión-cohorte**, tendría sentido reactivar este término aplicado sólo a esas comisiones. Hoy ese concepto no existe en la base, por lo que el término queda registrado como extensión potencial y fuera del alcance de la implementación.
-
-## 9. Referencias
-
-- Documentación de modelado del dominio: `modelo-planificacion-cursada.md`.
-- Pronóstico de inscripción: `../0. Planteo/plan-de-cursada.md` § 5.5.
-- Flujo general del sistema: `../2. Desarrollo/WORKFLOW.md`.
-- Implementación detallada con tecnologías y endpoints: `../2. Desarrollo/ASIGNACION_IMPL.md`.
-- Inventario de requerimientos: `../requerimientos.md` (RF-LP-01 a RF-LP-10, RF-PLAN-07).
-- Nemhauser & Wolsey, *Integer and Combinatorial Optimization*, capítulo III.6 — "Polyhedra of the Set Packing Problem".
+[5] Chinneck, J. W. *Feasibility and Infeasibility in Optimization*. Springer. (Referencia principal para el diagnóstico por relajación selectiva y el concepto de IIS.)
