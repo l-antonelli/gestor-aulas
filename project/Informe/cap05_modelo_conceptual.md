@@ -401,19 +401,56 @@ compatible. Una materia puede declarar cero, uno o varios
 laboratorios compatibles; a la inversa, un laboratorio puede ser
 compatible con varias materias.
 
-### 5.3.16 Carrera-sede
+### 5.3.16 Grupo de materias
 
 **Capa**: dominio de la solución.
 
-**Definición**: relación que declara qué sedes están habilitadas
-para el dictado de las materias de una carrera. Interviene en la
-restricción R10 del programa lineal, que se define formalmente en
-el capítulo 8.
+**Definición**: entidad que agrupa materias que comparten un mismo
+criterio de sedes admisibles. Cada materia pertenece a **exactamente
+un** grupo (partición estricta), y cada grupo declara dos
+configuraciones simultáneas de sedes:
 
-**Atributos principales**: carrera, sede.
+- Un **set duro**: las sedes admisibles cuando el grupo corre en
+  modo *duro* durante una corrida del asignador. En ese modo, sólo
+  las sedes del set son admisibles.
+- Una **lista blanda ordenada**: las sedes preferidas cuando el
+  grupo corre en modo *blando*. La primera es la preferida (paga
+  cero al objetivo del programa lineal) y el resto son alternativas
+  con un costo configurable por horario.
 
-**Relaciones**: cada entrada vincula una carrera con una sede
-habilitada. Una carrera puede tener una o varias sedes habilitadas.
+El modo con el que corre cada grupo se elige por corrida desde el
+panel del asignador. Los grupos declaran ambas configuraciones al
+mismo tiempo, y el resolutor elige cuál aplicar en cada iteración.
+Esta separación entre criterio y modo permite, por ejemplo, correr
+un mismo plan una vez con criterio estricto para chequear
+factibilidad estructural y otra vez con criterio flexible para
+minimizar desplazamientos.
+
+**Atributos principales**: nombre, set duro de sedes, lista blanda
+ordenada de sedes, marca de "grupo sin clasificar" (grupo de
+*fallback* al que caen materias que no fueron asignadas
+explícitamente).
+
+**Relaciones**: cada materia pertenece a exactamente un grupo
+(relación uno-a-muchos desde el grupo hacia sus materias, con
+totalidad y disjunción); cada grupo declara cero o más sedes por
+cada tipo de configuración. Opcionalmente, un grupo puede asociarse
+a una o más carreras a los efectos de un chequeo de consistencia
+curatorial (no afecta al asignador).
+
+**Bootstrap institucional**: al inicializar el sistema, se crean
+automáticamente grupos derivados de la operatoria de FCEIA (grupo
+del ciclo básico común a las ingenierías, grupo del bloque troncal
+de ingeniería con sede propia, grupo de las materias comunes a
+licenciaturas y profesorados, y un grupo *específicas de una
+carrera* por cada carrera existente). Las materias se asignan
+inicialmente por convenciones sobre el código de materia, y los
+casos residuales caen al grupo sin clasificar para curación
+posterior.
+
+Este mecanismo interviene en las restricciones R10 (sedes duras
+admisibles) y R12 (preferencia blanda de sede) del programa lineal,
+que se definen formalmente en el capítulo 8.
 
 ## 5.4 Relaciones y multiplicidades
 
@@ -451,16 +488,22 @@ dominio de la solución para su representación:
 | --- | --- | --- |
 | Materia con Carrera | Entrada de plan de estudios | Año, cuatrimestre, correlativas, versión de plan |
 | Materia con Aula (tipo laboratorio) | Compatibilidad materia-laboratorio | Ninguno adicional; sólo la afirmación de compatibilidad |
-| Carrera con Sede | Carrera-sede | Ninguno adicional; sólo la afirmación de habilitación |
+| Grupo de materias con Sede | Sede-de-grupo | Tipo de configuración (duro o blando) y orden dentro de la lista |
 | Materia con Ciclo lectivo | Dictado | Modalidad puntual, fechas efectivas, virtualidad del ciclo |
 
 La razón por la que en cada caso hay una entidad intermedia y no
 una tabla plana de dos claves es la señalada en §5.1: cuando la
 relación tiene *atributos propios* (año del plan, virtualidad del
-ciclo), la entidad intermedia es imprescindible. Cuando no los
-tiene (compatibilidad materia-laboratorio, carrera-sede) la entidad
-existe igualmente por consistencia de representación y por
-facilitar validaciones.
+ciclo, tipo de configuración de sede), la entidad intermedia es
+imprescindible. Cuando no los tiene (compatibilidad
+materia-laboratorio) la entidad existe igualmente por consistencia
+de representación y por facilitar validaciones.
+
+Notar que la vieja relación *Carrera con Sede* del anteproyecto
+quedó reemplazada por la relación *Grupo de materias con Sede*: la
+preferencia de una carrera se expresa hoy a través del grupo de
+sus materias específicas. Ver §5.3.16 para el detalle del
+razonamiento.
 
 ### 5.4.3 El caso especial de las jerarquías
 
@@ -525,36 +568,45 @@ La invariante asociada es que **los horarios efectivamente virtuales
 no participan del proceso de asignación de aulas**: se filtran antes
 de armar el programa lineal.
 
-### 5.5.3 Regla de sedes admisibles por materia
+### 5.5.3 Regla de sedes admisibles por grupo de materias
 
-Cada materia tiene un conjunto `Sed(m)` de **sedes admisibles**,
-computado con la siguiente lógica:
+Cada materia tiene un conjunto `Sed(m)` de **sedes admisibles** que
+se resuelve consultando el grupo al que la materia pertenece
+(§5.3.16) y el modo con el que ese grupo corre en la corrida
+actual:
 
-- Si la materia está declarada en una única carrera (es
-  *exclusiva*), su conjunto de sedes admisibles coincide con las
-  sedes habilitadas para esa carrera.
-- Si la materia está declarada en dos o más carreras (es *común*),
-  su conjunto de sedes admisibles se restringe a una única sede
-  configurada institucionalmente como **sede predeterminada para
-  materias comunes**.
-- Como excepción a lo anterior, si existe algún laboratorio
-  compatible con la materia (§5.3.15) que vive físicamente en una
-  sede distinta, esa sede también entra en el conjunto admisible
-  (para permitir usar ese laboratorio).
-
-Adicionalmente, cada **comisión** puede llevar un override de
-*carrera asignada*: si tiene este atributo definido, sus horarios
-usan las sedes admisibles de esa carrera en lugar de la regla por
-defecto de la materia. Esto permite dar granularidad al caso en
-que una materia común se abre en dos comisiones y una se dedica a
-una carrera concreta.
+- Si el grupo corre en modo **duro** con set no vacío, el conjunto
+  `Sed(m)` es exactamente el set duro del grupo.
+- Si el grupo corre en modo **duro** con set vacío, el conjunto se
+  toma como *fallback* permisivo (todas las sedes admisibles). Este
+  caso se reserva para el grupo *sin clasificar*, cuya presencia
+  con materias asignadas se reporta como advertencia curatorial.
+- Si el grupo corre en modo **blando**, todas las sedes son
+  admisibles, pero la primera sede de la lista blanda es la
+  preferida: el resolutor la elige gratis y castiga con un costo
+  configurable la elección de una alternativa.
+- Como **excepción** a lo anterior, si existe un laboratorio
+  compatible con la materia (§5.3.15) cuya sede no pertenece al
+  set del grupo, esa sede también se acepta para esa materia. La
+  compatibilidad física del laboratorio prevalece sobre la
+  preferencia curricular del grupo.
 
 La invariante asociada es que **toda asignación de aula respeta el
 conjunto de sedes admisibles del horario que se está asignando**.
 Formalmente: para un horario `h` con materia `m`, si `a` es el aula
 asignada y la sede de `a` no está en `Sed(m)`, entonces `a` debe ser
-un laboratorio compatible con `m` (o de lo contrario la asignación
-es inválida).
+un laboratorio compatible con `m` (de lo contrario la asignación es
+inválida).
+
+Notar que este esquema unifica dos preocupaciones que en el modelo
+del anteproyecto vivían en tablas separadas: la habilitación
+carrera-sede (para materias exclusivas) y la sede default para
+materias comunes. Con grupos, la primera se expresa a través del
+grupo *específicas de una carrera*, y la segunda a través de los
+grupos transversales (ciclo básico, comunes de licenciaturas y
+profesorados, inglés). El comisionamiento con override
+carrera-asignada sobrevive como etiqueta visual a nivel comisión,
+pero ya no interviene en la resolución del asignador.
 
 ### 5.5.4 Regla de recursado
 
@@ -629,16 +681,35 @@ perderlas de vista, indicando su estado de implementación:
   entero: se garantiza el progreso académico posible de un alumno
   tipo. Implementada como validación en el flujo de generación del
   plan (ver capítulo 9).
-- **Continuidad de sede entre bloques consecutivos.** Dos horarios
-  de la misma comisión programados en el mismo día con un gap
-  menor a un margen configurable (30 minutos por defecto) deben
-  dictarse en la misma sede. Implementada como restricción del
-  programa lineal (ver capítulo 8).
-- **Estabilidad de sede en primer año.** Los alumnos de primer año
-  de cualquier carrera no deberían cambiar de sede dentro de un
-  mismo día. **Planteada como política a implementar** en una
-  iteración futura; requiere consolidar operativamente la noción
-  de "cursada del alumno tipo de primer año" (ver §4.6.2).
+- **Continuidad de sede entre bloques consecutivos del docente.**
+  Dos horarios de la misma comisión programados en el mismo día
+  con un gap menor a un margen configurable (30 minutos por
+  defecto) deben dictarse en la misma sede. Refleja que un mismo
+  docente no puede trasladarse entre sedes en un intervalo corto.
+  Implementada como restricción del programa lineal (ver
+  capítulo 8, restricción R13 eje docente).
+- **Continuidad de sede entre bloques consecutivos del alumno.**
+  Dos horarios de **materias distintas** del mismo grupo
+  curricular `(carrera, año, cuatrimestre)` programados en el
+  mismo día con un gap menor al mismo margen deben dictarse en la
+  misma sede (o en sedes con compatibilidad física de traslado).
+  Refleja que un alumno tipo del grupo debe poder trasladarse de
+  una clase a la siguiente. Implementada como restricción del
+  programa lineal (ver capítulo 8, restricción R13 eje alumno).
+- **Camino de cursada intersede factible.** Para cada terna
+  `(carrera, año, cuatrimestre)`, debe existir al menos una
+  combinación de comisiones (una por materia obligatoria) que un
+  alumno pueda cursar sin conflictos horarios ni traslados
+  intersede imposibles. Refina la regla clásica de "no
+  superposición dentro del grupo curricular" incorporando la
+  dimensión de sedes admisibles por grupo. Implementada como
+  chequeo estructural pre-solve del programa lineal (ver
+  capítulo 8, R13-camino).
+- **Forzar misma sede por comisión.** Todos los horarios de una
+  misma comisión deben caer en la misma sede. Opcional y activable
+  por corrida; refleja que ciertos docentes no viajan entre sedes
+  a mitad de semana. Implementada como restricción del programa
+  lineal (ver capítulo 8, restricción R14).
 - **Flexibilidad por calendario de exámenes.** Durante los períodos
   de exámenes debe ser posible generar variantes transitorias de
   asignación sin descartar la asignación de base. **Fuera del
@@ -679,7 +750,16 @@ classDiagram
 
     class Sede {
         nombre
-        es_default_comunes
+    }
+
+    class GrupoDeMaterias {
+        nombre
+        es_sin_clasificar
+    }
+
+    class SedeDeGrupo {
+        tipo
+        orden
     }
 
     class Aula {
@@ -745,7 +825,6 @@ classDiagram
     }
 
     class CompatibilidadMateriaLaboratorio
-    class CarreraSede
 
     Carrera "1" --> "*" VersionPlanEstudios
     VersionPlanEstudios "1" --> "*" EntradaPlanEstudios
@@ -772,17 +851,20 @@ classDiagram
     CompatibilidadMateriaLaboratorio ..> Materia
     CompatibilidadMateriaLaboratorio ..> Aula
 
-    Carrera "*" --> "*" Sede
-    CarreraSede ..> Carrera
-    CarreraSede ..> Sede
+    Materia "*" --> "1" GrupoDeMaterias
+    GrupoDeMaterias "1" --> "*" SedeDeGrupo
+    SedeDeGrupo "*" --> "1" Sede
+    GrupoDeMaterias "*" --> "*" Carrera : asociaciones opcionales
 
-    Comision "*" --> "0..1" Carrera : carrera_asignada
+    Comision "*" --> "0..1" Carrera : carrera_asignada (etiqueta)
 ```
 
 Las clases sin lista de atributos (`Correlativa`,
-`CompatibilidadMateriaLaboratorio`, `CarreraSede`) son las entidades
-intermedias del dominio de la solución cuya única función es
-materializar una relación muchos-a-muchos.
+`CompatibilidadMateriaLaboratorio`) son entidades intermedias del
+dominio de la solución cuya única función es materializar una
+relación muchos-a-muchos. La entidad `SedeDeGrupo` sí lleva
+atributos propios (tipo y orden), por lo que aparece con recuadro
+completo aunque también materializa una relación muchos-a-muchos.
 
 ## 5.7 Recapitulación
 

@@ -227,14 +227,18 @@ problema. Su incumplimiento no admite negociación:
 Estas restricciones no son físicas sino que reflejan decisiones
 institucionales de la facultad:
 
-- **Sedes admisibles por carrera y por materia.** Cada carrera
-  tiene un subconjunto de sedes en las que puede dictar sus
-  materias; cada materia hereda ese subconjunto de la carrera a la
-  que pertenece. Para las materias comunes a varias carreras rige
-  una **sede predeterminada** que la facultad configura como
-  default. Las excepciones (típicamente laboratorios que existen
-  sólo en una sede) se manejan con reglas específicas que
-  desarrollamos en el capítulo 5.
+- **Sedes admisibles por familia de materias.** No todas las
+  materias pueden dictarse en cualquier sede. La política de la
+  facultad agrupa a las materias en familias que comparten un
+  criterio común: las del ciclo básico de las ingenierías se
+  dictan en una sede; las del bloque troncal de ingeniería, en
+  otra; las comunes de licenciaturas y profesorados, en una
+  tercera; las específicas de cada carrera, donde esa carrera
+  tenga sus recursos concentrados. El modelo agrupa las materias
+  en **grupos** y para cada grupo declara qué sedes son admisibles
+  y con qué criterio. Las excepciones (típicamente laboratorios
+  que existen sólo en una sede específica) se manejan con reglas
+  puntuales que desarrollamos en el capítulo 5.
 - **Carga horaria declarada por la materia.** Cada materia declara
   en su plan de estudios cuántas horas semanales son de teoría y
   cuántas de laboratorio. La suma de duraciones de horarios teóricos
@@ -248,14 +252,28 @@ institucionales de la facultad:
   comisión por materia: alcanza con que exista al menos un par
   compatible de comisiones para cada par de materias del grupo
   curricular.
-- **Continuidad de sede entre bloques consecutivos.** Dos clases de
-  la misma comisión programadas en bloques contiguos del mismo día
-  no pueden dictarse en sedes distintas, para evitar el traslado
-  apurado entre Pellegrini y el Centro Universitario Rosario. El
-  sistema implementa esta política de manera parametrizable: si el
-  gap entre dos horarios consecutivos es menor a un margen
-  configurable (por defecto, 30 minutos), la restricción los fuerza
-  a la misma sede.
+- **Continuidad de sede entre bloques consecutivos.** Dos clases
+  programadas en bloques contiguos del mismo día no pueden
+  dictarse en sedes distintas si el gap entre ellas es menor a un
+  margen configurable (por defecto, 30 minutos), porque el
+  traslado apurado entre Pellegrini y el Centro Universitario
+  Rosario deja de ser viable. La regla se aplica en dos ejes: al
+  **docente** (dos horarios de la misma comisión no pueden caer
+  en sedes distintas si están contiguos, porque el mismo profesor
+  no viaja en el intervalo) y al **alumno** (dos horarios de
+  materias distintas del mismo grupo curricular tampoco pueden
+  hacerlo, porque un alumno tipo que cursa las dos necesita
+  atravesar el traslado).
+- **Camino de cursada intersede factible.** Para cada terna
+  `(carrera, año, cuatrimestre)`, debe existir al menos una
+  combinación de comisiones (una por materia obligatoria) que un
+  alumno pueda cursar sin conflictos horarios ni traslados
+  intersede imposibles. La regla refina la protección de
+  trayectorias académicas incorporando la dimensión de sedes: no
+  alcanza con que no haya superposiciones horarias; debe ser
+  además factible caminar de una clase a la siguiente. El sistema
+  verifica esta regla como chequeo estructural antes de correr el
+  asignador.
 
 Adicionalmente, la facultad enuncia dos políticas ligadas al
 funcionamiento cotidiano que este trabajo trata de manera
