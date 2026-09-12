@@ -294,8 +294,8 @@ simultaneidad domina a la formulación por pares).
   aplica la solución al patrón semanal y se propaga.
 - → cuerpo: síntesis de `1. Diseño/asignacion-aulas-LP.md`;
   anexo E: desarrollo completo tomando de `asignacion-aulas-LP.md`,
-  `2. Desarrollo/RESTRICCIONES_LP.md` y
-  `2. Desarrollo/ASIGNACION_IMPL.md`.
+  `2. Desarrollo/asignador_guia_operativa.md` y
+  `2. Desarrollo/asignador_implementacion.md`.
 
 #### Capítulo 9. Validaciones y garantías de consistencia
 
@@ -321,7 +321,7 @@ simultaneidad domina a la formulación por pares).
   cambia el peso de sobre-ocupación, se restringe una materia a una
   sede.
 - → cuerpo: recorrido selectivo con capturas nuevas; anexo B: manual
-  operativo completo derivado de `3. Manual de Usuario/`.
+  operativo completo derivado de `Informe/anexos/Anexo_Manual_de_Usuario/`.
 
 #### Capítulo 11. Análisis y discusión
 
@@ -353,7 +353,7 @@ simultaneidad domina a la formulación por pares).
   independiente ya escrito. Ubicación:
   `anexos/Anexo_Base_de_Datos.md`.
 - **Anexo B. Manual de usuario.** Consolidación de
-  `project/3. Manual de Usuario/` con revisión para poner al día los
+  `project/Informe/anexos/Anexo_Manual_de_Usuario/` con revisión para poner al día los
   cambios acumulados desde su última edición (deprecación de clases
   puntuales, comisiones por carrera, etc.).
 - **Anexo C. Matriz de requerimientos.** Derivado de
@@ -366,8 +366,8 @@ simultaneidad domina a la formulación por pares).
   Documentación completa del modelo: derivación de restricciones,
   demostraciones, formulaciones alternativas descartadas, análisis
   de complejidad, catálogo de casos infactibles y sus diagnósticos.
-  Fuente: `2. Desarrollo/RESTRICCIONES_LP.md`,
-  `2. Desarrollo/ASIGNACION_IMPL.md` y partes de
+  Fuente: `2. Desarrollo/asignador_guia_operativa.md`,
+  `2. Desarrollo/asignador_implementacion.md` y partes de
   `1. Diseño/asignacion-aulas-LP.md` que no van al cuerpo.
 
 ---
@@ -411,9 +411,9 @@ material ya está escrito y con `∅` cuando falta redactar.
 | 6 | Modelo de datos | `Anexo_Base_de_Datos.md`, `orm.md`, `modelo-planificacion-cursada.md` | → material abundante |
 | 7 | Arquitectura | `tech_stack.md`, `orm.md`, `WORKFLOW.md` | → borradores |
 | 8 | Programa lineal (cuerpo) | `asignacion-aulas-LP.md` (síntesis) | → material abundante |
-| 8-E | Programa lineal (anexo E) | `asignacion-aulas-LP.md` completo, `RESTRICCIONES_LP.md`, `ASIGNACION_IMPL.md` | → material abundante |
+| 8-E | Programa lineal (anexo E) | `asignacion-aulas-LP.md` completo, `asignador_guia_operativa.md`, `asignador_implementacion.md` | → material abundante |
 | 9 | Validaciones | `VALIDACIONES.md` | → |
-| 10 | Herramienta en acción | `3. Manual de Usuario/`, `WORKFLOW.md`, capturas nuevas | ∅ (capturas) |
+| 10 | Herramienta en acción | `Informe/anexos/Anexo_Manual_de_Usuario/`, `WORKFLOW.md`, capturas nuevas | ∅ (capturas) |
 | 11 | Análisis y discusión | corridas experimentales sobre datos reales | ∅ |
 | 12 | Conclusiones | (síntesis del propio informe) | ∅ |
 
@@ -451,7 +451,7 @@ efectivamente produjo un artefacto útil.
    consagra como patrón general del informe (ver § 2). Nace de
    esto el **Anexo E** para el capítulo 8.
 2. **Manual de usuario como anexo (D2).** Se consolida
-   `project/3. Manual de Usuario/` en el **Anexo B**, con una
+   `project/Informe/anexos/Anexo_Manual_de_Usuario/` en el **Anexo B**, con una
    revisión previa para poner al día los cambios acumulados desde
    su última edición.
 3. **Stack tecnológico presentado entero al principio (D3).** Se

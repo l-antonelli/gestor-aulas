@@ -875,7 +875,7 @@ borran salvo que el operador los elimine explícitamente.
 - **Planteo formal completo**: `project/1. Diseño/asignacion-aulas-LP.md`.
 - **Validaciones del plan y camino de cursada**: `project/2.
   Desarrollo/VALIDACIONES.md`.
-- **Recursado y modalidad virtual**: `project/2. Desarrollo/RECURSADO_Y_VIRTUAL.md`.
-- **Implementación por servicio**: `project/2. Desarrollo/ASIGNACION_IMPL.md`.
+- **Recursado y modalidad virtual**: `project/2. Desarrollo/CICLOS_Y_DICTADOS.md`.
+- **Implementación por servicio**: `project/2. Desarrollo/asignador_implementacion.md`.
 - **Métricas de calidad y catálogo de indicadores**: § 8.7 y el
   documento de diseño del panel de calidad.

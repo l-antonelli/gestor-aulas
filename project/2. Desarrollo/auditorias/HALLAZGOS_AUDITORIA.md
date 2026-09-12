@@ -4,7 +4,7 @@
 > Origen: 5 agentes en paralelo revisaron el catálogo maestro,
 > ciclos+cronogramas, planes+asignación de aulas, inscriptos+historial y
 > flujos globales. El detalle exhaustivo está en
-> `project/3. Manual de Usuario/_auditoria/*.md`.
+> `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/*.md`.
 > **Ninguno de estos hallazgos fue arreglado**: sirven de backlog para
 > sesiones futuras.
 
@@ -959,11 +959,11 @@ código el 2026-07-30. Cada hallazgo referencia archivos y líneas del
 código real (no de la doc). El reporte extendido de cada agente está
 en:
 
-- `project/3. Manual de Usuario/_auditoria/01_catalogo_maestro.md`
-- `project/3. Manual de Usuario/_auditoria/02_ciclos_cronogramas.md`
-- `project/3. Manual de Usuario/_auditoria/03_planes_asignacion.md`
-- `project/3. Manual de Usuario/_auditoria/04_inscriptos_historial.md`
-- `project/3. Manual de Usuario/_auditoria/05_flujos_globales.md`
+- `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/01_catalogo_maestro.md`
+- `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/02_ciclos_cronogramas.md`
+- `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/03_planes_asignacion.md`
+- `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/04_inscriptos_historial.md`
+- `project/Informe/anexos/Anexo_Manual_de_Usuario/_auditoria/05_flujos_globales.md`
 
 Estos archivos son temporales y se pueden borrar tras redactar el
 manual (contienen la parte de auditoría; los hallazgos ya están

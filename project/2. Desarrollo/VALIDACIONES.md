@@ -334,7 +334,7 @@ vieja con exactitud y auditar la evolución de configuraciones.
 
 Cuando el status es `infeasible`, el veredicto se acompaña de una
 estructura `iis` con el diagnóstico por relajación selectiva (ver
-`2. Desarrollo/ASIGNACION_IMPL.md` § 4.2).
+`2. Desarrollo/asignador_implementacion.md` § 4.2).
 
 ---
 

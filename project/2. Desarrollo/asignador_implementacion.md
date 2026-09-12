@@ -8,8 +8,8 @@
 >
 > **Ver también**:
 > - Planteo formal: [`../1. Diseño/asignacion-aulas-LP.md`](../1.%20Diseño/asignacion-aulas-LP.md).
-> - Guía operativa del asignador: [`RESTRICCIONES_LP.md`](RESTRICCIONES_LP.md).
-> - Plan de retiro de `ClaseDB`: [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md).
+> - Guía operativa del asignador: [`asignador_guia_operativa.md`](asignador_guia_operativa.md).
+> - Plan de retiro de `ClaseDB`: [`sesiones/DEPRECACION_CLASEDB.md`](sesiones/DEPRECACION_CLASEDB.md).
 > - Workflow general del sistema: [`WORKFLOW.md`](WORKFLOW.md) § 9.
 
 Este documento describe **cómo está implementado el LP**: qué
@@ -733,7 +733,7 @@ a partir del estado vigente de la base, no del snapshot del último
   `HorarioDB.aula_id`. `ClaseDB.aula_id` se mantiene como *cache*
   con propagación desde el patrón por compatibilidad con
   validación por-fecha, pero ninguna vista lo lee ni permite
-  editarlo. Plan de retiro en [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md).
+  editarlo. Plan de retiro en [`sesiones/DEPRECACION_CLASEDB.md`](sesiones/DEPRECACION_CLASEDB.md).
 - **`ClaseDB.aula_asignada_manualmente`**. El flag vive en
   `HorarioDB.aula_asignada_manualmente`. La columna en `ClaseDB`
   existe por compatibilidad de esquema, pero no la consulta ni

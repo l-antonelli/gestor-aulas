@@ -7,7 +7,7 @@
 > equipo de desarrollo o para redactar el informe académico.
 >
 > Para uso operativo por usuarios finales no técnicos, consultar el
-> **manual de usuario** en `project/3. Manual de Usuario/`, que cubre
+> **manual de usuario** en `project/Informe/anexos/Anexo_Manual_de_Usuario/`, que cubre
 > los mismos flujos en lenguaje coloquial y con foco en tareas.
 >
 > **Cambios clave a tener en cuenta al leer este documento**:
@@ -18,7 +18,7 @@
 >    tampoco existe. Cualquier referencia a "toggle Activo" o
 >    "activo/inactivo" de dictados que quede abajo se refiere ahora
 >    a **crear / borrar la fila del dictado**. Ver
->    `RECURSADO_Y_VIRTUAL.md` y `RF-DICT-03`.
+>    `CICLOS_Y_DICTADOS.md` y `RF-DICT-03`.
 > 2. **Clases puntuales deprecadas** (2026-07-07). El tab "📅 Clases"
 >    y toda la edición manual de `ClaseDB` (aula puntual, tipo puntual,
 >    rangos) fueron removidos. El asignador de aulas y la UI trabajan
@@ -31,7 +31,7 @@
 >    `ComisionDB` puede pertenecer a un cronograma o a un plan y se
 >    edita como fila (nombre, cupo, carrera asignada, descripción).
 >    Al generar el plan desde un cronograma, las comisiones template
->    se **clonan** al plan. Ver `COMISIONES_POR_CARRERA.md`.
+>    se **clonan** al plan. Ver [sesiones/COMISIONES_POR_CARRERA.md](sesiones/COMISIONES_POR_CARRERA.md).
 > 4. **Grupos de Materias reemplazan `CarreraSedeDB`** (2026-09). La
 >    resolución de sedes admisibles del LP (R10) y la preferencia
 >    blanda (R12) van exclusivamente por el grupo de la materia.
@@ -39,7 +39,7 @@
 >    por-grupo se elige por corrida (`LPConfig.modos_por_grupo`).
 >    `CarreraSedeDB` y `SedeDB.es_default_comunes` quedan deprecados.
 >    `ComisionDB.carrera_asignada` sobrevive como etiqueta visual sin
->    efecto en el LP. Ver `ASIGNACION_IMPL.md` § 5.
+>    efecto en el LP. Ver `asignador_implementacion.md` § 5.
 > 5. **R13 extendida y R13-camino** (2026-09). R13 detecta pares
 >    intersede en riesgo tanto por traslado del docente (misma
 >    comisión) como por traslado del alumno (materias distintas del
@@ -50,7 +50,7 @@
 >    `forzar_misma_sede_por_comision` en el panel del asignador.
 >    Cada corrida persiste un veredicto humano-legible en
 >    `LPRunDB.details_json` con status, causa, bloqueos y config
->    completa. Ver `RESTRICCIONES_LP.md` § 4.
+>    completa. Ver `asignador_guia_operativa.md` § 4.
 > 7. **Excepciones ignoradas con auto-limpieza** (2026-09).
 >    `IgnoredConflictDB` marca pares de materias que la validación de
 >    solapamiento debe saltar. La auto-limpieza en `validate_plan`
@@ -66,9 +66,9 @@
 > Vínculos:
 > - Modelo de datos: [modelo-planificacion-cursada.md](../1.%20Diseño/modelo-planificacion-cursada.md)
 > - Asignación de aulas (planteo formal): [asignacion-aulas-LP.md](../1.%20Diseño/asignacion-aulas-LP.md)
-> - Asignación de aulas (implementación): [ASIGNACION_IMPL.md](ASIGNACION_IMPL.md)
-> - Recursado y virtualidad: [RECURSADO_Y_VIRTUAL.md](RECURSADO_Y_VIRTUAL.md)
-> - Comisiones y sede por carrera: [COMISIONES_POR_CARRERA.md](COMISIONES_POR_CARRERA.md)
+> - Asignación de aulas (implementación): [asignador_implementacion.md](asignador_implementacion.md)
+> - Recursado y virtualidad: [CICLOS_Y_DICTADOS.md](CICLOS_Y_DICTADOS.md)
+> - Comisiones y sede por carrera: [sesiones/COMISIONES_POR_CARRERA.md](sesiones/COMISIONES_POR_CARRERA.md)
 > - Validaciones: [VALIDACIONES.md](VALIDACIONES.md)
 > - Concepto de plan de cursada: [plan-de-cursada.md](../0.%20Planteo/plan-de-cursada.md)
 
@@ -230,7 +230,7 @@ horarios, checklist previo al asignador, escenarios recurrentes),
 ver el runbook **[CICLOS_Y_DICTADOS.md](CICLOS_Y_DICTADOS.md)**.
 Para la semántica formal de las tres puertas de decisión de un
 dictado (pertenencia, recursado, virtualidad),
-[`RECURSADO_Y_VIRTUAL.md § 1`](RECURSADO_Y_VIRTUAL.md).
+[`CICLOS_Y_DICTADOS.md § 1`](CICLOS_Y_DICTADOS.md).
 
 ### 3.1 Crear los dictados
 
@@ -275,7 +275,7 @@ sincronización que reporta:
   (setear `MateriaDB.dicta_recursado`) para que en ciclos futuros
   no aparezca como divergencia.
 
-Detalle completo del flujo en `RECURSADO_Y_VIRTUAL.md`.
+Detalle completo del flujo en `CICLOS_Y_DICTADOS.md`.
 
 > **Materias compartidas y separación visual**: una misma materia
 > (ej. "Cálculo I") puede aparecer en varios planes de carrera. La
@@ -607,7 +607,7 @@ Cuando el plan no tiene conflictos no-ignorados y el usuario aprieta
      clase es virtual si la materia es virtual de catálogo, si su
      dictado del ciclo está marcado virtual, o si el horario
      puntual está marcado virtual (jerarquía en 3 niveles, ver
-     `RECURSADO_Y_VIRTUAL.md`). El toggle a nivel dictado vive en
+     `CICLOS_Y_DICTADOS.md`). El toggle a nivel dictado vive en
      `📆 Ciclos → 📚 Dictados`, columna **Virtual**.
 
 El plan queda con `activo=True` y aparece como `[ACTIVO]` en la
@@ -623,7 +623,7 @@ lista.
 > como deprecado. El cache sigue vivo por compatibilidad
 > (`generate_clases_for_plan`, `apply_solution`, cascadas de borrado)
 > pero no se debe usar para features nuevas. Ver
-> [`DEPRECACION_CLASEDB.md`](DEPRECACION_CLASEDB.md).
+> [`sesiones/DEPRECACION_CLASEDB.md`](sesiones/DEPRECACION_CLASEDB.md).
 
 ---
 
@@ -651,7 +651,7 @@ propagación a `ClaseDB` con `fecha ≥ fecha_desde`) y cubre:
   diff visual y persistencia bajo confirmación.
 
 Detalle completo de la implementación:
-[`ASIGNACION_IMPL.md`](ASIGNACION_IMPL.md).
+[`asignador_implementacion.md`](asignador_implementacion.md).
 
 ---
 
@@ -723,7 +723,7 @@ asignación de aulas están en documentos dedicados:
   objetivo, ejemplos): `1. Diseño/asignacion-aulas-LP.md`.
 - **Implementación** (servicios, flujo, diagnóstico de
   infactibilidad, panel operativo, edición manual del patrón):
-  `2. Desarrollo/ASIGNACION_IMPL.md`.
+  `2. Desarrollo/asignador_implementacion.md`.
 
 El diseño final asigna aulas al **patrón semanal**
 (`HorarioDB.aula_id`) en vez de a cada `ClaseDB` — un orden de

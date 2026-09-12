@@ -705,7 +705,7 @@ class ClaseDB(SQLModel, table=True):
         ``validar_conflictos_aula_plan``. NO agregar features nuevas
         que dependan de ``ClaseDB``; el retiro completo (drop table +
         limpieza de servicios) está trackeado como tarea pendiente.
-        Ver ``project/2. Desarrollo/DEPRECACION_CLASEDB.md``.
+        Ver ``project/2. Desarrollo/sesiones/DEPRECACION_CLASEDB.md``.
     """
     __tablename__ = "clases"
 

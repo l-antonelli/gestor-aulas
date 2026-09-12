@@ -1,6 +1,6 @@
 # Programa Lineal de Asignación de Aulas
 
-> **Estado**: modelo formalizado y en producción. Este documento es la **referencia técnica** del planteo matemático — cubre conjuntos, variables, función objetivo, restricciones, chequeo estructural pre-solve y diagnóstico por relajación selectiva. Para la **guía operativa** (cómo se usa desde la UI, qué significan los parámetros, cómo interpretar cada mensaje del veredicto), ver `project/2. Desarrollo/RESTRICCIONES_LP.md`.
+> **Estado**: modelo formalizado y en producción. Este documento es la **referencia técnica** del planteo matemático — cubre conjuntos, variables, función objetivo, restricciones, chequeo estructural pre-solve y diagnóstico por relajación selectiva. Para la **guía operativa** (cómo se usa desde la UI, qué significan los parámetros, cómo interpretar cada mensaje del veredicto), ver `project/2. Desarrollo/asignador_guia_operativa.md`.
 >
 > **Última actualización**: 2026-09-11.
 

@@ -3,7 +3,7 @@
 Funciones para guardar/consultar `InscripcionHistoricaDB` con la
 semántica correcta cuando la UI aplica un filtro de cuatrimestre.
 
-Contexto (H01 del HALLAZGOS_AUDITORIA):
+Contexto (H01 de auditorias/HALLAZGOS_AUDITORIA):
 El editor de la página `📈 Inscriptos` tiene un filtro superior de
 cuatrimestre (1C / 2C / Anual / Todos) que solamente restringe qué
 registros se **muestran** en el editor. La lógica original guardaba

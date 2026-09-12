@@ -1,4 +1,25 @@
-# Comisiones como entidad y override de sede por carrera
+# Comisiones como entidad y override de sede por carrera (histórico)
+
+> **Nota histórica (2026-09-12)**. Este documento describe dos
+> cambios ejecutados en 2026-07:
+>
+> 1. `ComisionDB` como **entidad de primera clase** con anclaje
+>    XOR cronograma/plan y clonado al generar plan. **Vigente**.
+> 2. `ComisionDB.carrera_asignada` como override de sede a nivel
+>    comisión para materias comunes. **Deprecado como semántica LP
+>    en 2026-09**: el override sobrevive en el schema como etiqueta
+>    visual (se sigue editando desde la UI) pero **no interviene en
+>    la resolución de sedes admisibles del asignador**. La
+>    resolución va exclusivamente por el `GrupoMateriaDB` de la
+>    materia (partición estricta materia → grupo) con set duro +
+>    lista blanda ordenada. Ver
+>    [`../../1. Diseño/modelo-planificacion-cursada.md`](../../1.%20Diseño/modelo-planificacion-cursada.md)
+>    §2.2 (Grupos de Materias) y `asignador_implementacion.md § 5`.
+>
+> Se conserva este documento como registro del proceso de diseño
+> del refactor de comisiones. Los detalles operativos vigentes
+> sobre la comisión como entidad viven en
+> `../../1. Diseño/modelo-planificacion-cursada.md` §2.6.
 
 ## Motivación
 

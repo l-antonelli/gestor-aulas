@@ -294,9 +294,11 @@ classDiagram
     }
 
     class MateriaForecastConfigDB {
+        +str plan_cursada_id PK FK
         +str materia_codigo PK FK
-        +str metodo
-        +float override_inscriptos
+        +str cuatrimestre PK
+        +Optional~str~ metodo
+        +Optional~float~ valor_override
     }
 
     class ConfiguracionHoraria {
@@ -369,7 +371,8 @@ classDiagram
 
     %% Forecast e histórico
     MateriaDB "1" --o "0..*" InscripcionHistoricaDB
-    MateriaDB "1" --o "0..1" MateriaForecastConfigDB
+    PlanificacionCursadaDB "1" --o "0..*" MateriaForecastConfigDB : cascade
+    MateriaDB "1" --o "0..*" MateriaForecastConfigDB
 ```
 
 ---
@@ -479,7 +482,7 @@ reporta al usuario en el summary de `validate_plan`.
 - **`ClaseDB`**. Cache técnico deprecado (2026-08). El modelo activo
   trabaja sobre `HorarioDB.aula_id`. `ClaseDB.aula_id` se propaga
   desde el patrón por `apply_solution` pero ninguna vista lo
-  renderiza. Plan de retiro en `2. Desarrollo/DEPRECACION_CLASEDB.md`.
+  renderiza. Plan de retiro en `2. Desarrollo/sesiones/DEPRECACION_CLASEDB.md`.
 - **`ClaseDB.aula_asignada_manualmente`**. Deprecado. El flag vive
   ahora en `HorarioDB.aula_asignada_manualmente`.
 - **`DictadoDB.activo`**. Eliminada (2026-06-30). Semántica actual:

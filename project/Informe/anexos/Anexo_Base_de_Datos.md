@@ -771,7 +771,7 @@ Planificacion trabajable generada a partir de un cronograma.
 | `tipo_clase` | `Optional[str]` | — |
 | `aula_asignada_manualmente` | `bool` | Deprecado; el flag activo esta en `HorarioDB`. |
 
-**Retiro futuro**: el drop de la tabla y limpieza de servicios esta trackeada en `project/2. Desarrollo/DEPRECACION_CLASEDB.md`.
+**Retiro futuro**: el drop de la tabla y limpieza de servicios esta trackeada en `project/2. Desarrollo/sesiones/DEPRECACION_CLASEDB.md`.
 
 ---
 
@@ -1146,7 +1146,7 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 - **R13**: continuidad de sede en pares en riesgo (docente y alumno).
 - **R14**: forzar misma sede por comision (opcional).
 
-**Chequeo estructural pre-solve** (`factibilidad_service.py`) y **diagnostico post-solve por relajacion selectiva** (`_run_iis_relajacion`): documentados en detalle en `2. Desarrollo/ASIGNACION_IMPL.md` § 4.
+**Chequeo estructural pre-solve** (`factibilidad_service.py`) y **diagnostico post-solve por relajacion selectiva** (`_run_iis_relajacion`): documentados en detalle en `2. Desarrollo/asignador_implementacion.md` § 4.
 
 **Persistencia del snapshot** (`LPRunDB`):
 
@@ -1566,7 +1566,7 @@ Futura mejora: politica de retencion (conservar los ultimos N por par o los ulti
 - **Modelo de planificacion Schedule → Plan → Clases**: `project/1. Diseño/modelo-planificacion-cursada.md`
 - **LP de asignacion de aulas**: `project/1. Diseño/asignacion-aulas-LP.md`
 - **Arquitectura ORM**: `project/1. Diseño/orm.md`
-- **Manual de usuario (flujos)**: `project/3. Manual de Usuario/flujos/`
+- **Manual de usuario (flujos)**: `project/Informe/anexos/Anexo_Manual_de_Usuario/flujos/`
 - **Codigo fuente**:
   - Modelos: `src/database/models.py`
   - Conexion y migraciones: `src/database/connection.py`
