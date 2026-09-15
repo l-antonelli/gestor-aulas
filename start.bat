@@ -37,6 +37,11 @@ echo Para cerrar la aplicacion, cerra esta ventana de terminal.
 echo ===================================================================
 echo.
 
+REM Forzar que la raiz del proyecto este en sys.path, asi los imports
+REM "from src.database.connection import ..." de app/main.py funcionan
+REM independientemente del contexto de arranque.
+set "PYTHONPATH=%~dp0;%PYTHONPATH%"
+
 "%UV_BIN%" run streamlit run app/main.py ^
     --server.headless=false ^
     --server.address=localhost ^

@@ -56,6 +56,11 @@ echo "Para cerrar la aplicación, cerrá esta ventana de terminal."
 echo "==================================================================="
 echo ""
 
+# Forzar que la raíz del proyecto esté en sys.path, así los imports
+# `from src.database.connection import ...` de app/main.py funcionan
+# independientemente del contexto de arranque.
+export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 "$UV_BIN" run streamlit run app/main.py \
     --server.headless=false \
     --server.address=localhost \
