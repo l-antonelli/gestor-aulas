@@ -1,0 +1,102 @@
+===================================================================
+  Sistema de Gestión de Aulas — Instrucciones de instalación
+===================================================================
+
+Este ZIP contiene todo lo necesario para correr la aplicación en tu
+computadora. NO hace falta instalar Python ni saber programar.
+
+-------------------------------------------------------------------
+  Requisitos previos
+-------------------------------------------------------------------
+
+- Windows 10/11 (64 bits) o macOS (Intel o Apple Silicon).
+- Conexión a Internet la PRIMERA vez que se corre la app (para bajar
+  las librerías necesarias, ~200 MB). Después funciona sin Internet.
+- Aproximadamente 500 MB libres de disco.
+
+-------------------------------------------------------------------
+  Paso a paso
+-------------------------------------------------------------------
+
+1. Descomprimir este ZIP en una carpeta cómoda (por ejemplo el
+   Escritorio o Documentos). NO abras la app desde adentro del ZIP.
+
+2. Entrar en la carpeta descomprimida "gestor-aulas".
+
+3. Según el sistema operativo:
+
+   * En Windows: hacer DOBLE CLICK en "start.bat".
+     Si Windows Defender / SmartScreen muestra una advertencia
+     ("Windows protegió tu equipo"), hacer click en "Más información"
+     y después en "Ejecutar de todas formas".
+
+   * En macOS: hacer CLICK DERECHO sobre "start.command" y elegir
+     "Abrir". En el diálogo de seguridad, tocar "Abrir" nuevamente.
+     Esto sólo hace falta la primera vez. Después alcanza con doble
+     click.
+
+4. Se abre una ventana de terminal negra. La PRIMERA vez tarda
+   aproximadamente 1 minuto porque baja Python y las librerías. En
+   las corridas siguientes arranca en pocos segundos.
+
+5. Cuando termine de cargar, la aplicación se abre automáticamente
+   en el navegador (Chrome, Edge, Firefox o Safari). Si no se abre
+   sola, entrar manualmente a:
+
+       http://localhost:8501
+
+6. Para CERRAR la aplicación: cerrar la ventana de terminal negra.
+   Con eso alcanza.
+
+-------------------------------------------------------------------
+  Preguntas frecuentes
+-------------------------------------------------------------------
+
+* "Windows me dice que el archivo es peligroso"
+  Es un falso positivo típico de scripts de arranque sin firmar.
+  Elegir "Más información" > "Ejecutar de todas formas". La app es
+  segura y sólo corre en tu computadora (no se conecta a internet
+  después de la instalación inicial).
+
+* "macOS me dice que 'no se puede abrir porque el desarrollador no
+  puede verificarse'"
+  Es el mensaje típico de Gatekeeper para scripts sin firmar. La
+  primera vez hay que hacer CLICK DERECHO > "Abrir". Después se
+  puede usar doble click normalmente.
+
+* "La primera corrida tarda mucho"
+  Es normal. La primera vez baja Python 3.11 y todas las librerías
+  del proyecto (~200 MB). En corridas siguientes arranca en segundos.
+
+* "El puerto 8501 está ocupado"
+  Cerrá cualquier otra aplicación que esté usando ese puerto (puede
+  ser una versión anterior del gestor de aulas todavía abierta).
+  Después volvé a hacer doble click al lanzador.
+
+* "No se abre nada al hacer doble click"
+  Verificá que descomprimiste el ZIP completo (tiene que haber una
+  carpeta "bin" con los binarios adentro). Si el ZIP quedó a medio
+  descomprimir volvé a bajarlo.
+
+-------------------------------------------------------------------
+  Estructura del ZIP
+-------------------------------------------------------------------
+
+  gestor-aulas/
+    start.command       Lanzador de macOS
+    start.bat           Lanzador de Windows
+    LEEME.txt           Este archivo
+    README.md           Documentación técnica del proyecto
+    app/                Código de la aplicación
+    src/                Código de soporte
+    data/               Base de datos SQLite con datos precargados
+    bin/                Binarios de uv (gestor de dependencias)
+    pyproject.toml      Configuración del proyecto
+    uv.lock             Lock de versiones de dependencias
+
+-------------------------------------------------------------------
+  Cualquier problema
+-------------------------------------------------------------------
+
+Escribime con el mensaje de error que aparezca en la terminal negra
+y te ayudo a resolverlo.

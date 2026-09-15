@@ -212,3 +212,8 @@ __marimo__/
 project/Informe/bibliografia/
 project/Informe/pautas informe/
 project/Informe/borradores/
+
+# Distribución: binarios de uv descargados por scripts/build_portable_zip.sh
+# y ZIP generado — no se commitean al repo, se suben como asset de release.
+bin/
+dist/
