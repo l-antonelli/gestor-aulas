@@ -1,6 +1,6 @@
 [project]
 name = "gestor-aulas"
-version = "0.9.2"
+version = "0.9.3"
 description = "Sistema de asignación de aulas para FCEIA - UNR"
 requires-python = ">=3.11,<3.13"
 dependencies = [
