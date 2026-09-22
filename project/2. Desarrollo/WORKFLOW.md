@@ -470,17 +470,21 @@ con decisión "agregar". La UI muestra:
 
 - Métricas: horarios del archivo, materias detectadas, materias que
   requieren decisión, y total de horarios en el estado hipotético.
-- Calendario editable del shadow: mismo widget que Editar, con
-  drag/resize/click para modificar el preview antes de commitear.
+- Calendario **read-only** del shadow: el mismo widget que Editar
+  pero deshabilitado — no hay drag/resize/click de edición. El
+  propósito es visualizar el estado hipotético para decidir
+  confirmar o descartar; ediciones puntuales se hacen después del
+  merge, desde la tab Ver/Editar.
 - Toggle "Mostrar también datos previos no modificados": si ON
   incluye todas las materias del cronograma; si OFF acota a las
   afectadas por el archivo.
 - Toggle "Filtrar por (carrera, año, cuatri)": útil cuando el
   archivo trae materias de distintos años.
-- Botón "Ejecutar validaciones": opt-in (cuesta 1-2s en Plan v0).
-  Corre `validar_cronograma` sobre el shadow y muestra las 4
-  métricas centrales (faltantes, conflictos horarios, bloqueos de
-  camino, partición teoría/lab) más el detalle en JSON.
+- Validaciones automáticas al abrir el preview
+  (`validar_cronograma` sobre el shadow): reporta las 4 métricas
+  centrales (faltantes, conflictos horarios, bloqueos de camino,
+  partición teoría/lab). No hay botón "Ejecutar" — corre siempre
+  para dar contexto al usuario antes de confirmar.
 - Confirmar (`finalizar_shadow_import`): reemplaza las entries del
   destino por las del shadow y borra el shadow.
 - Descartar (`descartar_shadow_import`): borra el shadow sin tocar

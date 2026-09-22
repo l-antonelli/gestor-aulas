@@ -558,6 +558,14 @@ def render_editable_schedule_calendar(
             # tipo derivado del aula post-LP (sin icono explícito):
             # así el usuario puede distinguir "esto lo dijo la
             # cátedra" de "esto lo puso el LP".
+            #
+            # Bugfix (2026-09-22, task #346): antes cuando había tipo
+            # predeterminado + aula asignada se mostraba `📖 🏛️ Aula 42`
+            # (dos iconos consecutivos). El icono del tipo ya dice
+            # "clase teórica/lab"; el 🏛️ frente al aula es redundante
+            # y visualmente ruidoso. Regla nueva: si hay tipo
+            # predeterminado (📖/🧪), NO se antepone 🏛️ al aula; el
+            # 🏛️ sólo aparece cuando el tipo se deriva por el LP.
             _virtual = getattr(b, "virtual", False)
             _tipo = getattr(b, "tipo_clase", None)
             _aula_label = getattr(b, "aula_label", None)
@@ -577,7 +585,13 @@ def render_editable_schedule_calendar(
                 # el aula (o el AulaDB.tipo si se propaga) desambigua.
 
                 if _aula_label:
-                    aula_txt = f"🏛️ {_aula_label}"
+                    # Sin tipo predeterminado → prefijamos 🏛️. Con
+                    # tipo predeterminado → el 📖/🧪 va aparte, así
+                    # que el aula queda "pelada" (sin icono adicional).
+                    aula_txt = (
+                        _aula_label if _tipo_icon
+                        else f"🏛️ {_aula_label}"
+                    )
                 elif hasattr(b, "aula_label"):
                     aula_txt = "Sin aula"
                 else:

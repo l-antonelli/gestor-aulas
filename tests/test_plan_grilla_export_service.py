@@ -98,7 +98,12 @@ class TestExportGrillaAXlsx:
         codigos = {ws.cell(row=r, column=1).value for r in range(2, 5)}
         assert codigos == {"MAT1", "MAT2", "MAT3"}
 
-    def test_detalle_muestra_modalidad_y_aula(self):
+    def test_detalle_muestra_virtual_y_aula(self):
+        """Drift task #347 (2026-09-22): la columna 9 se llama
+        ahora "Virtual" (SI/NO), consistente con el dropdown de la
+        plantilla. Antes se llamaba "Modalidad" y mezclaba virtualidad
+        con tipo de clase.
+        """
         grid = {
             "Lunes": [
                 _mk_block(
@@ -123,16 +128,17 @@ class TestExportGrillaAXlsx:
         wb = load_workbook(BytesIO(raw))
         ws = wb["Detalle"]
         # Columnas: 1=cod, 2=nombre, 3=com, 4=alcance, 5=dia,
-        # 6=hi, 7=hf, 8=aula, 9=modalidad
+        # 6=hi, 7=hf, 8=aula, 9=virtual (SI/NO)
+        assert ws.cell(row=1, column=9).value == "Virtual"
         aulas = [ws.cell(row=r, column=8).value for r in range(2, 5)]
-        modalidades = [
+        virtual_col = [
             ws.cell(row=r, column=9).value for r in range(2, 5)
         ]
         assert "Virtual" in aulas
         assert "Pellegrini · AULA 5" in aulas
         assert "Sin aula" in aulas
-        assert "Virtual" in modalidades
-        assert "Laboratorio" in modalidades
+        # h1 (virtual=True) → SI, h2 y h3 (virtual=False) → NO.
+        assert sorted(virtual_col) == ["NO", "NO", "SI"]
 
     def test_detalle_muestra_alcance_desde_carreras_label(self):
         grid = {

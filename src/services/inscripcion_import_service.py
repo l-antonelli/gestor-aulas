@@ -277,6 +277,10 @@ def preview_import(
         # Resolución (Fase E2: alias tiene prioridad sobre guarani).
         materia = por_codigo.get(codigo_original)
         resolucion_type = "direct"
+        # Bugfix (2026-09-22, task #348): tracker de "alias huérfano"
+        # para diferenciar el caso "no hay alias" del caso "hay alias
+        # pero apunta a un código que ya no existe en el catálogo".
+        alias_huerfano_target: str | None = None
         if materia is None:
             alias_target = aliases_map.get(codigo_original)
             if alias_target is not None:
@@ -288,6 +292,8 @@ def preview_import(
                         f"resuelto vía alias persistido → "
                         f"'{materia.codigo}'."
                     )
+                else:
+                    alias_huerfano_target = alias_target
         if materia is None:
             matches = por_guarani.get(codigo_original, [])
             if len(matches) == 1:
@@ -298,6 +304,16 @@ def preview_import(
                     f"resuelto vía código Guaraní → "
                     f"'{materia.codigo}'."
                 )
+            elif alias_huerfano_target is not None:
+                preview.filas_error.append((
+                    fila_num,
+                    f"código '{codigo_original}' tiene un alias "
+                    f"persistido que apunta a '{alias_huerfano_target}', "
+                    "pero esa materia ya no está en el catálogo. "
+                    "Reasigná el código desde la sección 'Sin matchear' "
+                    "(el alias viejo se sobrescribe con el nuevo match).",
+                ))
+                continue
             else:
                 preview.filas_error.append((
                     fila_num,

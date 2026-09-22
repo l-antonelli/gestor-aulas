@@ -911,8 +911,10 @@ with tab_dictados:
 
                 _fc3, _fc4, _fc5, _fc6 = st.columns([2, 2, 2, 2])
                 with _fc3:
+                    # Drift task #347 (2026-09-22): unificamos label a
+                    # "Virtual" (consistente con export y plantilla).
                     _modal = st.multiselect(
-                        "Modalidad",
+                        "Virtual",
                         options=["Presencial", "Virtual"],
                         default=["Presencial", "Virtual"],
                         key="dict_modal",

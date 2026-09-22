@@ -516,9 +516,16 @@ def crear_shadow_import(
     El shadow es un cronograma temporal marcado con
     `es_shadow_import=True` y `shadow_target_schedule_id=destino_id`.
     Contiene una copia de las entries del destino + las nuevas del
-    archivo (según las decisiones de merge por default: "agregar" —
-    que se pueden cambiar después via un nuevo `crear_shadow_import`
-    o editando el shadow directamente).
+    archivo (según las decisiones de merge por default: "agregar").
+
+    Uso previsto: el shadow es **read-only** en la UI. Sirve para que
+    el usuario visualice el estado hipotético del cronograma después
+    del merge (via calendario, `validar_cronograma`, etc.) antes de
+    decidir `finalizar_shadow_import` o `descartar_shadow_import`.
+    Para cambiar la decisión de merge de una materia hay que
+    descartar el shadow y volver a llamar a `crear_shadow_import` con
+    otras decisiones (o hacer el import completo con `commit_import`
+    directamente sobre el destino).
 
     Devuelve `(shadow, preview)` para que el caller pueda mostrar
     tanto el calendario del shadow como el detalle del preview.
@@ -619,6 +626,16 @@ def finalizar_shadow_import(
     calcular diffs — el shadow ya representa el estado deseado.
 
     Devuelve el id del schedule destino.
+
+    Nota (task #355, 2026-09-22): esta operación **no** tiene lock
+    optimista sobre el destino. Si otro proceso edita el destino
+    entre `crear_shadow_import` y `finalizar_shadow_import`, esos
+    cambios se pierden silenciosamente (el shadow los pisa). El
+    riesgo se acepta porque el sistema es single-user en la práctica
+    (uso desktop de una persona por vez). Para escenarios multi-user
+    habría que agregar una columna `version` a `ScheduleDB` y
+    validar que `destino.version` no cambió respecto al snapshot al
+    crear el shadow.
     """
     shadow = session.get(ScheduleDB, shadow_id)
     if shadow is None:

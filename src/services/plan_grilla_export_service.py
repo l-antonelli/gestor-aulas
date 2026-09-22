@@ -521,7 +521,11 @@ def _write_detalle_sheet(
         "Hora inicio",
         "Hora fin",
         "Aula",
-        "Modalidad",
+        # Drift task #347 (2026-09-22): unificamos el label a "Virtual"
+        # (SI/NO) para que sea consistente con la plantilla Excel y con
+        # los dropdowns de los diálogos de Ciclos/Inscriptos. Antes se
+        # llamaba "Modalidad" y mezclaba virtualidad con tipo de clase.
+        "Virtual",
     ]
     for j, h in enumerate(headers, start=1):
         c = ws.cell(row=1, column=j, value=h)
@@ -549,12 +553,11 @@ def _write_detalle_sheet(
     )
 
     for i, b in enumerate(filas, start=2):
-        modalidad = (
-            "Virtual" if b.virtual
-            else ("Teórica" if b.tipo_clase == "teorica"
-                  else ("Laboratorio" if b.tipo_clase == "laboratorio"
-                        else "—"))
-        )
+        # Drift task #347 (2026-09-22): la columna "Virtual" del export
+        # ahora contiene SI/NO — el tipo de clase (Teórica/Laboratorio)
+        # ya se refleja en la columna "Aula" (aula asignada por el LP
+        # o el tag "Sin aula") y en el visualizador de la app.
+        virtual_txt = "SI" if b.virtual else "NO"
         aula_txt = (
             "Virtual" if b.virtual
             else (b.aula_label or "Sin aula")
@@ -572,7 +575,7 @@ def _write_detalle_sheet(
         ws.cell(row=i, column=6, value=_fmt_time(b.hora_inicio))
         ws.cell(row=i, column=7, value=_fmt_time(b.hora_fin))
         ws.cell(row=i, column=8, value=aula_txt)
-        ws.cell(row=i, column=9, value=modalidad)
+        ws.cell(row=i, column=9, value=virtual_txt)
 
     # Autofilter en toda la tabla.
     if filas:

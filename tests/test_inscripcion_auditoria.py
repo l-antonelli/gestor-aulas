@@ -293,3 +293,9 @@ class TestImportResuelveViaAlias:
         # matchea, va a error.
         assert pv.filas_ok == []
         assert len(pv.filas_error) == 1
+        # Bugfix task #348 (2026-09-22): el mensaje ahora es específico
+        # y no dice "ni por alias" (que era confuso porque sí había
+        # alias). Guía al usuario a re-asignar desde "Sin matchear".
+        _fila_num, _msg = pv.filas_error[0]
+        assert "CODIGO_FANTASMA" in _msg
+        assert "Sin matchear" in _msg

@@ -569,8 +569,11 @@ with st.container(border=True):
 
     fc8, _ = st.columns([2, 6])
     with fc8:
+        # Drift task #347 (2026-09-22): unificamos el label a "Virtual"
+        # (consistente con la columna del export y con la plantilla).
+        # Semánticamente sigue siendo un filtro binario Presencial/Virtual.
         _modal_sel = st.multiselect(
-            "Modalidad",
+            "Virtual",
             options=["Presencial", "Virtual"],
             default=["Presencial", "Virtual"],
             key="insc_modal",

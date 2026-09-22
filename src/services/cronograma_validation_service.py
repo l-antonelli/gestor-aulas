@@ -276,11 +276,21 @@ def _compute_content_hash(
         select(ConfiguracionHoraria).limit(1)
     ).first()
     if config is not None:
+        # Bugfix (2026-09-22, task #356): normalizamos
+        # `dias_operativos` antes de sumarlo al hash porque su
+        # representación es un string CSV; un mismo conjunto de
+        # días guardado con distinto orden o espacios extra
+        # producía hashes distintos y disparaba staleness falso
+        # positivo (ej. "Lunes,Martes" vs "Martes, Lunes").
+        _dias_norm = ",".join(sorted({
+            d.strip() for d in (config.dias_operativos or "").split(",")
+            if d.strip()
+        }))
         parts.append(
             f"config:{config.granularidad_minutos}"
             f"|{config.hora_inicio_operativo.isoformat()}"
             f"|{config.hora_fin_operativo.isoformat()}"
-            f"|{config.dias_operativos or ''}"
+            f"|{_dias_norm}"
         )
     else:
         parts.append("config:none")
