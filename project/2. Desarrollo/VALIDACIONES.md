@@ -158,18 +158,70 @@ Compone el siguiente resumen contra un cronograma + ciclo:
 7. **Conflictos de horarios**: invoca
    `validar_conflictos_horarios_cronograma`. Lista estructurada por
    carrera/año/cuatri.
-8. **Config aplicada**: `excluir_optativas` queda persistido en el
+8. **Camino de cursada** (Fase B del rediseño 2026-09-15): invoca
+   `check_camino_cursada_cronograma`. Detecta grupos (carrera, año,
+   cuatri del ciclo) donde **ninguna combinación** de comisiones
+   derivadas del preview evita solapamientos entre materias
+   obligatorias. Antes este chequeo sólo corría al armar el plan;
+   ahora el usuario lo ve durante la fase de recolección de horarios
+   de las cátedras. `codigo_regla="R13-camino-cronograma"`. El detalle
+   se guarda en `details_json["camino_bloqueos"]`.
+9. **Config aplicada**: `excluir_optativas` queda persistido en el
    snapshot. Si el toggle cambia entre runs, el snapshot está stale.
 
 **Persistencia**: `persist_validation` inserta una fila en
 `ScheduleValidationDB` con detalle JSON (`details_json`) para
-reconstruir la UI sin recomputar.
+reconstruir la UI sin recomputar. Desde la Fase A del rediseño
+2026-09-15 también se persiste `content_hash`, un SHA-256 sobre el
+contenido relevante del cronograma más los inputs del ciclo.
 
-**Staleness** (`is_validation_stale`): True si cambió alguno de:
-- `entry_count_at_validation` (se editaron entries del cronograma).
-- `dictado_count_at_validation` (cambiaron los dictados activos del
-  ciclo).
-- `excluir_optativas` (toggle aplicado).
+**Staleness** (`is_validation_stale`, refactor de Fase A):
+
+- Si el snapshot tiene `content_hash` no vacío, se recomputa el hash
+  del estado actual (`_compute_content_hash`) con la misma
+  configuración del toggle. La comparación cubre: entries
+  (`dia, hora_inicio, hora_fin, comision_id, tipo_clase, virtual`),
+  dictados del ciclo con su `virtual`, `MateriaDB.horas_teoria`,
+  `horas_laboratorio`, `virtual`, `optativa`, `PlanEstudioDB.optativa`
+  por materia y `MateriaLaboratorioDB`. Detecta cambios que la
+  comparación por counts se perdía (por ejemplo mover una clase de
+  lunes a martes con el mismo count, cambiar `PlanEstudioDB.optativa`
+  con el toggle activo, o agregar un `MateriaLaboratorioDB`).
+- Si el snapshot es histórico (`content_hash == ""`), se cae al
+  comportamiento previo: comparar `entry_count_at_validation` y
+  `dictado_count_at_validation`. Este fallback preserva la semántica
+  de snapshots viejos hasta que el usuario corra una validación
+  nueva.
+
+**Política unificada `compute_validation_status`** (Fase A): consolida
+la lectura del último snapshot para consumidores como la Lista de
+Cronogramas y el wizard del Plan. Antes cada uno tenía su propia
+lógica: la Lista ignoraba `n_conflictos_horarios` y `n_extra` (badge
+verde con conflictos), y el wizard aprobaba cualquier cronograma
+no-stale aunque tuviera problemas. La función devuelve un
+`ValidationStatus` con:
+
+- `validation`: el `ScheduleValidationDB` más reciente (o `None`).
+- `stale`: si el contenido cambió (según el hash o el fallback).
+- `problemas`: lista de mensajes cortos que enumera faltantes,
+  particiones sin cupo, conflictos horarios y materias extras.
+- `listo_para_plan`: `True` sólo si `problemas == []` y `stale is False`.
+- `badge`: emoji + descripción resumida (`⚪ sin validar` /
+  `🟡 con cambios posteriores` / `🔴 con problemas (...)` /
+  `🟢 validado`).
+
+El helper `esta_listo_para_plan(session, schedule_id, ciclo_id)` es
+un shortcut booleano equivalente a
+`compute_validation_status(...).listo_para_plan`.
+
+**Helper compartido `build_grupos_curriculares_del_ciclo`** (Fase B):
+extraído en `validations.py` para eliminar la duplicación en cuatro
+sitios del mismo patrón "grupos (carrera, año, cuatri) del cuatri del
+ciclo, enriquecidos con las anuales del mismo (carrera, año), sólo
+materias obligatorias". Consumido tanto por el chequeo de camino del
+plan como por el del cronograma. Descarta optativas (no las cursa
+ningún alumno simultáneamente por default; incluirlas produce
+falsos positivos).
 
 ### 2.2. `validar_plan(plan_id, exclude_optativas=False)`
 → `PlanValidationSummary`
@@ -196,7 +248,10 @@ Espejo del cronograma sobre `PlanificacionCursadaDB`. Diferencias:
   `check_camino_cursada` cuando corresponde (ver § 2.5).
   Los bloqueos aparecen en `summary.camino_bloqueos`.
 
-**Persistencia**: `PlanValidationDB`.
+**Persistencia**: `PlanValidationDB`. Desde Fase A del rediseño
+2026-09-15 el modelo incluye `content_hash` (simétrico con
+`ScheduleValidationDB`), aunque el cómputo se implementa
+progresivamente en fases posteriores.
 
 **Staleness**: cambia `comision_count_at_validation`,
 `horario_count_at_validation`, `dictado_count_at_validation` o

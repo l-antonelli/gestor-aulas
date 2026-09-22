@@ -381,6 +381,121 @@ Sube un Excel `.xlsx` con columnas: `materia | día | inicio | fin |
 comisión (opcional)`. Se valida la estructura y se persiste como un
 `ScheduleDB` con `ScheduleEntryDB` por fila.
 
+**Modos disponibles** (radio del tope de la tab):
+
+- **Crear vacío** — cronograma sin entradas.
+- **Crear desde archivo** — cronograma nuevo poblado con un CSV/Excel.
+- **Importar en cronograma existente** — flujo Fase C2, agrega/
+  reemplaza horarios sobre un cronograma existente con preview y
+  decisión de merge por materia.
+- **Copiar desde plan** (Fase F del rediseño 2026-09-15) — crea un
+  cronograma nuevo con el estado consolidado de un plan de cursada.
+  Uso típico: después de varias iteraciones de validación y edición
+  sobre un plan, se quiere "archivar" ese estado como cronograma
+  reutilizable (ej. para replicar la configuración firme del ciclo
+  anterior en el nuevo ciclo). Delega en
+  `src/services/schedule_service.py::clonar_plan_a_cronograma`,
+  que copia `ComisionDB` + `HorarioDB` como `ScheduleEntryDB` con
+  nuevos UUIDs preservando nombre/número/cupo/coef/carrera_asignada
+  a nivel comisión y día/horas/tipo_clase/virtual a nivel horario.
+  **No** copia `aula_id` (las entries del cronograma no tienen
+  aula asignada; el LP la resuelve al armar el plan siguiente) ni
+  `dictado_id` (se re-resuelve contra el ciclo destino).
+
+**Plantilla descargable con dropdowns** (Fase C1 del rediseño
+2026-09-15). Antes de subir, el usuario puede descargar una plantilla
+Excel armada dinámicamente por
+`src/services/template_export_service.py::generar_plantilla_cronograma_excel`.
+El archivo trae:
+
+- Hoja `Instrucciones` con guía en castellano sobre cómo completar
+  cada columna.
+- Hoja `Horarios` con headers, ancho de columna, freeze pane y una
+  fila de ejemplo estilizada para pisar.
+- Hojas ocultas `_materias`, `_dias`, `_tipos`, `_virtual` con las
+  listas cerradas. La lista de códigos válidos sale de los dictados
+  activos del ciclo elegido (misma fuente que `validar_cronograma`) —
+  por eso el botón queda deshabilitado hasta que se elija ciclo.
+- `openpyxl.DataValidation` en cada columna crítica: dropdown para
+  código de materia, día, tipo y virtual; validación tipográfica de
+  hora en formato `HH:MM`.
+
+La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
+horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
+se blindan errores tipográficos y datos fuera del catálogo.
+
+**Importer con preview + merge por materia** (Fase C2 del rediseño
+2026-09-15). La tab Cargar tiene tres modos:
+
+- **Crear vacío**: como antes, arranca sin entradas.
+- **Crear desde archivo**: flujo legacy, crea cronograma + carga en
+  un solo paso (sin preview). Sirve para migración rápida cuando el
+  cronograma es nuevo y no hay riesgo de merge.
+- **Importar en cronograma existente** (nuevo): pipeline de dos pasos
+  a través de `src/services/cronograma_import_service.py`:
+
+  1. `preview_import(session, schedule_id, file) → ImportPreview`:
+     parsea el archivo, resuelve códigos contra el catálogo (con
+     fallback via ``codigo_guarani``), agrupa por
+     `(materia, comisión)` y detecta qué materias ya tienen
+     horarios en el cronograma destino. La UI muestra tres
+     métricas (horarios a importar, materias detectadas, materias
+     que requieren decisión) y, por cada materia con datos previos,
+     un radio "agregar / reemplazar / ignorar".
+  2. `commit_import(session, preview, decisiones) → ImportResult`:
+     aplica las decisiones en una sola transacción. Con `agregar`,
+     falla si el nombre de comisión choca (unicidad
+     case-insensitive dentro de la misma materia). Con `reemplazar`,
+     borra entries + comisiones previas antes de crear las nuevas.
+     Con `ignorar`, la materia queda intacta.
+
+Los "nombres" de comisión son strings arbitrarios (`"1"`, `"A"`,
+`"Mañana"`, `"Comisión 3 turno tarde"`). La deduplicación se hace
+sobre la forma canónica `strip().lower()` para evitar chocar por
+espacios o mayúsculas. El campo `ComisionDB.numero` se sigue
+autoderivando (para `comision_key` y ordenamiento) pero el usuario
+no lo ve.
+
+El importer no ejecuta las validaciones estructurales completas del
+cronograma (cobertura, conflictos, camino de cursada) — esas siguen
+a cargo de `validar_cronograma` en la tab Validar. El preview sólo
+hace las validaciones tipográficas mínimas que evitan un import roto.
+
+**Preview con calendario + validaciones opt-in** (Fase G del
+rediseño 2026-09-15). Al apretar "Ver preview del archivo" se crea
+un **shadow schedule** (`ScheduleDB.es_shadow_import=True`,
+`shadow_target_schedule_id` apuntando al destino) que combina las
+entries del destino con las nuevas del archivo aplicadas por default
+con decisión "agregar". La UI muestra:
+
+- Métricas: horarios del archivo, materias detectadas, materias que
+  requieren decisión, y total de horarios en el estado hipotético.
+- Calendario editable del shadow: mismo widget que Editar, con
+  drag/resize/click para modificar el preview antes de commitear.
+- Toggle "Mostrar también datos previos no modificados": si ON
+  incluye todas las materias del cronograma; si OFF acota a las
+  afectadas por el archivo.
+- Toggle "Filtrar por (carrera, año, cuatri)": útil cuando el
+  archivo trae materias de distintos años.
+- Botón "Ejecutar validaciones": opt-in (cuesta 1-2s en Plan v0).
+  Corre `validar_cronograma` sobre el shadow y muestra las 4
+  métricas centrales (faltantes, conflictos horarios, bloqueos de
+  camino, partición teoría/lab) más el detalle en JSON.
+- Confirmar (`finalizar_shadow_import`): reemplaza las entries del
+  destino por las del shadow y borra el shadow.
+- Descartar (`descartar_shadow_import`): borra el shadow sin tocar
+  el destino.
+
+Si el usuario cierra el navegador con un preview abierto, el shadow
+queda huérfano en la DB. Al reabrir la tab Cargar se muestra un
+banner amarillo listando los huérfanos con un botón "Descartar" por
+cada uno. Los shadows nunca aparecen en `get_all_schedules` ni en el
+wizard del plan (filtrados por default en `schedule_service`).
+
+Servicio: `src/services/cronograma_import_service.py::crear_shadow_import`,
+`finalizar_shadow_import`, `descartar_shadow_import`,
+`list_shadows_huerfanos`.
+
 ### 4.2 📋 Lista
 
 Lista todos los cronogramas con:
@@ -406,6 +521,24 @@ Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
   click → editar (dialog con materia/día/inicio/fin/comisión/tipo
   + Eliminar/Cancelar), drag sobre celdas vacías → agregar
   entrada (requiere materia activa).
+
+### 4.5.1 Completitud desagregada (Fase D del rediseño 2026-09-15)
+
+Dentro del panel Validar (tab "✅ Validar"), después del resumen por
+carrera aparecen dos tablas nuevas de completitud desagregada:
+
+- **Por grupo de materias**: cada `GrupoMateriaDB` (F, FB, CE,
+  Específicas, etc.) con `n_cubiertas / n_esperadas` y un accordion
+  con las materias faltantes del grupo.
+- **Por (carrera, año, cuatri)**: cada grupo curricular del ciclo
+  con la misma métrica y accordion.
+
+Ambas vistas se computan on-the-fly con
+`src/services/cronograma_completitud_service.py` (no persisten en el
+snapshot). Respetan el toggle **"Excluir optativas del cómputo"**,
+que en Fase D pasó a estar **encendido por default** — la definición
+operativa "cronograma listo" no debería depender de las optativas
+para la mayoría de los flujos.
 
 ### 4.5 ✅ Validar (panel unificado)
 
@@ -454,6 +587,69 @@ sirve al panel del plan.
 
 > Para el detalle completo de los 10 checks ver
 > [VALIDACIONES.md](VALIDACIONES.md#4-validaciones-inline-del-editor-por-materia-cronograma).
+
+---
+
+## 4.6 Inscriptos históricos (📈 Inscriptos)
+
+Página dedicada a la serie histórica de inscriptos por
+`(materia, año, cuatri)`, que alimenta el forecast que consume el
+LP. Datos en `InscripcionHistoricaDB` (PK compuesta).
+
+### Carga
+
+- **Manual**: data editor por materia con filtro de cuatri visible.
+  El service `guardar_registros_materia` respeta el scope del filtro
+  para no borrar registros ocultos (`H01` del auditoría —
+  fix histórico).
+- **Masivo desde Excel** (Fase E1 del rediseño 2026-09-15): expander
+  "📥 Cargar masivo desde plantilla Excel" en el tope de la página.
+  Flujo de dos pasos:
+
+  1. **Paso 1**: descargar plantilla generada por
+     `template_export_service.generar_plantilla_inscriptos_excel`.
+     Trae dropdowns de códigos activos del catálogo, cuatri
+     (1C/2C/Anual), rango de año y validación de inscriptos >= 0.
+  2. **Paso 2**: subir el archivo completado y ver el preview
+     armado por `inscripcion_import_service.preview_import`. La UI
+     muestra métricas (nuevos / pisan valor / con errores),
+     warnings (duplicados en archivo, resolución vía
+     `codigo_guarani`), errores por fila, y una tabla con el
+     efecto por fila (`valor previo` vs `valor nuevo`). Al
+     confirmar se ejecuta `commit_import` con semántica overwrite
+     (última fila del archivo gana).
+
+  El importer respeta el fix del bug histórico "cuatri Anual
+  omitido del filtro de la UI" (Fase E1): el selectbox de
+  cuatri ahora incluye "Anual".
+
+### Auditoría mínima y alias persistentes (Fase E2)
+
+- `InscripcionHistoricaDB` incluye `updated_at` (datetime UTC) y
+  `origen` (`"manual"` | `"importado"` | `"override"`). Cada
+  INSERT/UPDATE de los services los popula: `guardar_registros_materia`
+  usa `"manual"` por default (parámetro configurable),
+  `inscripcion_import_service.commit_import` usa `"importado"`, y la
+  UI de "Sin matchear" usa `"override"`.
+- `CodigoAliasDB(codigo_externo, materia_codigo, updated_at,
+  origen, nota)` persiste los matches manuales del flow "Sin
+  matchear": cuando el usuario asocia un código externo a una
+  materia del catálogo, se guarda el alias y `preview_import` de la
+  próxima importación lo resuelve automáticamente sin volver a
+  ofrecerlo como "sin matchear".
+- Orden de resolución del importer: (1) match directo por
+  `codigo`, (2) alias persistido, (3) `codigo_guarani` con
+  match único, (4) error.
+
+### Filtros y forecast
+
+Filtros combinables (búsqueda, cuatri, carrera, año dentro del plan,
+optativa, período, modalidad). El forecast se muestra como
+referencia visual en 3 métodos superpuestos (media móvil, drift,
+SES); la elección del método real vive en el
+`PlanificacionCursadaDB` (default) y en `MateriaForecastConfigDB`
+(override por materia + plan). Ver también `asignador_implementacion.md`
+para cómo el asignador consume el forecast.
 
 ---
 
