@@ -166,6 +166,8 @@ classDiagram
         +str nombre
         +date fecha_upload
         +str source_filename
+        +bool es_shadow_import
+        +Optional~str~ shadow_target_schedule_id FK
     }
 
     class ScheduleEntryDB {
@@ -286,11 +288,20 @@ classDiagram
     }
 
     class InscripcionHistoricaDB {
-        +str id PK
-        +str materia_codigo FK
-        +int anio
-        +int cuatrimestre
+        +str materia_codigo PK FK
+        +int anio PK
+        +str cuatrimestre PK
         +int inscriptos
+        +datetime updated_at
+        +str origen
+    }
+
+    class CodigoAliasDB {
+        +str codigo_externo PK
+        +str materia_codigo FK
+        +str origen
+        +Optional~str~ nota
+        +datetime created_at
     }
 
     class MateriaForecastConfigDB {
@@ -371,8 +382,12 @@ classDiagram
 
     %% Forecast e histórico
     MateriaDB "1" --o "0..*" InscripcionHistoricaDB
+    MateriaDB "1" --o "0..*" CodigoAliasDB : match manual
     PlanificacionCursadaDB "1" --o "0..*" MateriaForecastConfigDB : cascade
     MateriaDB "1" --o "0..*" MateriaForecastConfigDB
+
+    %% Shadow schedules del importer (Fase G, 2026-09-15)
+    ScheduleDB "1" --o "0..*" ScheduleDB : shadow_target
 ```
 
 ---

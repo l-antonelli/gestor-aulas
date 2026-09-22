@@ -375,6 +375,8 @@ Carga validada de horarios desde un archivo.
 | `nombre` | `str` | |
 | `fecha_upload` | `datetime` | |
 | `source_filename` | `str` | |
+| `es_shadow_import` | `bool` | Fase G del rediseño 2026-09-15. Si `True`, este schedule es una copia temporal creada por el importer masivo que combina las entries del destino con las nuevas del archivo (bajo decisiones de merge por default: "agregar"). Se usa como *preview read-only* — el usuario visualiza el estado hipotético y decide `finalizar_shadow_import` (reemplaza al destino) o `descartar_shadow_import` (borra el shadow). Los shadows se filtran de `get_all_schedules` y del wizard del plan. |
+| `shadow_target_schedule_id` | `Optional[str]` FK a `schedules.id` | Sólo relevante cuando `es_shadow_import=True`. Apunta al schedule destino real. |
 
 #### `ScheduleEntryDB`
 
@@ -540,6 +542,38 @@ carreras, dictados, sedes, grupos). Fuente de la vista Historial.
 Historial de inscriptos por `(materia, año, cuatrimestre)`.
 Alimenta el forecast.
 
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `materia_codigo` | PK FK | Código del catálogo (`MateriaDB.codigo`). |
+| `anio` | PK `int` | Año calendario. |
+| `cuatrimestre` | PK `str` | `"1C"`, `"2C"` o `"Anual"`. |
+| `inscriptos` | `int` | Cantidad de inscriptos ese año/cuatri. |
+| `updated_at` | `datetime` | Fase E2 del rediseño 2026-09-15. Timestamp UTC del último touch del registro (insert o update, incluyendo importaciones que no cambian el valor). Sirve para auditoría y para ordenar la vista "Últimas actualizaciones". |
+| `origen` | `str` | Fase E2. Canal por el que se pobló el registro: `"manual"` (data_editor de la UI), `"importado"` (importer masivo desde Excel), `"override"` (match manual desde "Sin matchear"). |
+
+#### `CodigoAliasDB`
+
+Fase E2 del rediseño 2026-09-15. Persistencia de matches manuales
+entre un código externo (que aparece en un archivo de inscriptos)
+y una materia del catálogo. Cada vez que el usuario resuelve un
+código "Sin matchear" desde la UI, se inserta o se pisa la fila
+correspondiente; la próxima importación resuelve automáticamente
+sin volver a pedir intervención.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `codigo_externo` | PK `str` | Código tal como aparece en el archivo (por ejemplo un código Guaraní o un typo estable). |
+| `materia_codigo` | FK a `materias.codigo` | Código canónico destino. |
+| `origen` | `str` | `"manual"` (default). Reservado para automatizaciones futuras. |
+| `nota` | `Optional[str]` | Texto libre — por ejemplo `"Match manual desde UI el 2026-09-17"`. |
+| `created_at` | `datetime` | UTC. |
+
+Semántica de resolución en el importer (ver
+`inscripcion_import_service.preview_import`): `alias > guaraní >
+match directo`. Si el alias apunta a un `materia_codigo` que ya no
+está en el catálogo, la fila se rechaza con un mensaje específico
+guiando al usuario a re-asignar desde "Sin matchear".
+
 #### `MateriaForecastConfigDB`
 
 Override de config de forecast por `(plan, materia, cuatri)`:
@@ -692,6 +726,45 @@ En el modelo actual (sin plan activo vs escenarios de comparación,
 depredado con `_migrate_planificacion_cursada_drop_activo`), la
 distinción entre borrador y planificada desapareció: hay un único
 plan operativo por ciclo.
+
+### 5.2 Flujo inverso: `clonar_plan_a_cronograma`
+
+Fase F del rediseño 2026-09-15. Además del flujo canónico
+"cronograma → plan → asignación", el modelo soporta el flujo inverso
+"plan consolidado → cronograma reutilizable". La motivación es
+poder archivar el estado final de un ciclo como un cronograma
+autónomo — por ejemplo, para usarlo como base de un ciclo siguiente
+sin tener que volver a subir el Excel original.
+
+Servicio: `src/services/schedule_service.py::clonar_plan_a_cronograma(plan_id, nombre, ciclo_id_override=None)`.
+
+Qué se clona:
+
+- Cada `ComisionDB` del plan (con `plan_cursada_id`) genera una
+  `ComisionDB` nueva anclada al cronograma (`schedule_id`), con
+  nuevo UUID. Se preservan `nombre`, `numero`, `cupo`,
+  `descripcion`, `coef_asignacion` y `carrera_asignada`. **No** se
+  copia `dictado_id`: los dictados pertenecen al ciclo y se
+  re-resuelven cuando se genera un plan nuevo desde el cronograma
+  clonado.
+- Cada `HorarioDB` del plan genera un `ScheduleEntryDB` (con nuevo
+  UUID, `comision_id` apuntando a la comisión clonada), preservando
+  `codigo_materia`, `dia`, `hora_inicio`, `hora_fin`, `tipo_clase` y
+  `virtual`. **No** se copia `aula_id`: las entries del cronograma
+  no llevan aula (esa se resuelve por el LP cuando se arme el plan
+  nuevo).
+
+Qué **no** se clona porque no pertenece al cronograma:
+
+- Snapshots de validación (`PlanValidationDB`).
+- Excepciones de conflicto ignoradas (`IgnoredConflictDB`).
+- Config del asignador de aulas, corridas del LP (`LPRunDB`).
+- Overrides de forecast (`MateriaForecastConfigDB`).
+
+El nuevo `ScheduleDB` queda con `ciclo_id` = `ciclo_id_override` o
+`plan.ciclo_id` si no se pasa override. Regla de anclaje XOR (§4.5)
+se preserva: las comisiones clonadas quedan con `plan_cursada_id
+IS NULL` y `schedule_id` seteado.
 
 ---
 

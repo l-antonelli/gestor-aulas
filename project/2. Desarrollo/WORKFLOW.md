@@ -506,14 +506,21 @@ Lista todos los cronogramas con:
 - Badge de validación (sin validar / validado / con issues / stale).
 - Acciones: duplicar, eliminar, abrir en editar/validar.
 
-### 4.3 👁 Visualizar
+### 4.3 👁 Ver / Editar
 
-Calendario semanal read-only con todos los entries del cronograma.
-
-### 4.4 ✏️ Editar
+Fase F del rediseño 2026-09-21: las pestañas antiguas "Visualizar"
+(read-only) y "Editar" (drag/click/select) se unificaron en una sola,
+con un toggle "Solo lectura" que alterna entre ambos modos sin
+cambiar de tab. La razón fue simplificar la navegación: la mayoría
+de las veces el usuario alterna entre mirar y editar la misma vista.
 
 Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
 
+- **Toggle "Solo lectura"**: al estar activo, el calendario queda
+  read-only (sin drag, resize, ni edición de celdas) y las tablas
+  `data_editor` pasan a modo lectura. Sirve para revisar el estado
+  sin riesgo de cambios accidentales, en particular después de un
+  merge por shadow.
 - **Modo "Por grupo"**: filtros Carrera/Año/Cuatri/Tipo de materia
   (Ciclo Básico/Específicas) + checkbox "Excluir comunes" +
   multiselect de materias a mostrar.
@@ -521,30 +528,12 @@ Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
   + tabla `data_editor` con auto-save de Día/Inicio/Fin/Comisión/
   Tipo (sin determinar / teorica / laboratorio) + resumen por
   comisión.
-- **Calendario editable**: drag → mover, resize → cambiar duración,
-  click → editar (dialog con materia/día/inicio/fin/comisión/tipo
-  + Eliminar/Cancelar), drag sobre celdas vacías → agregar
-  entrada (requiere materia activa).
+- **Calendario editable** (sólo con "Solo lectura" apagado): drag →
+  mover, resize → cambiar duración, click → editar (dialog con
+  materia/día/inicio/fin/comisión/tipo + Eliminar/Cancelar), drag
+  sobre celdas vacías → agregar entrada (requiere materia activa).
 
-### 4.5.1 Completitud desagregada (Fase D del rediseño 2026-09-15)
-
-Dentro del panel Validar (tab "✅ Validar"), después del resumen por
-carrera aparecen dos tablas nuevas de completitud desagregada:
-
-- **Por grupo de materias**: cada `GrupoMateriaDB` (F, FB, CE,
-  Específicas, etc.) con `n_cubiertas / n_esperadas` y un accordion
-  con las materias faltantes del grupo.
-- **Por (carrera, año, cuatri)**: cada grupo curricular del ciclo
-  con la misma métrica y accordion.
-
-Ambas vistas se computan on-the-fly con
-`src/services/cronograma_completitud_service.py` (no persisten en el
-snapshot). Respetan el toggle **"Excluir optativas del cómputo"**,
-que en Fase D pasó a estar **encendido por default** — la definición
-operativa "cronograma listo" no debería depender de las optativas
-para la mayoría de los flujos.
-
-### 4.5 ✅ Validar (panel unificado)
+### 4.4 ✅ Validar (panel unificado)
 
 Esta es la pestaña central del cronograma. Reusa el módulo
 `validation_ui.render_validation(source='schedule', ...)` que también
@@ -592,9 +581,36 @@ sirve al panel del plan.
 > Para el detalle completo de los 10 checks ver
 > [VALIDACIONES.md](VALIDACIONES.md#4-validaciones-inline-del-editor-por-materia-cronograma).
 
+#### Completitud desagregada (Fase D del rediseño 2026-09-15)
+
+Después del resumen por carrera, el panel Validar muestra dos tablas
+de completitud desagregada:
+
+- **Por grupo de materias**: cada `GrupoMateriaDB` (F, FB, CE,
+  Específicas, etc.) con `n_cubiertas / n_esperadas` y un accordion
+  con las materias faltantes del grupo.
+- **Por (carrera, año, cuatri)**: cada grupo curricular del ciclo
+  con la misma métrica y accordion.
+
+Ambas vistas se computan on-the-fly con
+`src/services/cronograma_completitud_service.py` (no persisten en el
+snapshot). Respetan el toggle **"Excluir optativas del cómputo"**,
+que en Fase D pasó a estar **encendido por default** — la definición
+operativa "cronograma listo" no debería depender de las optativas
+para la mayoría de los flujos.
+
+#### Horarios fuera de configuración (Fase H.1 del rediseño 2026-09-21)
+
+Sección propia dentro del panel Validar que resume las entries que
+no cumplen con la `ConfiguracionHoraria` global (día no operativo,
+rango fuera del operativo, granularidad no múltiplo). Es warning, no
+bloquea `listo_para_plan`. Botón "Ajustar automáticamente" dispara
+`ajustar_horarios_a_config` que redondea/desplaza las entries en
+masa (ver VALIDACIONES.md § 1.9 y 1.10).
+
 ---
 
-## 4.6 Inscriptos históricos (📈 Inscriptos)
+## 4.5 Inscriptos históricos (📈 Inscriptos)
 
 Página dedicada a la serie histórica de inscriptos por
 `(materia, año, cuatri)`, que alimenta el forecast que consume el
@@ -865,7 +881,7 @@ Detalle completo de la implementación:
 | `3_🎓_Carreras.py` | CRUD Carreras + plan versions |
 | `4_📆_Ciclos.py` | Lista, Crear, Plan versions, **📚 Dictados** |
 | `5_📊_Planes.py` | **Generar plan**, **Detalle**, **Grilla horaria**, Clases, **🏛️ Aulas** (LP), Config |
-| `6_📅_Cronogramas.py` | Lista, **Cargar**, Visualizar, **Editar**, **Validar** |
+| `6_📅_Cronogramas.py` | Lista, **Cargar**, **Ver / Editar** (toggle "Solo lectura"), **Validar** |
 | `7_📝_Inscriptos.py` | Carga histórica de inscriptos por materia/cuatri |
 
 ---

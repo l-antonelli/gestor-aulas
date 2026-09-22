@@ -120,6 +120,53 @@ servicios agregadores (`cronograma_validation_service`,
 - **Severity**: BLOCKER (en el panel del cronograma).
 - **Output**: `list[ConflictoHorario]`.
 
+### 1.9. `validar_horarios_vs_config(schedule_id)`
+
+Fase H.1 del rediseño 2026-09-21. Verifica que los `ScheduleEntryDB`
+del cronograma cumplan con la `ConfiguracionHoraria` global (única
+fila del sistema):
+
+- **Día operativo**: `entry.dia` debe estar en
+  `config.dias_operativos` (CSV normalizado).
+- **Rango horario**: `entry.hora_inicio` y `entry.hora_fin` deben
+  caer dentro de `[config.hora_inicio_operativo,
+  config.hora_fin_operativo]`.
+- **Granularidad**: `entry.hora_inicio` y `entry.hora_fin` deben ser
+  múltiplos de `config.granularidad_minutos` contados desde
+  `config.hora_inicio_operativo` como origen.
+
+- **Severity**: WARNING (no bloquea el plan — ver 2.1 más abajo).
+- **Output**: `list[dict]` con `codigo_materia`, `dia`, franja,
+  motivo. Se expone al usuario en la sección "Horarios fuera de
+  configuración" del cronograma, con un botón "Ajustar
+  automáticamente" que dispara `ajustar_horarios_a_config`.
+
+### 1.10. `ajustar_horarios_a_config(schedule_id)`
+
+Fase I.1 del rediseño 2026-09-21. Complementa `validar_horarios_vs_config`:
+en vez de sólo reportar, arregla los entries que no cumplen la
+config. Reglas:
+
+- Día no operativo → entry inalterada (no hay redondeo posible; el
+  usuario tiene que decidir el día manualmente). Se cuenta en
+  `skipped_dia` y se reporta.
+- `hora_inicio < hora_inicio_operativo` → se lleva a
+  `hora_inicio_operativo`.
+- `hora_fin > hora_fin_operativo` → se lleva a
+  `hora_fin_operativo`.
+- Redondeo al slot más cercano según `granularidad_minutos`. Si
+  empatan, redondea hacia arriba.
+- Guard duración-cero: si tras el ajuste `hora_fin <= hora_inicio`
+  (por ejemplo un entry `23:30-23:45` con `fin_op=23:00` que
+  redondearía ambos a `23:00`), se empuja `hora_inicio` un slot
+  hacia atrás para que quede al menos una franja válida. Si eso
+  llevaría `hora_inicio` por debajo de `hora_inicio_operativo`, se
+  skippea la entry y se reporta como "requiere corrección manual".
+
+- **Severity**: N/A — es una acción, no una validación.
+- **Output**: `(n_ajustadas, n_skipped, mensajes)` para poblar el
+  toast/log de la UI.
+
 ---
 
 ## 2. Validaciones agregadas (servicios de prevalidación)
@@ -168,6 +215,14 @@ Compone el siguiente resumen contra un cronograma + ciclo:
    se guarda en `details_json["camino_bloqueos"]`.
 9. **Config aplicada**: `excluir_optativas` queda persistido en el
    snapshot. Si el toggle cambia entre runs, el snapshot está stale.
+10. **Horarios fuera de config** (Fase H.1 del rediseño 2026-09-21):
+    invoca `validar_horarios_vs_config`. Persiste
+    `n_horarios_fuera_config` y `horarios_fuera_config` (detalle
+    JSON) en el snapshot. **Es warning, no bloqueante**: aunque el
+    contador sea > 0, `listo_para_plan` sigue pudiendo ser `True` si
+    no hay otros problemas. La sección "Horarios fuera de config"
+    de la UI ofrece el botón "Ajustar automáticamente"
+    (`ajustar_horarios_a_config`) para arreglar en masa.
 
 **Persistencia**: `persist_validation` inserta una fila en
 `ScheduleValidationDB` con detalle JSON (`details_json`) para
@@ -468,13 +523,19 @@ La tabla "Detalle por materia" computa para cada materia un **estado
 |---|---|---|
 | `Faltante` | Esperada pero sin comisiones/entries | 📭 Faltante |
 | `No esperada` | Tiene comisiones/entries pero sin dictado activo | 📥 No esperada |
-| `Conflictiva` | Aparece como uno de los códigos en
-`summary.conflictos_horarios` | ⚠️ Conflicto |
+| `Conflictiva` | Aparece como uno de los códigos en `summary.conflictos_horarios` | ⚠️ Conflicto |
 | `Sin datos` | No tiene `horas_semanales` definido | ❓ Sin datos |
+| `Revisión` | Tiene entries y datos pero uno o más chequeos estructurales devuelven `warn` (por ejemplo horas semanales × comisiones no divisibles, distribución desequilibrada, `hsem × com ≠ total`) sin llegar al nivel de error | 🔎 Revisión |
 | `OK` | Cubierta sin issues | ✅ OK |
 
+Fase F del rediseño 2026-09-21: se agrega el estado `Revisión` para
+diferenciar "hay warnings que ameritan revisar" del genérico `OK`. Los
+warnings se computan reutilizando la misma máquina de chequeos que el
+editor por materia (sección 4), con la mezcla de flags
+`mismatch_hsem_com`, `no_divisible`, `desequilibrado`.
+
 El filtro "Estado" del panel acepta multi-selección de cualquiera de
-los 5 valores.
+los 6 valores.
 
 ---
 

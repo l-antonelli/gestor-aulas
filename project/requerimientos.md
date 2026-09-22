@@ -178,6 +178,35 @@ Las capacidades que **quedan** en producción y no eran puntuales:
 | RF-DOC-02 | Mapa conceptual de las tres puertas de decisión de un dictado (pertenencia estructural, regla de recursado, modalidad virtual) con su jerarquía de override respectiva y cómo se combinan. | ✅ | `2. Desarrollo/CICLOS_Y_DICTADOS.md § 1.2` |
 | RF-DOC-03 | Regla de independencia entre ciclos (RN19): cada ciclo es unidad operativa autónoma, con excepción de dictados anuales compartidos vía `DictadoCicloDB`. | ✅ | `1. Diseño/modelo-planificacion-cursada.md § 6 (RN19)` |
 
+### RF-IMPORT — Importer masivo de cronograma e inscriptos (rediseño 2026-09)
+
+| ID | Descripción | Estado | Doc canónico |
+|---|---|---|---|
+| RF-IMPORT-01 | Generación de **plantilla Excel** para cargar horarios en un ciclo, con hoja `Instrucciones` en castellano rioplatense, hoja `Horarios` con headers estilizados y freeze, dropdowns cerrados vía `openpyxl.DataValidation` sobre hojas ocultas (`_materias` con los códigos de los dictados activos del ciclo, `_dias` según `ConfiguracionHoraria`, `_horas` discretas según granularidad, `_tipos`, `_virtual`). Sin fila de ejemplo pre-llenada para evitar imports fantasma. Fase C1 del rediseño. | ✅ | `src/services/template_export_service.py::generar_plantilla_cronograma_excel` |
+| RF-IMPORT-02 | Preview del importer masivo (Fase G del rediseño 2026-09-15): crea un **shadow schedule** (`ScheduleDB.es_shadow_import=True`, `shadow_target_schedule_id` apuntando al destino) que combina las entries del destino con las nuevas del archivo (default: "agregar"). El shadow se muestra en la UI como calendario **read-only** + validaciones automáticas (`validar_cronograma` sobre el shadow) para decidir `finalizar_shadow_import` (merge) o `descartar_shadow_import` (rollback). Los shadows se filtran de `get_all_schedules` y del wizard del plan. | ✅ | `src/services/cronograma_import_service.py`; `2. Desarrollo/WORKFLOW.md § 4.1` |
+| RF-IMPORT-03 | Detección y limpieza de **shadows huérfanos** cuando el usuario cierra el navegador con un preview abierto. La tab Cargar muestra un banner amarillo listando cada shadow huérfano con botón "Descartar". | ✅ | `cronograma_import_service.list_shadows_huerfanos` |
+| RF-IMPORT-04 | Generación de **plantilla Excel** para carga masiva de inscriptos históricos: hoja `Instrucciones`, hoja `Inscriptos` con dropdowns cerrados (`_materias` con todo el catálogo activo, `_cuatris` `1C/2C/Anual`), validaciones tipográficas de año (2000-2100) e inscriptos (entero ≥0). Sin fila de ejemplo pre-llenada. Fase E1 del rediseño. | ✅ | `template_export_service.generar_plantilla_inscriptos_excel` |
+| RF-IMPORT-05 | Preview + commit del importer de inscriptos con **resolución jerárquica** de códigos: `alias > guaraní > match directo`. Detección de duplicados intra-archivo (última fila gana), pre-carga en batch de existentes, clasificación por materia y por (año, cuatri). Si el alias apunta a un target inexistente en el catálogo, la fila se rechaza con un mensaje específico que guía a re-asignar. Fase E1/E2 del rediseño. | ✅ | `src/services/inscripcion_import_service.py::preview_import`, `commit_import` |
+| RF-IMPORT-06 | Persistencia de **alias manuales** (`CodigoAliasDB`) para que un código externo resuelto una vez ("Sin matchear" → asociar) quede resuelto automáticamente en importaciones futuras. Fase E2. | ✅ | `CodigoAliasDB`; `inscripcion_import_service.registrar_alias` |
+| RF-IMPORT-07 | Auditoría de la carga histórica de inscriptos: `InscripcionHistoricaDB.updated_at` + `.origen` (`manual` / `importado` / `override`) se refresca cada vez que la fila se toca (incluso cuando el importer confirma un valor que ya estaba). Fase E2. | ✅ | `InscripcionHistoricaDB`; `1. Diseño/modelo-planificacion-cursada.md § 2.8` |
+
+### RF-CONFIG — Configuración horaria global (Fase H del rediseño 2026-09)
+
+| ID | Descripción | Estado | Doc canónico |
+|---|---|---|---|
+| RF-CONFIG-01 | Entidad `ConfiguracionHoraria` (fila única) con: granularidad en minutos, hora de inicio/fin operativo, días operativos (CSV). Sirve como fuente única de verdad para todas las UIs de calendario, dropdowns de plantillas y validaciones. | ✅ | `ConfiguracionHoraria` (modelo) |
+| RF-CONFIG-02 | Validación `validar_horarios_vs_config`: reporta las `ScheduleEntryDB` que rompen la config (día no operativo, rango fuera del operativo, granularidad no múltiplo). Es **warning**, no bloqueante — no impide `listo_para_plan`. Fase H.1. | ✅ | `src/services/validations.py`; `VALIDACIONES.md § 1.9` |
+| RF-CONFIG-03 | Acción **"Ajustar automáticamente"** (`ajustar_horarios_a_config`): redondea las entries al slot más cercano dentro del rango operativo. Salvaguarda contra duración cero: si al ajustar quedaría `hora_fin ≤ hora_inicio` empuja `hora_inicio` un slot atrás; si eso llevaría por debajo de `hora_inicio_operativo`, skippea y reporta como "requiere corrección manual". Fase I.1. | ✅ | `validations.py::ajustar_horarios_a_config`; `VALIDACIONES.md § 1.10` |
+
+### RF-CRONO — Panel de cronograma unificado (rediseño 2026-09)
+
+| ID | Descripción | Estado | Doc canónico |
+|---|---|---|---|
+| RF-CRONO-01 | Tab **"Ver / Editar"** unificado en `app/pages/6_📅_Cronogramas.py` (reemplaza las tabs separadas "Visualizar" y "Editar"). Toggle **"Solo lectura"** que alterna entre modo lectura (calendario + tablas deshabilitados) y modo edición (drag/click/resize + `data_editor` con auto-save). Fase F del rediseño. | ✅ | `2. Desarrollo/WORKFLOW.md § 4.3` |
+| RF-CRONO-02 | Estado por materia extendido con `Revisión`: la tabla "Detalle por materia" del panel Validar diferencia `OK` (sin warnings) de `Revisión` (con al menos un chequeo estructural en `warn` — h/sem×com no divisible, distribución desequilibrada, `hsem × com ≠ total`). El filtro "Estado" del panel es multi-select de 6 estados. Fase F. | ✅ | `VALIDACIONES.md § 3.2` |
+| RF-CRONO-03 | Completitud desagregada del cronograma en el panel Validar: tabla "Por grupo de materias" (`GrupoMateriaDB`) y tabla "Por (carrera, año, cuatri)" con `n_cubiertas / n_esperadas` y accordions con faltantes. Toggle **"Excluir optativas del cómputo"** encendido por default. Fase D del rediseño. | ✅ | `src/services/cronograma_completitud_service.py`; `WORKFLOW.md § 4.4` |
+| RF-CRONO-04 | Clonar un plan de cursada a un cronograma nuevo (flujo inverso "plan consolidado → cronograma reutilizable"): `clonar_plan_a_cronograma(plan_id, nombre, ciclo_id_override?)` genera un `ScheduleDB` con las `ComisionDB` del plan clonadas como comisiones del schedule y los `HorarioDB` como `ScheduleEntryDB`. No se copia `aula_id` ni `dictado_id`. Fase F. | ✅ | `src/services/schedule_service.py::clonar_plan_a_cronograma`; `1. Diseño/modelo-planificacion-cursada.md § 5.2` |
+
 ## RNF — Requerimientos no funcionales
 
 | ID | Descripción | Estado |
