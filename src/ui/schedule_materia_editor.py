@@ -1410,11 +1410,14 @@ def _compute_checks(
         }
         _gran = int(config_global.granularidad_minutos or 15) or 15
 
-        def _to_mins(t) -> int:
-            return t.hour * 60 + t.minute
-
-        _base = _to_mins(config_global.hora_inicio_operativo)
-        _fin_op = _to_mins(config_global.hora_fin_operativo)
+        # Nota (bugfix 2026-09-22): las celdas del `data_editor` de
+        # Streamlit pueden devolver `str` en vez de `datetime.time`
+        # (dependiendo de qué campo se editó por última vez). Usamos
+        # el helper `_parse_minutes` que ya normaliza ambos casos +
+        # `_time_str` para el label, en vez de acceder a `.hour`
+        # directamente.
+        _base = _parse_minutes(config_global.hora_inicio_operativo) or 0
+        _fin_op = _parse_minutes(config_global.hora_fin_operativo) or 0
         if (
             config_global.hora_fin_operativo.hour == 0
             and config_global.hora_fin_operativo.minute == 0
@@ -1431,18 +1434,22 @@ def _compute_checks(
             _razones: list[str] = []
             if _dias_ok and _dia not in _dias_ok:
                 _razones.append("día no operativo")
-            _hi = _to_mins(_ini)
-            _hf = _to_mins(_fin)
-            if _fin.hour == 0 and _fin.minute == 0:
+            _hi = _parse_minutes(_ini)
+            _hf = _parse_minutes(_fin)
+            if _hi is None or _hf is None:
+                # Fila sin hora parseable — no se puede validar.
+                continue
+            # `00:00` como fin lo interpretamos como fin de día (24:00).
+            if _hf == 0:
                 _hf = 24 * 60
             if _hi < _base:
                 _razones.append(
-                    f"inicio {_ini.strftime('%H:%M')} < "
+                    f"inicio {_time_str(_ini)} < "
                     f"{config_global.hora_inicio_operativo.strftime('%H:%M')}"
                 )
             if _hf > _fin_op:
                 _razones.append(
-                    f"fin {_fin.strftime('%H:%M')} > "
+                    f"fin {_time_str(_fin)} > "
                     f"{config_global.hora_fin_operativo.strftime('%H:%M')}"
                 )
             if _hi >= _base and (_hi - _base) % _gran != 0:
@@ -1455,8 +1462,8 @@ def _compute_checks(
                 )
             if _razones:
                 _out_rows.append(
-                    f"{_dia} {_ini.strftime('%H:%M')}–"
-                    f"{_fin.strftime('%H:%M')}: "
+                    f"{_dia} {_time_str(_ini)}–"
+                    f"{_time_str(_fin)}: "
                     + ", ".join(_razones)
                 )
 
