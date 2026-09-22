@@ -50,9 +50,62 @@ def _delete_ciclo_cascade(session: Session, ciclo_id: str) -> None:
         session.delete(plan)
 
     # 2. Schedules: entries -> schedule
-    schedules = session.exec(select(ScheduleDB).where(ScheduleDB.ciclo_id == ciclo_id)).all()
-    for sched in schedules:
-        entries = session.exec(select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sched.id)).all()
+    # Bugfix (2026-09-22, task #340): borrar primero los shadows del
+    # importer masivo (Fase G del rediseño 2026-09-15) porque:
+    #  - los shadows apuntan al destino via `shadow_target_schedule_id`
+    #    → borrar el destino primero rompería la FK,
+    #  - los shadows tienen `ComisionDB` propias (schedule_id=shadow.id)
+    #    que quedaban huérfanas con el borrado ingenuo previo.
+    schedules_todos = list(session.exec(
+        select(ScheduleDB).where(ScheduleDB.ciclo_id == ciclo_id)
+    ).all())
+    shadows_del_ciclo = [s for s in schedules_todos if s.es_shadow_import]
+    schedules_reales = [s for s in schedules_todos if not s.es_shadow_import]
+
+    # 2.a) Shadows: entries + comisiones + schedule.
+    for sh in shadows_del_ciclo:
+        entries_sh = session.exec(
+            select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sh.id)
+        ).all()
+        for e in entries_sh:
+            session.delete(e)
+        coms_sh = session.exec(
+            select(ComisionDB).where(ComisionDB.schedule_id == sh.id)
+        ).all()
+        for c in coms_sh:
+            session.delete(c)
+        session.delete(sh)
+    session.flush()
+
+    # 2.b) Además, capturar shadows huérfanos cuyo destino pertenece al
+    # ciclo pero que quedaron con `ciclo_id` distinto (defensivo).
+    if schedules_reales:
+        _ids_reales = [s.id for s in schedules_reales]
+        shadows_huerfanos = session.exec(
+            select(ScheduleDB).where(
+                ScheduleDB.es_shadow_import == True,  # noqa: E712
+                ScheduleDB.shadow_target_schedule_id.in_(_ids_reales),  # type: ignore[attr-defined]
+            )
+        ).all()
+        for sh in shadows_huerfanos:
+            entries_sh = session.exec(
+                select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sh.id)
+            ).all()
+            for e in entries_sh:
+                session.delete(e)
+            coms_sh = session.exec(
+                select(ComisionDB).where(ComisionDB.schedule_id == sh.id)
+            ).all()
+            for c in coms_sh:
+                session.delete(c)
+            session.delete(sh)
+        session.flush()
+
+    # 2.c) Schedules reales: entries -> schedule.
+    for sched in schedules_reales:
+        entries = session.exec(
+            select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sched.id)
+        ).all()
         for e in entries:
             session.delete(e)
         session.delete(sched)

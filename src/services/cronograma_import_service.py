@@ -564,21 +564,43 @@ def crear_shadow_import(
     #    lo marca como error, que la UI muestra.
     #
     #    Rewind al inicio del archivo para volver a parsear:
+    # Bugfix (2026-09-22, task #339): antes se hacía
+    # `try: file.seek(0) except: pass`, silenciando un error real que
+    # dejaba el shadow persistido sin datos del archivo. Ahora
+    # levantamos ValueError y descartamos el shadow — la UI ya
+    # convierte el error en toast.
     try:
         file.seek(0)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _borrar_shadow_datos(session, shadow.id)
+        session.delete(shadow)
+        session.commit()
+        raise ValueError(
+            "No se pudo re-leer el archivo para armar el shadow "
+            f"({exc}). Subí el archivo de nuevo."
+        ) from exc
     preview_shadow = preview_import(session, shadow.id, file)
-    if not preview_shadow.tiene_errores_bloqueantes:
-        # Decisiones por default: "agregar" para todo lo que tenga
-        # datos previos. El usuario después puede ajustar via UI y
-        # regenerar el shadow.
-        decisiones: dict[str, MergePolicy] = {
-            m.materia_codigo: "agregar"
-            for m in preview_shadow.materias
-            if m.tiene_datos_previos
-        }
-        commit_import(session, preview_shadow, decisiones)
+    if preview_shadow.tiene_errores_bloqueantes:
+        # Bugfix (2026-09-22, task #339): antes se commiteaba un
+        # shadow vacío en este caso, lo que dejaba un preview inútil
+        # (calendario con las entries del destino y sin la señal del
+        # error). Ahora descartamos el shadow y avisamos al caller.
+        _borrar_shadow_datos(session, shadow.id)
+        session.delete(shadow)
+        session.commit()
+        raise ValueError(
+            "El archivo generó errores al aplicarse sobre el shadow: "
+            + "; ".join(preview_shadow.parse_errors)
+        )
+    # Decisiones por default: "agregar" para todo lo que tenga
+    # datos previos. El usuario después puede ajustar via UI y
+    # regenerar el shadow.
+    decisiones: dict[str, MergePolicy] = {
+        m.materia_codigo: "agregar"
+        for m in preview_shadow.materias
+        if m.tiene_datos_previos
+    }
+    commit_import(session, preview_shadow, decisiones)
 
     session.commit()
     session.refresh(shadow)

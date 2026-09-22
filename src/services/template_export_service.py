@@ -182,25 +182,6 @@ def _escribir_headers_horarios(ws) -> None:
     ws.freeze_panes = "A2"
 
 
-def _escribir_fila_ejemplo_horarios(ws) -> None:
-    """Fila 2 con un ejemplo ilustrativo. Se estiliza en amarillo
-    claro para señalar que es guía y hay que borrarla o pisarla.
-    """
-    ejemplo = [
-        "MAT101",         # codigo_materia
-        "1",              # comision
-        "Lunes",          # dia
-        "08:00",          # hora_inicio
-        "11:00",          # hora_fin
-        "",               # tipo_clase (vacío = por determinar)
-        "",               # virtual (vacío = heredar)
-    ]
-    for col_idx, val in enumerate(ejemplo, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=val)
-        cell.fill = EJEMPLO_FILL
-        cell.font = EJEMPLO_FONT
-
-
 def _agregar_data_validations_horarios(
     ws,
     wb: Workbook,
@@ -452,7 +433,9 @@ def generar_plantilla_cronograma_excel(
     ws_main.title = "Horarios"
 
     _escribir_headers_horarios(ws_main)
-    _escribir_fila_ejemplo_horarios(ws_main)
+    # Bugfix (2026-09-22, task #341): no se escribe fila de ejemplo en
+    # la hoja Horarios porque el parser no distingue ejemplo de dato
+    # real; el ejemplo textual queda en la hoja Instrucciones.
     _agregar_data_validations_horarios(
         ws_main, wb, codigos_ordenados,
         dias_operativos=_dias_operativos,
@@ -543,15 +526,6 @@ def _escribir_headers_inscriptos(ws) -> None:
         ws.column_dimensions[letra].width = ancho
     ws.row_dimensions[1].height = 32
     ws.freeze_panes = "A2"
-
-
-def _escribir_fila_ejemplo_inscriptos(ws) -> None:
-    """Fila 2 de ejemplo en amarillo claro."""
-    ejemplo = ["MAT101", 2024, "1C", 120]
-    for col_idx, val in enumerate(ejemplo, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=val)
-        cell.fill = EJEMPLO_FILL
-        cell.font = EJEMPLO_FONT
 
 
 def _agregar_data_validations_inscriptos(
@@ -721,7 +695,9 @@ def generar_plantilla_inscriptos_excel(session: Session) -> bytes:
     ws_main.title = "Inscriptos"
 
     _escribir_headers_inscriptos(ws_main)
-    _escribir_fila_ejemplo_inscriptos(ws_main)
+    # Bugfix (2026-09-22, task #341): mismo motivo que la plantilla de
+    # cronograma — no se escribe fila de ejemplo porque el parser no la
+    # distingue de dato real. El ejemplo queda en la hoja Instrucciones.
     _agregar_data_validations_inscriptos(ws_main, wb, codigos_ordenados)
 
     _escribir_hoja_instrucciones_inscriptos(wb, len(codigos_ordenados))

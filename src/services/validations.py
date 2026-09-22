@@ -1256,8 +1256,30 @@ def ajustar_horarios_a_config(
         new_hi = _round_to_slot(hi)
         new_hf = _round_to_slot(hf)
         # Guard: fin > inicio.
+        # Bugfix (2026-09-22, task #338): si el entry cae más allá de
+        # `fin_op` (por ejemplo hora_inicio=23:30, hora_fin=23:45 con
+        # fin_op=23:00), ambos se redondean a `fin_op` y el guard
+        # anterior `new_hf = min(new_hi + gran, fin_op)` dejaba
+        # `new_hf == new_hi`, generando una clase de duración 0 que
+        # rompe validaciones posteriores. Si detectamos ese caso,
+        # empujamos `new_hi` un slot hacia atrás para que quede al
+        # menos una franja válida. Si eso lo llevaría por debajo de
+        # `base`, se skippea el ajuste y se reporta.
         if new_hf <= new_hi:
-            new_hf = min(new_hi + gran, fin_op)
+            if new_hi - gran >= base:
+                new_hi = new_hi - gran
+                new_hf = new_hi + gran
+            elif new_hi + gran <= fin_op:
+                new_hf = new_hi + gran
+            else:
+                n_skipped += 1
+                mensajes.append(
+                    f"{e.codigo_materia} {e.dia} "
+                    f"{e.hora_inicio.strftime('%H:%M')}–"
+                    f"{e.hora_fin.strftime('%H:%M')}: no cabe en "
+                    "el rango operativo, requiere corrección manual"
+                )
+                continue
 
         if new_hi == hi and new_hf == hf:
             continue  # ya estaba OK

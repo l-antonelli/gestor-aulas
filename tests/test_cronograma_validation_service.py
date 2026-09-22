@@ -714,9 +714,16 @@ class TestHorariosVsConfig:
         assert len(summary.horarios_fuera_config) == 1
         assert summary.horarios_fuera_config[0]["codigo_materia"] == "FIS101"
 
-    def test_badge_rojo_por_fuera_config(self, session, setup_basic):
-        """Un cronograma con `n_horarios_fuera_config > 0` aparece 🔴
-        en `compute_validation_status`.
+    def test_fuera_config_no_bloquea_listo_para_plan(
+        self, session, setup_basic,
+    ):
+        """Bugfix task #342 (2026-09-22): `n_horarios_fuera_config` es
+        un warning, no un bloqueante. Antes ponía el badge en 🔴 y
+        `listo_para_plan=False`, contradiciendo la doc de Fase H.1.
+        Ahora un cronograma con horarios fuera de config pero sin otros
+        problemas debe quedar 🟢 listo para plan; la sección de config
+        horaria de la UI sigue mostrando el warning con su botón
+        "Ajustar automáticamente".
         """
         from src.services.cronograma_validation_service import (
             compute_validation_status,
@@ -744,9 +751,15 @@ class TestHorariosVsConfig:
         session.commit()
 
         summary = validar_cronograma(session, sched.id, ciclo.id)
+        assert summary.n_horarios_fuera_config >= 1
         persist_validation(session, summary)
 
         status = compute_validation_status(session, sched.id, ciclo.id)
-        assert status.listo_para_plan is False
-        assert "🔴" in status.badge
-        assert any("fuera de la config" in p for p in status.problemas)
+        # El horario fuera de config no bloquea el plan.
+        assert status.listo_para_plan is True, (
+            f"Con solo fuera-de-config debe estar listo. Problemas: "
+            f"{status.problemas}"
+        )
+        assert not any(
+            "fuera de la config" in p for p in status.problemas
+        )

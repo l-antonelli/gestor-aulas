@@ -772,21 +772,40 @@ if _show_without_data:
                 ):
                     _valid = edited.dropna(subset=["Año", "Cuatrimestre", "Inscriptos"])
                     if not _valid.empty:
-                        from datetime import datetime as _dt
-                        _now = _dt.utcnow()
-                        with next(get_session()) as sess:
-                            for _, r in _valid.iterrows():
-                                sess.add(InscripcionHistoricaDB(
-                                    materia_codigo=_code,
-                                    anio=int(r["Año"]),
-                                    cuatrimestre=str(r["Cuatrimestre"]),
-                                    inscriptos=int(r["Inscriptos"]),
-                                    updated_at=_now,
-                                    origen="manual",
-                                ))
-                            sess.commit()
-                        st.toast(f"{_code}: {len(_valid)} registros creados.")
-                        st.rerun()
+                        # Bugfix (2026-09-22, task #345): usar
+                        # `guardar_registros_materia` en vez de
+                        # `session.add` directo. Antes, si el usuario
+                        # tipeaba dos filas con la misma PK
+                        # (materia, año, cuatri) — o si por error
+                        # apretaba Guardar dos veces —, saltaba
+                        # `IntegrityError` sin captura y quedaba la
+                        # sesión inutilizable. El helper deduplica
+                        # (última fila gana) y respeta `cuatris_visibles`.
+                        _cuatris_visibles = (
+                            {"1C", "2C", "Anual"} if _cuatri_filter == "Todos"
+                            else {_cuatri_filter}
+                        )
+                        _registros = [
+                            RegistroInscripcion(
+                                anio=int(r["Año"]),
+                                cuatrimestre=str(r["Cuatrimestre"]),
+                                inscriptos=int(r["Inscriptos"]),
+                            )
+                            for _, r in _valid.iterrows()
+                        ]
+                        try:
+                            with next(get_session()) as sess:
+                                n_persistidas = guardar_registros_materia(
+                                    sess, _code, _registros,
+                                    cuatris_visibles=_cuatris_visibles,
+                                )
+                        except ValueError as e:
+                            st.error(f"No se pudo guardar: {e}")
+                        else:
+                            st.toast(
+                                f"{_code}: {n_persistidas} registro(s) creado(s)."
+                            )
+                            st.rerun()
 
 
 # =============================================================================
@@ -862,6 +881,25 @@ if _show_unmatched:
                             )
                             _now = _dt.utcnow()
                             with next(get_session()) as sess:
+                                # Bugfix (2026-09-22, task #343):
+                                # antes se hacía `existing.inscriptos
+                                # += _insc`, con lo cual un doble tap
+                                # en "Asociar" duplicaba el valor.
+                                # Ahora se sobrescribe (semántica
+                                # consistente con el importer y con
+                                # `guardar_registros_materia`).
+                                # Registrar el alias PRIMERO además
+                                # hace idempotente el segundo tap: al
+                                # rerun el código ya no aparece en
+                                # "Sin matchear".
+                                _reg_alias(
+                                    sess, _uc, _dest_code,
+                                    origen="manual",
+                                    nota=(
+                                        f"Match manual desde UI el "
+                                        f"{_now:%Y-%m-%d}"
+                                    ),
+                                )
                                 for _, r in _uc_data.iterrows():
                                     _anio = int(r["Año"])
                                     _cuatri = str(r["Cuatrimestre"])
@@ -871,7 +909,7 @@ if _show_unmatched:
                                         (_dest_code, _anio, _cuatri),
                                     )
                                     if existing:
-                                        existing.inscriptos += _insc
+                                        existing.inscriptos = _insc
                                         existing.updated_at = _now
                                         existing.origen = "override"
                                         sess.add(existing)
@@ -885,18 +923,6 @@ if _show_unmatched:
                                             origen="override",
                                         ))
                                 sess.commit()
-                                # Fase E2: persistir el alias para que
-                                # la proxima importacion resuelva
-                                # automaticamente sin volver a
-                                # aparecer en "Sin matchear".
-                                _reg_alias(
-                                    sess, _uc, _dest_code,
-                                    origen="manual",
-                                    nota=(
-                                        f"Match manual desde UI el "
-                                        f"{_now:%Y-%m-%d}"
-                                    ),
-                                )
                             st.toast(
                                 f"Asociado: {_uc} → {_dest_code}. "
                                 "Alias guardado — no volverá a aparecer."

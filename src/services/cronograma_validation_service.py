@@ -813,11 +813,12 @@ def _describir_problemas(val: ScheduleValidationDB) -> list[str]:
         problemas.append(
             f"{val.n_camino_bloqueos} bloqueos de camino de cursada"
         )
-    if val.n_horarios_fuera_config > 0:
-        problemas.append(
-            f"{val.n_horarios_fuera_config} horarios fuera de la config "
-            "(día/rango/granularidad)"
-        )
+    # Bugfix (2026-09-22, task #342): `n_horarios_fuera_config` NO se
+    # incluye acá porque, por decisión de la Fase H.1 del rediseño
+    # 2026-09-21, es un *warning* (no bloqueante) del cronograma. La
+    # UI lo sigue mostrando en la sección de config horaria con su
+    # propio botón "Ajustar automáticamente"; pero no debe impedir
+    # que `listo_para_plan` sea True. Antes esto contradecía la doc.
 
     return problemas
 

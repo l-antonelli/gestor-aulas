@@ -455,6 +455,14 @@ def commit_import(
             session.add(existente)
             result.filas_actualizadas += 1
         else:
+            # Bugfix (2026-09-22, task #344): la fila fue "tocada" por
+            # el importer aunque el valor no cambió. Refrescamos
+            # `updated_at` + `origen` para que la auditoría refleje
+            # que el dato pasó por este import; el conteo específico
+            # de filas sin cambio se preserva en `filas_sin_cambio`.
+            existente.updated_at = now
+            existente.origen = "importado"
+            session.add(existente)
             result.filas_sin_cambio += 1
 
     session.commit()

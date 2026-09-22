@@ -751,19 +751,27 @@ class TestPreviewLeeHojaHorariosDeLaPlantilla:
     def test_preview_no_reporta_columnas_faltantes_sobre_plantilla_real(
         self, session, setup_catalogo,
     ):
-        """La plantilla generada por el sistema, con su fila de ejemplo
-        pre-llenada, debe parsearse sin `parse_errors`. Antes del fix
-        el parser leía `Instrucciones` y reportaba columnas faltantes.
+        """La plantilla generada por el sistema debe:
+        1. Parsearse sin reportar "columnas faltantes" — antes del fix
+           el parser leía la hoja `Instrucciones` porque era la
+           primera del workbook.
+        2. NO importar la fila 2 como dato real — bugfix task #341
+           (2026-09-22): antes se escribía un ejemplo `MAT101 · 1 ·
+           Lunes · 08:00 · 11:00` en amarillo que el parser no
+           distinguía de dato del usuario.
         """
         plantilla = self._crear_plantilla_del_sistema(session)
 
         sched = setup_catalogo["schedule"]
         pv = preview_import(session, sched.id, plantilla)
 
-        assert pv.parse_errors == [], (
-            f"El parser reporta parse_errors — no está leyendo la "
-            f"hoja 'Horarios'. Detalle: {pv.parse_errors}"
+        # No debe haber errores de columnas — la lectura llega a la
+        # hoja `Horarios`.
+        assert not any(
+            "Columnas faltantes" in err for err in pv.parse_errors
+        ), (
+            f"El parser reporta 'columnas faltantes' — no está leyendo "
+            f"la hoja 'Horarios'. Detalle: {pv.parse_errors}"
         )
-        # La fila de ejemplo (MAT101 lunes 8-11) genera una MateriaEnPreview.
-        assert len(pv.materias) == 1
-        assert pv.materias[0].materia_codigo == "MAT101"
+        # La plantilla vacía no debe generar ninguna materia.
+        assert pv.materias == []

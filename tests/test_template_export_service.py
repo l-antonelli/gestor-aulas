@@ -168,15 +168,49 @@ class TestEstructuraDelArchivo:
             "hora_fin", "tipo_clase", "virtual",
         ]
 
-    def test_fila_de_ejemplo_presente(self, session, ciclo_con_2_materias):
+    def test_fila_2_esta_vacia_para_evitar_import_del_ejemplo(
+        self, session, ciclo_con_2_materias,
+    ):
+        """Bugfix task #341 (2026-09-22): la fila 2 no debe contener el
+        ejemplo `MAT101 · Lunes · 08:00 · 11:00`. Antes se escribía en
+        amarillo como guía visual pero el parser no distingue ejemplo
+        de dato real: si el usuario subía la plantilla sin borrar la
+        fila 2, el ejemplo se importaba como horario válido.
+        """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        # La fila 2 es el ejemplo (MAT101 lunes 8-11)
-        assert ws.cell(row=2, column=1).value == "MAT101"
-        assert ws.cell(row=2, column=3).value == "Lunes"
+        # Todas las celdas de la fila 2 deben estar vacías.
+        for col in range(1, len(
+            ["codigo_materia", "comision", "dia", "hora_inicio",
+             "hora_fin", "tipo_clase", "virtual"]
+        ) + 1):
+            assert ws.cell(row=2, column=col).value in (None, ""), (
+                f"Fila 2 columna {col} no está vacía: "
+                f"{ws.cell(row=2, column=col).value!r}"
+            )
+
+    def test_roundtrip_template_no_importa_filas_fantasma(
+        self, session, ciclo_con_2_materias,
+    ):
+        """Regresión task #341: descargar la plantilla y pasarla al
+        parser no debe devolver ningún ``HorarioInput`` — el usuario
+        aún no cargó nada.
+        """
+        from src.services.horario_file_parser import parse_horarios_file
+
+        ciclo = ciclo_con_2_materias["ciclo"]
+        contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
+
+        upload = io.BytesIO(contenido)
+        upload.name = "plantilla.xlsx"  # type: ignore[attr-defined]
+        inputs, errors = parse_horarios_file(upload)
+        assert inputs == [], (
+            f"El parser debería devolver una lista vacía, obtuvo: {inputs}"
+        )
+        assert errors == [], f"No debería haber errores, obtuvo: {errors}"
 
 
 class TestListasDeValores:
