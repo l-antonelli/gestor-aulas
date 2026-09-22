@@ -17,12 +17,25 @@ from src.domain.types import DIAS_SEMANA
 
 
 class HorarioInput(BaseModel):
-    """Input data for a single horario entry (used by horario_file_parser)."""
+    """Input data for a single horario entry (used by horario_file_parser).
+
+    Extendido en Fase C2 del rediseño 2026-09-15 con `tipo_clase` y
+    `virtual`, que la plantilla generada por
+    ``template_export_service`` expone como dropdowns. Ambos son
+    opcionales y siguen la semántica del modelo:
+
+    - ``tipo_clase``: None = por determinar (default histórico);
+      ``"teorica"`` / ``"laboratorio"`` cuando la cátedra lo declara.
+    - ``virtual``: None = heredar del dictado/materia (default);
+      ``True`` / ``False`` = override explícito.
+    """
     codigo_materia: str = PydanticField(min_length=1)
     comision_nombre: str = PydanticField(default="Comision Unica", min_length=1)
     dia: str
     hora_inicio: time
     hora_fin: time
+    tipo_clase: Optional[str] = PydanticField(default=None)
+    virtual: Optional[bool] = PydanticField(default=None)
 
     @field_validator("dia")
     @classmethod
@@ -38,6 +51,18 @@ class HorarioInput(BaseModel):
         # time(0,0) = midnight, valid for classes that end at midnight (e.g. 20:00-00:00)
         if hora_inicio and v != time(0, 0) and v <= hora_inicio:
             raise ValueError("hora_fin debe ser posterior a hora_inicio")
+        return v
+
+    @field_validator("tipo_clase")
+    @classmethod
+    def validate_tipo_clase(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v not in ("teorica", "laboratorio"):
+            raise ValueError(
+                f"tipo_clase invalido: '{v}'. "
+                "Debe ser 'teorica', 'laboratorio' o vacio."
+            )
         return v
 
 

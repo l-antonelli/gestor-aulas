@@ -494,6 +494,19 @@ class ScheduleDB(SQLModel, table=True):
     fecha_upload: date
     source_filename: str = Field(default="")
 
+    # Shadow schedule para el preview del importer masivo (Fase G del
+    # rediseño 2026-09-15). Si `es_shadow_import=True`, este schedule
+    # es una copia temporal creada por el importer que combina las
+    # entries del destino con las nuevas del archivo, para que el
+    # usuario pueda visualizarlas, editarlas y validarlas antes de
+    # confirmar. Al confirmar se aplican las diferencias al destino
+    # y se borra el shadow. Al cancelar se borra directamente.
+    # `shadow_target_schedule_id` apunta al schedule destino real.
+    es_shadow_import: bool = Field(default=False, index=True)
+    shadow_target_schedule_id: Optional[str] = Field(
+        default=None, foreign_key="schedules.id", index=True,
+    )
+
     # Relationships
     ciclo: Optional[CicloDB] = Relationship(back_populates="schedules")
     entries: list["ScheduleEntryDB"] = Relationship(back_populates="schedule")
@@ -586,6 +599,19 @@ class ScheduleValidationDB(SQLModel, table=True):
     # Detalle. El detalle estructurado va en `details_json["conflictos"]`.
     n_conflictos_horarios: int = Field(default=0, ge=0)
 
+    # Bloqueos de camino de cursada detectados sobre el cronograma
+    # (R13-camino-cronograma, Fase B del rediseño 2026-09-15). Cuenta
+    # grupos (carrera, año, cuatri) donde ninguna combinación de
+    # comisiones derivadas del preview evita solapamientos + advertencias
+    # por cap de combinaciones. Detalle en `details_json["camino_bloqueos"]`.
+    n_camino_bloqueos: int = Field(default=0, ge=0)
+
+    # Horarios que no respetan `ConfiguracionHoraria` (Fase H.1 del
+    # rediseño 2026-09-15): día no operativo, fuera del rango
+    # operativo o no múltiplo de la granularidad. Detalle en
+    # `details_json["horarios_fuera_config"]`.
+    n_horarios_fuera_config: int = Field(default=0, ge=0)
+
     # Config aplicada a la validacion (toggle "excluir optativas").
     # Si cambia entre runs, la validacion queda stale.
     # Las virtuales SI cuentan para cobertura/conflictos (no necesitan aula
@@ -595,6 +621,15 @@ class ScheduleValidationDB(SQLModel, table=True):
     # historicos); el campo activo es `excluir_optativas`.
     excluir_virtuales_optativas: bool = Field(default=False)
     excluir_optativas: bool = Field(default=False)
+
+    # Hash de contenido del cronograma + inputs relevantes del ciclo al
+    # momento de validar (Fase A del rediseño 2026-09-15). Sirve para
+    # detectar cambios que no mueven `entry_count_at_validation` ni
+    # `dictado_count_at_validation` — por ejemplo, mover una clase de
+    # lunes a martes o editar `PlanEstudioDB.optativa`. Vacío en
+    # snapshots historicos: en ese caso `is_validation_stale` cae al
+    # comportamiento previo (comparacion de counts).
+    content_hash: str = Field(default="")
 
     # Snapshot de detalle (JSON-serialized para reconstruccion de la UI)
     details_json: str = Field(default="{}")
@@ -647,6 +682,11 @@ class PlanValidationDB(SQLModel, table=True):
     # Conflictos
     n_conflictos_horarios: int = Field(default=0, ge=0)
     n_conflictos_ignorados: int = Field(default=0, ge=0)
+
+    # Hash de contenido del plan + inputs relevantes al momento de
+    # validar (Fase A del rediseño 2026-09-15, simetrico con
+    # ScheduleValidationDB). Vacío en snapshots historicos.
+    content_hash: str = Field(default="")
 
     # Snapshot detalle JSON
     details_json: str = Field(default="{}")
@@ -737,13 +777,68 @@ class MateriaLaboratorioDB(SQLModel, table=True):
 
 
 class InscripcionHistoricaDB(SQLModel, table=True):
-    """Registro historico de inscriptos por materia, año y cuatrimestre."""
+    """Registro historico de inscriptos por materia, año y cuatrimestre.
+
+    Fase E2 del rediseño 2026-09-15: se agregan campos de auditoria
+    minima (``updated_at``, ``origen``) para trazabilidad basica.
+    No es versionado historico completo — para eso hay que introducir
+    una tabla ``InscripcionCambioDB`` en el futuro. Por ahora alcanza
+    con saber cuando se toco el registro por ultima vez y quien
+    (canal) lo hizo.
+    """
     __tablename__ = "inscripciones_historicas"
 
     materia_codigo: str = Field(foreign_key="materias.codigo", primary_key=True)
     anio: int = Field(primary_key=True)
     cuatrimestre: str = Field(primary_key=True)  # "1C", "2C", "Anual"
     inscriptos: int = Field(ge=0)
+
+    # Auditoria minima (Fase E2). Cada vez que se INSERT/UPDATE la fila,
+    # los services que la modifican actualizan ambos campos.
+    #   - ``updated_at``: timestamp UTC de la ultima modificacion.
+    #   - ``origen``: canal por el que se cargo/actualizo el dato:
+    #     * "manual"    → data editor de la pagina Inscriptos.
+    #     * "importado" → preview + commit del importer masivo (Fase E1).
+    #     * "override"  → resolucion manual desde 'Sin matchear' o
+    #                     ediciones bulk que difieren del canal normal.
+    # Columnas nullable a nivel schema para no romper snapshots historicos;
+    # los services nuevos las llenan siempre.
+    updated_at: Optional[datetime] = Field(default=None)
+    origen: Optional[str] = Field(default=None, index=True)
+
+
+class CodigoAliasDB(SQLModel, table=True):
+    """Alias persistente de un codigo externo a una materia del catalogo.
+
+    Fase E2 del rediseño 2026-09-15. Cuando el loader/import encuentra
+    un codigo que no matchea directamente (ni por ``codigo`` ni por
+    ``codigo_guarani``), el usuario puede asociarlo manualmente a una
+    materia destino desde la seccion "Sin matchear" de la UI. Esa
+    asociacion se persiste aca para que en la siguiente importacion
+    el mismo codigo externo se resuelva automaticamente y no vuelva a
+    aparecer en "Sin matchear".
+
+    Casos de uso:
+    - Codigos historicos de sistemas legacy (Guarani viejo, planillas
+      Excel ad-hoc) que difieren del catalogo actual.
+    - Typos frecuentes en las planillas de las catedras.
+    - Materias con codigo distinto entre carreras que apuntan a la
+      misma entidad de dominio.
+
+    PK compuesta ``(codigo_externo)``: cada codigo externo apunta a
+    exactamente una materia. Si el usuario reasigna, se actualiza la
+    fila existente (upsert).
+    """
+    __tablename__ = "codigo_alias"
+
+    codigo_externo: str = Field(primary_key=True, index=True)
+    materia_codigo: str = Field(foreign_key="materias.codigo", index=True)
+    # Auditoria minima igual que InscripcionHistoricaDB.
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    origen: str = Field(default="manual")  # "manual" | "importado"
+    # Nota libre del usuario ("codigo del sistema X", "typo comun de
+    # la catedra Y"). Opcional.
+    nota: str = Field(default="")
 
 
 class MateriaForecastConfigDB(SQLModel, table=True):

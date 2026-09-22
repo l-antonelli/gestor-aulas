@@ -91,6 +91,68 @@ def horarios_se_superponen(h1: HorarioDB, h2: HorarioDB) -> bool:
     return not (h1.hora_fin <= h2.hora_inicio or h2.hora_fin <= h1.hora_inicio)
 
 
+def build_grupos_curriculares_del_ciclo(
+    session: Session, ciclo_id: str,
+) -> dict[tuple[str, int, str], set[str]]:
+    """Devuelve los grupos curriculares (carrera, año, cuatri) → set[materia]
+    que se cursan en el ciclo dado, enriquecidos con anuales.
+
+    Patrón compartido: se cursan en el ciclo las materias del cuatri
+    del ciclo (`{ciclo.numero}C`) más las anuales del mismo (carrera,
+    año). Los grupos del cuatri opuesto se descartan.
+
+    Sólo devuelve materias **obligatorias**. Las optativas se filtran
+    porque ningún alumno las cursa simultáneamente por default; incluirlas
+    genera falsos positivos en camino de cursada. Si en el futuro se
+    necesitase mostrar bloqueos "posibles" con optativas, se puede
+    parametrizar.
+
+    Antes este bloque estaba duplicado 4 veces (validations.py,
+    plan_validation_service.py, factibilidad_service.py) casi textual.
+    Ahora es una fuente única. Consumidores del plan y del cronograma
+    resuelven el mismo grafo curricular por acá.
+    """
+    from src.database.models import CicloDB
+
+    ciclo = session.get(CicloDB, ciclo_id)
+    if ciclo is None:
+        return {}
+    cuatri_ciclo = f"{ciclo.numero}C"
+
+    plan_version_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all())
+    if not plan_version_ids:
+        return {}
+
+    plan_entries = list(session.exec(
+        select(PlanEstudioDB)
+        .where(col(PlanEstudioDB.plan_version_id).in_(plan_version_ids))
+    ).all())
+
+    grupos: dict[tuple[str, int, str], set[str]] = {}
+    for pe in plan_entries:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        if pe.optativa:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        grupos.setdefault(key, set()).add(pe.materia_codigo)
+
+    enriquecidos: dict[tuple[str, int, str], set[str]] = {}
+    for (carrera, anio, cuatri), mats in grupos.items():
+        if cuatri != cuatri_ciclo:
+            continue
+        s = set(mats)
+        anual_key = (carrera, anio, "Anual")
+        if anual_key in grupos:
+            s |= grupos[anual_key]
+        enriquecidos[(carrera, anio, cuatri)] = s
+
+    return enriquecidos
+
+
 def validar_factibilidad_horarios_carrera(
     session: Session,
     carrera_codigo: str,
@@ -960,6 +1022,261 @@ def ejecutar_todas_validaciones(session: Session) -> dict[str, ValidationResult]
     # Use validar_conflictos_aula_plan(session, plan_cursada_id) directly when needed
 
     return results
+
+
+# =============================================================================
+# Validacion: horarios respetan la configuracion horaria global
+# =============================================================================
+
+
+@dataclass
+class HorarioFueraConfig:
+    """Un ScheduleEntryDB que rompe alguna regla de ConfiguracionHoraria."""
+    entry_id: str
+    codigo_materia: str
+    dia: str
+    hora_inicio: str  # HH:MM
+    hora_fin: str
+    razones: list[str]  # ej: ["dia no operativo", "inicio no múltiplo de 15 min"]
+
+
+def validar_horarios_vs_config(
+    session: Session,
+    schedule_id: str,
+) -> list[HorarioFueraConfig]:
+    """Chequea que cada entry del cronograma respete `ConfiguracionHoraria`.
+
+    Fase H.1 del rediseño 2026-09-15. Antes no se validaba que los
+    horarios cayeran en los días operativos, dentro del rango
+    ``[hora_inicio_operativo, hora_fin_operativo]`` y con la
+    granularidad configurada. Cargar horarios rotos pasaba
+    silenciosamente y sólo se detectaba al armar el plan (o ni ahí).
+
+    Reglas:
+
+    - ``dia`` debe estar en ``ConfiguracionHoraria.dias_operativos``.
+    - ``hora_inicio >= hora_inicio_operativo``.
+    - ``hora_fin <= hora_fin_operativo`` (con `time(0, 0)` interpretado
+      como "medianoche" — sólo válido si `hora_fin_operativo` es
+      exactamente medianoche).
+    - ``hora_inicio`` y ``hora_fin`` deben ser múltiplos de
+      ``granularidad_minutos`` contados desde ``hora_inicio_operativo``.
+
+    Devuelve la lista de entries que violan al menos una regla, con
+    las razones enumeradas por entry. Vacía si todo OK.
+    """
+    from src.database.models import ConfiguracionHoraria, ScheduleEntryDB
+
+    config = session.exec(
+        select(ConfiguracionHoraria).limit(1)
+    ).first()
+    if config is None:
+        # Sin config no hay reglas — no reportar nada.
+        return []
+
+    dias_operativos = {
+        d.strip() for d in (config.dias_operativos or "").split(",") if d.strip()
+    }
+    granularidad = int(config.granularidad_minutos or 15)
+    if granularidad <= 0:
+        granularidad = 15
+
+    def _mins(t) -> int:
+        return t.hour * 60 + t.minute
+
+    base_mins = _mins(config.hora_inicio_operativo)
+    fin_mins = _mins(config.hora_fin_operativo)
+    # Interpretar medianoche como fin del día (24:00).
+    if config.hora_fin_operativo.hour == 0 and config.hora_fin_operativo.minute == 0:
+        fin_mins = 24 * 60
+
+    entries = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == schedule_id,
+        )
+    ).all())
+
+    resultado: list[HorarioFueraConfig] = []
+    for e in entries:
+        razones: list[str] = []
+
+        if dias_operativos and e.dia not in dias_operativos:
+            razones.append(
+                f"día '{e.dia}' no está en los días operativos "
+                f"({sorted(dias_operativos)})"
+            )
+
+        h_ini = _mins(e.hora_inicio)
+        h_fin = _mins(e.hora_fin)
+        # hora_fin == 00:00 significa "medianoche" (fin del día).
+        if e.hora_fin.hour == 0 and e.hora_fin.minute == 0:
+            h_fin = 24 * 60
+
+        if h_ini < base_mins:
+            razones.append(
+                f"inicio {e.hora_inicio.strftime('%H:%M')} es anterior "
+                f"al horario operativo ({config.hora_inicio_operativo.strftime('%H:%M')})"
+            )
+        if h_fin > fin_mins:
+            razones.append(
+                f"fin {e.hora_fin.strftime('%H:%M')} es posterior al "
+                f"horario operativo ({config.hora_fin_operativo.strftime('%H:%M')})"
+            )
+        if h_ini >= base_mins:
+            delta_ini = h_ini - base_mins
+            if delta_ini % granularidad != 0:
+                razones.append(
+                    f"inicio {e.hora_inicio.strftime('%H:%M')} no respeta la "
+                    f"granularidad de {granularidad} min "
+                    f"(offset {delta_ini % granularidad} min)"
+                )
+        if h_fin <= fin_mins and h_fin > base_mins:
+            delta_fin = h_fin - base_mins
+            if delta_fin % granularidad != 0:
+                razones.append(
+                    f"fin {e.hora_fin.strftime('%H:%M')} no respeta la "
+                    f"granularidad de {granularidad} min "
+                    f"(offset {delta_fin % granularidad} min)"
+                )
+
+        if razones:
+            resultado.append(HorarioFueraConfig(
+                entry_id=e.id,
+                codigo_materia=e.codigo_materia,
+                dia=e.dia,
+                hora_inicio=e.hora_inicio.strftime("%H:%M"),
+                hora_fin=e.hora_fin.strftime("%H:%M"),
+                razones=razones,
+            ))
+    return resultado
+
+
+def ajustar_horarios_a_config(
+    session: Session,
+    schedule_id: str,
+) -> tuple[int, int, list[str]]:
+    """Ajusta masivamente los ``ScheduleEntryDB`` que rompen la config
+    horaria: redondea ``hora_inicio`` y ``hora_fin`` al múltiplo de la
+    granularidad más cercano dentro del rango operativo.
+
+    Fase I.1 del rediseño 2026-09-21. Complementa
+    ``validar_horarios_vs_config``: en vez de sólo reportar, arregla.
+
+    Reglas de ajuste:
+
+    - Si el día no es operativo → la entry queda **inalterada** (no
+      hay redondeo posible; el usuario tiene que decidir el día
+      manualmente). Se cuenta en ``skipped_dia`` y su descripción
+      aparece en el listado devuelto.
+    - Si ``hora_inicio < hora_inicio_operativo`` → se lleva a
+      ``hora_inicio_operativo``.
+    - Si ``hora_fin > hora_fin_operativo`` → se lleva a
+      ``hora_fin_operativo``.
+    - Redondeo al slot más cercano según ``granularidad_minutos``.
+      Si empatan, redondea hacia arriba.
+    - Guard: si tras el ajuste ``hora_fin <= hora_inicio``, se
+      extiende ``hora_fin`` un slot (granularidad).
+
+    Returns:
+        (n_ajustadas, n_skipped, mensajes) — ``mensajes`` es un
+        listado corto de los cambios aplicados y los saltos por
+        día, útil para el toast/log de la UI.
+    """
+    from datetime import time
+    from src.database.models import ConfiguracionHoraria, ScheduleEntryDB
+
+    config = session.exec(
+        select(ConfiguracionHoraria).limit(1)
+    ).first()
+    if config is None:
+        return (0, 0, [])
+
+    dias_ok = {
+        d.strip() for d in (config.dias_operativos or "").split(",")
+        if d.strip()
+    }
+    gran = int(config.granularidad_minutos or 15) or 15
+
+    def _mins(t) -> int:
+        return t.hour * 60 + t.minute
+
+    def _from_mins(m: int) -> time:
+        # `m == 24*60` se representa como time(0, 0) — semántica
+        # medianoche del final del día.
+        if m >= 24 * 60:
+            return time(0, 0)
+        return time((m // 60) % 24, m % 60)
+
+    base = _mins(config.hora_inicio_operativo)
+    fin_op = _mins(config.hora_fin_operativo)
+    if (
+        config.hora_fin_operativo.hour == 0
+        and config.hora_fin_operativo.minute == 0
+    ):
+        fin_op = 24 * 60
+
+    def _round_to_slot(m: int) -> int:
+        """Redondea m al múltiplo de `gran` más cercano contado desde `base`."""
+        if m <= base:
+            return base
+        if m >= fin_op:
+            return fin_op
+        rel = m - base
+        lower = (rel // gran) * gran + base
+        upper = lower + gran
+        # Empate → hacia arriba.
+        return upper if (m - lower) >= (upper - m) else lower
+
+    entries = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == schedule_id,
+        )
+    ).all())
+
+    n_ajustadas = 0
+    n_skipped = 0
+    mensajes: list[str] = []
+    for e in entries:
+        # Día no operativo → skip.
+        if dias_ok and e.dia not in dias_ok:
+            n_skipped += 1
+            mensajes.append(
+                f"{e.codigo_materia} {e.dia} "
+                f"{e.hora_inicio.strftime('%H:%M')}–"
+                f"{e.hora_fin.strftime('%H:%M')}: día no operativo, "
+                "requiere corrección manual"
+            )
+            continue
+
+        hi = _mins(e.hora_inicio)
+        hf = _mins(e.hora_fin)
+        if e.hora_fin.hour == 0 and e.hora_fin.minute == 0:
+            hf = 24 * 60
+
+        new_hi = _round_to_slot(hi)
+        new_hf = _round_to_slot(hf)
+        # Guard: fin > inicio.
+        if new_hf <= new_hi:
+            new_hf = min(new_hi + gran, fin_op)
+
+        if new_hi == hi and new_hf == hf:
+            continue  # ya estaba OK
+
+        e.hora_inicio = _from_mins(new_hi)
+        e.hora_fin = _from_mins(new_hf)
+        session.add(e)
+        n_ajustadas += 1
+        mensajes.append(
+            f"{e.codigo_materia} {e.dia}: "
+            f"{_from_mins(hi).strftime('%H:%M')}–"
+            f"{_from_mins(hf).strftime('%H:%M')} → "
+            f"{e.hora_inicio.strftime('%H:%M')}–"
+            f"{e.hora_fin.strftime('%H:%M')}"
+        )
+
+    if n_ajustadas > 0:
+        session.commit()
+    return (n_ajustadas, n_skipped, mensajes)
 
 
 # =============================================================================

@@ -1179,3 +1179,258 @@ def check_camino_cursada(
         sede_nombre=sede_nombre,
     )
     return list(reporte_tmp.bloqueos) + list(reporte_tmp.advertencias)
+
+
+# =============================================================================
+# API pública: chequeo de camino de cursada sobre un cronograma
+# =============================================================================
+
+
+def check_camino_cursada_cronograma(
+    session: Session,
+    schedule_id: str,
+    ciclo_id: str,
+) -> list[Bloqueo]:
+    """Chequea camino de cursada usando comisiones auto-derivadas de un
+    cronograma (Fase B del rediseño 2026-09-15).
+
+    Objetivo: detectar los mismos bloqueos por solapamiento horario
+    irresoluble que hoy sólo aparecen cuando se arma el plan (via
+    ``check_camino_cursada`` sobre ``PlanificacionCursadaDB``). Cerrar
+    ese gap permite al usuario iterar sobre el cronograma sin
+    sorpresas al momento de generar el plan.
+
+    Se enfoca en **solapamiento horario** entre pares de materias del
+    mismo grupo curricular (carrera, año, cuatri del ciclo, más
+    anuales). El chequeo intersede de R13-camino se delega al plan —
+    depende de sedes admisibles configuradas en el asignador, no del
+    cronograma.
+
+    Reusa el pipeline de ``preview_plan_from_schedule`` para derivar
+    "comisiones sintéticas" a partir de las entries del cronograma
+    (mismo criterio que ``validar_conflictos_horarios_cronograma``).
+
+    Returns:
+        Lista de ``Bloqueo`` con ``codigo_regla="R13-camino-cronograma"``.
+        Vacía si el cronograma no tiene entries, hay errores de preview,
+        o no hay pares infactibles.
+    """
+    from src.services.plan_generation_service import preview_plan_from_schedule
+    from src.database.models import CicloDB
+    from src.services.validations import build_grupos_curriculares_del_ciclo
+
+    ciclo = session.get(CicloDB, ciclo_id)
+    if ciclo is None:
+        return []
+
+    preview = preview_plan_from_schedule(session, schedule_id)
+    if preview.errors or not preview.materias:
+        return []
+
+    # comisiones_por_materia[materia] = [(com_key, [ (dia, hi, hf), ... ]), ...]
+    # Cada com_key es un identificador sintético estable — la tupla
+    # (materia, comision_asignada) — que reemplaza al ComisionDB.id
+    # inexistente en el plano cronograma.
+    # Un horario sintético del cronograma: (dia, hora_inicio, hora_fin).
+    # Simple tuple para evitar dependencia con HorarioDB en este chequeo.
+    coms_por_materia: dict[str, list[tuple[tuple[str, int], list[tuple]]]] = {}
+    mat_nombre: dict[str, str] = {}
+    for mp in preview.materias:
+        mat_nombre[mp.materia_codigo] = mp.materia_nombre
+        by_com: dict[int, list[tuple]] = {}
+        for ep in mp.entries:
+            by_com.setdefault(ep.comision_asignada, []).append(
+                (ep.dia, ep.hora_inicio, ep.hora_fin)
+            )
+        if by_com:
+            coms_por_materia[mp.materia_codigo] = [
+                ((mp.materia_codigo, n), hs) for n, hs in by_com.items()
+            ]
+
+    if not coms_por_materia:
+        return []
+
+    grupos_enriquecidos = build_grupos_curriculares_del_ciclo(
+        session, ciclo_id,
+    )
+    if not grupos_enriquecidos:
+        return []
+
+    def _solapa(h1: tuple, h2: tuple) -> bool:
+        if h1[0] != h2[0]:
+            return False
+        return h1[1] < h2[2] and h2[1] < h1[2]
+
+    def _par_es_compatible(
+        hs_a: list[tuple], hs_b: list[tuple],
+    ) -> tuple[bool, Optional[tuple[tuple, tuple]]]:
+        """True si el par (comA, comB) no tiene solapamientos."""
+        for h1 in hs_a:
+            for h2 in hs_b:
+                if _solapa(h1, h2):
+                    return False, (h1, h2)
+        return True, None
+
+    bloqueos: list[Bloqueo] = []
+    advertencias: list[Bloqueo] = []
+
+    for (carrera, anio, cuatri), mats_del_grupo in grupos_enriquecidos.items():
+        # Sólo materias con al menos una comisión en el cronograma.
+        materias_con_com = [
+            mc for mc in sorted(mats_del_grupo)
+            if mc in coms_por_materia
+        ]
+        if len(materias_con_com) < 2:
+            continue
+
+        opciones: list[tuple[str, list[tuple[tuple[str, int], list[tuple]]]]] = [
+            (mc, coms_por_materia[mc]) for mc in materias_con_com
+        ]
+
+        # Cota superior de combinaciones.
+        prod = 1
+        for _mc, coms in opciones:
+            prod *= max(1, len(coms))
+            if prod > MAX_COMBINACIONES_CAMINO:
+                break
+        excede_cap = prod > MAX_COMBINACIONES_CAMINO
+
+        # Cache de compatibilidad entre pares de comisiones sintéticas.
+        pair_compat: dict[
+            tuple[tuple[str, int], tuple[str, int]],
+            tuple[bool, Optional[tuple[tuple, tuple]]]
+        ] = {}
+
+        def _cached_compat(
+            ka: tuple[str, int], hs_a: list[tuple],
+            kb: tuple[str, int], hs_b: list[tuple],
+        ) -> tuple[bool, Optional[tuple[tuple, tuple]]]:
+            key = (ka, kb) if ka < kb else (kb, ka)
+            if key in pair_compat:
+                return pair_compat[key]
+            r = _par_es_compatible(hs_a, hs_b)
+            pair_compat[key] = r
+            return r
+
+        # Backtracking DFS.
+        combinaciones_probadas = [0]
+        conflicto_ejemplo: dict = {}
+
+        def _dfs(
+            k: int,
+            elegidas: list[tuple[tuple[str, int], list[tuple]]],
+        ) -> bool:
+            if k == len(opciones):
+                return True
+            if combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
+                return False
+            _mc, coms = opciones[k]
+            for kb, hs_b in coms:
+                combinaciones_probadas[0] += 1
+                if combinaciones_probadas[0] > MAX_COMBINACIONES_CAMINO:
+                    return False
+                ok = True
+                for ka, hs_a in elegidas:
+                    compat, info = _cached_compat(ka, hs_a, kb, hs_b)
+                    if not compat:
+                        ok = False
+                        if info is not None:
+                            conflicto_ejemplo["par"] = info
+                            conflicto_ejemplo["ka"] = ka
+                            conflicto_ejemplo["kb"] = kb
+                        break
+                if not ok:
+                    continue
+                elegidas.append((kb, hs_b))
+                if _dfs(k + 1, elegidas):
+                    return True
+                elegidas.pop()
+            return False
+
+        factible = _dfs(0, [])
+
+        if factible:
+            continue
+
+        # Cap excedido → advertencia, no bloqueo.
+        if excede_cap or combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
+            advertencias.append(Bloqueo(
+                codigo_regla="R13-camino-cronograma",
+                severidad="advertencia",
+                titulo=(
+                    f"Camino de cursada · {carrera} · Año {anio} · "
+                    f"{cuatri}: espacio de combinaciones excede "
+                    f"{MAX_COMBINACIONES_CAMINO}; no se pudo verificar "
+                    "factibilidad completa desde el cronograma."
+                ),
+                detalle=(
+                    f"- **Carrera**: `{carrera}`\n"
+                    f"- **Año**: {anio}\n"
+                    f"- **Cuatrimestre**: {cuatri}\n"
+                    f"- **Materias evaluadas**: {len(opciones)}\n"
+                    "El pre-check del plan puede resolverlo, pero desde "
+                    "el cronograma no podemos garantizarlo."
+                ),
+                entidades_a_revisar=[
+                    f"materia:{mc}" for mc, _ in opciones
+                ],
+            ))
+            continue
+
+        # Bloqueo real. Fabricamos el detalle con el ejemplo del último
+        # conflicto encontrado durante el DFS.
+        detalle_lines = [
+            f"- **Carrera**: `{carrera}`",
+            f"- **Año**: {anio}",
+            f"- **Cuatrimestre**: {cuatri}",
+            f"- **Materias del ciclo con horarios**: {len(opciones)}",
+        ]
+        par_materias: Optional[list[str]] = None
+        if conflicto_ejemplo.get("par"):
+            h1, h2 = conflicto_ejemplo["par"]
+            ka = conflicto_ejemplo["ka"]
+            kb = conflicto_ejemplo["kb"]
+            mat_a = ka[0]
+            mat_b = kb[0]
+            par_materias = sorted([mat_a, mat_b])
+            detalle_lines.extend([
+                "",
+                "**Ejemplo de conflicto irresoluble** "
+                "(dos comisiones del grupo se solapan y no hay "
+                "combinación alternativa):",
+                f"- **Materia 1**: `{mat_a}` "
+                f"({mat_nombre.get(mat_a, '?')}) — "
+                f"{h1[0]} {h1[1].strftime('%H:%M')}–"
+                f"{h1[2].strftime('%H:%M')}",
+                f"- **Materia 2**: `{mat_b}` "
+                f"({mat_nombre.get(mat_b, '?')}) — "
+                f"{h2[0]} {h2[1].strftime('%H:%M')}–"
+                f"{h2[2].strftime('%H:%M')}",
+                "",
+                "Ningún alumno puede cursar dos materias obligatorias en "
+                "el mismo horario. Alternativas: agregar una comisión "
+                "adicional a alguna de las materias en otro día/hora, "
+                "o mover uno de los horarios del cronograma.",
+            ])
+
+        contexto: dict = {
+            "carrera": carrera, "anio": anio, "cuatri": cuatri,
+            "tipo": "solapamiento",
+        }
+        if par_materias is not None:
+            contexto["par_materias"] = par_materias
+
+        bloqueos.append(Bloqueo(
+            codigo_regla="R13-camino-cronograma",
+            severidad="bloqueante",
+            titulo=(
+                f"Camino de cursada · {carrera} · Año {anio} · "
+                f"{cuatri}: ninguna combinación de comisiones evita "
+                "el solapamiento"
+            ),
+            detalle="\n".join(detalle_lines),
+            entidades_a_revisar=[f"materia:{mc}" for mc, _ in opciones],
+            contexto=contexto,
+        ))
+
+    return bloqueos + advertencias

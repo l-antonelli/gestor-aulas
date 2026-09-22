@@ -31,13 +31,17 @@ from sqlmodel import col, select
 from src.database.connection import get_session
 from src.database.crud import get_or_create_config, materia_crud
 from src.database.models import (
+    AulaDB,
     CarreraDB,
     CicloDB,
     ComisionDB,
+    DictadoCicloDB,
+    DictadoDB,
     HorarioDB,
     MateriaDB,
     MateriaLaboratorioDB,
     PlanificacionCursadaDB,
+    SedeDB,
 )
 from src.domain.types import DIAS_SEMANA
 from src.services.plan_generation_service import (
@@ -165,7 +169,7 @@ def _dialog_edit_horario():
             index=_virtual_labels.index(_pending_virtual_lbl),
             key="_pme_dlg_virtual",
             help=(
-                "Modalidad de este horario específico. "
+                "Virtual de este horario específico. "
                 "Heredar = usa lo que dice el dictado o la materia. "
                 "Sí = fuerza virtual (no se asigna aula). "
                 "No = fuerza presencial (aunque el dictado sea virtual)."
@@ -328,7 +332,7 @@ def _dialog_add_horario():
             options=_virtual_labels, index=0,
             key="_pme_dlg_add_virtual",
             help=(
-                "Modalidad de este horario específico. "
+                "Virtual de este horario específico. "
                 "Heredar = usa lo que dice el dictado o la materia. "
                 "Sí = fuerza virtual (no se asigna aula). "
                 "No = fuerza presencial."
@@ -435,9 +439,66 @@ def _render_plan_editable_calendar(
         _mat_db = session.get(MateriaDB, materia_codigo)
         _mat_nombre = _mat_db.nombre if _mat_db else materia_codigo
 
+    # Fase I.1 · Precargar aula/sede + dictado.virtual + materia.virtual
+    # para populate `aula_label`, `virtual` y `tipo_clase` en cada
+    # ScheduleBlock. Antes se pasaban vacíos y el calendario mostraba
+    # "Sin aula" incluso con aula asignada por el LP.
+    from src.services.resolucion_jerarquica import resolve_virtual as _rvirt
+    with next(get_session()) as _sess_extra:
+        # Aula del patrón (HorarioDB.aula_id) + sede
+        _aula_ids = list({h.aula_id for h in _hs if h.aula_id})
+        _aula_map: dict[str, AulaDB] = {}
+        _sede_map: dict[str, SedeDB] = {}
+        if _aula_ids:
+            _aula_map = {
+                a.id: a for a in _sess_extra.exec(
+                    select(AulaDB).where(col(AulaDB.id).in_(_aula_ids))
+                ).all()
+            }
+            _sede_ids = list({
+                a.sede_id for a in _aula_map.values() if a.sede_id
+            })
+            if _sede_ids:
+                _sede_map = {
+                    s.id: s for s in _sess_extra.exec(
+                        select(SedeDB).where(col(SedeDB.id).in_(_sede_ids))
+                    ).all()
+                }
+        # Dictado del ciclo (para heredar virtual). Necesito el ciclo
+        # del plan.
+        _plan_db = _sess_extra.get(PlanificacionCursadaDB, plan_id)
+        _dictado_virtual: bool | None = None
+        if _plan_db is not None and _plan_db.ciclo_id:
+            _dr = _sess_extra.exec(
+                select(DictadoDB.virtual)
+                .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)  # type: ignore[arg-type]
+                .where(DictadoCicloDB.ciclo_id == _plan_db.ciclo_id)
+                .where(DictadoDB.materia_codigo == materia_codigo)
+            ).first()
+            if _dr is not None:
+                _dictado_virtual = _dr
+        _materia_virtual_base = bool(_mat_db.virtual) if _mat_db else False
+
     grid_filt: dict[str, list[ScheduleBlock]] = {}
     for h in _hs:
         com = _com_by_id.get(h.comision_id)
+        # Aula label: "Sede · Aula" si tiene aula asignada.
+        _aula_lbl = None
+        if h.aula_id:
+            _aula = _aula_map.get(h.aula_id)
+            if _aula is not None:
+                _sede = _sede_map.get(_aula.sede_id) if _aula.sede_id else None
+                _sede_nom = _sede.nombre if _sede is not None else ""
+                _aula_lbl = (
+                    f"{_sede_nom} · {_aula.nombre}"
+                    if _sede_nom else _aula.nombre
+                )
+        # Virtual resuelto por jerarquía horario → dictado → materia.
+        _virt_resuelto = _rvirt(
+            horario_virtual=h.virtual,
+            dictado_virtual=_dictado_virtual,
+            materia_virtual=_materia_virtual_base,
+        )
         block = ScheduleBlock(
             entry_id=h.id,
             materia_codigo=materia_codigo,
@@ -447,6 +508,9 @@ def _render_plan_editable_calendar(
             comision_id=h.comision_id,
             comision_numero=com.numero if com else None,
             comision_nombre=com.nombre if com else None,
+            aula_label=_aula_lbl,
+            virtual=_virt_resuelto,
+            tipo_clase=h.tipo_clase,
         )
         grid_filt.setdefault(h.dia, []).append(block)
 
@@ -991,7 +1055,7 @@ def _render_bulk_horario_editor(
                 options=["Heredar", "Sí", "No"],
                 default="Heredar", width="small",
                 help=(
-                    "Modalidad de este horario específico. "
+                    "Virtual de este horario específico. "
                     "Heredar = usa lo que dice el dictado o la materia. "
                     "Sí = fuerza virtual (no se asigna aula). "
                     "No = fuerza presencial."

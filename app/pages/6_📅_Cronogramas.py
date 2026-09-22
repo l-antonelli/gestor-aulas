@@ -15,10 +15,11 @@ from sqlmodel import select, col, func
 from src.database.connection import get_session, init_db
 from src.database.models import (
     ScheduleDB, ScheduleEntryDB, MateriaDB, CicloDB, ConfiguracionHoraria,
-    CarreraDB, PlanCarreraVersionDB, PlanEstudioDB,
+    CarreraDB, PlanCarreraVersionDB, PlanEstudioDB, CicloPlanVersionDB,
 )
 from src.database.crud import ciclo_crud, get_or_create_config
 from src.services.schedule_service import (
+    clonar_plan_a_cronograma,
     create_schedule_standalone,
     create_empty_schedule,
     get_all_schedules,
@@ -35,6 +36,7 @@ from src.services.cronograma_validation_service import (
     get_latest_validation,
     is_validation_stale,
     parse_details_json,
+    compute_validation_status,
 )
 from src.ui.calendar_render import render_schedule_calendar, render_editable_schedule_calendar
 
@@ -289,19 +291,21 @@ def _dialog_edit_entry():
     _tipo_current_lbl = _TIPO_DB_TO_LABEL.get(_entry_tipo, "Automático")
 
     _entry_virtual = _entry_db.virtual if _entry_db else None
+    # Fase I.3 · Terminología unificada "Virtual" con opciones
+    # Heredar/Sí/No — consistente con el data_editor de la tabla.
     _VIRT_LABEL_TO_DB = {
-        "Según la materia": None,
+        "Heredar": None,
         "Sí (virtual)": True,
         "No (presencial)": False,
     }
     _VIRT_DB_TO_LABEL = {
-        None: "Según la materia",
+        None: "Heredar",
         True: "Sí (virtual)",
         False: "No (presencial)",
     }
     _virtual_labels = list(_VIRT_LABEL_TO_DB.keys())
     _virtual_current_label = _VIRT_DB_TO_LABEL.get(
-        _entry_virtual, "Según la materia",
+        _entry_virtual, "Heredar",
     )
 
     col_tipo_dlg, col_virt_dlg = st.columns(2)
@@ -321,13 +325,13 @@ def _dialog_edit_entry():
         )
     with col_virt_dlg:
         new_virtual_label = st.selectbox(
-            "Modalidad",
+            "Virtual",
             options=_virtual_labels,
             index=_virtual_labels.index(_virtual_current_label),
             key="dlg_edit_virtual",
             help=(
-                "**Según la materia**: usa la modalidad "
-                "configurada en la materia (o en el dictado del "
+                "**Heredar**: usa el flag virtual "
+                "configurado en la materia (o en el dictado del "
                 "ciclo si tiene una configuración específica).\n"
                 "**Sí (virtual)**: forzá virtual — no se le "
                 "asigna aula.\n"
@@ -415,8 +419,12 @@ def _dialog_edit_entry():
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_lista, tab_cargar, tab_visualizar, tab_editar, tab_validar = st.tabs([
-    "📋 Lista", "📤 Cargar", "👁 Visualizar", "✏️ Editar", "✅ Validar",
+# Fase I.2 · Unificamos Visualizar con Editar: en vez de dos tabs
+# distintas, dejamos una sola pestaña "Ver / Editar" con un toggle
+# "Solo lectura" arriba (default OFF) para ver sin editar. Simplifica
+# el mapa de la app y garantiza que las dos vistas siempre están al día.
+tab_lista, tab_cargar, tab_editar, tab_validar = st.tabs([
+    "📋 Lista", "📤 Cargar", "✏️ Ver / Editar", "✅ Validar",
 ])
 
 
@@ -441,29 +449,14 @@ with tab_lista:
                         ScheduleEntryDB.schedule_id == s.id
                     )
                 ).one()
-                # Latest validation across any ciclo (for badge)
-                _latest_val = get_latest_validation(session, s.id)
-                _val_stale = (
-                    is_validation_stale(session, _latest_val)
-                    if _latest_val else False
-                )
+                # Estado consolidado de la ultima validacion (Fase A).
+                # Cubre faltantes, particion, conflictos horarios y extras,
+                # detectando staleness por hash de contenido (no solo counts).
+                _val_status = compute_validation_status(session, s.id)
 
-            # Badge de estado de validacion
-            if _latest_val is None:
-                _val_badge = "⚪ sin validar"
-            elif _val_stale:
-                _val_badge = (
-                    f"🟡 validado vs {_latest_val.ciclo_id}, "
-                    f"con cambios posteriores"
-                )
-            elif not _latest_val.particion_valid or _latest_val.n_faltantes > 0:
-                _val_badge = (
-                    f"🔴 con problemas vs {_latest_val.ciclo_id} "
-                    f"({_latest_val.n_faltantes} materias faltantes, "
-                    f"{_latest_val.particion_n_infactibles} particiones sin cupo)"
-                )
-            else:
-                _val_badge = f"🟢 validado vs {_latest_val.ciclo_id}"
+            _latest_val = _val_status.validation
+            _val_stale = _val_status.stale
+            _val_badge = _val_status.badge
 
             ciclo_label = s.ciclo_id if s.ciclo_id else "sin ciclo"
             _header = (
@@ -558,34 +551,67 @@ with tab_lista:
 # Tab 2: Cargar
 # =============================================================================
 with tab_cargar:
-    st.subheader("Crear nuevo cronograma")
+    st.subheader("Crear o cargar cronograma")
     st.caption(
         "Un cronograma es un conjunto de horarios (día + rango + "
-        "materia + comisión) que después se valida contra un ciclo. "
-        "Podés armarlo desde cero o importarlo desde un archivo."
+        "materia + comisión) asociado a un ciclo. Podés crear uno "
+        "vacío para cargar a mano, crear uno desde un archivo, o "
+        "importar horarios adicionales sobre un cronograma existente "
+        "(ideal para agregar los datos que van llegando de las "
+        "cátedras en distintas tandas)."
     )
 
     with st.container(border=True):
         st.markdown("**⚙️ Configuración básica**")
         modo_carga = st.radio(
-            "¿Cómo lo querés crear?",
-            options=["Crear vacío", "Cargar desde archivo"],
+            "¿Qué querés hacer?",
+            options=[
+                "Crear vacío",
+                "Crear desde archivo",
+                "Importar en cronograma existente",
+                "Copiar desde plan",
+            ],
             horizontal=True,
             key="crono_modo",
             help=(
                 "**Crear vacío**: arranca sin entradas, las cargás a "
-                "mano desde la pestaña Editar.\n"
-                "**Cargar desde archivo**: importa un CSV/Excel con "
-                "los horarios ya armados."
+                "mano desde la pestaña Editar.\n\n"
+                "**Crear desde archivo**: crea un cronograma nuevo y "
+                "carga las entradas del archivo de una.\n\n"
+                "**Importar en cronograma existente**: toma un "
+                "cronograma que ya está en la lista y le suma / "
+                "reemplaza horarios desde un archivo. Con preview y "
+                "decisión de merge por materia.\n\n"
+                "**Copiar desde plan**: crea un cronograma nuevo con "
+                "el estado consolidado de un plan de cursada — útil "
+                "para archivar la versión que quedó firme tras las "
+                "validaciones y ediciones."
             ),
         )
 
-        nombre = st.text_input(
-            "Nombre del cronograma",
-            key="crono_nombre",
-            placeholder="Ej: Cronograma 2026 - 1C",
-        )
+        # El campo "Nombre" aplica a los modos que crean cronograma nuevo
+        # (Crear vacío, Crear desde archivo, Copiar desde plan). El modo
+        # "Copiar desde plan" ofrece un default derivado del plan, pero
+        # el usuario lo puede editar.
+        if modo_carga == "Importar en cronograma existente":
+            nombre = ""
+        elif modo_carga == "Copiar desde plan":
+            # El default se recalcula cuando el usuario elige plan;
+            # acá se muestra el input vacío y se sugiere abajo con
+            # `session_state`.
+            nombre = st.text_input(
+                "Nombre del cronograma nuevo",
+                key="crono_nombre",
+                placeholder="Se autocompleta al elegir plan",
+            )
+        else:
+            nombre = st.text_input(
+                "Nombre del cronograma",
+                key="crono_nombre",
+                placeholder="Ej: Cronograma 2026 - 1C",
+            )
 
+        # El ciclo puede elegirse para todos los modos (referencia).
         ciclo_sel = st.selectbox(
             "Ciclo asociado (opcional)",
             options=["(ninguno)"] + ciclo_ids,
@@ -598,45 +624,725 @@ with tab_cargar:
         )
     ciclo_id_val = ciclo_sel if ciclo_sel != "(ninguno)" else None
 
-    if modo_carga == "Cargar desde archivo":
+    if modo_carga in ("Crear desde archivo", "Importar en cronograma existente"):
         with st.container(border=True):
             st.markdown("**📤 Archivo de importación**")
             st.caption(
                 "El archivo debe tener las columnas mínimas: materia, "
-                "día, hora inicio, hora fin. Comisión y tipo son opcionales."
+                "día, hora inicio, hora fin. Comisión, tipo_clase y "
+                "virtual son opcionales."
             )
+
+            # Descarga de plantilla Excel con dropdowns de códigos válidos
+            # (Fase C1 del rediseño 2026-09-15).
+            with st.expander(
+                "📥 Descargar plantilla Excel con listas predeterminadas",
+                expanded=False,
+            ):
+                st.caption(
+                    "Genera un Excel con los códigos de materia del ciclo "
+                    "elegido como dropdown, más listas de días, tipos y "
+                    "SI/NO para virtual. Ideal para pasarle a las "
+                    "cátedras: no pueden escribir códigos inválidos."
+                )
+                if ciclo_id_val is None:
+                    st.info(
+                        "Elegí primero un ciclo arriba — la lista de "
+                        "códigos válidos depende de los dictados del "
+                        "ciclo."
+                    )
+                else:
+                    from src.services.template_export_service import (
+                        generar_plantilla_cronograma_excel,
+                        obtener_referencia_materias_del_ciclo,
+                    )
+                    _plantilla_key = f"crono_plantilla_bytes_{ciclo_id_val}"
+                    _plantilla_err_key = f"crono_plantilla_err_{ciclo_id_val}"
+                    if st.button(
+                        "🧮 Generar plantilla",
+                        key=f"crono_plantilla_btn_{ciclo_id_val}",
+                        help=(
+                            "Arma el Excel a partir de los dictados "
+                            "activos del ciclo. Puede tardar 1-2 "
+                            "segundos con muchas materias."
+                        ),
+                    ):
+                        try:
+                            with next(get_session()) as _sess:
+                                st.session_state[_plantilla_key] = (
+                                    generar_plantilla_cronograma_excel(
+                                        _sess, ciclo_id_val,
+                                    )
+                                )
+                            st.session_state.pop(_plantilla_err_key, None)
+                        except ValueError as _exc:
+                            st.session_state[_plantilla_err_key] = str(_exc)
+                            st.session_state.pop(_plantilla_key, None)
+
+                    if _plantilla_err_key in st.session_state:
+                        st.error(st.session_state[_plantilla_err_key])
+                    elif _plantilla_key in st.session_state:
+                        st.download_button(
+                            "⬇️ Descargar plantilla_horarios.xlsx",
+                            data=st.session_state[_plantilla_key],
+                            file_name=f"plantilla_horarios_{ciclo_id_val}.xlsx",
+                            mime=(
+                                "application/vnd.openxmlformats-officedocument"
+                                ".spreadsheetml.sheet"
+                            ),
+                            key=f"crono_plantilla_dl_{ciclo_id_val}",
+                        )
+                        with next(get_session()) as _sess:
+                            _refs = obtener_referencia_materias_del_ciclo(
+                                _sess, ciclo_id_val,
+                            )
+                        st.caption(
+                            f"Plantilla lista con **{len(_refs)}** códigos "
+                            "válidos en el dropdown."
+                        )
+
             uploaded = st.file_uploader(
                 "Archivo CSV o Excel con horarios",
                 type=["csv", "xlsx", "xls"],
                 key="crono_upload",
             )
 
-            if st.button(
-                "Crear cronograma",
-                disabled=not nombre or not uploaded,
-                type="primary",
-                width="stretch",
-            ):
-                with next(get_session()) as session:
-                    result = create_schedule_standalone(
-                        session, nombre, uploaded, ciclo_id=ciclo_id_val
+    if modo_carga == "Crear desde archivo":
+        # Flujo legacy: crea el cronograma y carga en un solo paso.
+        # Sin preview — para cronogramas nuevos alcanza con crear +
+        # dejar que la validación posterior detecte cualquier
+        # inconsistencia.
+        if st.button(
+            "Crear cronograma",
+            disabled=not nombre or not uploaded,
+            type="primary",
+            width="stretch",
+        ):
+            with next(get_session()) as session:
+                result = create_schedule_standalone(
+                    session, nombre, uploaded, ciclo_id=ciclo_id_val
+                )
+            if result.errors:
+                for e in result.errors:
+                    st.error(e)
+            if result.warnings:
+                for w in result.warnings:
+                    st.warning(w)
+            if result.schedule:
+                st.success(
+                    f"Cronograma '{result.schedule.nombre}' creado con "
+                    f"{result.entries_created} entradas."
+                )
+                st.rerun()
+
+    elif modo_carga == "Importar en cronograma existente":
+        # Flujo Fase G del rediseño 2026-09-15: preview via shadow
+        # schedule + calendario editable + validaciones opt-in.
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            descartar_shadow_import,
+            finalizar_shadow_import,
+            list_shadows_huerfanos,
+        )
+        from src.ui.calendar_render import (
+            render_schedule_calendar,
+        )
+
+        # --------------------------------------------------------------
+        # Banner de shadows huérfanos (si el usuario cerró el navegador
+        # con un preview abierto, quedan en la DB).
+        # --------------------------------------------------------------
+        with next(get_session()) as _sess:
+            _huerfanos = list_shadows_huerfanos(_sess)
+        if _huerfanos:
+            with st.container(border=True):
+                st.warning(
+                    f"🧹 Hay {len(_huerfanos)} preview(s) de import "
+                    "sin finalizar. Se crean cuando abrís un preview "
+                    "y no lo confirmás ni cancelás (por ejemplo si "
+                    "cerraste el navegador). Podés limpiarlos acá:"
+                )
+                for _sh in _huerfanos:
+                    _c1, _c2 = st.columns([3, 1])
+                    _c1.caption(
+                        f"**{_sh.nombre}** · target "
+                        f"`{_sh.shadow_target_schedule_id or '?'}` · "
+                        f"{_sh.fecha_upload}"
                     )
-                if result.errors:
-                    for e in result.errors:
-                        st.error(e)
-                if result.warnings:
-                    for w in result.warnings:
-                        st.warning(w)
-                if result.schedule:
-                    st.success(
-                        f"Cronograma '{result.schedule.nombre}' creado con "
-                        f"{result.entries_created} entradas."
+                    if _c2.button(
+                        "Descartar", key=f"discard_shadow_{_sh.id}",
+                    ):
+                        with next(get_session()) as _sess:
+                            descartar_shadow_import(_sess, _sh.id)
+                        st.rerun()
+
+        if not all_schedules:
+            st.info(
+                "No hay cronogramas cargados. Creá primero uno vacío o "
+                "desde archivo antes de importar."
+            )
+        else:
+            _sched_options = {
+                s.id: f"{s.nombre} ({s.fecha_upload})"
+                for s in all_schedules
+            }
+            _sel_sched_id = st.selectbox(
+                "Cronograma destino",
+                options=list(_sched_options.keys()),
+                format_func=lambda sid: _sched_options[sid],
+                key="crono_import_sched",
+                help=(
+                    "El archivo se va a importar dentro de este "
+                    "cronograma. Se muestra un preview con calendario "
+                    "editable antes de confirmar."
+                ),
+            )
+
+            # session_state keys namespaced por destino.
+            _shadow_key = f"crono_import_shadow_{_sel_sched_id}"
+            _validation_key = f"crono_import_shadow_val_{_sel_sched_id}"
+
+            col_pv, col_reset = st.columns([3, 1])
+            with col_pv:
+                if st.button(
+                    "🔍 Ver preview del archivo",
+                    disabled=not uploaded,
+                    type="primary",
+                    width="stretch",
+                    key="crono_import_preview_btn",
+                ):
+                    try:
+                        with next(get_session()) as _sess:
+                            _shadow, _preview = crear_shadow_import(
+                                _sess, _sel_sched_id, uploaded,
+                            )
+                        st.session_state[_shadow_key] = {
+                            "shadow_id": _shadow.id,
+                            "preview_summary": {
+                                "total_horarios": _preview.total_horarios,
+                                "materias": len(_preview.materias),
+                                "materias_no_resueltas": (
+                                    _preview.materias_no_resueltas
+                                ),
+                                "warnings": _preview.warnings,
+                                "con_conflicto": [
+                                    m.materia_codigo
+                                    for m in _preview.materias_con_conflicto
+                                ],
+                            },
+                        }
+                        # Reset validación cacheada al recrear preview.
+                        st.session_state.pop(_validation_key, None)
+                    except ValueError as _exc:
+                        st.error(str(_exc))
+            with col_reset:
+                if _shadow_key in st.session_state:
+                    if st.button(
+                        "🗑 Descartar",
+                        key="crono_import_reset_btn",
+                        width="stretch",
+                    ):
+                        _shadow_id = (
+                            st.session_state[_shadow_key]["shadow_id"]
+                        )
+                        with next(get_session()) as _sess:
+                            descartar_shadow_import(_sess, _shadow_id)
+                        st.session_state.pop(_shadow_key, None)
+                        st.session_state.pop(_validation_key, None)
+                        st.rerun()
+
+            # ------------------------------------------------------------
+            # Render del preview (shadow schedule + calendario)
+            # ------------------------------------------------------------
+            if _shadow_key in st.session_state:
+                _pv_data = st.session_state[_shadow_key]
+                _shadow_id = _pv_data["shadow_id"]
+                _summary = _pv_data["preview_summary"]
+
+                # Verificar que el shadow siga vivo.
+                with next(get_session()) as _sess:
+                    _shadow_db = _sess.get(ScheduleDB, _shadow_id)
+                if _shadow_db is None:
+                    st.warning(
+                        "El preview se perdió (shadow borrado). "
+                        "Volvé a apretar 'Ver preview'."
                     )
-                    st.rerun()
-    else:
+                    st.session_state.pop(_shadow_key, None)
+                else:
+                    st.info(
+                        "👀 Este es un **preview**: los cambios "
+                        "todavía **no se guardaron** en el cronograma "
+                        "destino. Revisá el calendario abajo, "
+                        "editá si hace falta, y apretá **Confirmar "
+                        "importación** para persistir."
+                    )
+
+                    # Métricas.
+                    _m1, _m2, _m3, _m4 = st.columns(4)
+                    _m1.metric(
+                        "Horarios en el archivo", _summary["total_horarios"],
+                    )
+                    _m2.metric("Materias del archivo", _summary["materias"])
+                    _m3.metric(
+                        "Requieren decisión", len(_summary["con_conflicto"]),
+                        help=(
+                            "Materias que ya tenían horarios en el "
+                            "destino. Por default se agregaron las "
+                            "nuevas comisiones (agregar). Si querés "
+                            "reemplazar en vez de agregar, editá el "
+                            "calendario o descartá y usá 'reemplazar' "
+                            "manualmente."
+                        ),
+                    )
+                    with next(get_session()) as _sess:
+                        _n_ent = _sess.exec(
+                            select(func.count(ScheduleEntryDB.id))
+                            .where(ScheduleEntryDB.schedule_id == _shadow_id)
+                        ).one()
+                    _m4.metric(
+                        "Horarios en el preview", _n_ent,
+                        help=(
+                            "Total de horarios que quedan en el "
+                            "cronograma después de confirmar (mezcla "
+                            "de existentes + importados)."
+                        ),
+                    )
+
+                    # Warnings + no resueltas.
+                    if _summary["warnings"]:
+                        with st.expander(
+                            f"⚠️ Avisos ({len(_summary['warnings'])})",
+                            expanded=False,
+                        ):
+                            for _w in _summary["warnings"]:
+                                st.warning(_w)
+                    if _summary["materias_no_resueltas"]:
+                        with st.expander(
+                            "🚫 Códigos no reconocidos "
+                            f"({len(_summary['materias_no_resueltas'])})",
+                            expanded=True,
+                        ):
+                            for _cod, _fila in _summary["materias_no_resueltas"]:
+                                st.warning(
+                                    f"Fila ~{_fila}: `{_cod}` no "
+                                    "está en el catálogo — se ignoró."
+                                )
+
+                    # Toggles.
+                    _c1, _c2 = st.columns(2)
+                    with _c1:
+                        _mostrar_existentes = st.toggle(
+                            "🕰 Mostrar también los datos previos "
+                            "no modificados",
+                            value=False,
+                            key=f"crono_import_show_exist_{_shadow_id}",
+                            help=(
+                                "Si ON, el calendario muestra todo "
+                                "el cronograma resultante. Si OFF "
+                                "(default), sólo las materias "
+                                "afectadas por el archivo."
+                            ),
+                        )
+                    with _c2:
+                        _filtro_grupo = st.toggle(
+                            "🎯 Filtrar por (carrera, año, cuatri)",
+                            value=False,
+                            key=f"crono_import_filtro_grupo_{_shadow_id}",
+                            help=(
+                                "Acota la vista a un grupo curricular. "
+                                "Útil si el archivo trae muchas "
+                                "materias de distintos años."
+                            ),
+                        )
+
+                    # Filtro opcional por grupo curricular.
+                    _materias_afectadas = set(
+                        _summary["con_conflicto"]
+                    )
+                    # Materias sin conflicto = las que aparecen en el
+                    # shadow pero no estaban en el destino.
+                    with next(get_session()) as _sess:
+                        _all_mat_shadow = set(_sess.exec(
+                            select(ScheduleEntryDB.codigo_materia)
+                            .where(ScheduleEntryDB.schedule_id == _shadow_id)
+                            .distinct()
+                        ).all())
+                        _all_mat_dest = set(_sess.exec(
+                            select(ScheduleEntryDB.codigo_materia)
+                            .where(
+                                ScheduleEntryDB.schedule_id == _sel_sched_id
+                            )
+                            .distinct()
+                        ).all())
+                    _materias_nuevas = _all_mat_shadow - _all_mat_dest
+                    _materias_afectadas = (
+                        _materias_afectadas | _materias_nuevas
+                    )
+
+                    _restrict_materias: set[str] | None = None
+                    if not _mostrar_existentes:
+                        _restrict_materias = _materias_afectadas
+
+                    _grupo_filtro: tuple[str, int, str] | None = None
+                    if _filtro_grupo:
+                        # Cargar carreras/años/cuatris del ciclo del shadow.
+                        _cf1, _cf2, _cf3 = st.columns(3)
+                        with next(get_session()) as _sess:
+                            _pe_rows = list(_sess.exec(
+                                select(PlanEstudioDB).where(
+                                    col(PlanEstudioDB.plan_version_id).in_(
+                                        list(_sess.exec(
+                                            select(
+                                                CicloPlanVersionDB.plan_version_id  # noqa: E501
+                                            ).where(
+                                                CicloPlanVersionDB.ciclo_id
+                                                == _shadow_db.ciclo_id
+                                            )
+                                        ).all())
+                                    ) if _shadow_db.ciclo_id else False,
+                                )
+                            ).all()) if _shadow_db.ciclo_id else []
+                        _carreras_opt = sorted({
+                            pe.carrera_codigo for pe in _pe_rows
+                        })
+                        _anios_opt = sorted({
+                            pe.anio_plan for pe in _pe_rows
+                            if pe.anio_plan is not None
+                        })
+                        _cuatris_opt = sorted({
+                            pe.cuatrimestre_plan for pe in _pe_rows
+                            if pe.cuatrimestre_plan
+                        })
+                        _sel_car = _cf1.selectbox(
+                            "Carrera", _carreras_opt,
+                            key=f"cimp_fcar_{_shadow_id}",
+                        ) if _carreras_opt else None
+                        _sel_anio = _cf2.selectbox(
+                            "Año", _anios_opt,
+                            key=f"cimp_fanio_{_shadow_id}",
+                        ) if _anios_opt else None
+                        _sel_cuatri = _cf3.selectbox(
+                            "Cuatri", _cuatris_opt,
+                            key=f"cimp_fcuatri_{_shadow_id}",
+                        ) if _cuatris_opt else None
+                        if _sel_car and _sel_anio and _sel_cuatri:
+                            _grupo_filtro = (
+                                _sel_car, int(_sel_anio), _sel_cuatri,
+                            )
+                            _mats_grupo = {
+                                pe.materia_codigo for pe in _pe_rows
+                                if pe.carrera_codigo == _sel_car
+                                and pe.anio_plan == _sel_anio
+                                and pe.cuatrimestre_plan == _sel_cuatri
+                            }
+                            if _restrict_materias is not None:
+                                _restrict_materias = (
+                                    _restrict_materias & _mats_grupo
+                                )
+                            else:
+                                _restrict_materias = _mats_grupo
+
+                    # Calendario editable del shadow.
+                    st.markdown("#### 📆 Calendario del preview")
+                    if _restrict_materias is not None and not _restrict_materias:
+                        st.info(
+                            "El filtro no dejó ninguna materia visible."
+                        )
+                    else:
+                        with next(get_session()) as _sess:
+                            _grid = build_schedule_grid(_sess, _shadow_id)
+                        if _restrict_materias is not None:
+                            _grid = {
+                                dia: [
+                                    b for b in blocks
+                                    if b.materia_codigo in _restrict_materias
+                                ]
+                                for dia, blocks in _grid.items()
+                            }
+                            _grid = {d: bs for d, bs in _grid.items() if bs}
+
+                        if not _grid:
+                            st.caption("Sin horarios para mostrar.")
+                        else:
+                            render_schedule_calendar(
+                                _grid, config,
+                                key=f"crono_import_cal_{_shadow_id}",
+                                color_by_comision=True,
+                            )
+                            st.caption(
+                                "Vista read-only del cronograma "
+                                "resultante. Si detectás un error, "
+                                "descartá el preview, corregí el "
+                                "Excel y volvé a subirlo. Después de "
+                                "confirmar el import podés editar "
+                                "desde la pestaña **Editar**."
+                            )
+
+                    # Detalle por materia sobre el estado hipotético
+                    # (Fase H.3 del rediseño 2026-09-15). Corre las
+                    # mismas validaciones que la pestaña Validar del
+                    # cronograma, filtradas a las materias afectadas
+                    # por el archivo. El componente re-computa el
+                    # summary automáticamente cuando detecta cambios
+                    # en las entries del shadow (via
+                    # `_compute_live_fingerprint`), así que editar
+                    # in-situ dentro de cada expander refresca las
+                    # métricas sin apretar botones.
+                    st.divider()
+                    st.markdown(
+                        "#### 🔬 Validaciones por materia sobre el "
+                        "estado hipotético"
+                    )
+                    if _shadow_db.ciclo_id is None:
+                        st.caption(
+                            "El cronograma destino no tiene ciclo "
+                            "asociado — no se puede validar. Asignále "
+                            "un ciclo si querés ver el diagnóstico."
+                        )
+                    elif not _materias_afectadas:
+                        st.caption(
+                            "No hay materias afectadas por el archivo — "
+                            "nada para validar."
+                        )
+                    else:
+                        st.caption(
+                            "Estas son las validaciones que verías en "
+                            "la pestaña **Validar** si confirmaras el "
+                            "import. Podés editar in-situ dentro de "
+                            "cada materia y las métricas se actualizan."
+                        )
+                        # Correr / recuperar el summary sobre el shadow.
+                        _pending_reval_key = f"cimp_pending_reval_{_shadow_id}"
+                        from src.services.cronograma_validation_service import (  # noqa: E501
+                            validar_cronograma,
+                            CronogramaValidationSummary,
+                        )
+                        # Re-computar si es la primera vez o si se
+                        # marcó pending desde el detalle-por-materia.
+                        _pending = st.session_state.pop(
+                            _pending_reval_key, False,
+                        )
+                        if (
+                            _validation_key not in st.session_state
+                            or _pending
+                        ):
+                            with next(get_session()) as _sess:
+                                st.session_state[_validation_key] = (
+                                    validar_cronograma(
+                                        _sess, _shadow_id,
+                                        _shadow_db.ciclo_id,
+                                        exclude_optativas=True,
+                                    )
+                                )
+
+                        _val_sum: CronogramaValidationSummary = (
+                            st.session_state[_validation_key]
+                        )
+
+                        # Barra superior de métricas hipotéticas.
+                        _vc1, _vc2, _vc3, _vc4, _vc5 = st.columns(5)
+                        _vc1.metric("Faltantes", _val_sum.n_faltantes)
+                        _vc2.metric(
+                            "Conflictos horarios",
+                            _val_sum.n_conflictos_horarios,
+                        )
+                        _vc3.metric(
+                            "Bloqueos camino", _val_sum.n_camino_bloqueos,
+                        )
+                        _vc4.metric(
+                            "Partición",
+                            "OK" if _val_sum.particion_valid
+                            else f"{_val_sum.particion_n_infactibles} !",
+                        )
+                        _vc5.metric(
+                            "Fuera de config",
+                            _val_sum.n_horarios_fuera_config,
+                        )
+
+                        from src.ui.validation_ui import (
+                            _render_detalle_por_materia,
+                        )
+                        _render_detalle_por_materia(
+                            summary=_val_sum,
+                            key_ns=f"cimp_dpm_{_shadow_id}",
+                            source="schedule",
+                            schedule_id=_shadow_id,
+                            ciclo_id=_shadow_db.ciclo_id,
+                            save_as_copy=False,
+                            pending_revalidate_key=_pending_reval_key,
+                            invalidate_cache_keys=[_validation_key],
+                            restrict_materias=_materias_afectadas,
+                        )
+
+                    # Botones finales.
+                    st.divider()
+                    st.warning(
+                        "⚠️ Los cambios todavía no se guardaron. "
+                        "Apretá **Confirmar** para persistir el "
+                        "estado del preview en el cronograma destino, "
+                        "o **Descartar** para tirarlo."
+                    )
+                    _bc1, _bc2 = st.columns(2)
+                    with _bc1:
+                        if st.button(
+                            "✅ Confirmar importación",
+                            type="primary",
+                            width="stretch",
+                            key="crono_import_confirm_btn",
+                        ):
+                            try:
+                                with next(get_session()) as _sess:
+                                    _dest_id = finalizar_shadow_import(
+                                        _sess, _shadow_id,
+                                    )
+                                st.success(
+                                    "Import confirmado. "
+                                    "Los cambios del preview quedaron "
+                                    "en el cronograma destino."
+                                )
+                                st.session_state.pop(_shadow_key, None)
+                                st.session_state.pop(_validation_key, None)
+                                st.rerun()
+                            except ValueError as _exc:
+                                st.error(str(_exc))
+                    with _bc2:
+                        if st.button(
+                            "🗑 Descartar preview",
+                            width="stretch",
+                            key="crono_import_discard_bottom_btn",
+                        ):
+                            with next(get_session()) as _sess:
+                                descartar_shadow_import(_sess, _shadow_id)
+                            st.session_state.pop(_shadow_key, None)
+                            st.session_state.pop(_validation_key, None)
+                            st.rerun()
+
+    elif modo_carga == "Copiar desde plan":
+        # Fase F del rediseño 2026-09-15: clona el estado consolidado
+        # de un plan (comisiones + horarios) como un cronograma nuevo,
+        # útil para archivar la versión firme post-validaciones.
+        with st.container(border=True):
+            st.markdown("**🧬 Plan de origen**")
+            st.caption(
+                "Se copian las comisiones del plan y sus horarios "
+                "(día, rango, tipo de clase, virtual). No se copia el "
+                "aula asignada — el asignador la resuelve al generar "
+                "el próximo plan."
+            )
+            from src.database.models import PlanificacionCursadaDB
+            with next(get_session()) as _sess:
+                _planes = list(_sess.exec(
+                    select(PlanificacionCursadaDB).order_by(
+                        PlanificacionCursadaDB.nombre  # type: ignore[arg-type]
+                    )
+                ).all())
+                # Pre-cargar ciclo_id + nombre para display.
+                _plan_labels = {
+                    p.id: (
+                        f"{p.nombre} · ciclo {p.ciclo_id}"
+                        if p.ciclo_id else p.nombre
+                    )
+                    for p in _planes
+                }
+
+            if not _planes:
+                st.info(
+                    "No hay planes de cursada creados todavía. Andá "
+                    "a **📊 Planes** para generar uno antes de "
+                    "copiarlo como cronograma."
+                )
+            else:
+                _sel_plan_id = st.selectbox(
+                    "Plan de origen",
+                    options=[p.id for p in _planes],
+                    format_func=lambda pid: _plan_labels.get(pid, pid),
+                    key="crono_clon_plan",
+                    help=(
+                        "El cronograma nuevo va a quedar linkeado al "
+                        "mismo ciclo que este plan, salvo que elijas "
+                        "otro ciclo arriba."
+                    ),
+                )
+
+                # Auto-sugerir nombre si el campo está vacío.
+                _plan_sel = next(
+                    (p for p in _planes if p.id == _sel_plan_id), None,
+                )
+                if _plan_sel is not None and not (nombre or "").strip():
+                    _sugerido = f"Copia de {_plan_sel.nombre}"
+                    st.caption(
+                        f"Sugerencia de nombre: **{_sugerido}** "
+                        "(escribí uno propio arriba si preferís)."
+                    )
+                    _nombre_final = _sugerido
+                else:
+                    _nombre_final = (nombre or "").strip()
+
+                # Override de ciclo: si el usuario eligió un ciclo
+                # distinto del que tiene el plan, se muestra warning.
+                _ciclo_override = None
+                if _plan_sel is not None:
+                    if (
+                        ciclo_id_val is not None
+                        and ciclo_id_val != _plan_sel.ciclo_id
+                    ):
+                        st.warning(
+                            f"El plan pertenece al ciclo "
+                            f"**{_plan_sel.ciclo_id}**. Vas a crear "
+                            f"el cronograma linkeado a "
+                            f"**{ciclo_id_val}** (override)."
+                        )
+                        _ciclo_override = ciclo_id_val
+
+                if st.button(
+                    "🧬 Copiar como cronograma nuevo",
+                    disabled=(_plan_sel is None),
+                    type="primary",
+                    width="stretch",
+                    key="crono_clon_btn",
+                ):
+                    if _plan_sel is None:
+                        st.error("Elegí un plan primero.")
+                    else:
+                        try:
+                            with next(get_session()) as _sess:
+                                _new_sched = clonar_plan_a_cronograma(
+                                    _sess,
+                                    _plan_sel.id,
+                                    _nombre_final,
+                                    ciclo_id_override=_ciclo_override,
+                                )
+                                # Métricas rápidas para el toast.
+                                from src.database.models import (
+                                    ComisionDB as _ComDB,
+                                )
+                                _n_com = _sess.exec(
+                                    select(func.count(_ComDB.id))
+                                    .where(
+                                        _ComDB.schedule_id == _new_sched.id
+                                    )
+                                ).one()
+                                _n_ent = _sess.exec(
+                                    select(func.count(ScheduleEntryDB.id))
+                                    .where(
+                                        ScheduleEntryDB.schedule_id
+                                        == _new_sched.id
+                                    )
+                                ).one()
+                            st.success(
+                                f"Cronograma '{_new_sched.nombre}' "
+                                f"creado con {_n_com} comisiones y "
+                                f"{_n_ent} horarios."
+                            )
+                            st.rerun()
+                        except ValueError as _exc:
+                            st.error(str(_exc))
+
+    else:  # modo_carga == "Crear vacío"
         st.info(
             "Se va a crear un cronograma sin entradas. Después "
-            "podés cargar los horarios desde la pestaña **Editar**."
+            "podés cargar los horarios desde la pestaña **Editar** "
+            "o desde acá mismo con 'Importar en cronograma existente'."
         )
         if st.button(
             "Crear cronograma vacío",
@@ -659,246 +1365,6 @@ with tab_cargar:
 
 
 # =============================================================================
-# Tab 3: Visualizar
-# =============================================================================
-with tab_visualizar:
-    st.subheader("Visualizar cronograma")
-    st.caption(
-        "Mirá los horarios cargados sin editarlos. Podés filtrar "
-        "por carrera/año/cuatri, o enfocarte en una sola materia."
-    )
-
-    if not all_schedules:
-        st.info("No hay cronogramas para visualizar.")
-    else:
-        schedule_options = {s.id: f"{s.nombre} ({s.fecha_upload})" for s in all_schedules}
-        sel_id = st.selectbox(
-            "Cronograma",
-            options=list(schedule_options.keys()),
-            format_func=lambda x: schedule_options[x],
-            key="viz_schedule",
-        )
-
-        if sel_id:
-            viz_modo = st.radio(
-                "Modo de visualización",
-                options=["Por grupo", "Por materia"],
-                horizontal=True,
-                key="viz_modo",
-                help=(
-                    "**Por grupo**: filtra por carrera + año + "
-                    "cuatrimestre. Ideal para armar la vista de "
-                    "un grupo puntual (por ejemplo, Electrónica 3er año 1C).\n"
-                    "**Por materia**: te enfoca en una sola materia. "
-                    "Útil para materias que se dictan en varias carreras."
-                ),
-            )
-
-            # =================================================================
-            # Mode: Por materia
-            # =================================================================
-            if viz_modo == "Por materia":
-                _vm_busqueda = st.text_input(
-                    "🔍 Buscar materia por nombre o código",
-                    key="viz_sm_buscar",
-                    placeholder="Ej: fisica III, FB10, algebra...",
-                )
-                _vm_all = sorted(materias_map.keys())
-                if _vm_busqueda.strip():
-                    _vm_term = _vm_busqueda.strip().lower()
-                    _vm_opts = [
-                        c for c in _vm_all
-                        if _vm_term in c.lower()
-                        or _vm_term in materias_map[c].lower()
-                    ]
-                else:
-                    _vm_opts = _vm_all
-                if not _vm_opts:
-                    _vm_opts = _vm_all
-
-                _vm_sel = st.selectbox(
-                    "Materia",
-                    options=_vm_opts,
-                    index=None,
-                    format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                    placeholder="Seleccioná una materia...",
-                    key="viz_sm_materia",
-                )
-
-                if _vm_sel:
-                    with next(get_session()) as session:
-                        _vm_grid = build_schedule_grid(session, sel_id)
-
-                    _vm_grid = {
-                        dia: [b for b in blocks if b.materia_codigo == _vm_sel]
-                        for dia, blocks in _vm_grid.items()
-                    }
-                    _vm_grid = {d: bs for d, bs in _vm_grid.items() if bs}
-
-                    _vm_n = sum(len(bs) for bs in _vm_grid.values())
-                    if _vm_n > 0:
-                        st.caption(
-                            f"{_vm_n} entrada(s) para "
-                            f"**{materias_map.get(_vm_sel, _vm_sel)}**."
-                        )
-                    else:
-                        st.info(
-                            f"No hay entradas para "
-                            f"**{materias_map.get(_vm_sel, _vm_sel)}** "
-                            f"en este cronograma."
-                        )
-
-                    st.divider()
-
-                    if _vm_grid:
-                        render_schedule_calendar(
-                            _vm_grid, config,
-                            key=f"viz_cal_mat_{_vm_n}",
-                            color_by_comision=True,
-                        )
-                else:
-                    st.caption(
-                        "Seleccioná una materia para ver sus horarios "
-                        "en el cronograma."
-                    )
-
-            # =================================================================
-            # Mode: Por grupo (carrera/año/cuatri)
-            # =================================================================
-            else:
-                with st.container(border=True):
-                    st.markdown("**🔎 Filtros del grupo**")
-                    st.caption(
-                        "Elegí la carrera, el año y el cuatrimestre "
-                        "para acotar las materias que se muestran."
-                    )
-                    # --- Filtros fila 1: carrera, año, cuatrimestre ---
-                    col_f1, col_f2, col_f3 = st.columns(3)
-                    with col_f1:
-                        carrera_opts = [
-                            f"{c.codigo} - {c.nombre}" for c in all_carreras
-                        ]
-                        viz_filtro_carrera = st.selectbox(
-                            "Carrera", options=carrera_opts,
-                            index=None, placeholder="Elegí una carrera...",
-                            key="viz_filtro_carrera",
-                        )
-                    with col_f2:
-                        viz_filtro_anio = st.selectbox(
-                            "Año de cursada",
-                            options=[1, 2, 3, 4, 5, 6],
-                            index=None, placeholder="Elegí un año...",
-                            key="viz_filtro_anio",
-                        )
-                    with col_f3:
-                        viz_filtro_cuatri = st.selectbox(
-                            "Cuatrimestre",
-                            options=["1C", "2C", "Anual"],
-                            index=None, placeholder="Elegí un cuatri...",
-                            key="viz_filtro_cuatri",
-                        )
-
-                    # --- Filtros fila 2: alcance ---
-                    col_f4, col_f5 = st.columns(2)
-                    with col_f4:
-                        viz_filtro_tipo = st.selectbox(
-                            "Alcance de las materias",
-                            options=[
-                                "Todas",
-                                "Sólo del ciclo básico (F/FB)",
-                                "Sólo específicas de la carrera",
-                            ],
-                            key="viz_filtro_tipo",
-                            help=(
-                                "Filtra por el segmento del plan de "
-                                "estudio.\n"
-                                "**Todas**: no filtra por segmento.\n"
-                                "**Ciclo básico**: sólo materias cuyo "
-                                "código empieza con F o FB.\n"
-                                "**Específicas**: excluye el ciclo básico."
-                            ),
-                        )
-                    with col_f5:
-                        viz_excluir_comunes = st.checkbox(
-                            "Ocultar materias compartidas con otras carreras",
-                            key="viz_excluir_comunes",
-                            help=(
-                                "Si tildás, se ocultan las materias "
-                                "que aparecen en el plan de estudio "
-                                "de más de una carrera (útil para "
-                                "ver sólo las propias de la carrera "
-                                "elegida)."
-                            ),
-                        )
-
-                _viz_all_filters_set = (
-                    viz_filtro_carrera is not None
-                    and viz_filtro_anio is not None
-                    and viz_filtro_cuatri is not None
-                )
-
-                # Determinar materias filtradas via PlanEstudioDB
-                viz_filtered_mats: set[str] | None = None
-                if _viz_all_filters_set:
-                    with next(get_session()) as session:
-                        q = select(PlanEstudioDB.materia_codigo)
-                        carrera_cod = viz_filtro_carrera.split(" - ")[0]
-                        q = q.where(PlanEstudioDB.carrera_codigo == carrera_cod)
-                        q = q.where(PlanEstudioDB.anio_plan == int(viz_filtro_anio))
-                        if viz_filtro_cuatri == "Anual":
-                            q = q.where(PlanEstudioDB.cuatrimestre_plan.in_(["Anual", "anual"]))
-                        else:
-                            q = q.where(PlanEstudioDB.cuatrimestre_plan == viz_filtro_cuatri)
-                        viz_filtered_mats = set(session.exec(q.distinct()).all())
-
-                if not _viz_all_filters_set:
-                    st.caption(
-                        "Seleccioná Carrera, Año y Cuatrimestre para ver "
-                        "las materias del cronograma."
-                    )
-                else:
-                    # --- Multiselect de materias ---
-                    with next(get_session()) as session:
-                        grid_data = build_schedule_grid(session, sel_id)
-
-                    # Materias presentes en el cronograma
-                    _viz_mats_en_schedule = set()
-                    for _blocks in grid_data.values():
-                        for _b in _blocks:
-                            _viz_mats_en_schedule.add(_b.materia_codigo)
-
-                    # Intersectar con filtros de plan
-                    _viz_mats_disponibles = _viz_mats_en_schedule
-                    if viz_filtered_mats is not None:
-                        _viz_mats_disponibles = _viz_mats_en_schedule & viz_filtered_mats
-
-                    _viz_mat_list = sorted(_viz_mats_disponibles, key=lambda c: materias_map.get(c, c))
-                    viz_materias_sel = st.multiselect(
-                        "Materias a mostrar",
-                        options=_viz_mat_list,
-                        default=_viz_mat_list,
-                        format_func=lambda x: f"{materias_map.get(x, x)} — {x}",
-                        key="viz_filtro_materias",
-                    )
-                    _viz_selected_set = set(viz_materias_sel) if viz_materias_sel else _viz_mats_disponibles
-
-                    st.divider()
-
-                    # Aplicar filtro de materias seleccionadas
-                    if grid_data:
-                        grid_data = {
-                            dia: [b for b in blocks if b.materia_codigo in _viz_selected_set]
-                            for dia, blocks in grid_data.items()
-                        }
-                        grid_data = {d: bs for d, bs in grid_data.items() if bs}
-
-                    # Aplicar filtros de tipo y comunes
-                    grid_data = _aplicar_filtro_tipo(grid_data, viz_filtro_tipo, viz_excluir_comunes)
-
-                    render_schedule_calendar(grid_data, config, key="viz_cal")
-
-
-# =============================================================================
 # Tab 4: Editar
 # =============================================================================
 with tab_editar:
@@ -906,14 +1372,45 @@ with tab_editar:
     if "_edit_toast" in st.session_state:
         st.toast(st.session_state.pop("_edit_toast"))
 
-    st.subheader("Editar entradas del cronograma")
-    st.caption(
-        "🖱️ **Arrastrá** un bloque para cambiar el día o la hora. "
-        "Redimensionalo tirando del borde para ajustar la "
-        "duración. **Presioná** un bloque para editarlo o "
-        "eliminarlo. Para sumar una entrada nueva, arrastrá "
-        "sobre un espacio vacío del cronograma."
+    st.subheader("Ver / Editar cronograma")
+
+    # Fase I.2 · Toggle "Solo lectura". Default OFF (modo edición).
+    # Cuando está ON, la vista muestra exactamente los mismos
+    # componentes que en edición, pero:
+    # - El calendario se renderea con `render_schedule_calendar`
+    #   (drag/drop deshabilitado, click de edición inactivo).
+    # - El `data_editor` se marca `disabled=True`.
+    # - Los botones de acción (Agregar / Guardar / Eliminar) quedan
+    #   ocultos.
+    # De esta forma "Visualizar" y "Editar" son la misma vista con
+    # sólo un flag distinto — cero duplicación.
+    edit_readonly = st.toggle(
+        "🔒 Solo lectura",
+        value=False,
+        key="edit_readonly_toggle",
+        help=(
+            "Cuando está ON, la vista se comporta como Visualizar: "
+            "no permite editar horarios, comisiones ni agregar filas. "
+            "Ideal para consultar el cronograma sin miedo a tocarlo "
+            "por accidente."
+        ),
     )
+
+    if edit_readonly:
+        st.caption(
+            "👁 **Modo lectura**: la vista muestra los horarios y las "
+            "comisiones del cronograma sin permitir ediciones. Podés "
+            "usar los filtros de la misma manera que en modo edición. "
+            "Apagá el toggle para volver a editar."
+        )
+    else:
+        st.caption(
+            "🖱️ **Arrastrá** un bloque para cambiar el día o la hora. "
+            "Redimensionalo tirando del borde para ajustar la "
+            "duración. **Presioná** un bloque para editarlo o "
+            "eliminarlo. Para sumar una entrada nueva, arrastrá "
+            "sobre un espacio vacío del cronograma."
+        )
 
     if not all_schedules:
         st.info("No hay cronogramas para editar.")
@@ -1009,12 +1506,23 @@ with tab_editar:
 
                     st.divider()
 
-                    action = render_editable_schedule_calendar(
-                        _sm_grid, config,
-                        key=f"edit_cal_{_sm_n}",
-                        allow_empty=True,
-                        color_by_comision=True,
-                    )
+                    # Fase I.2 · En modo lectura, usar el calendario
+                    # read-only. `action` queda en None y todo el
+                    # procesamiento posterior de acciones no dispara.
+                    if edit_readonly:
+                        render_schedule_calendar(
+                            _sm_grid, config,
+                            key=f"edit_cal_ro_{_sm_n}",
+                            color_by_comision=True,
+                        )
+                        action = None
+                    else:
+                        action = render_editable_schedule_calendar(
+                            _sm_grid, config,
+                            key=f"edit_cal_{_sm_n}",
+                            allow_empty=True,
+                            color_by_comision=True,
+                        )
 
                     # --- Tabla editable de entradas ---
                     st.divider()
@@ -1252,7 +1760,7 @@ with tab_editar:
                                 options=["Heredar", "Sí", "No"],
                                 default="Heredar",
                                 help=(
-                                    "Modalidad de este horario. "
+                                    "Virtual de este horario. "
                                     "**Heredar**: usa lo configurado "
                                     "en la materia o el dictado. "
                                     "**Sí**: forzá virtual (no se "
@@ -1262,14 +1770,16 @@ with tab_editar:
                                 width="small",
                             ),
                         },
-                        num_rows="dynamic",
+                        num_rows="fixed" if edit_readonly else "dynamic",
                         use_container_width=True,
                         hide_index=True,
-                        on_change=_sm_on_change,
+                        on_change=None if edit_readonly else _sm_on_change,
                         key=_sm_de_key,
+                        disabled=edit_readonly,
                     )
 
                     # --- Dialog para crear comisión nueva al vuelo ---
+                    # (Skippeamos en modo lectura.)
                     _req = st.session_state.get("_sm_new_com_request")
                     if _req is not None:
                         _req_kind, _req_ref = _req
@@ -1429,10 +1939,11 @@ with tab_editar:
                                 "Descripción": column_config.TextColumn(width="large"),
                             },
                             hide_index=True,
-                            num_rows="dynamic",
-                            on_change=_com_on_change,
+                            num_rows="fixed" if edit_readonly else "dynamic",
+                            on_change=None if edit_readonly else _com_on_change,
                             key=_com_de_key,
                             use_container_width=True,
+                            disabled=edit_readonly,
                         )
                         if st.session_state.get("_com_del_warn"):
                             st.warning(st.session_state.pop("_com_del_warn"))
@@ -1629,53 +2140,63 @@ with tab_editar:
                         grid_data, edit_filtro_tipo, edit_excluir_comunes,
                     )
 
-                    action = render_editable_schedule_calendar(
-                        grid_data, config, key="edit_cal",
-                    )
+                    # Fase I.2 · Read-only en modo lectura.
+                    if edit_readonly:
+                        render_schedule_calendar(
+                            grid_data, config, key="edit_cal_ro",
+                        )
+                        action = None
+                    else:
+                        action = render_editable_schedule_calendar(
+                            grid_data, config, key="edit_cal",
+                        )
 
                     # --- Selector de materia para agregar ---
-                    st.divider()
-                    mat_options_base = sorted(
-                        c for c in materias_map
-                        if c in edit_filtered_mats
-                    )
-
-                    busqueda_mat = st.text_input(
-                        "🔍 Buscar materia por nombre o código",
-                        key="edit_buscar_materia",
-                        placeholder="Ej: algebra, F0301, programacion...",
-                    )
-
-                    if busqueda_mat.strip():
-                        termino = busqueda_mat.strip().lower()
-                        mat_options = [
-                            c for c in mat_options_base
-                            if termino in c.lower()
-                            or termino in materias_map[c].lower()
-                        ]
-                    else:
-                        mat_options = mat_options_base
-
-                    if mat_options:
-                        sel_mat_add = st.selectbox(
-                            "Materia (para agregar al seleccionar un rango)",
-                            options=mat_options,
-                            index=None,
-                            format_func=lambda x: f"{materias_map[x]} — {x}",
-                            placeholder="Seleccioná una materia...",
-                            key="edit_add_materia",
+                    # Fase I.2 · Solo aplica en modo edición. En modo
+                    # lectura, se oculta.
+                    if not edit_readonly:
+                        st.divider()
+                        mat_options_base = sorted(
+                            c for c in materias_map
+                            if c in edit_filtered_mats
                         )
-                    else:
+
+                        busqueda_mat = st.text_input(
+                            "🔍 Buscar materia por nombre o código",
+                            key="edit_buscar_materia",
+                            placeholder="Ej: algebra, F0301, programacion...",
+                        )
+
                         if busqueda_mat.strip():
-                            st.warning(
-                                f"No se encontraron materias para "
-                                f"'{busqueda_mat}'"
+                            termino = busqueda_mat.strip().lower()
+                            mat_options = [
+                                c for c in mat_options_base
+                                if termino in c.lower()
+                                or termino in materias_map[c].lower()
+                            ]
+                        else:
+                            mat_options = mat_options_base
+
+                        if mat_options:
+                            sel_mat_add = st.selectbox(
+                                "Materia (para agregar al seleccionar un rango)",
+                                options=mat_options,
+                                index=None,
+                                format_func=lambda x: f"{materias_map[x]} — {x}",
+                                placeholder="Seleccioná una materia...",
+                                key="edit_add_materia",
                             )
                         else:
-                            st.info(
-                                "No hay materias disponibles con "
-                                "los filtros actuales."
-                            )
+                            if busqueda_mat.strip():
+                                st.warning(
+                                    f"No se encontraron materias para "
+                                    f"'{busqueda_mat}'"
+                                )
+                            else:
+                                st.info(
+                                    "No hay materias disponibles con "
+                                    "los filtros actuales."
+                                )
 
             # =================================================================
             # Shared: process calendar actions

@@ -162,6 +162,36 @@ def _run_migrations(eng):
         "ALTER TABLE grupo_materia ADD COLUMN chequear_pertenencia_asociadas BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE grupo_materia ADD COLUMN chequear_exclusividad_no_asociadas BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE grupo_materia ADD COLUMN chequear_completitud BOOLEAN NOT NULL DEFAULT 1",
+        # Hash de contenido del snapshot de validacion (Fase A del rediseño
+        # cronograma-cronogramas). Reemplaza a la staleness basada solo en
+        # counts, que no detectaba cambios de contenido con mismo count
+        # (ej: mover una clase de lunes a martes). Vacío en snapshots
+        # historicos → is_validation_stale cae a la comparacion de counts.
+        "ALTER TABLE schedule_validations ADD COLUMN content_hash VARCHAR NOT NULL DEFAULT ''",
+        "ALTER TABLE plan_validations ADD COLUMN content_hash VARCHAR NOT NULL DEFAULT ''",
+        # Chequeo de camino de cursada para el cronograma (Fase B del
+        # rediseño 2026-09-15). Cuenta bloqueos R13-camino-cronograma;
+        # detalle estructurado en `details_json["camino_bloqueos"]`.
+        "ALTER TABLE schedule_validations ADD COLUMN n_camino_bloqueos INTEGER NOT NULL DEFAULT 0",
+        # Auditoria minima de inscripciones (Fase E2 del rediseño
+        # 2026-09-15). `updated_at` timestamp de ultimo touch; `origen`
+        # canal ('manual' | 'importado' | 'override'). NULL en filas
+        # historicas — los services nuevos las populan siempre.
+        "ALTER TABLE inscripciones_historicas ADD COLUMN updated_at TIMESTAMP DEFAULT NULL",
+        "ALTER TABLE inscripciones_historicas ADD COLUMN origen VARCHAR DEFAULT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_inscripciones_historicas_origen ON inscripciones_historicas (origen)",
+        # Schedule sombra para el preview del importer (Fase G del
+        # rediseño 2026-09-15). Flag `es_shadow_import` + FK autoreferencial
+        # a schedule destino. Cronogramas normales tienen ambos NULL.
+        "ALTER TABLE schedules ADD COLUMN es_shadow_import BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE schedules ADD COLUMN shadow_target_schedule_id VARCHAR DEFAULT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_schedules_es_shadow_import ON schedules (es_shadow_import)",
+        "CREATE INDEX IF NOT EXISTS ix_schedules_shadow_target ON schedules (shadow_target_schedule_id)",
+        # Horarios que no respetan `ConfiguracionHoraria` (Fase H.1
+        # del rediseño 2026-09-15). Detalle en
+        # `details_json["horarios_fuera_config"]`. Warning, no
+        # bloqueante.
+        "ALTER TABLE schedule_validations ADD COLUMN n_horarios_fuera_config INTEGER NOT NULL DEFAULT 0",
     ]
     with eng.connect() as conn:
         for sql in migrations:

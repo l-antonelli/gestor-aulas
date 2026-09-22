@@ -15,6 +15,7 @@ y luego recuperar con `get_latest_validation()` para mostrar el badge.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,6 +26,8 @@ from sqlmodel import Session, select, col, func
 from src.database.models import (
     CarreraDB,
     CicloPlanVersionDB,
+    DictadoCicloDB,
+    DictadoDB,
     MateriaDB,
     MateriaLaboratorioDB,
     PlanCarreraVersionDB,
@@ -97,6 +100,17 @@ class CronogramaValidationSummary:
     # Conflictos de horarios (con comisiones auto-derivadas)
     n_conflictos_horarios: int = 0
 
+    # Bloqueos de camino de cursada (Fase B). Cuenta grupos
+    # (carrera, año, cuatri) donde no hay combinación libre de
+    # solapamientos + advertencias por cap excedido.
+    n_camino_bloqueos: int = 0
+
+    # Horarios que no respetan la config global (Fase H.1 del
+    # rediseño 2026-09-15): día no operativo, fuera del rango
+    # operativo, o no múltiplo de la granularidad. Detalle en
+    # `details_json["horarios_fuera_config"]`.
+    n_horarios_fuera_config: int = 0
+
     # Config aplicada (toggle "excluir optativas"). Las virtuales SI se
     # validan (estructuralmente deben ser consistentes); solo las optativas
     # se descartan del set esperado cuando el toggle esta ON.
@@ -104,11 +118,19 @@ class CronogramaValidationSummary:
     excluir_optativas: bool = False
     excluir_virtuales_optativas: bool = False  # legacy
 
+    # Hash de contenido del snapshot (Fase A). Cubre entries, dictados
+    # activos, PlanEstudioDB del ciclo, MateriaLaboratorioDB, campos de
+    # MateriaDB que afectan cobertura/particion, y el toggle. Se computa
+    # via `compute_content_hash()` antes de persistir.
+    content_hash: str = ""
+
     # Detalle (para reconstruir la UI sin recomputar)
     faltantes_por_carrera: list[dict] = field(default_factory=list)
     extras: list[dict] = field(default_factory=list)
     particion_details: list[str] = field(default_factory=list)
     conflictos_horarios: list[dict] = field(default_factory=list)
+    camino_bloqueos: list[dict] = field(default_factory=list)
+    horarios_fuera_config: list[dict] = field(default_factory=list)
     esperadas: dict[str, str] = field(default_factory=dict)
     mat_map: dict[str, str] = field(default_factory=dict)
 
@@ -119,6 +141,8 @@ class CronogramaValidationSummary:
             "extras": self.extras,
             "particion_details": self.particion_details,
             "conflictos_horarios": self.conflictos_horarios,
+            "camino_bloqueos": self.camino_bloqueos,
+            "horarios_fuera_config": self.horarios_fuera_config,
             "esperadas": self.esperadas,
             "mat_map": self.mat_map,
             "particion_message": self.particion_message,
@@ -216,6 +240,148 @@ def _get_faltantes_por_carrera(
 
     result.sort(key=lambda x: x["carrera_codigo"])
     return result
+
+
+def _compute_content_hash(
+    session: Session, schedule_id: str, ciclo_id: str, exclude_optativas: bool,
+) -> str:
+    """Hash SHA-256 del contenido del cronograma + inputs del ciclo.
+
+    Detecta cambios que la staleness por counts se pierde: mover una
+    clase de lunes a martes, cambiar `PlanEstudioDB.optativa`, editar
+    `MateriaLaboratorioDB`, agregar sedes admisibles, cambiar el toggle.
+
+    Compuesto por:
+    - Entries del schedule: (dia, hora_inicio, hora_fin, codigo_materia,
+      comision_id, tipo_clase, virtual) ordenado deterministicamente.
+    - Dictados activos del ciclo con su `virtual`.
+    - `PlanEstudioDB.optativa` de cada materia (afecta el filtro
+      exclude_optativas y las cuentas de faltantes por carrera).
+    - `MateriaLaboratorioDB` de cada materia con lab (afecta el
+      breakdown y la particion teoria/lab).
+    - `MateriaDB.horas_teoria`, `horas_laboratorio`, `virtual`,
+      `optativa` (afectan la particion y la clasificacion).
+    - Toggle `exclude_optativas`.
+
+    Retorna hex string SHA-256.
+    """
+    parts: list[str] = [f"toggle:{'1' if exclude_optativas else '0'}"]
+
+    # Config horaria global (Fase H.1). Si cambia la granularidad,
+    # los días operativos o el rango, los horarios que antes pasaban
+    # la validación pueden empezar a fallar → la staleness debe
+    # detectar ese cambio.
+    from src.database.models import ConfiguracionHoraria
+    config = session.exec(
+        select(ConfiguracionHoraria).limit(1)
+    ).first()
+    if config is not None:
+        parts.append(
+            f"config:{config.granularidad_minutos}"
+            f"|{config.hora_inicio_operativo.isoformat()}"
+            f"|{config.hora_fin_operativo.isoformat()}"
+            f"|{config.dias_operativos or ''}"
+        )
+    else:
+        parts.append("config:none")
+
+    # 1) Entries del schedule
+    entries = list(session.exec(
+        select(ScheduleEntryDB)
+        .where(ScheduleEntryDB.schedule_id == schedule_id)
+    ).all())
+    entry_tuples = sorted(
+        (
+            e.codigo_materia or "",
+            e.dia or "",
+            e.hora_inicio.isoformat() if e.hora_inicio else "",
+            e.hora_fin.isoformat() if e.hora_fin else "",
+            e.comision_id or "",
+            e.tipo_clase or "",
+            "1" if e.virtual is True else ("0" if e.virtual is False else "-"),
+        )
+        for e in entries
+    )
+    parts.append("entries:" + "|".join(
+        ";".join(t) for t in entry_tuples
+    ))
+
+    # 2) Dictados activos del ciclo (materia_codigo + virtual). El link
+    # es M:N via DictadoCicloDB (un dictado anual atraviesa 2 ciclos).
+    dictados = list(session.exec(
+        select(DictadoDB)
+        .join(DictadoCicloDB, DictadoCicloDB.dictado_id == DictadoDB.id)
+        .where(DictadoCicloDB.ciclo_id == ciclo_id)
+    ).all())
+    dictado_tuples = sorted(
+        (
+            d.materia_codigo or "",
+            "1" if d.virtual is True else ("0" if d.virtual is False else "-"),
+        )
+        for d in dictados
+    )
+    parts.append("dictados:" + "|".join(
+        ";".join(t) for t in dictado_tuples
+    ))
+
+    # Universo de materias relevantes: las del schedule + las esperadas
+    materia_codes: set[str] = {e.codigo_materia for e in entries if e.codigo_materia}
+    materia_codes.update(d.materia_codigo for d in dictados if d.materia_codigo)
+
+    if materia_codes:
+        # 3) MateriaDB (horas_teoria, horas_laboratorio, virtual, optativa)
+        mat_rows = list(session.exec(
+            select(MateriaDB)
+            .where(col(MateriaDB.codigo).in_(list(materia_codes)))
+        ).all())
+        mat_tuples = sorted(
+            (
+                m.codigo or "",
+                str(m.horas_teoria if m.horas_teoria is not None else "-"),
+                str(m.horas_laboratorio if m.horas_laboratorio is not None else "-"),
+                "1" if m.virtual else "0",
+                "1" if m.optativa else "0",
+            )
+            for m in mat_rows
+        )
+        parts.append("materias:" + "|".join(
+            ";".join(t) for t in mat_tuples
+        ))
+
+        # 4) PlanEstudioDB.optativa por (materia, plan_version)
+        pe_rows = list(session.exec(
+            select(PlanEstudioDB)
+            .where(col(PlanEstudioDB.materia_codigo).in_(list(materia_codes)))
+        ).all())
+        pe_tuples = sorted(
+            (
+                pe.materia_codigo or "",
+                pe.plan_version_id or "",
+                str(pe.anio_plan if pe.anio_plan is not None else "-"),
+                pe.cuatrimestre_plan or "",
+                "1" if pe.optativa else "0",
+            )
+            for pe in pe_rows
+        )
+        parts.append("plan_estudio:" + "|".join(
+            ";".join(t) for t in pe_tuples
+        ))
+
+        # 5) MateriaLaboratorioDB (afecta breakdown y particion)
+        lab_rows = list(session.exec(
+            select(MateriaLaboratorioDB)
+            .where(col(MateriaLaboratorioDB.materia_codigo).in_(list(materia_codes)))
+        ).all())
+        lab_tuples = sorted(
+            (ml.materia_codigo or "", ml.aula_id or "")
+            for ml in lab_rows
+        )
+        parts.append("labs:" + "|".join(
+            ";".join(t) for t in lab_tuples
+        ))
+
+    payload = "\n".join(parts).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _compute_lab_breakdown(
@@ -421,6 +587,53 @@ def validar_cronograma(
         for c in conflictos
     ]
 
+    # Camino de cursada (Fase B). Detecta grupos (carrera, año, cuatri)
+    # donde ninguna combinación de comisiones evita solapamientos entre
+    # materias obligatorias. Antes ese chequeo sólo se ejecutaba al
+    # generar el plan, así que las inconsistencias del cronograma no
+    # eran visibles hasta ese momento.
+    from src.services.factibilidad_service import check_camino_cursada_cronograma
+    bloqueos_camino = check_camino_cursada_cronograma(
+        session, schedule_id, ciclo_id,
+    )
+    summary.n_camino_bloqueos = len(bloqueos_camino)
+    summary.camino_bloqueos = [
+        {
+            "codigo_regla": b.codigo_regla,
+            "severidad": b.severidad,
+            "titulo": b.titulo,
+            "detalle": b.detalle,
+            "entidades_a_revisar": list(b.entidades_a_revisar or []),
+            "contexto": dict(b.contexto or {}),
+        }
+        for b in bloqueos_camino
+    ]
+
+    # Horarios fuera de config (Fase H.1): entries que no respetan
+    # `ConfiguracionHoraria` (día, rango operativo, granularidad).
+    # Warning, no bloqueante — el cronograma puede convivir con
+    # horarios rotos hasta que el usuario los corrija.
+    from src.services.validations import validar_horarios_vs_config
+    fuera_config = validar_horarios_vs_config(session, schedule_id)
+    summary.n_horarios_fuera_config = len(fuera_config)
+    summary.horarios_fuera_config = [
+        {
+            "entry_id": h.entry_id,
+            "codigo_materia": h.codigo_materia,
+            "dia": h.dia,
+            "hora_inicio": h.hora_inicio,
+            "hora_fin": h.hora_fin,
+            "razones": list(h.razones),
+        }
+        for h in fuera_config
+    ]
+
+    # Hash de contenido — Fase A. Se computa al final para que refleje
+    # exactamente el estado que dio origen al summary.
+    summary.content_hash = _compute_content_hash(
+        session, schedule_id, ciclo_id, exclude_optativas,
+    )
+
     return summary
 
 
@@ -452,8 +665,11 @@ def persist_validation(
         particion_valid=summary.particion_valid,
         particion_n_infactibles=summary.particion_n_infactibles,
         n_conflictos_horarios=summary.n_conflictos_horarios,
+        n_camino_bloqueos=summary.n_camino_bloqueos,
+        n_horarios_fuera_config=summary.n_horarios_fuera_config,
         excluir_optativas=summary.excluir_optativas,
         excluir_virtuales_optativas=summary.excluir_virtuales_optativas,
+        content_hash=summary.content_hash,
         details_json=summary.to_details_json(),
     )
     session.add(record)
@@ -494,9 +710,28 @@ def get_validation_history(
 def is_validation_stale(
     session: Session, validation: ScheduleValidationDB,
 ) -> bool:
-    """True si cambio el cronograma O el set de dictados activos del ciclo
-    desde que se persistio la validacion.
+    """True si el contenido relevante cambio desde que se persistio la validacion.
+
+    Estrategia (Fase A del rediseño 2026-09-15):
+    - Si el snapshot tiene `content_hash` no vacio, se recomputa el hash
+      del estado actual con la misma config del toggle y se compara. Esto
+      detecta cambios que la comparacion por counts se pierde (mover una
+      clase de dia con mismo count, editar `PlanEstudioDB.optativa`, etc).
+    - Si el snapshot es historico (`content_hash == ""`), se cae al
+      comportamiento previo: comparar `entry_count` y `dictado_count`.
+      Esto preserva la semantica de snapshots viejos hasta que el usuario
+      corra una validacion nueva.
     """
+    if validation.content_hash:
+        current_hash = _compute_content_hash(
+            session,
+            validation.schedule_id,
+            validation.ciclo_id,
+            validation.excluir_optativas,
+        )
+        return current_hash != validation.content_hash
+
+    # Fallback backward-compat: snapshots sin hash usan comparacion de counts.
     current_entries = session.exec(
         select(func.count(ScheduleEntryDB.id))
         .where(ScheduleEntryDB.schedule_id == validation.schedule_id)
@@ -511,6 +746,135 @@ def is_validation_stale(
         return True
 
     return False
+
+
+# =============================================================================
+# Politica unificada: badge de estado y "listo para plan"
+# =============================================================================
+
+@dataclass
+class ValidationStatus:
+    """Estado consolidado de la ultima validacion de un cronograma.
+
+    Unifica la lectura de badge y la politica de "listo para generar plan".
+    Antes cada consumidor computaba su propia version — el badge en la
+    Lista de Cronogramas ignoraba `n_conflictos_horarios` y `n_extra`, y
+    el wizard del Plan ignoraba todo excepto staleness. Ahora hay una
+    fuente unica.
+
+    Campos:
+    - `validation`: el ScheduleValidationDB mas reciente (None si nunca).
+    - `stale`: si el contenido cambio desde que se persistio.
+    - `problemas`: lista de mensajes cortos de problemas detectados
+      (faltantes, particion, conflictos, extras, error de pre-check).
+    - `listo_para_plan`: True solo si no hay problemas y no esta stale.
+    - `badge`: string con emoji + descripcion resumida para la UI.
+    """
+    validation: Optional[ScheduleValidationDB]
+    stale: bool
+    problemas: list[str]
+    listo_para_plan: bool
+    badge: str
+
+
+def _describir_problemas(val: ScheduleValidationDB) -> list[str]:
+    """Enumera problemas concretos de una validacion.
+
+    Un cronograma es "listo para plan" solo si esta lista esta vacia
+    (y ademas el snapshot no esta stale). Se contempla:
+    - Pre-check fallado (no hay dictados en el ciclo).
+    - Materias faltantes vs dictados esperados.
+    - Particion teoria/lab infactible.
+    - Conflictos de horario intra-grupo.
+    - Materias extras (no tienen dictado en el ciclo).
+    - Bloqueos de camino de cursada (Fase B).
+    """
+    problemas: list[str] = []
+
+    # Nota: el snapshot no persiste el `error` de pre-check literal, pero
+    # si el pre-check falla el summary no se persiste (early return en
+    # validar_cronograma). Aca alcanza con las metricas del snapshot.
+
+    if val.n_faltantes > 0:
+        problemas.append(f"{val.n_faltantes} materias faltantes")
+    if not val.particion_valid:
+        problemas.append(
+            f"{val.particion_n_infactibles} particiones teoria/lab sin cupo"
+        )
+    if val.n_conflictos_horarios > 0:
+        problemas.append(
+            f"{val.n_conflictos_horarios} conflictos de horario intra-grupo"
+        )
+    if val.n_extra > 0:
+        problemas.append(
+            f"{val.n_extra} materias sin dictado en el ciclo"
+        )
+    if val.n_camino_bloqueos > 0:
+        problemas.append(
+            f"{val.n_camino_bloqueos} bloqueos de camino de cursada"
+        )
+    if val.n_horarios_fuera_config > 0:
+        problemas.append(
+            f"{val.n_horarios_fuera_config} horarios fuera de la config "
+            "(día/rango/granularidad)"
+        )
+
+    return problemas
+
+
+def compute_validation_status(
+    session: Session,
+    schedule_id: str,
+    ciclo_id: Optional[str] = None,
+) -> ValidationStatus:
+    """Devuelve el estado consolidado de la ultima validacion.
+
+    Consumido tanto por la Lista de Cronogramas como por el wizard del
+    Plan. Reemplaza la logica inline que existia en ambos lugares
+    (ver docstring de `ValidationStatus`).
+    """
+    val = get_latest_validation(session, schedule_id, ciclo_id)
+
+    if val is None:
+        return ValidationStatus(
+            validation=None,
+            stale=False,
+            problemas=[],
+            listo_para_plan=False,
+            badge="⚪ sin validar",
+        )
+
+    stale = is_validation_stale(session, val)
+    problemas = _describir_problemas(val)
+
+    ciclo_lbl = val.ciclo_id
+    if stale:
+        listo = False
+        badge = f"🟡 validado vs {ciclo_lbl}, con cambios posteriores"
+    elif problemas:
+        listo = False
+        badge = (
+            f"🔴 con problemas vs {ciclo_lbl} "
+            f"({', '.join(problemas)})"
+        )
+    else:
+        listo = True
+        badge = f"🟢 validado vs {ciclo_lbl}"
+
+    return ValidationStatus(
+        validation=val,
+        stale=stale,
+        problemas=problemas,
+        listo_para_plan=listo,
+        badge=badge,
+    )
+
+
+def esta_listo_para_plan(
+    session: Session, schedule_id: str, ciclo_id: Optional[str] = None,
+) -> bool:
+    """Shortcut booleano de `compute_validation_status(...).listo_para_plan`."""
+    return compute_validation_status(session, schedule_id, ciclo_id).listo_para_plan
 
 
 def parse_details_json(details_json: str) -> dict:

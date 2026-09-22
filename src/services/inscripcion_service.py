@@ -11,9 +11,13 @@ con "borrar toda la materia + reinsertar lo del editor", lo cual
 borraba silenciosamente los registros del cuatri no visible. Este
 servicio corrige eso: el borrado se limita al conjunto de cuatris
 que el usuario está viendo.
+
+Fase E2 del rediseño 2026-09-15: cada INSERT/UPDATE popula
+``updated_at`` (timestamp UTC) y ``origen`` (canal de carga).
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Iterable
 
 from sqlmodel import Session, col, select
@@ -42,6 +46,7 @@ def guardar_registros_materia(
     registros: Iterable[RegistroInscripcion],
     *,
     cuatris_visibles: set[str],
+    origen: str = "manual",
 ) -> int:
     """Guarda los `registros` para `materia_codigo`, restringiendo el
     scope al conjunto de `cuatris_visibles`.
@@ -123,6 +128,7 @@ def guardar_registros_materia(
     persistidas = 0
 
     # Update / insert.
+    now = datetime.utcnow()
     for r in registros_list:
         pk = (r.anio, r.cuatrimestre)
         row = existentes_por_pk.get(pk)
@@ -132,9 +138,13 @@ def guardar_registros_materia(
                 anio=r.anio,
                 cuatrimestre=r.cuatrimestre,
                 inscriptos=r.inscriptos,
+                updated_at=now,
+                origen=origen,
             ))
         else:
             row.inscriptos = r.inscriptos
+            row.updated_at = now
+            row.origen = origen
             session.add(row)
         persistidas += 1
 

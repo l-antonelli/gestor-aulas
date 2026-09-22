@@ -1549,7 +1549,7 @@ def _render_tabla_editable_por_materia(
                 options=["Heredar", "Sí", "No"],
                 default="Heredar",
                 help=(
-                    "Modalidad de este horario específico. "
+                    "Virtual de este horario específico. "
                     "Heredar = usa lo que dice el dictado o la "
                     "materia. Sí = fuerza virtual (no se asigna "
                     "aula). No = fuerza presencial (aunque el "

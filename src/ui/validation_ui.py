@@ -132,7 +132,7 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     with _col_t1:
         exclude_optativas = st.toggle(
             "Excluir optativas del cómputo",
-            value=st.session_state.get(_toggle_key, False),
+            value=st.session_state.get(_toggle_key, True),
             key=_toggle_key,
             help=(
                 "Las materias optativas no se cuentan en el set esperado. "
@@ -379,6 +379,11 @@ def _render_plan(plan_id: str, key_ns: str) -> None:
     _render_camino_cursada_section(summary, plan_id, key_ns)
 
     # =====================================================================
+    # Horarios fuera de la configuración (Fase I.1 del rediseño 2026-09-21)
+    # =====================================================================
+    _render_horarios_fuera_config_section(summary)
+
+    # =====================================================================
     # Excepciones auto-limpiadas (informativo, si hubo).
     # =====================================================================
     _render_excepciones_stale_removidas(summary)
@@ -413,9 +418,9 @@ def _render_excepciones_stale_removidas(summary) -> None:
 
 
 def _render_camino_cursada_section(
-    summary, plan_id: str, key_ns: str,
+    summary, plan_id: Optional[str], key_ns: str,
 ) -> None:
-    """Sección 'Camino de cursada' en el detalle del plan.
+    """Sección 'Camino de cursada' en el detalle del plan **o** del cronograma.
 
     Muestra los grupos (carrera × año × cuatri) donde **ninguna
     combinación** de comisiones deja cursar todas las materias
@@ -425,6 +430,10 @@ def _render_camino_cursada_section(
 
     Sólo trata solapamiento — el margen intersede (dependiente de la
     config del LP) vive en el pre-check del asignador.
+
+    Con `plan_id=None` (flujo del cronograma, Fase B del rediseño
+    2026-09-15) el shortcut "Ignorar par" queda oculto porque las
+    excepciones (`IgnoredConflictDB`) viven a nivel plan.
     """
     st.divider()
     n = summary.n_camino_bloqueos
@@ -455,13 +464,137 @@ def _render_camino_cursada_section(
             st.markdown(item.get("detalle", ""))
             ctx = item.get("contexto") or {}
             par = ctx.get("par_materias") or []
-            if ctx.get("tipo") == "solapamiento" and len(par) == 2:
+            if (
+                plan_id is not None
+                and ctx.get("tipo") == "solapamiento"
+                and len(par) == 2
+            ):
                 _render_shortcut_ignorar_par_desde_plan(
                     plan_id=plan_id,
                     par=(str(par[0]), str(par[1])),
                     key_ns=key_ns,
                     idx=i,
                 )
+
+
+def _render_horarios_fuera_config_section(
+    summary,
+    *,
+    schedule_id: Optional[str] = None,
+    key_ns: str = "hfc",
+    invalidate_cache_keys: Optional[list[str]] = None,
+    pending_revalidate_key: Optional[str] = None,
+) -> None:
+    """Sección "Horarios fuera de config" del panel Validar.
+
+    Fase I.1 del rediseño 2026-09-21. Muestra los `ScheduleEntryDB`
+    (o `HorarioDB` en el flujo plan) que no respetan la
+    `ConfiguracionHoraria` global: día no operativo, fuera del
+    rango operativo, o no múltiplo de la granularidad.
+
+    Se renderea como **un solo expander colapsable** con:
+    - tabla plana (Código, Día, Inicio, Fin, Razones)
+    - botón "🛠 Ajustar automáticamente" que redondea inicio/fin al
+      slot válido más cercano. Sólo aplica a los horarios cuyos días
+      SÍ son operativos; los que rompen por día quedan sin cambios y
+      requieren corrección manual.
+
+    Cuando ``n_horarios_fuera_config == 0`` no se muestra nada — el
+    conteo aparece igual como check dentro del detalle por materia.
+    """
+    n = getattr(summary, "n_horarios_fuera_config", 0)
+    detalle = getattr(summary, "horarios_fuera_config", []) or []
+    if n == 0 and not detalle:
+        return
+
+    with st.expander(
+        f"⏱ Horarios fuera de la configuración ({n})",
+        expanded=False,
+    ):
+        st.caption(
+            "Estos horarios rompen la **configuración horaria** "
+            "(granularidad / rango operativo / días operativos). "
+            "La config vive en **Configuraciones → Configuración "
+            "horaria**. Los horarios con **día no operativo** "
+            "requieren corrección manual porque no hay redondeo "
+            "posible."
+        )
+
+        # Tabla plana.
+        _rows: list[dict] = []
+        for item in detalle:
+            _razones = item.get("razones", []) or []
+            _rows.append({
+                "Código": item.get("codigo_materia", "?"),
+                "Día": item.get("dia", "?"),
+                "Inicio": item.get("hora_inicio", "?"),
+                "Fin": item.get("hora_fin", "?"),
+                "Razones": " · ".join(_razones),
+            })
+        if _rows:
+            st.dataframe(
+                pd.DataFrame(_rows),
+                hide_index=True, use_container_width=True,
+            )
+
+        # Botón de ajuste masivo.
+        if schedule_id is not None:
+            _c1, _c2 = st.columns([2, 3])
+            with _c1:
+                _btn = st.button(
+                    "🛠 Ajustar automáticamente al slot válido más cercano",
+                    key=f"{key_ns}_fix_fuera_config",
+                    type="primary",
+                    help=(
+                        "Redondea inicio y fin al múltiplo de la "
+                        "granularidad más cercano dentro del rango "
+                        "operativo. Los horarios en día no operativo "
+                        "quedan sin tocar (requieren cambio manual)."
+                    ),
+                )
+            with _c2:
+                st.caption(
+                    "El ajuste corre sobre todos los horarios del "
+                    "cronograma en un click. Después re-corré la "
+                    "validación (o guardá el detalle por materia) "
+                    "para ver el nuevo estado."
+                )
+            if _btn:
+                from src.services.validations import (
+                    ajustar_horarios_a_config,
+                )
+                from src.database.connection import get_session
+                with next(get_session()) as _s:
+                    n_ok, n_skip, msgs = ajustar_horarios_a_config(
+                        _s, schedule_id,
+                    )
+                if n_ok:
+                    st.success(
+                        f"✅ Se ajustaron {n_ok} horario(s). "
+                        + (
+                            f"{n_skip} quedaron sin tocar (día no "
+                            "operativo — requiere corrección manual)."
+                            if n_skip else ""
+                        )
+                    )
+                elif n_skip:
+                    st.warning(
+                        f"No se aplicaron ajustes automáticos: los "
+                        f"{n_skip} casos son por día no operativo y "
+                        "requieren corrección manual."
+                    )
+                else:
+                    st.info(
+                        "No había nada para ajustar (ya estaban "
+                        "todos en configuración)."
+                    )
+                # Invalidar caches para forzar re-validación en el
+                # siguiente render.
+                for _k in (invalidate_cache_keys or []):
+                    st.session_state.pop(_k, None)
+                if pending_revalidate_key is not None:
+                    st.session_state[pending_revalidate_key] = True
+                st.rerun()
 
 
 def _render_shortcut_ignorar_par_desde_plan(
@@ -776,6 +909,149 @@ def _render_resumen_carreras(grupos: dict[str, dict]) -> None:
         pd.concat([_df, _total], ignore_index=True),
         use_container_width=True, hide_index=True,
     )
+
+
+def _render_completitud_desagregada_schedule(
+    schedule_id: str,
+    ciclo_id: str,
+    exclude_optativas: bool,
+    key_ns: str,
+) -> None:
+    """Muestra las dos vistas desagregadas de completitud del cronograma.
+
+    Fase D del rediseño 2026-09-15. Complementa las métricas globales
+    (n_esperadas / n_cubiertas / n_faltantes) con dos breakdowns:
+
+    - **Por grupo de materias** (FB, F, CE, Específicas, etc.): útil
+      para saber qué familia de materias todavía tiene datos
+      faltantes de las cátedras.
+    - **Por (carrera, año)**: útil cuando se arma el cronograma con
+      los profesores de una carrera puntual.
+
+    Ambas vistas respetan el toggle ``excluir_optativas`` y usan
+    ``get_session()`` con la sesión activa de Streamlit. Se computan
+    on-the-fly (no persisten en el snapshot) porque son baratas y
+    así reflejan siempre el estado actual del cronograma.
+    """
+    from src.database.connection import get_session
+    from src.services.cronograma_completitud_service import (
+        completitud_por_carrera_anio,
+        completitud_por_grupo_materia,
+    )
+
+    st.divider()
+    st.markdown("### 📊 Completitud desagregada")
+    st.caption(
+        "Progreso de carga por grupo de materias y por (carrera, año). "
+        + (
+            "Las optativas no se cuentan."
+            if exclude_optativas
+            else "Las optativas se cuentan."
+        )
+    )
+
+    with next(get_session()) as _s:
+        try:
+            grupos = completitud_por_grupo_materia(
+                _s, schedule_id, ciclo_id,
+                exclude_optativas=exclude_optativas,
+            )
+            por_car = completitud_por_carrera_anio(
+                _s, schedule_id, ciclo_id,
+                exclude_optativas=exclude_optativas,
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.error(
+                f"No se pudo calcular la completitud desagregada: {exc}"
+            )
+            return
+
+    _col_g, _col_c = st.columns(2, gap="medium")
+
+    with _col_g:
+        st.markdown("**Por grupo de materias**")
+        if not grupos:
+            st.caption("Sin grupos con materias esperadas en este ciclo.")
+        else:
+            rows_g = []
+            for g in grupos:
+                rows_g.append({
+                    "Grupo": g.grupo_nombre + (" (sin clasificar)" if g.es_sin_clasificar else ""),
+                    "Cubiertas": g.n_cubiertas,
+                    "Esperadas": g.n_esperadas,
+                    "% completitud": f"{g.pct_completitud:.0f}%",
+                })
+            st.dataframe(
+                pd.DataFrame(rows_g),
+                use_container_width=True, hide_index=True,
+            )
+            # Detalles de faltantes por grupo. Fase I.1 (fix 2026-09-21):
+            # ir agrupado en un expander padre para poder colapsar todo
+            # de una — antes se acumulaba scroll infinito.
+            _grupos_con_falt = [g for g in grupos if g.materias_faltantes]
+            if _grupos_con_falt:
+                _n_falt_total = sum(
+                    len(g.materias_faltantes) for g in _grupos_con_falt
+                )
+                with st.expander(
+                    f"📭 Faltantes por grupo ({_n_falt_total} en "
+                    f"{len(_grupos_con_falt)} grupo(s))",
+                    expanded=False,
+                ):
+                    for g in _grupos_con_falt:
+                        with st.expander(
+                            f"**{g.grupo_nombre}** "
+                            f"({len(g.materias_faltantes)})",
+                            expanded=False,
+                        ):
+                            st.markdown("\n".join(
+                                f"- `{c}` — {n}"
+                                for c, n in g.materias_faltantes
+                            ))
+
+    with _col_c:
+        st.markdown("**Por carrera y año**")
+        if not por_car:
+            st.caption(
+                "Sin grupos curriculares configurados para este ciclo."
+            )
+        else:
+            rows_c = []
+            for c in por_car:
+                rows_c.append({
+                    "Carrera": f"{c.carrera_codigo} — {c.carrera_nombre}",
+                    "Año": c.anio,
+                    "Cuatri": c.cuatri,
+                    "Cubiertas": c.n_cubiertas,
+                    "Esperadas": c.n_esperadas,
+                    "% completitud": f"{c.pct_completitud:.0f}%",
+                })
+            st.dataframe(
+                pd.DataFrame(rows_c),
+                use_container_width=True, hide_index=True,
+            )
+            # Faltantes por (carrera, año, cuatri). Fase I.1 (fix
+            # 2026-09-21): agrupar bajo un expander padre.
+            _car_con_falt = [c for c in por_car if c.materias_faltantes]
+            if _car_con_falt:
+                _n_falt_total_c = sum(
+                    len(c.materias_faltantes) for c in _car_con_falt
+                )
+                with st.expander(
+                    f"📭 Faltantes por carrera/año "
+                    f"({_n_falt_total_c} en {len(_car_con_falt)} grupo(s))",
+                    expanded=False,
+                ):
+                    for c in _car_con_falt:
+                        with st.expander(
+                            f"**{c.carrera_codigo} · Año {c.anio} · "
+                            f"{c.cuatri}** ({len(c.materias_faltantes)})",
+                            expanded=False,
+                        ):
+                            st.markdown("\n".join(
+                                f"- `{cod}` — {nom}"
+                                for cod, nom in c.materias_faltantes
+                            ))
 
 
 def _render_carrera_subexpander(
@@ -1413,6 +1689,10 @@ def _estado_de_materia(data: dict) -> str:
     - "No esperada": tiene comisiones pero sin dictado en el ciclo.
     - "Conflictiva": con comisiones y conflictos sin ignorar.
     - "Sin datos": esperada con dictado pero falta info de horas.
+    - "Revisión": (Fase I.1) tiene horas cargadas pero rompe alguno de
+      los checks numéricos del editor por-materia (h/sem × comisiones,
+      divisibles, equilibradas). Antes esto no gatillaba nada en el
+      badge del expander externo, generando drift.
     - "OK": cubierta sin issues.
     """
     if data.get("es_faltante"):
@@ -1423,6 +1703,12 @@ def _estado_de_materia(data: dict) -> str:
         return "Conflictiva"
     if data.get("falta_horas"):
         return "Sin datos"
+    if (
+        data.get("mismatch_hsem_com")
+        or data.get("no_divisible")
+        or data.get("desequilibrado")
+    ):
+        return "Revisión"
     return "OK"
 
 
@@ -1491,6 +1777,7 @@ def _render_detalle_por_materia(
     save_as_copy: bool = False,
     pending_revalidate_key: Optional[str] = None,
     invalidate_cache_keys: Optional[list[str]] = None,
+    restrict_materias: Optional[set[str]] = None,
 ) -> None:
     """Lista filtrada de materias + esperadas con su estado.
 
@@ -1498,6 +1785,10 @@ def _render_detalle_por_materia(
     para `source='schedule'` (solo lista, sin editor). En el caso del
     cronograma las "comisiones" se cuentan a nivel de `ScheduleEntryDB`
     (cantidad de entries únicas por materia).
+
+    Con `restrict_materias` seteado, solo se muestran las materias de
+    ese conjunto (útil para el preview del importer, que quiere ver
+    solo las afectadas). None (default) → sin restricción.
     """
     # Detectar si las entries/comisiones cambiaron en DB respecto del
     # snapshot del summary cacheado. Si cambiaron → marcar pending y
@@ -1534,6 +1825,13 @@ def _render_detalle_por_materia(
     # Construir dataset unificado: union de esperadas + materias del plan
     _esperadas_set = set(summary.esperadas.keys())
     _en_plan_set = set(summary.mat_map.keys())
+
+    # Fase H.3 del rediseño 2026-09-15: `restrict_materias` permite
+    # que el preview del importer muestre solo las materias afectadas
+    # por el archivo. Todo lo demás del pipeline sigue igual.
+    if restrict_materias is not None:
+        _esperadas_set = _esperadas_set & restrict_materias
+        _en_plan_set = _en_plan_set & restrict_materias
 
     _faltantes_set = _esperadas_set - _en_plan_set
     _extras_set = _en_plan_set - _esperadas_set
@@ -1614,6 +1912,11 @@ def _render_detalle_por_materia(
         _h_count_per_com: dict[str, int] = {}
         _com_count_sched: dict[str, int] = {}
         _entry_count_sched: dict[str, int] = {}
+        # Fase I.1: horas totales y por comisión (para checks de
+        # h/sem × comisiones, divisibles, equilibradas). Se computan
+        # tanto para plan (HorarioDB) como para schedule (ScheduleEntryDB).
+        _horas_por_mat_sched: dict[str, float] = {}
+        _horas_por_mat_com_sched: dict[str, dict[str, float]] = {}
         if source == "plan" and plan_id:
             _coms = list(session.exec(
                 select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
@@ -1631,6 +1934,31 @@ def _render_detalle_por_materia(
                     .group_by(HorarioDB.comision_id)  # type: ignore[arg-type]
                 ).all())
                 _h_count_per_com = {cid: n for cid, n in _h_rows}
+                # Cargar los horarios completos para sumar duración por
+                # comisión + por materia.
+                _horarios_full = list(session.exec(
+                    select(HorarioDB).where(
+                        col(HorarioDB.comision_id).in_(_com_ids)
+                    )
+                ).all())
+                _com_to_mat = {c.id: c.materia_codigo for c in _coms}
+                for _h in _horarios_full:
+                    _mins = (
+                        _h.hora_fin.hour * 60 + _h.hora_fin.minute
+                        - _h.hora_inicio.hour * 60 - _h.hora_inicio.minute
+                    )
+                    _hrs = max(0, _mins) / 60
+                    _mat = _com_to_mat.get(_h.comision_id, "")
+                    if _mat:
+                        _horas_por_mat_sched[_mat] = (
+                            _horas_por_mat_sched.get(_mat, 0.0) + _hrs
+                        )
+                        _horas_por_mat_com_sched.setdefault(_mat, {})
+                        _horas_por_mat_com_sched[_mat][_h.comision_id] = (
+                            _horas_por_mat_com_sched[_mat].get(
+                                _h.comision_id, 0.0,
+                            ) + _hrs
+                        )
         elif source == "schedule" and schedule_id:
             from src.database.models import ScheduleEntryDB as _SE
             _entries = list(session.exec(
@@ -1648,6 +1976,29 @@ def _render_detalle_por_materia(
                 if e.comision_id is not None:
                     _by_mat.setdefault(e.codigo_materia, set()).add(e.comision_id)
             _com_count_sched = {mc: len(s) for mc, s in _by_mat.items()}
+
+            # Fase I.1 del rediseño 2026-09-21: sumar horas por
+            # materia y por comisión para gatillar los 3 checks
+            # numéricos (h/sem × comisiones, divisibles,
+            # equilibradas) desde el badge del expander.
+            for e in _entries:
+                _mins = (
+                    e.hora_fin.hour * 60 + e.hora_fin.minute
+                    - e.hora_inicio.hour * 60 - e.hora_inicio.minute
+                )
+                _hrs = max(0, _mins) / 60
+                _horas_por_mat_sched[e.codigo_materia] = (
+                    _horas_por_mat_sched.get(e.codigo_materia, 0.0) + _hrs
+                )
+                if e.comision_id is not None:
+                    _horas_por_mat_com_sched.setdefault(
+                        e.codigo_materia, {},
+                    )
+                    _horas_por_mat_com_sched[e.codigo_materia][e.comision_id] = (  # noqa: E501
+                        _horas_por_mat_com_sched[e.codigo_materia].get(
+                            e.comision_id, 0.0,
+                        ) + _hrs
+                    )
 
     # Construir filas: UNA POR (materia, carrera, año, cuatri).
     #
@@ -1696,6 +2047,31 @@ def _render_detalle_por_materia(
             _n_coms = _com_count_sched.get(_code, 0)
             _n_horarios = _entry_count_sched.get(_code, 0)
 
+        # Fase I.1 · Checks numéricos preventivos, para que el badge
+        # del expander en `_estado_de_materia` esté alineado con el
+        # detalle interno del editor por-materia (evitando el drift
+        # OK-en-header pero warning-al-abrir-el-detalle).
+        _total_hrs = _horas_por_mat_sched.get(_code, 0.0)
+        _hours_by_com = _horas_por_mat_com_sched.get(_code, {})
+        # h/sem × comisiones = total: warn si difieren.
+        _mismatch_hsem_com = (
+            _hsem is not None and _hsem > 0
+            and _n_coms > 0 and _total_hrs > 0
+            and abs(_hsem * _n_coms - _total_hrs) > 0.01
+        )
+        # Divisibles entre comisiones (múltiplo de 15 min = 0.25h).
+        _no_divisible = False
+        if _n_coms > 1 and _total_hrs > 0:
+            _h_per = _total_hrs / _n_coms
+            _rem = _h_per % 0.25
+            _no_divisible = 0.01 < _rem < 0.24
+        # Equilibradas: max-min > 0.5h se considera desbalanceado.
+        _desequilibrado = False
+        if len(_hours_by_com) >= 2:
+            _hcoms_v = list(_hours_by_com.values())
+            if max(_hcoms_v) - min(_hcoms_v) > 0.5:
+                _desequilibrado = True
+
         _base_flags = {
             "codigo": _code,
             "nombre": _m.nombre if _m else "?",
@@ -1715,6 +2091,9 @@ def _render_detalle_por_materia(
             "es_no_esperada": _code in _extras_set,
             "tiene_conflicto": _code in _conf_pairs,
             "falta_horas": _hsem is None,
+            "mismatch_hsem_com": _mismatch_hsem_com,
+            "no_divisible": _no_divisible,
+            "desequilibrado": _desequilibrado,
         }
 
         if _pes:
@@ -1937,7 +2316,7 @@ def _render_detalle_por_materia(
         for cc in (r.get("carreras_set") or set()):
             bkt = _carrera_counts.setdefault(
                 cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
-                     "Conflictiva": 0, "Sin datos": 0},
+                     "Conflictiva": 0, "Sin datos": 0, "Revisión": 0},
             )
             bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
     if _carrera_counts:
@@ -1948,7 +2327,11 @@ def _render_detalle_por_materia(
                 "Carrera": cc,
                 "Materias": sum(counts.values()),
                 "✅ OK": counts["OK"],
-                "⚠️ Revisión": counts["Conflictiva"] + counts["Sin datos"],
+                "⚠️ Revisión": (
+                    counts["Conflictiva"]
+                    + counts["Sin datos"]
+                    + counts.get("Revisión", 0)
+                ),
                 "📭 Faltantes": counts["Faltante"],
                 "📥 No esperadas": counts["No esperada"],
             })
@@ -1961,7 +2344,7 @@ def _render_detalle_por_materia(
         _u_noesp = sum(1 for r in _filtered if r["estado"] == "No esperada")
         _u_rev = sum(
             1 for r in _filtered
-            if r["estado"] in ("Conflictiva", "Sin datos")
+            if r["estado"] in ("Conflictiva", "Sin datos", "Revisión")
         )
         _tot = {
             "Carrera": "**Total (únicas)**",
@@ -2189,27 +2572,14 @@ def _render_detalle_por_materia(
         else:
             _lab_suffix = ""
 
-        # Sufijo de ubicación curricular. Cuando la materia aparece en
-        # varias ubicaciones curriculares y el filtro dejó pasar más de
-        # una, listamos todas (agrupadas en el mismo expander) para que
-        # el usuario vea que es "la misma materia en varias carreras"
-        # y no dos entradas duplicadas.
-        _ubicacion_lbl = ""
-        _ubics = _r.get("_ubicaciones_filtradas") or []
-        _ubics_utiles = [
-            u for u in _ubics
-            if u.get("carrera") and u["carrera"] != "—"
-        ]
-        if _ubics_utiles:
-            def _fmt_ubic(u: dict) -> str:
-                if u.get("anio"):
-                    return f"{u['carrera']} · {u['anio']}° {u['cuatri']}"
-                return u["carrera"]
-            _ubicacion_lbl = (
-                " — [" + " | ".join(_fmt_ubic(u) for u in _ubics_utiles) + "]"
-            )
+        # Header sin ubicación curricular (Fase H.3 del rediseño
+        # 2026-09-15): el listado "carrera · año° cuatri" era info
+        # redundante — la agrupación por materia hace que ese detalle
+        # duplique lo que ya se ve al abrir el expander en la tabla
+        # de comisiones/horarios. Se mantiene el badge + código +
+        # nombre + resumen numérico + modo lab.
         _hdr = (
-            f"{_worst_icon} {_code}{_ubicacion_lbl} — "
+            f"{_worst_icon} {_code} — "
             f"{_r['nombre']} | {_r['n_comisiones']} com · "
             f"{_r['n_horarios']} clases · {_hsem_disp}{_lab_suffix}"
         )
@@ -2291,6 +2661,7 @@ def _estado_badge(estado: str) -> str:
         "No esperada": "📥 No esperada",
         "Conflictiva": "⚠️ Conflicto",
         "Sin datos": "❓ Sin datos",
+        "Revisión": "⚠️ Revisión",
     }.get(estado, estado)
 
 
@@ -2321,7 +2692,7 @@ def _render_schedule(
     with _col_t1:
         exclude_optativas = st.toggle(
             "Excluir optativas del cómputo",
-            value=st.session_state.get(_toggle_key, False),
+            value=st.session_state.get(_toggle_key, True),
             key=_toggle_key,
             help=(
                 "Las materias optativas no se cuentan en el set esperado. "
@@ -2423,6 +2794,10 @@ def _render_schedule(
                     particion_n_infactibles=_last.particion_n_infactibles,
                     particion_message=_details.get("particion_message", ""),
                     n_conflictos_horarios=_last.n_conflictos_horarios,
+                    n_camino_bloqueos=_last.n_camino_bloqueos,
+                    n_horarios_fuera_config=getattr(
+                        _last, "n_horarios_fuera_config", 0,
+                    ),
                     excluir_optativas=_last.excluir_optativas,
                     excluir_virtuales_optativas=_last.excluir_virtuales_optativas,
                     faltantes_por_carrera=_details.get(
@@ -2432,6 +2807,10 @@ def _render_schedule(
                     particion_details=_details.get("particion_details", []),
                     conflictos_horarios=_details.get(
                         "conflictos_horarios", []
+                    ),
+                    camino_bloqueos=_details.get("camino_bloqueos", []),
+                    horarios_fuera_config=_details.get(
+                        "horarios_fuera_config", []
                     ),
                     esperadas=_details.get("esperadas", {}),
                     mat_map=_details.get("mat_map", {}),
@@ -2567,6 +2946,32 @@ def _render_schedule(
                     pending_revalidate_key=_pending_revalidate_key,
                     source="schedule",
                 )
+
+    # =========================================================================
+    # Completitud desglosada (Fase D del rediseño 2026-09-15)
+    # =========================================================================
+    _render_completitud_desagregada_schedule(
+        schedule_id=schedule_id,
+        ciclo_id=ciclo_id,
+        exclude_optativas=summary.excluir_optativas,
+        key_ns=key_ns,
+    )
+
+    # =========================================================================
+    # Camino de cursada (Fase B del rediseño 2026-09-15)
+    # =========================================================================
+    _render_camino_cursada_section(summary, plan_id=None, key_ns=key_ns)
+
+    # =========================================================================
+    # Horarios fuera de la configuración (Fase I.1 del rediseño 2026-09-21)
+    # =========================================================================
+    _render_horarios_fuera_config_section(
+        summary,
+        schedule_id=schedule_id,
+        key_ns=key_ns,
+        invalidate_cache_keys=[_validation_key, _last_toggle_key],
+        pending_revalidate_key=_pending_revalidate_key,
+    )
 
     # =========================================================================
     # Detalle por materia

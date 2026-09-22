@@ -439,6 +439,9 @@ def render_schedule_materia_detail(
             .limit(1)
         ).first() is not None
 
+        # Config global (para el check "horarios vs config").
+        _config_global = get_or_create_config(session)
+
     # Catálogo
     db_hsem = float(mat_db.horas_semanales or 0.0)
     db_hteo = mat_db.horas_teoria
@@ -775,6 +778,7 @@ def render_schedule_materia_detail(
             paralelas=paralelas, hours_by_com=hours_by_com,
             has_lab=has_lab, h_teo=db_hteo, h_lab=db_hlab,
             valid_df=valid_df, com_options=com_options,
+            config_global=_config_global,
         )
 
     # Worst status — `faltante` tiene su propio nivel para que el icono
@@ -1062,10 +1066,16 @@ def _compute_checks(
     h_teo: Optional[float], h_lab: Optional[float],
     valid_df: pd.DataFrame,
     com_options: list[int],
+    config_global=None,
 ) -> list[dict]:
     """Computa los 10 checks documentados en VALIDACIONES.md.
 
     Cada check es un dict con `id`, `label`, `status`, `detail`.
+
+    `config_global`: opcional. Si se pasa una `ConfiguracionHoraria`,
+    se computa el eje adicional "Horarios dentro de config"
+    (día operativo + rango + granularidad) — Fase I.1 del rediseño
+    2026-09-21.
     """
     checks: list[dict] = []
 
@@ -1386,6 +1396,96 @@ def _compute_checks(
                 "label": "Partición teórica/lab factible",
                 "status": "error",
                 "detail": "; ".join(infactibles),
+            })
+
+    # 11. config_horaria — cada horario respeta día operativo + rango
+    # operativo + granularidad de `ConfiguracionHoraria` (Fase I.1
+    # del rediseño 2026-09-21). Antes esto solo se veía como sección
+    # aparte al final del panel; ahora es un check más de la lista
+    # para que no se descuelgue del resto y el badge quede alineado.
+    if config_global is not None and not valid_df.empty:
+        _dias_ok = {
+            d.strip() for d in (config_global.dias_operativos or "").split(",")
+            if d.strip()
+        }
+        _gran = int(config_global.granularidad_minutos or 15) or 15
+
+        def _to_mins(t) -> int:
+            return t.hour * 60 + t.minute
+
+        _base = _to_mins(config_global.hora_inicio_operativo)
+        _fin_op = _to_mins(config_global.hora_fin_operativo)
+        if (
+            config_global.hora_fin_operativo.hour == 0
+            and config_global.hora_fin_operativo.minute == 0
+        ):
+            _fin_op = 24 * 60
+
+        _out_rows: list[str] = []
+        for _, _row in valid_df.iterrows():
+            _dia = _row.get("Día")
+            _ini = _row.get("Inicio")
+            _fin = _row.get("Fin")
+            if _ini is None or _fin is None or _dia is None:
+                continue
+            _razones: list[str] = []
+            if _dias_ok and _dia not in _dias_ok:
+                _razones.append("día no operativo")
+            _hi = _to_mins(_ini)
+            _hf = _to_mins(_fin)
+            if _fin.hour == 0 and _fin.minute == 0:
+                _hf = 24 * 60
+            if _hi < _base:
+                _razones.append(
+                    f"inicio {_ini.strftime('%H:%M')} < "
+                    f"{config_global.hora_inicio_operativo.strftime('%H:%M')}"
+                )
+            if _hf > _fin_op:
+                _razones.append(
+                    f"fin {_fin.strftime('%H:%M')} > "
+                    f"{config_global.hora_fin_operativo.strftime('%H:%M')}"
+                )
+            if _hi >= _base and (_hi - _base) % _gran != 0:
+                _razones.append(
+                    f"inicio no múltiplo de {_gran} min"
+                )
+            if _base < _hf <= _fin_op and (_hf - _base) % _gran != 0:
+                _razones.append(
+                    f"fin no múltiplo de {_gran} min"
+                )
+            if _razones:
+                _out_rows.append(
+                    f"{_dia} {_ini.strftime('%H:%M')}–"
+                    f"{_fin.strftime('%H:%M')}: "
+                    + ", ".join(_razones)
+                )
+
+        if _out_rows:
+            checks.append({
+                "id": "config_horaria",
+                "label": "Horarios respetan la configuración",
+                "status": "warn",
+                "detail": (
+                    f"{len(_out_rows)} horario(s) rompen día operativo / "
+                    f"rango / granularidad: "
+                    + "; ".join(_out_rows[:3])
+                    + (
+                        f" … (+{len(_out_rows) - 3} más)"
+                        if len(_out_rows) > 3 else ""
+                    )
+                ),
+            })
+        else:
+            checks.append({
+                "id": "config_horaria",
+                "label": "Horarios respetan la configuración",
+                "status": "ok",
+                "detail": (
+                    f"Todos los horarios caen dentro del rango "
+                    f"{config_global.hora_inicio_operativo.strftime('%H:%M')}-"
+                    f"{config_global.hora_fin_operativo.strftime('%H:%M')} "
+                    f"y son múltiplos de {_gran} min."
+                ),
             })
 
     return checks

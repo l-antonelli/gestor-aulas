@@ -259,19 +259,161 @@ def create_schedule_standalone(
     return result
 
 
+def clonar_plan_a_cronograma(
+    session: Session,
+    plan_id: str,
+    nombre: str,
+    ciclo_id_override: Optional[str] = None,
+) -> ScheduleDB:
+    """Crea un cronograma nuevo a partir del estado consolidado de un plan.
+
+    Fase F del rediseño 2026-09-15. Uso típico: después de varias
+    iteraciones de validación y edición sobre un plan, se quiere
+    "guardar" el estado actual como un cronograma reutilizable — por
+    ejemplo, para archivar la versión consolidada del ciclo o para
+    usarla como base de un ciclo siguiente.
+
+    Qué se clona:
+    - ``ComisionDB`` del plan → ``ComisionDB`` del schedule (nuevos
+      UUIDs), preservando: ``nombre``, ``numero``, ``cupo``,
+      ``descripcion``, ``coef_asignacion``, ``carrera_asignada``.
+      **No** se copia ``dictado_id`` — los dictados pertenecen al
+      ciclo; al generar un plan nuevo desde este cronograma se
+      re-resuelven contra el ciclo destino.
+    - ``HorarioDB`` de cada comisión del plan → ``ScheduleEntryDB``
+      del schedule (nuevos UUIDs, ``comision_id`` apuntando a la
+      comisión clonada), preservando: ``codigo_materia``, ``dia``,
+      ``hora_inicio``, ``hora_fin``, ``tipo_clase``, ``virtual``.
+      **No** se copia ``aula_id`` — las entries del cronograma son
+      "sin aula asignada"; el aula la resuelve el LP al armar el
+      plan nuevo.
+
+    Qué NO se clona (fuera de scope del cronograma):
+    - Snapshots de validación (``PlanValidationDB``).
+    - Excepciones de conflicto ignoradas (``IgnoredConflictDB``).
+    - Config del asignador, corridas del LP, etc.
+
+    Args:
+        session: sesión activa.
+        plan_id: plan de cursada de origen.
+        nombre: nombre para el cronograma nuevo.
+        ciclo_id_override: si se especifica, el cronograma queda
+            asociado a este ciclo en lugar del ``ciclo_id`` del plan.
+            Útil para clonar un plan del ciclo N como plantilla del
+            ciclo N+1.
+
+    Returns:
+        ``ScheduleDB`` recién creado (ya committeado).
+
+    Raises:
+        ValueError si el plan no existe o el ciclo de override no existe.
+    """
+    from src.database.models import (
+        ComisionDB as _Com,
+        HorarioDB as _Hor,
+        PlanificacionCursadaDB as _Plan,
+    )
+
+    plan = session.get(_Plan, plan_id)
+    if plan is None:
+        raise ValueError(f"Plan '{plan_id}' no existe.")
+
+    ciclo_id_final = ciclo_id_override if ciclo_id_override is not None else plan.ciclo_id
+    if ciclo_id_final is not None:
+        if ciclo_crud.get(session, ciclo_id_final) is None:
+            raise ValueError(f"Ciclo '{ciclo_id_final}' no existe.")
+
+    schedule = ScheduleDB(
+        id=str(uuid.uuid4()),
+        ciclo_id=ciclo_id_final,
+        nombre=nombre,
+        fecha_upload=date.today(),
+        source_filename=f"clon:plan:{plan_id}",
+    )
+    session.add(schedule)
+    session.flush()
+
+    # Clonar comisiones del plan → comisiones del schedule.
+    comisiones_plan = list(session.exec(
+        select(_Com).where(_Com.plan_cursada_id == plan_id)
+    ).all())
+    # Mapa plan_com_id → schedule_com_id, para linkear los horarios.
+    com_id_map: dict[str, str] = {}
+    for c in comisiones_plan:
+        new_id = str(uuid.uuid4())
+        com_id_map[c.id] = new_id
+        session.add(_Com(
+            id=new_id,
+            materia_codigo=c.materia_codigo,
+            dictado_id=None,  # dictados son del ciclo, se re-resuelven
+            plan_cursada_id=None,
+            schedule_id=schedule.id,
+            comision_key=c.comision_key,
+            nombre=c.nombre,
+            numero=c.numero,
+            cupo=c.cupo,
+            descripcion=c.descripcion,
+            coef_asignacion=c.coef_asignacion,
+            carrera_asignada=c.carrera_asignada,
+        ))
+    session.flush()
+
+    # Clonar horarios del plan → entries del schedule.
+    if com_id_map:
+        horarios_plan = list(session.exec(
+            select(_Hor).where(col(_Hor.comision_id).in_(list(com_id_map.keys())))
+        ).all())
+        for h in horarios_plan:
+            new_com_id = com_id_map.get(h.comision_id)
+            if new_com_id is None:
+                continue
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()),
+                schedule_id=schedule.id,
+                codigo_materia=h.codigo_materia,
+                dia=h.dia,
+                hora_inicio=h.hora_inicio,
+                hora_fin=h.hora_fin,
+                comision_id=new_com_id,
+                tipo_clase=h.tipo_clase,
+                virtual=h.virtual,
+                # Nota: NO se copia aula_id — el cronograma no tiene
+                # concepto de aula asignada; el LP resuelve eso al
+                # generar el plan siguiente.
+            ))
+
+    session.commit()
+    session.refresh(schedule)
+    return schedule
+
+
 # =============================================================================
 # Queries
 # =============================================================================
 
-def get_all_schedules(session: Session) -> list[ScheduleDB]:
-    """Listar todos los cronogramas."""
+def get_all_schedules(
+    session: Session, *, incluir_shadows: bool = False,
+) -> list[ScheduleDB]:
+    """Listar todos los cronogramas.
+
+    Los shadow schedules del importer (Fase G) se ocultan por default:
+    son artefactos temporales del preview que no deberían aparecer en
+    la Lista, en el wizard de plan, ni en los selectores de import
+    destino.
+    """
     statement = select(ScheduleDB).order_by(ScheduleDB.fecha_upload.desc())  # type: ignore[attr-defined]
+    if not incluir_shadows:
+        statement = statement.where(ScheduleDB.es_shadow_import == False)  # noqa: E712
     return list(session.exec(statement).all())
 
 
-def get_schedules_for_ciclo(session: Session, ciclo_id: str) -> list[ScheduleDB]:
-    """Get all schedules for a ciclo."""
+def get_schedules_for_ciclo(
+    session: Session, ciclo_id: str, *, incluir_shadows: bool = False,
+) -> list[ScheduleDB]:
+    """Get all schedules for a ciclo (excluye shadows del importer por default)."""
     statement = select(ScheduleDB).where(ScheduleDB.ciclo_id == ciclo_id)
+    if not incluir_shadows:
+        statement = statement.where(ScheduleDB.es_shadow_import == False)  # noqa: E712
     return list(session.exec(statement).all())
 
 

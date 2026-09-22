@@ -233,7 +233,16 @@ def render_schedule_calendar(
             continue
         for b in blocks:
             com = getattr(b, "comision", None)
-            com_tag = f" [C{com}]" if com else ""
+            # Fase I.3 · Preferimos el NOMBRE de la comisión (arbitrario,
+            # legible: "Mañana", "A", "Nocturno", "1") sobre el número.
+            # El número queda como fallback si no hay nombre.
+            _com_nombre = getattr(b, "comision_nombre", None)
+            if _com_nombre:
+                com_tag = f" [{_com_nombre}]"
+            elif com:
+                com_tag = f" [{com}]"
+            else:
+                com_tag = ""
             if color_by_comision:
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
@@ -378,20 +387,31 @@ def render_timetable_calendar(
                 )
             else:
                 # Modo completo: materia (codigo + nombre), comision y
-                # aula del patron. FullCalendar respeta los \n cuando
-                # el tema permite eventos altos. Si el horario es
-                # virtual no requiere aula: mostramos el icono para
-                # que no parezca un "sin aula" por falta de LP.
+                # aula del patron. Fase I.3 del rediseño 2026-09-21:
+                # emoji del **tipo predeterminado** (📖 teo / 🧪 lab)
+                # explícito, para diferenciarlo del tipo derivado del
+                # aula asignada por el LP (donde no ponemos icono
+                # porque el aula al lado ya lo aclara).
+                _tipo = getattr(b, "tipo_clase", None)
+                _tipo_icon = ""
+                if not b.virtual:
+                    if _tipo == "teorica":
+                        _tipo_icon = "📖"
+                    elif _tipo == "laboratorio":
+                        _tipo_icon = "🧪"
                 if b.virtual:
                     aula_line = "💻 Virtual (no requiere aula)"
+                    _prefix_icon = ""
                 elif b.aula_label:
                     aula_line = b.aula_label
+                    _prefix_icon = _tipo_icon or "🏛️"
                 else:
                     aula_line = "Sin aula"
+                    _prefix_icon = _tipo_icon or "📄"
                 title = (
                     f"{b.materia_codigo}{v_tag} — {b.materia_nombre}\n"
                     f"{b.comision_nombre}\n"
-                    f"🏛️ {aula_line}"
+                    f"{_prefix_icon} {aula_line}"
                 )
 
             border_color = "#FF9800" if b.en_periodo is False else bg
@@ -511,53 +531,75 @@ def render_editable_schedule_calendar(
             continue
         for b in blocks:
             com = getattr(b, "comision", None)
-            com_tag = f" [C{com}]" if com else ""
+            # Fase I.3 · Nombre de la comisión como etiqueta primaria.
+            # Fallback al número si no hay nombre (compat con blocks
+            # históricos que no populan `comision_nombre`).
+            _com_nombre = getattr(b, "comision_nombre", None)
+            if _com_nombre:
+                com_tag = f" [{_com_nombre}]"
+            elif com:
+                com_tag = f" [{com}]"
+            else:
+                com_tag = ""
             if color_by_comision:
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
                 bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
-            # Modalidad / tipo (opcionales, blocks del plan pueden
-            # tener estos datos; blocks de cronograma no).
+
+            # Fase I.3 · Iconos del bloque:
+            #   💻 → horario virtual (sin aula).
+            #   📖 → teórica **predeterminada** por el usuario.
+            #   🧪 → laboratorio **predeterminado** por el usuario.
+            #   📄 → "automático" pero SIN aula asignada aún (el LP
+            #        todavía no corrió sobre este horario).
+            #   Sin icono de tipo → el tipo se deriva del aula
+            #        asignada por el LP (el aula al lado ya lo aclara).
+            # Notación distinta entre tipo predeterminado (📖/🧪) y
+            # tipo derivado del aula post-LP (sin icono explícito):
+            # así el usuario puede distinguir "esto lo dijo la
+            # cátedra" de "esto lo puso el LP".
             _virtual = getattr(b, "virtual", False)
             _tipo = getattr(b, "tipo_clase", None)
             _aula_label = getattr(b, "aula_label", None)
-            # Emoji de la 3ra fila: prioridad virtual → tipo. El
-            # tipo se representa sólo con emoji (📖 teo · 🧪 lab)
-            # sin texto adicional, ya que el aula al lado desambigua.
+            _tipo_icon = ""
             if _virtual:
-                emoji = "💻"
-                aula_txt = "Virtual"
+                aula_txt = "💻 Virtual"
             else:
                 if _tipo == "teorica":
-                    emoji = "📖"
+                    _tipo_icon = "📖"
                 elif _tipo == "laboratorio":
-                    emoji = "🧪"
-                else:
-                    emoji = "🏛️"
+                    _tipo_icon = "🧪"
+                elif _aula_label is None and hasattr(b, "aula_label"):
+                    # Block del plan sin tipo predeterminado y sin
+                    # aula asignada — señal de "por asignar".
+                    _tipo_icon = "📄"
+                # Si tipo=None Y hay aula, no ponemos icono explícito:
+                # el aula (o el AulaDB.tipo si se propaga) desambigua.
+
                 if _aula_label:
-                    aula_txt = _aula_label
+                    aula_txt = f"🏛️ {_aula_label}"
                 elif hasattr(b, "aula_label"):
-                    # Block del plan sin aula asignada — distinguir
-                    # de blocks de cronograma que no tienen el campo.
                     aula_txt = "Sin aula"
                 else:
                     aula_txt = ""
 
             # Título en tres líneas:
-            #   1) código de materia [Cx]  · (badge de carreras si aplica)
+            #   1) código de materia [nombre_comision]  · (badge de carreras si aplica)
             #   2) nombre de la materia
-            #   3) emoji + aula (o "Virtual" / "Sin aula" cuando aplica)
+            #   3) icono de tipo + aula (o "💻 Virtual" cuando aplica)
             _carreras = getattr(b, "carreras_label", None)
             # Para no saturar la línea 1, sólo agregamos el badge de
-            # carreras cuando es una materia COMÚN (>=2 carreras). Las
-            # exclusivas se identifican por el filtro que las trajo, no
-            # necesitan aclaración.
+            # carreras cuando es una materia COMÚN (>=2 carreras).
             if _carreras and _carreras.startswith("Común"):
                 linea1 = f"{b.materia_codigo}{com_tag} · {_carreras}"
             else:
                 linea1 = f"{b.materia_codigo}{com_tag}"
             linea2 = b.materia_nombre
-            linea3 = f"{emoji} {aula_txt}".rstrip() if aula_txt else ""
+            # Prefijamos el icono del tipo al texto del aula. Si el
+            # tipo se derivará del aula por el LP, no hay icono → la
+            # línea empieza directamente con el aula.
+            _l3_parts = [p for p in (_tipo_icon, aula_txt) if p]
+            linea3 = " ".join(_l3_parts) if _l3_parts else ""
             title = "\n".join(
                 part for part in (linea1, linea2, linea3) if part
             )

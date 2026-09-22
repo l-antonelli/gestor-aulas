@@ -1001,8 +1001,7 @@ with tab_planes:
             sel_ciclo_w = sel_ciclo
 
             from src.services.cronograma_validation_service import (
-                get_latest_validation,
-                is_validation_stale,
+                compute_validation_status,
             )
             from src.services.schedule_service import (
                 get_schedules_for_ciclo,
@@ -1012,23 +1011,16 @@ with tab_planes:
                 _w_scheds = get_schedules_for_ciclo(_ws, sel_ciclo_w)
                 _w_sched_status: dict[str, dict] = {}
                 for s in _w_scheds:
-                    _val = get_latest_validation(
-                        _ws, s.id, sel_ciclo_w,
-                    )
-                    _stale = (
-                        is_validation_stale(_ws, _val)
-                        if _val is not None else False
-                    )
-                    if _val is None:
-                        _badge, _ok = "⚪ Sin validar", False
-                    elif _stale:
-                        _badge, _ok = (
-                            "🟡 Validado pero desactualizado", False,
-                        )
-                    else:
-                        _badge, _ok = "🟢 Validado y vigente", True
+                    # Estado consolidado (Fase A): considera faltantes,
+                    # particion, conflictos horarios, extras y staleness
+                    # por hash de contenido. Antes el wizard aprobaba
+                    # cualquier cronograma no-stale aunque tuviera
+                    # problemas, inconsistente con la Lista de Cronogramas.
+                    _st = compute_validation_status(_ws, s.id, sel_ciclo_w)
                     _w_sched_status[s.id] = {
-                        "schedule": s, "badge": _badge, "ok": _ok,
+                        "schedule": s,
+                        "badge": _st.badge,
+                        "ok": _st.listo_para_plan,
                     }
 
             if not _w_scheds:

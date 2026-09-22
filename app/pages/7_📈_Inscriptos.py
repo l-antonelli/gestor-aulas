@@ -298,6 +298,197 @@ def _render_materia_expander(
 
 
 # =============================================================================
+# Import masivo desde Excel (Fase E1 del rediseño 2026-09-15)
+# =============================================================================
+with st.expander(
+    "📥 Cargar masivo desde plantilla Excel", expanded=False,
+):
+    st.caption(
+        "Descargá la plantilla, completala con los datos de "
+        "inscriptos por (materia, año, cuatri), y subila para "
+        "importar de una. La app muestra un preview antes de "
+        "commitear, indicando qué filas son nuevas y cuáles pisan "
+        "valores existentes."
+    )
+
+    _tpl_col, _upl_col = st.columns(2)
+
+    with _tpl_col:
+        st.markdown("**Paso 1 · Descargar plantilla**")
+        from src.services.template_export_service import (
+            generar_plantilla_inscriptos_excel,
+            obtener_referencia_materias_activas,
+        )
+        _tpl_key = "insc_tpl_bytes"
+        _tpl_err_key = "insc_tpl_err"
+        if st.button(
+            "🧮 Generar plantilla",
+            key="insc_tpl_btn",
+            help=(
+                "Arma un Excel con los códigos del catálogo como "
+                "dropdown y validaciones de cuatri, año e inscriptos."
+            ),
+        ):
+            try:
+                with next(get_session()) as _sess:
+                    st.session_state[_tpl_key] = (
+                        generar_plantilla_inscriptos_excel(_sess)
+                    )
+                st.session_state.pop(_tpl_err_key, None)
+            except ValueError as _exc:
+                st.session_state[_tpl_err_key] = str(_exc)
+                st.session_state.pop(_tpl_key, None)
+
+        if _tpl_err_key in st.session_state:
+            st.error(st.session_state[_tpl_err_key])
+        elif _tpl_key in st.session_state:
+            st.download_button(
+                "⬇️ Descargar plantilla_inscriptos.xlsx",
+                data=st.session_state[_tpl_key],
+                file_name="plantilla_inscriptos.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"
+                ),
+                key="insc_tpl_dl",
+            )
+            with next(get_session()) as _sess:
+                _refs = obtener_referencia_materias_activas(_sess)
+            st.caption(
+                f"Plantilla lista con **{len(_refs)}** códigos "
+                "válidos en el dropdown."
+            )
+
+    with _upl_col:
+        st.markdown("**Paso 2 · Subir archivo completado**")
+        from src.services.inscripcion_import_service import (
+            commit_import as _insc_commit_import,
+            preview_import as _insc_preview_import,
+        )
+        _upl_file = st.file_uploader(
+            "Archivo CSV o Excel con inscriptos",
+            type=["csv", "xlsx", "xls"],
+            key="insc_upload",
+        )
+
+        _pv_key = "insc_import_preview"
+        _c_prev, _c_reset = st.columns([3, 1])
+        with _c_prev:
+            if st.button(
+                "🔍 Ver preview",
+                disabled=not _upl_file,
+                type="primary",
+                width="stretch",
+                key="insc_import_prev_btn",
+            ):
+                with next(get_session()) as _sess:
+                    st.session_state[_pv_key] = _insc_preview_import(
+                        _sess, _upl_file,
+                    )
+        with _c_reset:
+            if _pv_key in st.session_state:
+                if st.button(
+                    "🗑",
+                    help="Cancelar preview",
+                    key="insc_import_reset_btn",
+                    width="stretch",
+                ):
+                    st.session_state.pop(_pv_key, None)
+                    st.rerun()
+
+    # Render del preview (fuera de las columnas para tener todo el ancho).
+    if _pv_key in st.session_state:
+        _pv = st.session_state[_pv_key]
+        st.divider()
+        if _pv.tiene_errores_bloqueantes:
+            st.error("❌ El archivo tiene errores bloqueantes.")
+            for _err in _pv.parse_errors:
+                st.error(_err)
+        else:
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _m1.metric("Filas OK", len(_pv.filas_ok))
+            _m2.metric(
+                "Nuevas", _pv.n_nuevos,
+                help="Filas que agregan un registro nuevo a la DB.",
+            )
+            _m3.metric(
+                "Pisan valor", _pv.n_pisan,
+                help=(
+                    "Filas cuyo (materia, año, cuatri) ya existía "
+                    "en la DB y el valor difiere — se sobrescribe."
+                ),
+            )
+            _m4.metric(
+                "Con errores", len(_pv.filas_error),
+                delta=(
+                    "⚠️ se ignoran" if _pv.filas_error else None
+                ),
+                delta_color="inverse",
+            )
+            if _pv.n_iguales:
+                st.caption(
+                    f"Además hay {_pv.n_iguales} filas con valor "
+                    "idéntico al previo — no cambian nada."
+                )
+
+            if _pv.warnings:
+                with st.expander(
+                    f"⚠️ Avisos ({len(_pv.warnings)})", expanded=False,
+                ):
+                    for _w in _pv.warnings:
+                        st.warning(_w)
+
+            if _pv.filas_error:
+                with st.expander(
+                    f"🚫 Filas con errores ({len(_pv.filas_error)})",
+                    expanded=True,
+                ):
+                    for _fila_num, _msg in _pv.filas_error:
+                        st.warning(f"Fila {_fila_num}: {_msg}")
+
+            # Tabla de filas OK para inspección.
+            if _pv.filas_ok:
+                _df_pv = pd.DataFrame([
+                    {
+                        "Fila": f.fila_num,
+                        "Materia": f"{f.materia_codigo} — {f.materia_nombre}",
+                        "Año": f.anio,
+                        "Cuatri": f.cuatrimestre,
+                        "Valor previo": (
+                            "(nuevo)" if f.valor_previo is None
+                            else str(f.valor_previo)
+                        ),
+                        "Valor nuevo": f.inscriptos,
+                        "Cambio": (
+                            "🆕 nuevo" if f.es_nuevo
+                            else ("✏️ actualiza" if f.cambia_valor else "= igual")
+                        ),
+                    }
+                    for f in _pv.filas_ok
+                ])
+                st.dataframe(
+                    _df_pv, use_container_width=True, hide_index=True,
+                )
+
+            if st.button(
+                "✅ Confirmar importación",
+                type="primary",
+                width="stretch",
+                key="insc_import_confirm_btn",
+            ):
+                with next(get_session()) as _sess:
+                    _res = _insc_commit_import(_sess, _pv)
+                st.success(
+                    f"Import completado. Creadas: {_res.filas_creadas}, "
+                    f"Actualizadas: {_res.filas_actualizadas}, "
+                    f"Sin cambio: {_res.filas_sin_cambio}."
+                )
+                st.session_state.pop(_pv_key, None)
+                st.session_state.pop("insc_upload", None)
+                st.rerun()
+
+
+# =============================================================================
 # Filtros + visibility toggles
 # =============================================================================
 with st.container(border=True):
@@ -316,8 +507,13 @@ with st.container(border=True):
     with fc2:
         _cuatri_filter = st.selectbox(
             "Cuatrimestre a mostrar",
-            ["Todos", "1C", "2C"],
+            ["Todos", "1C", "2C", "Anual"],
             key="insc_cuatri_filter",
+            help=(
+                "Filtra qué registros se muestran en las tablas. "
+                "'Todos' incluye Anual. Con 'Anual' se muestran sólo "
+                "los registros de materias que se cursan todo el año."
+            ),
         )
     with fc3:
         _anio_target_global = st.number_input(
@@ -576,6 +772,8 @@ if _show_without_data:
                 ):
                     _valid = edited.dropna(subset=["Año", "Cuatrimestre", "Inscriptos"])
                     if not _valid.empty:
+                        from datetime import datetime as _dt
+                        _now = _dt.utcnow()
                         with next(get_session()) as sess:
                             for _, r in _valid.iterrows():
                                 sess.add(InscripcionHistoricaDB(
@@ -583,6 +781,8 @@ if _show_without_data:
                                     anio=int(r["Año"]),
                                     cuatrimestre=str(r["Cuatrimestre"]),
                                     inscriptos=int(r["Inscriptos"]),
+                                    updated_at=_now,
+                                    origen="manual",
                                 ))
                             sess.commit()
                         st.toast(f"{_code}: {len(_valid)} registros creados.")
@@ -656,6 +856,11 @@ if _show_unmatched:
                             "Asociar", type="primary", key=f"unm_assign_{_uc}",
                         ):
                             _dest_code = _dest.split(" - ")[0]
+                            from datetime import datetime as _dt
+                            from src.services.inscripcion_import_service import (
+                                registrar_alias as _reg_alias,
+                            )
+                            _now = _dt.utcnow()
                             with next(get_session()) as sess:
                                 for _, r in _uc_data.iterrows():
                                     _anio = int(r["Año"])
@@ -667,6 +872,8 @@ if _show_unmatched:
                                     )
                                     if existing:
                                         existing.inscriptos += _insc
+                                        existing.updated_at = _now
+                                        existing.origen = "override"
                                         sess.add(existing)
                                     else:
                                         sess.add(InscripcionHistoricaDB(
@@ -674,9 +881,26 @@ if _show_unmatched:
                                             anio=_anio,
                                             cuatrimestre=_cuatri,
                                             inscriptos=_insc,
+                                            updated_at=_now,
+                                            origen="override",
                                         ))
                                 sess.commit()
-                            st.toast(f"Asociado: {_uc} → {_dest_code}")
+                                # Fase E2: persistir el alias para que
+                                # la proxima importacion resuelva
+                                # automaticamente sin volver a
+                                # aparecer en "Sin matchear".
+                                _reg_alias(
+                                    sess, _uc, _dest_code,
+                                    origen="manual",
+                                    nota=(
+                                        f"Match manual desde UI el "
+                                        f"{_now:%Y-%m-%d}"
+                                    ),
+                                )
+                            st.toast(
+                                f"Asociado: {_uc} → {_dest_code}. "
+                                "Alias guardado — no volverá a aparecer."
+                            )
                             st.rerun()
 
 

@@ -1,0 +1,685 @@
+"""Servicio de importación de horarios a un cronograma existente.
+
+Fase C2 del rediseño 2026-09-15. Reemplaza al flujo antiguo
+``create_schedule_standalone`` (que sólo servía para crear cronogramas
+nuevos y confiaba parcialmente en el input) por un pipeline explícito
+de dos pasos:
+
+1. **Preview** (``preview_import``): parsea el archivo, resuelve
+   códigos de materia contra el catálogo, detecta materias que ya
+   tienen datos en el cronograma destino, arma comisiones sintéticas
+   por (materia, nombre_comision), y devuelve un ``ImportPreview``
+   que la UI puede mostrar antes de commitear nada.
+
+2. **Commit** (``commit_import``): recibe el preview + las decisiones
+   por materia (``agregar`` / ``reemplazar`` / ``ignorar``) que
+   resolvió el usuario en la UI, y aplica los cambios sobre
+   ``ScheduleEntryDB`` + ``ComisionDB`` en una sola transacción.
+
+El importer NO ejecuta las validaciones estructurales completas del
+cronograma (cobertura, conflictos horarios, camino de cursada, etc.)
+— esas quedan a cargo de ``validar_cronograma`` una vez que el
+usuario aprieta "Prevalidar". El preview sólo hace las validaciones
+"tipográficas" que evitan un import roto:
+
+- Códigos de materia existentes en el catálogo (con resolución
+  ``codigo_guarani``).
+- Nombres de comisión únicos para las que se agregan (dentro de la
+  misma materia y del mismo cronograma).
+- Detección de materias con horarios previos → decisión requerida.
+
+Comisiones "nombradas" arbitrariamente (no numéricas): el usuario
+puede llamar a una comisión ``1``, ``A``, ``Mañana`` o
+``Comisión 3 turno tarde``. La unicidad se resuelve sobre el string
+canonicalizado (trim + normalización case-insensitive). El campo
+``ComisionDB.numero`` sigue siendo un entero autoderivado (usado por
+``comision_key`` y ordenamiento), pero el usuario no lo ve.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Literal, Optional
+
+from sqlmodel import Session, select
+
+from src.database.models import (
+    ComisionDB,
+    ScheduleDB,
+    ScheduleEntryDB,
+)
+from src.services.comision_service import (
+    create_comision_for_schedule,
+    list_comisiones_for_schedule_materia,
+)
+from src.services.horario_file_parser import parse_horarios_file
+from src.services.horario_loading_service import (
+    HorarioInput,
+    _resolve_materia_code,
+)
+
+
+# =============================================================================
+# Dataclasses
+# =============================================================================
+
+MergePolicy = Literal["agregar", "reemplazar", "ignorar"]
+
+
+@dataclass
+class ComisionEnPreview:
+    """Comisión sintética derivada del archivo importado.
+
+    Agrupa los horarios que comparten (materia_codigo, nombre_comision)
+    en el archivo. Se usa para (a) decidir si el nombre choca con una
+    comisión ya existente y (b) volcar los entries al DB al commitear.
+    """
+    materia_codigo: str
+    nombre_comision: str
+    horarios: list[HorarioInput] = field(default_factory=list)
+
+    @property
+    def nombre_canonico(self) -> str:
+        """Clave normalizada para deduplicación (trim + lowercase).
+
+        La UI muestra el nombre como lo escribió el usuario, pero el
+        chequeo de unicidad usa esta forma canónica para evitar
+        problemas obvios (``"1 "`` vs ``"1"``, ``"A"`` vs ``"a"``).
+        """
+        return self.nombre_comision.strip().lower()
+
+
+@dataclass
+class MateriaEnPreview:
+    """Estado de una materia dentro del preview.
+
+    Contiene tanto las comisiones que trae el archivo como las que ya
+    existen en el cronograma (si las hay), para que la UI pueda pedir
+    la decisión de merge apropiada.
+    """
+    materia_codigo: str
+    materia_nombre: str
+    resolution_type: str  # "direct" | "guarani" | "unresolved"
+    original_code: Optional[str] = None  # sólo si resolution_type == "guarani"
+    comisiones_nuevas: list[ComisionEnPreview] = field(default_factory=list)
+    comisiones_existentes: list[str] = field(default_factory=list)  # nombres
+    n_entries_existentes: int = 0
+
+    @property
+    def tiene_datos_previos(self) -> bool:
+        return self.n_entries_existentes > 0
+
+    @property
+    def n_horarios_nuevos(self) -> int:
+        return sum(len(c.horarios) for c in self.comisiones_nuevas)
+
+
+@dataclass
+class ImportPreview:
+    """Resultado del preview de importación sobre un cronograma.
+
+    - ``schedule_id``: cronograma destino (siempre existe: el preview
+      requiere un cronograma ya creado).
+    - ``materias``: lista de ``MateriaEnPreview`` con las materias que
+      trae el archivo. Cada una es una unidad de decisión de merge.
+    - ``materias_no_resueltas``: códigos que no matchean el catálogo,
+      con la fila donde aparecieron.
+    - ``parse_errors``: errores estructurales del archivo (columnas
+      faltantes, filas mal formadas). Bloquean el commit.
+    - ``warnings``: mensajes no bloqueantes (por ejemplo, resolución
+      via ``codigo_guarani``).
+    """
+    schedule_id: str
+    materias: list[MateriaEnPreview] = field(default_factory=list)
+    materias_no_resueltas: list[tuple[str, int]] = field(default_factory=list)
+    parse_errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def tiene_errores_bloqueantes(self) -> bool:
+        return bool(self.parse_errors)
+
+    @property
+    def total_horarios(self) -> int:
+        return sum(m.n_horarios_nuevos for m in self.materias)
+
+    @property
+    def materias_con_conflicto(self) -> list[MateriaEnPreview]:
+        """Materias que ya tienen datos previos — requieren decisión."""
+        return [m for m in self.materias if m.tiene_datos_previos]
+
+
+@dataclass
+class ImportResult:
+    """Resultado del commit de una importación.
+
+    - ``entries_creados``: cantidad de ``ScheduleEntryDB`` insertados.
+    - ``comisiones_creadas``: cantidad de ``ComisionDB`` nuevas.
+    - ``entries_borrados``: cantidad borrada por decisión ``reemplazar``.
+    - ``materias_ignoradas``: códigos que el usuario decidió omitir.
+    - ``errors``: errores encontrados al commitear (por ejemplo,
+      colisión de nombre de comisión no detectada en el preview).
+    """
+    entries_creados: int = 0
+    comisiones_creadas: int = 0
+    entries_borrados: int = 0
+    comisiones_borradas: int = 0
+    materias_ignoradas: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+# =============================================================================
+# Preview
+# =============================================================================
+
+
+def preview_import(
+    session: Session,
+    schedule_id: str,
+    file,
+) -> ImportPreview:
+    """Arma un preview de la importación sin commitear nada.
+
+    Args:
+        session: sesión activa.
+        schedule_id: cronograma destino.
+        file: file-like con ``.name`` (Streamlit UploadedFile o similar).
+
+    Returns:
+        ``ImportPreview`` con las materias detectadas y los conflictos
+        de merge que la UI tiene que resolver antes de commitear.
+    """
+    preview = ImportPreview(schedule_id=schedule_id)
+
+    # Validar que el cronograma existe.
+    if session.get(ScheduleDB, schedule_id) is None:
+        preview.parse_errors.append(
+            f"Cronograma '{schedule_id}' no existe."
+        )
+        return preview
+
+    # Parsear el archivo.
+    entries, parse_errors = parse_horarios_file(file)
+    preview.parse_errors.extend(parse_errors)
+    if not entries:
+        if not parse_errors:
+            preview.parse_errors.append(
+                "El archivo no tiene horarios válidos."
+            )
+        return preview
+
+    # Agrupar por materia (código original antes de resolver) y por comisión.
+    # Se preserva la fila para reportar errores útiles si algo no resuelve.
+    por_materia_original: dict[str, dict[str, list[tuple[int, HorarioInput]]]] = {}
+    for idx, entry in enumerate(entries, start=1):
+        por_materia = por_materia_original.setdefault(entry.codigo_materia, {})
+        # Deduplicación canónica de nombre de comisión.
+        clave = entry.comision_nombre.strip().lower()
+        por_materia.setdefault(clave, []).append((idx, entry))
+
+    # Resolver códigos y armar el preview.
+    for codigo_original, por_comision in por_materia_original.items():
+        resolution = _resolve_materia_code(session, codigo_original)
+
+        if resolution.resolution_type == "unresolved":
+            # Reportar la primera fila donde apareció el código.
+            primera_fila = min(
+                idx for horarios in por_comision.values() for idx, _ in horarios
+            )
+            preview.materias_no_resueltas.append(
+                (codigo_original, primera_fila)
+            )
+            continue
+
+        if resolution.resolution_type == "guarani":
+            preview.warnings.append(
+                f"Código '{resolution.original_code}' resuelto vía "
+                f"código Guaraní → '{resolution.resolved_code}'."
+            )
+
+        codigo_resuelto = resolution.resolved_code
+        assert codigo_resuelto is not None  # unresolved ya salió arriba
+        materia = resolution.materia
+        materia_nombre = materia.nombre if materia else codigo_resuelto
+
+        # Comisiones nuevas del archivo.
+        comisiones_nuevas: list[ComisionEnPreview] = []
+        for _, horarios in por_comision.items():
+            # Tomar el primer nombre como el "canónico" para display.
+            nombre_display = horarios[0][1].comision_nombre.strip()
+            com = ComisionEnPreview(
+                materia_codigo=codigo_resuelto,
+                nombre_comision=nombre_display,
+                horarios=[hor for _, hor in horarios],
+            )
+            comisiones_nuevas.append(com)
+
+        # Existentes en el cronograma.
+        coms_db = list_comisiones_for_schedule_materia(
+            session, schedule_id, codigo_resuelto,
+        )
+        nombres_existentes = [c.nombre for c in coms_db]
+        n_entries_prev = session.exec(
+            select(ScheduleEntryDB.id)
+            .where(ScheduleEntryDB.schedule_id == schedule_id)
+            .where(ScheduleEntryDB.codigo_materia == codigo_resuelto)
+        ).all()
+
+        mp = MateriaEnPreview(
+            materia_codigo=codigo_resuelto,
+            materia_nombre=materia_nombre,
+            resolution_type=resolution.resolution_type,
+            original_code=(
+                resolution.original_code
+                if resolution.resolution_type == "guarani" else None
+            ),
+            comisiones_nuevas=comisiones_nuevas,
+            comisiones_existentes=nombres_existentes,
+            n_entries_existentes=len(n_entries_prev),
+        )
+        preview.materias.append(mp)
+
+    # Orden estable para la UI: primero las que requieren decisión.
+    preview.materias.sort(
+        key=lambda m: (not m.tiene_datos_previos, m.materia_codigo),
+    )
+
+    return preview
+
+
+# =============================================================================
+# Commit
+# =============================================================================
+
+
+def commit_import(
+    session: Session,
+    preview: ImportPreview,
+    decisiones: dict[str, MergePolicy],
+) -> ImportResult:
+    """Aplica el preview con las decisiones de merge por materia.
+
+    Args:
+        session: sesión activa.
+        preview: preview generado por ``preview_import``. Debe pertenecer
+            al mismo cronograma que se está editando.
+        decisiones: mapa ``{materia_codigo -> MergePolicy}``. Para
+            materias sin datos previos la decisión se ignora (siempre
+            se agrega). Para materias con datos previos, la decisión
+            debe estar presente (default implícito: ``agregar``).
+
+    Returns:
+        ``ImportResult`` con estadísticas del commit.
+
+    Raises:
+        ValueError si el preview trae errores bloqueantes.
+    """
+    if preview.tiene_errores_bloqueantes:
+        raise ValueError(
+            "El preview tiene errores bloqueantes; corregir el archivo "
+            "antes de commitear."
+        )
+
+    result = ImportResult()
+    schedule_id = preview.schedule_id
+
+    for mp in preview.materias:
+        decision: MergePolicy = decisiones.get(mp.materia_codigo, "agregar")
+
+        if not mp.tiene_datos_previos:
+            # Nada previo — siempre agregar, sin importar la decisión.
+            decision = "agregar"
+
+        if decision == "ignorar":
+            result.materias_ignoradas.append(mp.materia_codigo)
+            continue
+
+        if decision == "reemplazar":
+            _borrar_entries_y_comisiones_de_materia(
+                session, schedule_id, mp.materia_codigo, result,
+            )
+            # Después de borrar, el escenario es equivalente a "sin datos
+            # previos": todas las comisiones nuevas se pueden crear sin
+            # colisión de nombre.
+
+        _agregar_comisiones_nuevas(
+            session, schedule_id, mp, decision, result,
+        )
+
+    session.commit()
+    return result
+
+
+def _borrar_entries_y_comisiones_de_materia(
+    session: Session, schedule_id: str, materia_codigo: str,
+    result: ImportResult,
+) -> None:
+    """Borra todas las entries y comisiones de una materia en un cronograma."""
+    entries = list(session.exec(
+        select(ScheduleEntryDB)
+        .where(ScheduleEntryDB.schedule_id == schedule_id)
+        .where(ScheduleEntryDB.codigo_materia == materia_codigo)
+    ).all())
+    for e in entries:
+        session.delete(e)
+    result.entries_borrados += len(entries)
+
+    coms = list_comisiones_for_schedule_materia(
+        session, schedule_id, materia_codigo,
+    )
+    for c in coms:
+        session.delete(c)
+    result.comisiones_borradas += len(coms)
+    session.flush()
+
+
+def _agregar_comisiones_nuevas(
+    session: Session,
+    schedule_id: str,
+    mp: "MateriaEnPreview",
+    decision: MergePolicy,
+    result: ImportResult,
+) -> None:
+    """Crea las comisiones + entries nuevas de una materia.
+
+    - Si ``decision == "agregar"`` y la materia tiene comisiones
+      previas, exige que los nombres canónicos de las comisiones
+      nuevas **no colisionen** con los existentes (unicidad).
+    - Si ``decision == "reemplazar"``, se acaba de borrar todo y no
+      hay colisiones posibles.
+    """
+    # Nombres canónicos ya usados (comisiones que sobrevivieron).
+    coms_actuales = list_comisiones_for_schedule_materia(
+        session, schedule_id, mp.materia_codigo,
+    )
+    nombres_actuales_canon: set[str] = {
+        (c.nombre or "").strip().lower() for c in coms_actuales
+    }
+
+    for com_new in mp.comisiones_nuevas:
+        canon = com_new.nombre_canonico
+        if decision == "agregar" and canon in nombres_actuales_canon:
+            result.errors.append(
+                f"{mp.materia_codigo}: la comisión "
+                f"'{com_new.nombre_comision}' ya existe en el "
+                "cronograma. Elegí otro nombre o cambiá la decisión "
+                "a 'reemplazar' para esta materia."
+            )
+            continue
+
+        com_db = create_comision_for_schedule(
+            session, schedule_id, mp.materia_codigo,
+            nombre=com_new.nombre_comision,
+        )
+        result.comisiones_creadas += 1
+        nombres_actuales_canon.add(canon)
+
+        for hor in com_new.horarios:
+            entry = ScheduleEntryDB(
+                id=str(uuid.uuid4()),
+                schedule_id=schedule_id,
+                codigo_materia=mp.materia_codigo,
+                dia=hor.dia,
+                hora_inicio=hor.hora_inicio,
+                hora_fin=hor.hora_fin,
+                comision_id=com_db.id,
+                tipo_clase=hor.tipo_clase,
+                virtual=hor.virtual,
+            )
+            session.add(entry)
+            result.entries_creados += 1
+
+
+# =============================================================================
+# Shadow schedule (Fase G del rediseño 2026-09-15)
+# =============================================================================
+#
+# En vez de que el usuario vea el preview como una tabla estática y
+# después confirme para persistir, se crea un "cronograma sombra" que
+# contiene las entries del destino + las nuevas del archivo aplicadas
+# según las decisiones de merge. Ese shadow es un ScheduleDB normal
+# con `es_shadow_import=True`, lo cual permite:
+#
+# - Renderizarlo con el calendario editable normal (mismos widgets).
+# - Ejecutar `validar_cronograma` sobre él (validaciones sobre el
+#   estado hipotético).
+# - Editarlo con `add_schedule_entry`/`update_schedule_entry`/etc.
+#
+# Al confirmar, se aplican las diferencias entre el shadow y el
+# destino (create/update/delete de entries y comisiones), y se
+# elimina el shadow. Al cancelar se borra el shadow directamente.
+
+
+def _copiar_entries_y_comisiones(
+    session: Session,
+    src_schedule_id: str,
+    dst_schedule_id: str,
+) -> dict[str, str]:
+    """Duplica las comisiones + entries del schedule origen al destino.
+
+    Devuelve un mapa `{com_id_origen: com_id_destino}` para que el
+    caller pueda re-linkear referencias si hace falta.
+    """
+    coms_src = list(session.exec(
+        select(ComisionDB).where(ComisionDB.schedule_id == src_schedule_id)
+    ).all())
+    com_id_map: dict[str, str] = {}
+    for c in coms_src:
+        new_id = str(uuid.uuid4())
+        com_id_map[c.id] = new_id
+        session.add(ComisionDB(
+            id=new_id,
+            materia_codigo=c.materia_codigo,
+            dictado_id=c.dictado_id,
+            plan_cursada_id=None,
+            schedule_id=dst_schedule_id,
+            comision_key=c.comision_key,
+            nombre=c.nombre,
+            numero=c.numero,
+            cupo=c.cupo,
+            descripcion=c.descripcion,
+            coef_asignacion=c.coef_asignacion,
+            carrera_asignada=c.carrera_asignada,
+        ))
+    session.flush()
+
+    entries_src = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == src_schedule_id,
+        )
+    ).all())
+    for e in entries_src:
+        new_com_id = com_id_map.get(e.comision_id) if e.comision_id else None
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()),
+            schedule_id=dst_schedule_id,
+            codigo_materia=e.codigo_materia,
+            dia=e.dia,
+            hora_inicio=e.hora_inicio,
+            hora_fin=e.hora_fin,
+            comision_id=new_com_id,
+            tipo_clase=e.tipo_clase,
+            virtual=e.virtual,
+        ))
+    session.flush()
+    return com_id_map
+
+
+def crear_shadow_import(
+    session: Session,
+    destino_id: str,
+    file,
+) -> tuple[ScheduleDB, ImportPreview]:
+    """Crea un shadow ScheduleDB con los datos del destino + import.
+
+    El shadow es un cronograma temporal marcado con
+    `es_shadow_import=True` y `shadow_target_schedule_id=destino_id`.
+    Contiene una copia de las entries del destino + las nuevas del
+    archivo (según las decisiones de merge por default: "agregar" —
+    que se pueden cambiar después via un nuevo `crear_shadow_import`
+    o editando el shadow directamente).
+
+    Devuelve `(shadow, preview)` para que el caller pueda mostrar
+    tanto el calendario del shadow como el detalle del preview.
+    """
+    destino = session.get(ScheduleDB, destino_id)
+    if destino is None:
+        raise ValueError(f"Cronograma destino '{destino_id}' no existe.")
+
+    # Preview inicial para tener el desglose de comisiones nuevas.
+    preview = preview_import(session, destino_id, file)
+    if preview.tiene_errores_bloqueantes:
+        # Devolvemos un shadow "vacío" descartable — la UI mostrará
+        # los parse_errors y no ofrecerá calendario.
+        raise ValueError(
+            "El archivo tiene errores estructurales — no se puede "
+            "armar el preview. Detalles: "
+            + "; ".join(preview.parse_errors)
+        )
+
+    # 1) Crear el shadow y copiar todo el estado actual del destino.
+    from datetime import date as _date
+    shadow = ScheduleDB(
+        id=str(uuid.uuid4()),
+        ciclo_id=destino.ciclo_id,
+        nombre=f"[SHADOW] {destino.nombre}",
+        fecha_upload=_date.today(),
+        source_filename=f"shadow:{destino_id}",
+        es_shadow_import=True,
+        shadow_target_schedule_id=destino_id,
+    )
+    session.add(shadow)
+    session.flush()
+    _copiar_entries_y_comisiones(session, destino_id, shadow.id)
+    session.flush()
+
+    # 2) Aplicar el import sobre el shadow como si fuera un cronograma
+    #    normal. Necesitamos recomputar el preview PARA EL SHADOW
+    #    (el original apuntaba al destino). En el shadow, después de
+    #    la copia, todas las materias del archivo que ya estaban en
+    #    el destino aparecen como "con datos previos" → decisiones
+    #    default: `agregar`. Si el nombre de comisión colisiona (por
+    #    ejemplo "1" del destino y "1" del archivo), `commit_import`
+    #    lo marca como error, que la UI muestra.
+    #
+    #    Rewind al inicio del archivo para volver a parsear:
+    try:
+        file.seek(0)
+    except Exception:  # noqa: BLE001
+        pass
+    preview_shadow = preview_import(session, shadow.id, file)
+    if not preview_shadow.tiene_errores_bloqueantes:
+        # Decisiones por default: "agregar" para todo lo que tenga
+        # datos previos. El usuario después puede ajustar via UI y
+        # regenerar el shadow.
+        decisiones: dict[str, MergePolicy] = {
+            m.materia_codigo: "agregar"
+            for m in preview_shadow.materias
+            if m.tiene_datos_previos
+        }
+        commit_import(session, preview_shadow, decisiones)
+
+    session.commit()
+    session.refresh(shadow)
+    # El preview que devolvemos es el "vs destino" (para que la UI
+    # muestre las decisiones que se aplicaron al shadow).
+    return shadow, preview
+
+
+def finalizar_shadow_import(
+    session: Session, shadow_id: str,
+) -> str:
+    """Aplica los cambios del shadow al schedule destino y borra el shadow.
+
+    Estrategia: reemplaza completamente las entries + comisiones del
+    destino con las del shadow. Es más simple y consistente que
+    calcular diffs — el shadow ya representa el estado deseado.
+
+    Devuelve el id del schedule destino.
+    """
+    shadow = session.get(ScheduleDB, shadow_id)
+    if shadow is None:
+        raise ValueError(f"Shadow '{shadow_id}' no existe.")
+    if not shadow.es_shadow_import:
+        raise ValueError(
+            f"El schedule '{shadow_id}' no es un shadow del importer."
+        )
+    destino_id = shadow.shadow_target_schedule_id
+    if destino_id is None:
+        raise ValueError(
+            f"Shadow '{shadow_id}' no tiene destino asociado."
+        )
+    destino = session.get(ScheduleDB, destino_id)
+    if destino is None:
+        raise ValueError(
+            f"Destino '{destino_id}' del shadow ya no existe."
+        )
+
+    # 1) Borrar entries + comisiones del destino.
+    entries_dst = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == destino_id,
+        )
+    ).all())
+    for e in entries_dst:
+        session.delete(e)
+    coms_dst = list(session.exec(
+        select(ComisionDB).where(ComisionDB.schedule_id == destino_id)
+    ).all())
+    for c in coms_dst:
+        session.delete(c)
+    session.flush()
+
+    # 2) Copiar shadow → destino.
+    _copiar_entries_y_comisiones(session, shadow_id, destino_id)
+
+    # 3) Borrar el shadow (entries + comisiones + fila del schedule).
+    _borrar_shadow_datos(session, shadow_id)
+    session.delete(shadow)
+    session.commit()
+    return destino_id
+
+
+def descartar_shadow_import(session: Session, shadow_id: str) -> None:
+    """Elimina un shadow y todos sus datos temporales."""
+    shadow = session.get(ScheduleDB, shadow_id)
+    if shadow is None:
+        return
+    if not shadow.es_shadow_import:
+        raise ValueError(
+            f"El schedule '{shadow_id}' no es un shadow — no borro."
+        )
+    _borrar_shadow_datos(session, shadow_id)
+    session.delete(shadow)
+    session.commit()
+
+
+def _borrar_shadow_datos(session: Session, shadow_id: str) -> None:
+    """Borra entries + comisiones de un shadow (sin borrar la fila del schedule)."""
+    entries = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == shadow_id,
+        )
+    ).all())
+    for e in entries:
+        session.delete(e)
+    coms = list(session.exec(
+        select(ComisionDB).where(ComisionDB.schedule_id == shadow_id)
+    ).all())
+    for c in coms:
+        session.delete(c)
+    session.flush()
+
+
+def list_shadows_huerfanos(session: Session) -> list[ScheduleDB]:
+    """Devuelve los shadow schedules que quedaron en la DB.
+
+    Si el usuario cierra el navegador con un preview abierto, el
+    shadow queda persistido. Este helper lo lista para que la UI
+    pueda ofrecerlo al usuario y limpiarlo.
+    """
+    stmt = select(ScheduleDB).where(
+        ScheduleDB.es_shadow_import == True,  # noqa: E712
+    ).order_by(ScheduleDB.fecha_upload.desc())  # type: ignore[attr-defined]
+    return list(session.exec(stmt).all())

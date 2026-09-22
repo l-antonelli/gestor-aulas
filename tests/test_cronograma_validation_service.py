@@ -10,7 +10,7 @@ from datetime import date, time
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from src.database.models import (
     CarreraDB,
@@ -305,3 +305,448 @@ class TestStaleness:
         session.commit()
 
         assert is_validation_stale(session, record) is True
+
+    def test_is_validation_stale_por_cambio_de_contenido_mismo_count(
+        self, session, setup_basic,
+    ):
+        """Regresion Fase A: mover una entry de dia (mismo count) tiene
+        que disparar staleness. Antes solo se comparaba entry_count, asi
+        que este caso pasaba desapercibido y el badge quedaba en verde
+        con datos podridos.
+        """
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        record = persist_validation(session, summary)
+
+        assert is_validation_stale(session, record) is False
+        assert record.content_hash  # se persistio
+
+        # Mover la entry de Lunes a Martes — mismo count, distinto contenido
+        entry = session.exec(
+            select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sched.id)
+        ).first()
+        assert entry is not None
+        entry.dia = "Martes"
+        session.add(entry)
+        session.commit()
+
+        assert is_validation_stale(session, record) is True
+
+    def test_is_validation_stale_por_cambio_de_optativa_flag(
+        self, session, setup_basic,
+    ):
+        """Regresion Fase A: cambiar PlanEstudioDB.optativa cambia el set
+        esperado cuando el toggle esta ON, entonces tiene que disparar
+        staleness. Antes solo counts entraban en la comparacion.
+        """
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        summary = validar_cronograma(
+            session, sched.id, ciclo.id, exclude_optativas=True,
+        )
+        record = persist_validation(session, summary)
+        assert is_validation_stale(session, record) is False
+
+        # Marcar FIS101 como optativa en PlanEstudio → cambia el set
+        # esperado con toggle ON (pasa de 2 a 1 esperadas).
+        pe = session.exec(
+            select(PlanEstudioDB)
+            .where(PlanEstudioDB.materia_codigo == "FIS101")
+        ).first()
+        assert pe is not None
+        pe.optativa = True
+        session.add(pe)
+        session.commit()
+
+        assert is_validation_stale(session, record) is True
+
+    def test_is_validation_stale_fallback_snapshot_historico_sin_hash(
+        self, session, setup_basic,
+    ):
+        """Fase A: snapshots viejos sin content_hash caen al comportamiento
+        legado (comparacion por counts) para no romper la UI de historicos.
+        """
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        record = persist_validation(session, summary)
+
+        # Simular snapshot historico: borrar el hash
+        record.content_hash = ""
+        session.add(record)
+        session.commit()
+
+        # Sin cambios reales, no debe ser stale (fallback: counts iguales)
+        assert is_validation_stale(session, record) is False
+
+        # Cambio que SI cambia el count → detecta stale por fallback
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Miercoles",
+            hora_inicio=time(9, 0), hora_fin=time(11, 0),
+            comision=1,
+        ))
+        session.commit()
+        assert is_validation_stale(session, record) is True
+
+
+class TestBadgeUnificado:
+    """Regresion Fase A: el badge de la Lista de Cronogramas y el wizard
+    del Plan comparten la misma politica. Antes cada consumidor tenia una
+    logica distinta — la Lista ignoraba n_conflictos_horarios y n_extra,
+    el wizard ignoraba todo excepto staleness.
+    """
+
+    def test_badge_rojo_si_conflictos_horarios(self, session, setup_basic):
+        """Un cronograma con conflictos horarios pero sin faltantes ni
+        particion invalida tiene que dar badge 🔴, no 🟢.
+        """
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        # Simular conflictos horarios detectados
+        summary.n_conflictos_horarios = 2
+        summary.n_faltantes = 0
+        summary.particion_valid = True
+        record = persist_validation(session, summary)
+        assert record.n_conflictos_horarios == 2
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.listo_para_plan is False
+        assert "🔴" in status.badge
+        assert any("conflicto" in p for p in status.problemas)
+
+    def test_badge_rojo_si_extras(self, session, setup_basic):
+        """Un cronograma con materias extras (sin dictado) tiene que dar 🔴."""
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        summary.n_extra = 1
+        summary.n_faltantes = 0
+        summary.particion_valid = True
+        summary.n_conflictos_horarios = 0
+        persist_validation(session, summary)
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.listo_para_plan is False
+        assert "🔴" in status.badge
+        assert any("sin dictado" in p for p in status.problemas)
+
+    def test_badge_verde_si_todo_ok(self, session, setup_basic):
+        """Cronograma sin faltantes, sin conflictos, particion OK → 🟢."""
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        # Dos entries en dias distintos para evitar conflicto intra-grupo
+        # (ambas materias van a (ING, 1, 1C)).
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="ok", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.commit()
+
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        assert summary.n_faltantes == 0
+        assert summary.n_conflictos_horarios == 0
+        persist_validation(session, summary)
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.listo_para_plan is True
+        assert "🟢" in status.badge
+        assert status.problemas == []
+
+    def test_badge_amarillo_si_stale(self, session, setup_basic):
+        """Snapshot stale → 🟡 aunque no haya problemas en el snapshot."""
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        # Dos entries en dias distintos para evitar conflicto intra-grupo.
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="stale", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.commit()
+
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        persist_validation(session, summary)
+
+        # Mutar el schedule → stale
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Viernes",
+            hora_inicio=time(14, 0), hora_fin=time(16, 0),
+        ))
+        session.commit()
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.stale is True
+        assert status.listo_para_plan is False
+        assert "🟡" in status.badge
+
+    def test_badge_gris_si_nunca_validado(self, session, setup_basic):
+        """Sin validaciones persistidas → ⚪."""
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        ciclo = setup_basic["ciclo"]
+        sched = _make_schedule_with_entries(session, ciclo.id, [])
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.validation is None
+        assert status.listo_para_plan is False
+        assert "⚪" in status.badge
+
+
+class TestHorariosVsConfig:
+    """Fase H.1 del rediseño 2026-09-15: validar que los ScheduleEntryDB
+    respeten `ConfiguracionHoraria` (día operativo, rango, granularidad).
+    """
+
+    def _crear_config(self, session, *, granularidad=15,
+                       inicio=time(7, 0), fin=time(23, 0),
+                       dias="Lunes,Martes,Miércoles,Jueves,Viernes,Sábado"):
+        from src.database.models import ConfiguracionHoraria
+        existing = session.exec(select(ConfiguracionHoraria).limit(1)).first()
+        if existing is None:
+            session.add(ConfiguracionHoraria(
+                id=1,
+                granularidad_minutos=granularidad,
+                hora_inicio_operativo=inicio,
+                hora_fin_operativo=fin,
+                dias_operativos=dias,
+            ))
+        else:
+            existing.granularidad_minutos = granularidad
+            existing.hora_inicio_operativo = inicio
+            existing.hora_fin_operativo = fin
+            existing.dias_operativos = dias
+            session.add(existing)
+        session.commit()
+
+    def test_todo_ok_no_reporta_nada(self, session, setup_basic):
+        from src.services.validations import validar_horarios_vs_config
+        self._crear_config(session)  # 15 min, 07:00-23:00, Lun-Sab
+        ciclo = setup_basic["ciclo"]
+        sched = _make_schedule_with_entries(session, ciclo.id, ["MAT101"])
+        # La entry base es Lunes 8:00-11:00 → OK
+        result = validar_horarios_vs_config(session, sched.id)
+        assert result == []
+
+    def test_dia_no_operativo(self, session, setup_basic):
+        from src.services.validations import validar_horarios_vs_config
+        self._crear_config(session, dias="Lunes,Martes,Miércoles,Jueves,Viernes")
+        # Sábado excluido de dias operativos.
+        ciclo = setup_basic["ciclo"]
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Sábado",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.commit()
+
+        result = validar_horarios_vs_config(session, sched.id)
+        assert len(result) == 1
+        assert any("día" in r.lower() for r in result[0].razones)
+
+    def test_hora_fuera_del_rango_operativo(self, session, setup_basic):
+        from src.services.validations import validar_horarios_vs_config
+        self._crear_config(session, inicio=time(8, 0), fin=time(20, 0))
+        ciclo = setup_basic["ciclo"]
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        # Antes de las 08:00
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(7, 0), hora_fin=time(10, 0),
+        ))
+        # Después de las 20:00
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(19, 0), hora_fin=time(21, 0),
+        ))
+        session.commit()
+
+        result = validar_horarios_vs_config(session, sched.id)
+        assert len(result) == 2
+        razones_all = [r for row in result for r in row.razones]
+        assert any("anterior al horario operativo" in r for r in razones_all)
+        assert any("posterior al horario operativo" in r for r in razones_all)
+
+    def test_granularidad_no_respetada(self, session, setup_basic):
+        from src.services.validations import validar_horarios_vs_config
+        self._crear_config(session, granularidad=15, inicio=time(7, 0))
+        # 8:07 no es múltiplo de 15 desde 07:00 (offset 7 min).
+        ciclo = setup_basic["ciclo"]
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 7), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        result = validar_horarios_vs_config(session, sched.id)
+        assert len(result) == 1
+        assert any("granularidad" in r for r in result[0].razones)
+
+    def test_granularidad_media_hora(self, session, setup_basic):
+        """Con granularidad 30 min, 8:30 sí es válido, 8:15 no."""
+        from src.services.validations import validar_horarios_vs_config
+        self._crear_config(session, granularidad=30, inicio=time(7, 0))
+        ciclo = setup_basic["ciclo"]
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        # 8:30 OK
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 30), hora_fin=time(10, 0),
+        ))
+        # 8:15 NO
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Martes",
+            hora_inicio=time(8, 15), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        result = validar_horarios_vs_config(session, sched.id)
+        assert len(result) == 1
+        assert result[0].dia == "Martes"
+
+    def test_integracion_con_validar_cronograma(self, session, setup_basic):
+        """`validar_cronograma` popula `n_horarios_fuera_config` y el
+        detalle en `horarios_fuera_config`.
+        """
+        self._crear_config(session, granularidad=15, inicio=time(7, 0))
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        # Una fila OK y una rota.
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(8, 7), hora_fin=time(10, 0),  # granularidad rota
+        ))
+        session.commit()
+
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        assert summary.n_horarios_fuera_config == 1
+        assert len(summary.horarios_fuera_config) == 1
+        assert summary.horarios_fuera_config[0]["codigo_materia"] == "FIS101"
+
+    def test_badge_rojo_por_fuera_config(self, session, setup_basic):
+        """Un cronograma con `n_horarios_fuera_config > 0` aparece 🔴
+        en `compute_validation_status`.
+        """
+        from src.services.cronograma_validation_service import (
+            compute_validation_status,
+        )
+        self._crear_config(session, granularidad=15, inicio=time(7, 0))
+        ciclo = setup_basic["ciclo"]
+        create_dictados_for_ciclo(session, ciclo.id)
+
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=ciclo.id,
+            nombre="t", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.flush()
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+        ))
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(8, 7), hora_fin=time(10, 0),
+        ))
+        session.commit()
+
+        summary = validar_cronograma(session, sched.id, ciclo.id)
+        persist_validation(session, summary)
+
+        status = compute_validation_status(session, sched.id, ciclo.id)
+        assert status.listo_para_plan is False
+        assert "🔴" in status.badge
+        assert any("fuera de la config" in p for p in status.problemas)

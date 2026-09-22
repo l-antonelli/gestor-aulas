@@ -5,11 +5,12 @@ import uuid
 import pytest
 from datetime import date, time
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from src.database.models import CicloDB, MateriaDB, ScheduleDB, ScheduleEntryDB
 from src.services.schedule_service import (
+    clonar_plan_a_cronograma,
     create_schedule_from_file,
     get_schedules_for_ciclo,
     get_schedule_entries,
@@ -271,3 +272,248 @@ class TestSyncPreviewEditsToSchedule:
         assert updated == 1
         assert created == 1
         assert deleted == 1
+
+
+# =============================================================================
+# Fase F · Clonar plan a cronograma
+# =============================================================================
+
+
+class TestClonarPlanACronograma:
+    """Tests para `clonar_plan_a_cronograma` (Fase F del rediseño 2026-09-15).
+
+    Los tests arman un plan de cursada con comisiones + horarios y
+    verifican que el schedule clonado sea equivalente estructuralmente
+    pero con IDs nuevos y sin arrastrar `aula_id`.
+    """
+
+    def _armar_plan_con_datos(self, session, ciclo, materias):
+        """Helper: crea un plan del ciclo con 2 comisiones + 3 horarios.
+
+        - MAT101: 1 comisión con 2 horarios (uno con aula, otro sin).
+        - FIS101: 1 comisión con 1 horario y `carrera_asignada`.
+        """
+        from src.database.models import (
+            AulaDB, ComisionDB, HorarioDB, PlanificacionCursadaDB, SedeDB,
+        )
+
+        # Aula + sede (dummy) para poblar aula_id en algún horario.
+        sede = SedeDB(id=str(uuid.uuid4()), nombre="Test-Sede")
+        session.add(sede)
+        session.flush()
+        aula = AulaDB(
+            id=str(uuid.uuid4()), sede_id=sede.id,
+            codigo_aula="101", nombre="Aula 101",
+            capacidad=50, tipo="Aula",
+        )
+        session.add(aula)
+        session.flush()
+
+        plan = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="Plan Consolidado",
+            ciclo_id=ciclo.id,
+        )
+        session.add(plan)
+        session.flush()
+
+        c_mat = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="MAT101",
+            plan_cursada_id=plan.id,
+            comision_key="MAT101-001", nombre="M1", numero=1,
+            cupo=40, descripcion="descripcion mat",
+            coef_asignacion=0.7,
+        )
+        c_fis = ComisionDB(
+            id=str(uuid.uuid4()), materia_codigo="FIS101",
+            plan_cursada_id=plan.id,
+            comision_key="FIS101-001", nombre="F1", numero=1,
+            cupo=30, descripcion="descripcion fis",
+            coef_asignacion=1.0,
+            carrera_asignada="ING",
+        )
+        session.add_all([c_mat, c_fis])
+        session.flush()
+
+        # Horarios: uno con aula, otros sin.
+        h_mat_1 = HorarioDB(
+            id=str(uuid.uuid4()), comision_id=c_mat.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+            tipo_clase="teorica", aula_id=aula.id,
+            virtual=False,
+        )
+        h_mat_2 = HorarioDB(
+            id=str(uuid.uuid4()), comision_id=c_mat.id,
+            codigo_materia="MAT101", dia="Miércoles",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+            tipo_clase="laboratorio", aula_id=None,
+        )
+        h_fis = HorarioDB(
+            id=str(uuid.uuid4()), comision_id=c_fis.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(14, 0), hora_fin=time(17, 0),
+            virtual=True,
+        )
+        session.add_all([h_mat_1, h_mat_2, h_fis])
+        session.commit()
+
+        # También agregamos una carrera para el FK de carrera_asignada.
+        from src.database.models import CarreraDB
+        session.add(CarreraDB(codigo="ING", nombre="Ing"))
+        session.commit()
+
+        return {
+            "plan": plan, "c_mat": c_mat, "c_fis": c_fis,
+            "h_mat_1": h_mat_1, "h_mat_2": h_mat_2, "h_fis": h_fis,
+            "aula": aula, "sede": sede,
+        }
+
+    def test_clona_estructura_completa(self, session, ciclo, materias):
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+        plan = data["plan"]
+
+        sched = clonar_plan_a_cronograma(
+            session, plan.id, "Copia consolidada",
+        )
+
+        # Schedule creado y linkeado al mismo ciclo del plan.
+        assert sched.nombre == "Copia consolidada"
+        assert sched.ciclo_id == plan.ciclo_id
+        assert sched.source_filename == f"clon:plan:{plan.id}"
+
+        # 2 comisiones nuevas, con IDs distintos a los del plan.
+        from src.database.models import ComisionDB
+        coms_sched = session.exec(
+            select(ComisionDB).where(ComisionDB.schedule_id == sched.id)
+        ).all()
+        assert len(coms_sched) == 2
+        ids_plan = {data["c_mat"].id, data["c_fis"].id}
+        ids_sched = {c.id for c in coms_sched}
+        assert ids_plan.isdisjoint(ids_sched)
+
+        # 3 entries nuevas.
+        entries = get_schedule_entries(session, sched.id)
+        assert len(entries) == 3
+
+    def test_comision_preserva_atributos(self, session, ciclo, materias):
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+        sched = clonar_plan_a_cronograma(session, data["plan"].id, "clon")
+
+        from src.database.models import ComisionDB
+        coms = session.exec(
+            select(ComisionDB).where(ComisionDB.schedule_id == sched.id)
+        ).all()
+        by_mat = {c.materia_codigo: c for c in coms}
+
+        # MAT101
+        assert by_mat["MAT101"].nombre == "M1"
+        assert by_mat["MAT101"].numero == 1
+        assert by_mat["MAT101"].cupo == 40
+        assert by_mat["MAT101"].descripcion == "descripcion mat"
+        assert by_mat["MAT101"].coef_asignacion == 0.7
+        assert by_mat["MAT101"].plan_cursada_id is None  # es del schedule
+        assert by_mat["MAT101"].schedule_id == sched.id
+        assert by_mat["MAT101"].dictado_id is None  # no se propaga
+
+        # FIS101 con carrera_asignada
+        assert by_mat["FIS101"].carrera_asignada == "ING"
+
+    def test_entry_no_arrastra_aula_id(self, session, ciclo, materias):
+        """Regresión de la Fase F: `HorarioDB.aula_id` del plan NO se
+        propaga a `ScheduleEntryDB` — las entries del cronograma no
+        tienen concepto de aula asignada.
+        """
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+        sched = clonar_plan_a_cronograma(session, data["plan"].id, "clon")
+
+        entries = get_schedule_entries(session, sched.id)
+        # ScheduleEntryDB no tiene atributo aula_id — la estructura misma
+        # lo enforza. Verificamos que los atributos que sí se propagan
+        # estén correctos.
+        by_key = {(e.codigo_materia, e.dia): e for e in entries}
+
+        e_lunes = by_key[("MAT101", "Lunes")]
+        assert e_lunes.tipo_clase == "teorica"
+        assert e_lunes.virtual is False
+
+        e_mie = by_key[("MAT101", "Miércoles")]
+        assert e_mie.tipo_clase == "laboratorio"
+
+        e_mar = by_key[("FIS101", "Martes")]
+        assert e_mar.virtual is True
+
+        # Todos los entries deben tener comision_id apuntando a las
+        # comisiones nuevas del schedule.
+        from src.database.models import ComisionDB
+        coms_sched_ids = {
+            c.id for c in session.exec(
+                select(ComisionDB).where(ComisionDB.schedule_id == sched.id)
+            ).all()
+        }
+        for e in entries:
+            assert e.comision_id in coms_sched_ids
+
+    def test_horas_y_dias_se_preservan(self, session, ciclo, materias):
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+        sched = clonar_plan_a_cronograma(session, data["plan"].id, "clon")
+
+        entries = get_schedule_entries(session, sched.id)
+        by_key = {(e.codigo_materia, e.dia): e for e in entries}
+        assert by_key[("MAT101", "Lunes")].hora_inicio == time(8, 0)
+        assert by_key[("MAT101", "Lunes")].hora_fin == time(11, 0)
+        assert by_key[("FIS101", "Martes")].hora_inicio == time(14, 0)
+        assert by_key[("FIS101", "Martes")].hora_fin == time(17, 0)
+
+    def test_ciclo_id_override(self, session, ciclo, materias):
+        """Si se pasa ciclo_id_override, el schedule queda linkeado ahí
+        en vez de al ciclo del plan.
+        """
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+
+        # Ciclo destino distinto.
+        ciclo_2026 = CicloDB(
+            id="2026-1C", anio=2026, numero=1,
+            fecha_inicio=date(2026, 3, 1), fecha_fin=date(2026, 7, 5),
+        )
+        session.add(ciclo_2026)
+        session.commit()
+
+        sched = clonar_plan_a_cronograma(
+            session, data["plan"].id, "clon2026",
+            ciclo_id_override=ciclo_2026.id,
+        )
+        assert sched.ciclo_id == ciclo_2026.id
+        assert sched.ciclo_id != data["plan"].ciclo_id
+
+    def test_plan_inexistente_falla(self, session):
+        with pytest.raises(ValueError, match="no existe"):
+            clonar_plan_a_cronograma(session, "plan-fantasma", "x")
+
+    def test_ciclo_override_inexistente_falla(
+        self, session, ciclo, materias,
+    ):
+        data = self._armar_plan_con_datos(session, ciclo, materias)
+        with pytest.raises(ValueError, match="no existe"):
+            clonar_plan_a_cronograma(
+                session, data["plan"].id, "x",
+                ciclo_id_override="ciclo-fantasma",
+            )
+
+    def test_plan_vacio_crea_schedule_sin_entries(
+        self, session, ciclo, materias,
+    ):
+        """Un plan sin comisiones se clona como schedule vacío — no
+        levanta errores."""
+        from src.database.models import PlanificacionCursadaDB
+        plan_vacio = PlanificacionCursadaDB(
+            id=str(uuid.uuid4()), nombre="Plan vacío",
+            ciclo_id=ciclo.id,
+        )
+        session.add(plan_vacio)
+        session.commit()
+
+        sched = clonar_plan_a_cronograma(
+            session, plan_vacio.id, "clon vacío",
+        )
+        assert sched.nombre == "clon vacío"
+        assert get_schedule_entries(session, sched.id) == []
