@@ -620,7 +620,8 @@ class TestShadowImport:
         assert result.entries_previas == 0
         assert result.entries_finales == 2
         assert result.entries_agregadas == 2
-        assert result.entries_reemplazadas == 0
+        assert result.entries_eliminadas == 0
+        assert result.entries_sin_cambio == 0
 
         # Destino ahora tiene las 2 entries del shadow.
         entries = session.exec(
@@ -634,6 +635,42 @@ class TestShadowImport:
 
         # Shadow ya no existe.
         assert session.get(ScheduleDB, shadow_id) is None
+
+    def test_finalizar_shadow_reimport_mismos_datos_es_sin_cambio(
+        self, session, setup_catalogo,
+    ):
+        """Regresión task #358 (2026-09-23): re-importar los mismos
+        datos debe reportar 0 agregadas / 0 eliminadas / N sin_cambio.
+        Antes el conteo era ``min(previas, finales)`` y reportaba todas
+        las entries como "reemplazadas" aunque no cambiara nada.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+            {"codigo_materia": "FIS101", "comision": "1",
+             "dia": "Martes", "hora_inicio": "09:00", "hora_fin": "12:00"},
+        ])
+        # Import inicial.
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
+        finalizar_shadow_import(session, shadow.id)
+
+        # Re-import de los mismos datos.
+        shadow2, _ = crear_shadow_import(
+            session, sched.id, _fake_excel(df),
+        )
+        result = finalizar_shadow_import(session, shadow2.id)
+
+        assert result.entries_previas == 2
+        assert result.entries_finales == 2
+        assert result.entries_agregadas == 0
+        assert result.entries_eliminadas == 0
+        assert result.entries_sin_cambio == 2
 
     def test_descartar_shadow_no_toca_destino(
         self, session, setup_catalogo,
@@ -781,3 +818,163 @@ class TestPreviewLeeHojaHorariosDeLaPlantilla:
         )
         # La plantilla vacía no debe generar ninguna materia.
         assert pv.materias == []
+
+
+class TestRegenerarMateriaEnShadow:
+    """Task #359 (2026-09-23): la UI ahora expone un radio de decisión
+    por materia dentro del preview. Al cambiarlo, la función regenera
+    el estado hipotético de esa materia (respetando la decisión) sin
+    tocar las demás.
+    """
+
+    def _setup_destino_con_materia_preexistente(
+        self, session, setup_catalogo,
+    ):
+        """Poblar el destino con una comisión de MAT101 y una de FIS101
+        para tener "datos previos" desde donde partir.
+        """
+        sched = setup_catalogo["schedule"]
+
+        com_mat_previa = create_comision_for_schedule(
+            session, sched.id, "MAT101", nombre="Vieja",
+        )
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Viernes",
+            hora_inicio=time(15, 0), hora_fin=time(18, 0),
+            comision_id=com_mat_previa.id,
+        ))
+
+        com_fis = create_comision_for_schedule(
+            session, sched.id, "FIS101", nombre="1",
+        )
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(9, 0), hora_fin=time(12, 0),
+            comision_id=com_fis.id,
+        ))
+        session.commit()
+        return sched
+
+    def test_reemplazar_borra_lo_previo_y_aplica_archivo(
+        self, session, setup_catalogo,
+    ):
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+
+        sched = self._setup_destino_con_materia_preexistente(
+            session, setup_catalogo,
+        )
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "Nueva",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+
+        # Default = reemplazar → la comisión "Vieja" ya no existe en
+        # el shadow, solo la "Nueva" del archivo.
+        entries_mat = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "MAT101")
+        ).all())
+        assert len(entries_mat) == 1
+        assert entries_mat[0].dia == "Lunes"
+
+        # Regenerar la misma materia con decisión "agregar": la comisión
+        # "Vieja" del destino vuelve al shadow (baseline previo).
+        excel.seek(0)
+        regenerar_materia_en_shadow(
+            session, shadow.id, "MAT101",
+            decision="agregar", file=excel,
+        )
+        entries_mat = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "MAT101")
+        ).all())
+        # 1 de la vieja (Viernes) + 1 de la nueva (Lunes) = 2.
+        assert len(entries_mat) == 2
+
+    def test_regenerar_no_toca_otras_materias(
+        self, session, setup_catalogo,
+    ):
+        """Regenerar MAT101 no debe afectar los entries de FIS101 en
+        el shadow.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+
+        sched = self._setup_destino_con_materia_preexistente(
+            session, setup_catalogo,
+        )
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "Nueva",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+
+        # FIS101 en el shadow arranca con 1 entry (copiada del destino).
+        fis_antes = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "FIS101")
+        ).all())
+        assert len(fis_antes) == 1
+
+        excel.seek(0)
+        regenerar_materia_en_shadow(
+            session, shadow.id, "MAT101",
+            decision="agregar", file=excel,
+        )
+
+        # FIS101 sigue igual.
+        fis_despues = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "FIS101")
+        ).all())
+        assert len(fis_despues) == 1
+        assert fis_despues[0].dia == "Martes"
+
+    def test_ignorar_deja_solo_lo_previo_del_destino(
+        self, session, setup_catalogo,
+    ):
+        """Decisión ``ignorar``: la materia queda con el estado del
+        destino, sin nada del archivo.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+
+        sched = self._setup_destino_con_materia_preexistente(
+            session, setup_catalogo,
+        )
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "Nueva",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+        excel.seek(0)
+
+        regenerar_materia_en_shadow(
+            session, shadow.id, "MAT101",
+            decision="ignorar", file=excel,
+        )
+        entries_mat = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "MAT101")
+        ).all())
+        # Solo queda la comisión "Vieja" del destino (Viernes).
+        assert len(entries_mat) == 1
+        assert entries_mat[0].dia == "Viernes"

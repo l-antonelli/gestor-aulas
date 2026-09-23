@@ -460,15 +460,25 @@ def _copiar_entries_y_comisiones(
     session: Session,
     src_schedule_id: str,
     dst_schedule_id: str,
+    materia_codigo: str | None = None,
 ) -> dict[str, str]:
     """Duplica las comisiones + entries del schedule origen al destino.
+
+    Si ``materia_codigo`` viene distinto de ``None``, sólo se copian
+    las comisiones + entries de esa materia (usado por
+    ``regenerar_materia_en_shadow``).
 
     Devuelve un mapa `{com_id_origen: com_id_destino}` para que el
     caller pueda re-linkear referencias si hace falta.
     """
-    coms_src = list(session.exec(
-        select(ComisionDB).where(ComisionDB.schedule_id == src_schedule_id)
-    ).all())
+    _coms_stmt = select(ComisionDB).where(
+        ComisionDB.schedule_id == src_schedule_id
+    )
+    if materia_codigo is not None:
+        _coms_stmt = _coms_stmt.where(
+            ComisionDB.materia_codigo == materia_codigo
+        )
+    coms_src = list(session.exec(_coms_stmt).all())
     com_id_map: dict[str, str] = {}
     for c in coms_src:
         new_id = str(uuid.uuid4())
@@ -489,11 +499,14 @@ def _copiar_entries_y_comisiones(
         ))
     session.flush()
 
-    entries_src = list(session.exec(
-        select(ScheduleEntryDB).where(
-            ScheduleEntryDB.schedule_id == src_schedule_id,
+    _entries_stmt = select(ScheduleEntryDB).where(
+        ScheduleEntryDB.schedule_id == src_schedule_id,
+    )
+    if materia_codigo is not None:
+        _entries_stmt = _entries_stmt.where(
+            ScheduleEntryDB.codigo_materia == materia_codigo
         )
-    ).all())
+    entries_src = list(session.exec(_entries_stmt).all())
     for e in entries_src:
         new_com_id = com_id_map.get(e.comision_id) if e.comision_id else None
         session.add(ScheduleEntryDB(
@@ -607,11 +620,16 @@ def crear_shadow_import(
             "El archivo generó errores al aplicarse sobre el shadow: "
             + "; ".join(preview_shadow.parse_errors)
         )
-    # Decisiones por default: "agregar" para todo lo que tenga
-    # datos previos. El usuario después puede ajustar via UI y
-    # regenerar el shadow.
+    # Decisiones por default: "reemplazar" para todo lo que tenga
+    # datos previos (task #359, 2026-09-23). Antes era "agregar",
+    # pero eso llevaba a acumulación silenciosa cuando el usuario
+    # re-importaba con comisiones de nombre distinto — y era la
+    # decisión menos frecuente en la práctica (el usuario típicamente
+    # sube el archivo actualizado de la cátedra, no un delta).
+    # La UI ahora expone el radio por materia; este default se puede
+    # sobreescribir vía `regenerar_materia_en_shadow`.
     decisiones: dict[str, MergePolicy] = {
-        m.materia_codigo: "agregar"
+        m.materia_codigo: "reemplazar"
         for m in preview_shadow.materias
         if m.tiene_datos_previos
     }
@@ -628,15 +646,31 @@ def crear_shadow_import(
 class FinalizarShadowResult:
     """Métricas de la aplicación de un shadow al destino.
 
-    Sirve para armar el toast de confirmación en la UI:
-    "Se agregaron X entradas, se pisaron Y, en el cronograma 'Z'".
+    Sirve para armar el toast de confirmación en la UI. Se computan
+    comparando los conjuntos de entries antes/después por *fingerprint*
+    lógico (materia, comisión-por-nombre, día, hora_inicio, hora_fin,
+    tipo_clase, virtual) en vez de por ``entry.id`` (que cambia al
+    copiar shadow → destino). De ahí salen los tres contadores
+    disjuntos:
+
+    - ``entries_agregadas``: fingerprints que están en el shadow pero
+      no en el destino previo.
+    - ``entries_eliminadas``: fingerprints que estaban en el destino
+      pero ya no están en el shadow (se borran al confirmar).
+    - ``entries_sin_cambio``: fingerprints que aparecen en ambos lados.
+
+    Bugfix (2026-09-23): antes el conteo era
+    ``reemplazadas = min(previas, finales)``, que hacía que re-importar
+    los mismos datos reportara todas las entries como "reemplazadas"
+    aunque no hubiera cambio real.
     """
     destino_id: str
     destino_nombre: str
     entries_previas: int
     entries_finales: int
     entries_agregadas: int
-    entries_reemplazadas: int
+    entries_eliminadas: int
+    entries_sin_cambio: int
 
 
 def finalizar_shadow_import(
@@ -679,7 +713,9 @@ def finalizar_shadow_import(
             f"Destino '{destino_id}' del shadow ya no existe."
         )
 
-    # 1) Snapshot conteos previos.
+    # 1) Snapshot entries previas del destino + entries finales del
+    # shadow. Se comparan por fingerprint lógico (nombre de comisión,
+    # no id) para clasificarlas como agregadas/eliminadas/sin_cambio.
     entries_dst = list(session.exec(
         select(ScheduleEntryDB).where(
             ScheduleEntryDB.schedule_id == destino_id,
@@ -687,13 +723,15 @@ def finalizar_shadow_import(
     ).all())
     n_entries_previas = len(entries_dst)
 
-    # Total en shadow (será el conteo final).
     entries_shadow = list(session.exec(
         select(ScheduleEntryDB).where(
             ScheduleEntryDB.schedule_id == shadow_id,
         )
     ).all())
     n_entries_finales = len(entries_shadow)
+
+    fp_previas = _fingerprint_entries(session, entries_dst)
+    fp_finales = _fingerprint_entries(session, entries_shadow)
 
     # 2) Borrar entries + comisiones del destino.
     for e in entries_dst:
@@ -713,13 +751,12 @@ def finalizar_shadow_import(
     session.delete(shadow)
     session.commit()
 
-    # Métricas para el toast. Como el shadow *pisa* al destino, la
-    # semántica es: `agregadas = finales - previas` cuando el shadow
-    # trae más y `reemplazadas = min(previas, finales)` — aproximación
-    # simple porque no rastreamos identidad de entry entre ambos lados.
-    # Es un contador honesto para el toast, no una auditoría fina.
-    entries_agregadas = max(0, n_entries_finales - n_entries_previas)
-    entries_reemplazadas = min(n_entries_previas, n_entries_finales)
+    # Métricas honestas por diff de fingerprints. Cuando el usuario
+    # re-importa el mismo archivo, `entries_agregadas` y
+    # `entries_eliminadas` son 0 y todo cae en `entries_sin_cambio`.
+    entries_agregadas = len(fp_finales - fp_previas)
+    entries_eliminadas = len(fp_previas - fp_finales)
+    entries_sin_cambio = len(fp_previas & fp_finales)
 
     return FinalizarShadowResult(
         destino_id=destino_id,
@@ -727,8 +764,164 @@ def finalizar_shadow_import(
         entries_previas=n_entries_previas,
         entries_finales=n_entries_finales,
         entries_agregadas=entries_agregadas,
-        entries_reemplazadas=entries_reemplazadas,
+        entries_eliminadas=entries_eliminadas,
+        entries_sin_cambio=entries_sin_cambio,
     )
+
+
+def _fingerprint_entries(
+    session: Session, entries: list[ScheduleEntryDB],
+) -> set[tuple]:
+    """Fingerprint lógico de un conjunto de entries — resuelve el
+    ``comision_id`` a ``nombre`` porque el id es distinto entre
+    destino y shadow (se copian con nuevos UUIDs).
+
+    Cada entry se representa como
+    ``(codigo_materia, comision_nombre, dia, hi_str, hf_str, tipo, virtual)``.
+    """
+    if not entries:
+        return set()
+
+    com_ids = {e.comision_id for e in entries if e.comision_id}
+    com_map: dict[str, str] = {}
+    if com_ids:
+        coms = list(session.exec(
+            select(ComisionDB).where(
+                ComisionDB.id.in_(com_ids)  # type: ignore[attr-defined]
+            )
+        ).all())
+        com_map = {c.id: (c.nombre or "").strip() for c in coms}
+
+    result: set[tuple] = set()
+    for e in entries:
+        com_nombre = (
+            com_map.get(e.comision_id, "") if e.comision_id else ""
+        )
+        result.add((
+            e.codigo_materia,
+            com_nombre,
+            e.dia,
+            e.hora_inicio.isoformat() if e.hora_inicio else "",
+            e.hora_fin.isoformat() if e.hora_fin else "",
+            e.tipo_clase or "",
+            "1" if e.virtual is True else ("0" if e.virtual is False else "-"),
+        ))
+    return result
+
+
+def regenerar_materia_en_shadow(
+    session: Session,
+    shadow_id: str,
+    materia_codigo: str,
+    decision: MergePolicy,
+    file,
+    sheet_name: str | None = None,
+) -> None:
+    """Regenera las entries + comisiones de UNA materia en el shadow,
+    aplicando la decisión (``reemplazar`` / ``agregar`` / ``ignorar``)
+    con el contenido del archivo.
+
+    Uso: la UI del importer expone por materia un radio "Decisión"; al
+    cambiarlo se llama esta función para recomputar el estado
+    hipotético de esa materia sin tocar las demás. Cualquier edición
+    manual previa que el usuario haya hecho **en esta materia** se
+    pierde (semántica documentada en la UI, task #360, 2026-09-23).
+
+    Args:
+        session: sesión activa.
+        shadow_id: shadow del importer (debe existir).
+        materia_codigo: materia a regenerar.
+        decision: ``"reemplazar"`` (borra todo lo previo del destino
+            en esta materia y aplica solo lo del archivo);
+            ``"agregar"`` (mantiene lo previo del destino y suma las
+            comisiones nuevas del archivo, exigiendo que no colisionen
+            nombres); ``"ignorar"`` (deja solo lo previo del destino,
+            sin nada del archivo).
+        file: archivo original que se pasó a ``crear_shadow_import``.
+        sheet_name: hoja del Excel a usar (mismo criterio que
+            ``crear_shadow_import``).
+
+    Raises:
+        ValueError: si el shadow no existe, no es un shadow válido, o
+            si el re-parseo del archivo levanta errores bloqueantes.
+    """
+    shadow = session.get(ScheduleDB, shadow_id)
+    if shadow is None:
+        raise ValueError(f"Shadow '{shadow_id}' no existe.")
+    if not shadow.es_shadow_import:
+        raise ValueError(
+            f"El schedule '{shadow_id}' no es un shadow del importer."
+        )
+    destino_id = shadow.shadow_target_schedule_id
+    if destino_id is None:
+        raise ValueError(
+            f"Shadow '{shadow_id}' no tiene destino asociado."
+        )
+
+    # 1) Vaciar el estado actual de la materia en el shadow.
+    _borrar_materia_en_shadow(session, shadow_id, materia_codigo)
+
+    # 2) Copiar la materia desde el destino al shadow (baseline previo).
+    _copiar_entries_y_comisiones(
+        session, destino_id, shadow_id, materia_codigo=materia_codigo,
+    )
+
+    # 3) Re-parsear el archivo y aplicar la decisión sólo a esta
+    # materia. `commit_import` acepta un preview del shadow completo,
+    # así que armamos uno restringido.
+    try:
+        file.seek(0)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            f"No se pudo re-leer el archivo ({exc}). Subilo de nuevo."
+        ) from exc
+    preview_shadow = preview_import(
+        session, shadow_id, file, sheet_name=sheet_name,
+    )
+    if preview_shadow.tiene_errores_bloqueantes:
+        raise ValueError(
+            "El archivo tiene errores estructurales al re-parsear: "
+            + "; ".join(preview_shadow.parse_errors)
+        )
+
+    # Filtrar el preview a solo la materia que estamos regenerando.
+    # No borro la lista original — `commit_import` itera sobre
+    # `preview.materias`, así que le paso un preview con esa lista
+    # acotada.
+    _materias_original = list(preview_shadow.materias)
+    preview_shadow.materias = [
+        m for m in _materias_original
+        if m.materia_codigo == materia_codigo
+    ]
+    try:
+        commit_import(
+            session, preview_shadow,
+            {materia_codigo: decision},
+        )
+    finally:
+        # Restaurar por si el caller reusa el preview.
+        preview_shadow.materias = _materias_original
+
+
+def _borrar_materia_en_shadow(
+    session: Session, shadow_id: str, materia_codigo: str,
+) -> None:
+    """Borra entries + comisiones de una materia dentro del shadow."""
+    entries = list(session.exec(
+        select(ScheduleEntryDB)
+        .where(ScheduleEntryDB.schedule_id == shadow_id)
+        .where(ScheduleEntryDB.codigo_materia == materia_codigo)
+    ).all())
+    for e in entries:
+        session.delete(e)
+    coms = list(session.exec(
+        select(ComisionDB)
+        .where(ComisionDB.schedule_id == shadow_id)
+        .where(ComisionDB.materia_codigo == materia_codigo)
+    ).all())
+    for c in coms:
+        session.delete(c)
+    session.flush()
 
 
 def descartar_shadow_import(session: Session, shadow_id: str) -> None:

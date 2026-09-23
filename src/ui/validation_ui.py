@@ -2128,18 +2128,14 @@ def _render_detalle_por_materia(
             _rows.append(_data)
 
     # Metricas: `_n_total` cuenta MATERIAS ÚNICAS (no filas).
+    # (Task #361, 2026-09-23) las métricas se movieron a continuación
+    # de los filtros para que estén junto al listado de expanders,
+    # no arriba de todo. `_n_ok`/`_n_revision` se recomputan
+    # post-filtrado más abajo.
     _n_total = len({r["codigo"] for r in _rows})
-    _n_ok = len({
-        r["codigo"] for r in _rows if r["estado"] == "OK"
-    })
-    _n_revision = _n_total - _n_ok
-    _mt1, _mt2, _mt3 = st.columns(3)
-    _mt1.metric("Total materias", _n_total)
-    _mt2.metric("OK", _n_ok)
-    _mt3.metric("Requieren revisión", _n_revision)
 
     # =========================================================================
-    # Filtros
+    # Filtros (agrupados en container para separar visualmente del contenido)
     # =========================================================================
     # Set completo de carreras de todas las materias (union de
     # carreras_set por row). Asi una materia comun puede ser elegida
@@ -2178,75 +2174,82 @@ def _render_detalle_por_materia(
         if cc in _carrera_nombre_map else cc
     )
 
-    _f1, _f2, _f3, _f4, _f5 = st.columns(5)
-    with _f1:
-        _busc = st.text_input(
-            "🔍 Buscar", key=f"{key_ns}_dpm_busc",
-            placeholder="código o nombre",
+    with st.container(border=True):
+        st.markdown("**🎛 Filtros del detalle por materia**")
+        st.caption(
+            "Combinan con AND: una materia se muestra si cumple "
+            "todos los filtros activos. Los conteos de arriba y las "
+            "tablas de abajo respetan estos filtros."
         )
-    with _f2:
-        _f_carr = st.multiselect(
-            "Carrera", options=_carreras_opts, default=[],
-            format_func=_carrera_label,
-            key=f"{key_ns}_dpm_carrera",
-        )
-    with _f3:
-        _f_anio = st.multiselect(
-            "Año", options=_anios_opts, default=[],
-            format_func=lambda a: f"{a}°",
-            key=f"{key_ns}_dpm_anio",
-        )
-    with _f4:
-        _f_cuatri = st.multiselect(
-            "Cuatri", options=_cuatris_opts, default=[],
-            key=f"{key_ns}_dpm_cuatri",
-        )
-    with _f5:
-        _f_estado = st.multiselect(
-            "Estado", options=_estados_opts, default=[],
-            key=f"{key_ns}_dpm_estado",
-        )
+        _f1, _f2, _f3, _f4, _f5 = st.columns(5)
+        with _f1:
+            _busc = st.text_input(
+                "🔍 Buscar", key=f"{key_ns}_dpm_busc",
+                placeholder="código o nombre",
+            )
+        with _f2:
+            _f_carr = st.multiselect(
+                "Carrera", options=_carreras_opts, default=[],
+                format_func=_carrera_label,
+                key=f"{key_ns}_dpm_carrera",
+            )
+        with _f3:
+            _f_anio = st.multiselect(
+                "Año", options=_anios_opts, default=[],
+                format_func=lambda a: f"{a}°",
+                key=f"{key_ns}_dpm_anio",
+            )
+        with _f4:
+            _f_cuatri = st.multiselect(
+                "Cuatri", options=_cuatris_opts, default=[],
+                key=f"{key_ns}_dpm_cuatri",
+            )
+        with _f5:
+            _f_estado = st.multiselect(
+                "Estado", options=_estados_opts, default=[],
+                key=f"{key_ns}_dpm_estado",
+            )
 
-    _g1, _g2, _g3 = st.columns(3)
-    with _g1:
-        _f_tipo = st.selectbox(
-            "Tipo (carreras)",
-            options=_tipo_opts, index=0,
-            key=f"{key_ns}_dpm_tipo",
-            help=(
-                "Comunes: materias compartidas entre 2+ carreras. "
-                "Específicas: materias de una sola carrera."
-            ),
-        )
-    with _g2:
-        _f_attrs = st.multiselect(
-            "Atributos",
-            options=_attr_opts, default=[],
-            key=f"{key_ns}_dpm_attrs",
-            help=(
-                "Filtros por atributo de la materia. Si elegís un par "
-                "contradictorio (ej. Optativa + No optativa) no queda "
-                "ninguna materia. Combinable con los demás filtros.\n\n"
-                "**Virtual** filtra materias virtuales por *cualquiera* "
-                "de las dos vías: virtuales de catálogo "
-                "(`MateriaDB.virtual=True`, ej. asignaturas dictadas "
-                "por Zoom siempre) o con dictado virtual del ciclo "
-                "actual (`DictadoDB.virtual=True`, modalidad puntual "
-                "como recursados que excepcionalmente se dictan online "
-                "este cuatri). La columna **Virtual** de la tabla "
-                "distingue cuál de las dos aplica."
-            ),
-        )
-    with _g3:
-        _only_issues = st.toggle(
-            "Solo con alertas",
-            value=False,
-            key=f"{key_ns}_dpm_only_issues",
-            help=(
-                "Mostrar solo materias cuyo estado no es OK (faltantes, "
-                "no esperadas, conflictivas o sin datos)."
-            ),
-        )
+        _g1, _g2, _g3 = st.columns(3)
+        with _g1:
+            _f_tipo = st.selectbox(
+                "Tipo (carreras)",
+                options=_tipo_opts, index=0,
+                key=f"{key_ns}_dpm_tipo",
+                help=(
+                    "Comunes: materias compartidas entre 2+ carreras. "
+                    "Específicas: materias de una sola carrera."
+                ),
+            )
+        with _g2:
+            _f_attrs = st.multiselect(
+                "Atributos",
+                options=_attr_opts, default=[],
+                key=f"{key_ns}_dpm_attrs",
+                help=(
+                    "Filtros por atributo de la materia. Si elegís un par "
+                    "contradictorio (ej. Optativa + No optativa) no queda "
+                    "ninguna materia. Combinable con los demás filtros.\n\n"
+                    "**Virtual** filtra materias virtuales por *cualquiera* "
+                    "de las dos vías: virtuales de catálogo "
+                    "(`MateriaDB.virtual=True`, ej. asignaturas dictadas "
+                    "por Zoom siempre) o con dictado virtual del ciclo "
+                    "actual (`DictadoDB.virtual=True`, modalidad puntual "
+                    "como recursados que excepcionalmente se dictan online "
+                    "este cuatri). La columna **Virtual** de la tabla "
+                    "distingue cuál de las dos aplica."
+                ),
+            )
+        with _g3:
+            _only_issues = st.toggle(
+                "Solo con alertas",
+                value=False,
+                key=f"{key_ns}_dpm_only_issues",
+                help=(
+                    "Mostrar solo materias cuyo estado no es OK (faltantes, "
+                    "no esperadas, conflictivas o sin datos)."
+                ),
+            )
 
     # --- Aplicar filtros ---
     def _passes(r: dict) -> bool:
@@ -2303,16 +2306,29 @@ def _render_detalle_por_materia(
         )
         return
 
+    # =========================================================================
+    # Resumen del set filtrado (task #361, 2026-09-23)
+    # =========================================================================
     # Contamos materias únicas visibles vs total de materias únicas.
     _n_mat_visibles = len({r["codigo"] for r in _filtered})
+    _n_mat_ok_filtered = len({
+        r["codigo"] for r in _filtered if r["estado"] == "OK"
+    })
+    _n_mat_rev_filtered = _n_mat_visibles - _n_mat_ok_filtered
     _extra = ""
     if len(_filtered) != _n_mat_visibles:
         _extra = (
             f" · {len(_filtered)} filas (una por ubicación curricular)"
         )
-    st.caption(
-        f"Mostrando {_n_mat_visibles} de {_n_total} materias{_extra}."
-    )
+    with st.container(border=True):
+        st.markdown("**📊 Resumen del set filtrado**")
+        _rmt1, _rmt2, _rmt3, _rmt4 = st.columns(4)
+        _rmt1.metric("Mostrando", _n_mat_visibles)
+        _rmt2.metric("de un total", _n_total)
+        _rmt3.metric("OK", _n_mat_ok_filtered)
+        _rmt4.metric("Requieren revisión", _n_mat_rev_filtered)
+        if _extra:
+            st.caption(_extra.lstrip(" · "))
 
     # =========================================================================
     # Tabla "Resumen por carrera" — counts de status por carrera
@@ -2473,55 +2489,64 @@ def _render_detalle_por_materia(
                 break
 
     st.divider()
-    st.markdown(
-        f"##### 🛠️ Detalle por materia ({len(_loop_rows)} materia(s))"
-    )
-
-    # Botones globales y selector de página
-    _bc1, _bc2, _bc3, _bc4 = st.columns([1, 1, 1, 3])
-    with _bc1:
-        if st.button(
-            "Abrir todas",
-            key=f"{key_ns}_dpm_btn_open_all",
-            help="Expandir todas las materias visibles en la página actual.",
-            use_container_width=True,
-        ):
-            st.session_state[f"{key_ns}_dpm_force_expand"] = "open"
-            st.rerun()
-    with _bc2:
-        if st.button(
-            "Cerrar todas",
-            key=f"{key_ns}_dpm_btn_close_all",
-            help="Colapsar todas las materias de la página actual.",
-            use_container_width=True,
-        ):
-            st.session_state[f"{key_ns}_dpm_force_expand"] = "close"
-            st.rerun()
-    with _bc3:
-        # Si el state ya existe y queda fuera de rango (porque cambió
-        # _total_pages), lo clampeamos ANTES de instanciar el widget
-        # para que respete el state. NO se puede pasar `value=` cuando
-        # el widget ya tiene state guardado: streamlit lanza warning
-        # y descarta uno de los dos. La forma robusta es ajustar el
-        # session_state directamente.
-        _cur = st.session_state.get(_page_key, 1)
-        if _cur > _total_pages:
-            st.session_state[_page_key] = _total_pages
-        elif _cur < 1:
-            st.session_state[_page_key] = 1
-        _page = st.number_input(
-            f"Página (de {_total_pages})",
-            min_value=1, max_value=_total_pages,
-            step=1,
-            key=_page_key,
-            label_visibility="collapsed",
+    # Task #361 (2026-09-23): agrupar el header + controles de
+    # paginación del detalle por materia en un container propio.
+    # Antes quedaban sueltos y visualmente pegados a la tabla de
+    # arriba.
+    with st.container(border=True):
+        st.markdown(
+            f"**🛠️ Detalle por materia ({len(_loop_rows)} materia(s))**"
         )
-    with _bc4:
         st.caption(
-            f"Página {int(_page)} de {_total_pages} · "
-            f"{_PAGE_SIZE} materias/página · "
-            f"total {len(_loop_rows)} materia(s)"
+            "Cada tarjeta despliega el editor completo de la materia. "
+            "Usá los botones para abrir/cerrar en masa las tarjetas "
+            "de la página actual, o navegá entre páginas."
         )
+        # Botones globales y selector de página
+        _bc1, _bc2, _bc3, _bc4 = st.columns([1, 1, 1, 3])
+        with _bc1:
+            if st.button(
+                "Abrir todas",
+                key=f"{key_ns}_dpm_btn_open_all",
+                help="Expandir todas las materias visibles en la página actual.",
+                use_container_width=True,
+            ):
+                st.session_state[f"{key_ns}_dpm_force_expand"] = "open"
+                st.rerun()
+        with _bc2:
+            if st.button(
+                "Cerrar todas",
+                key=f"{key_ns}_dpm_btn_close_all",
+                help="Colapsar todas las materias de la página actual.",
+                use_container_width=True,
+            ):
+                st.session_state[f"{key_ns}_dpm_force_expand"] = "close"
+                st.rerun()
+        with _bc3:
+            # Si el state ya existe y queda fuera de rango (porque cambió
+            # _total_pages), lo clampeamos ANTES de instanciar el widget
+            # para que respete el state. NO se puede pasar `value=` cuando
+            # el widget ya tiene state guardado: streamlit lanza warning
+            # y descarta uno de los dos. La forma robusta es ajustar el
+            # session_state directamente.
+            _cur = st.session_state.get(_page_key, 1)
+            if _cur > _total_pages:
+                st.session_state[_page_key] = _total_pages
+            elif _cur < 1:
+                st.session_state[_page_key] = 1
+            _page = st.number_input(
+                f"Página (de {_total_pages})",
+                min_value=1, max_value=_total_pages,
+                step=1,
+                key=_page_key,
+                label_visibility="collapsed",
+            )
+        with _bc4:
+            st.caption(
+                f"Página {int(_page)} de {_total_pages} · "
+                f"{_PAGE_SIZE} materias/página · "
+                f"total {len(_loop_rows)} materia(s)"
+            )
 
     _force_expand = st.session_state.pop(
         f"{key_ns}_dpm_force_expand", None

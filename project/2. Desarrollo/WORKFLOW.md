@@ -461,34 +461,42 @@ cronograma (cobertura, conflictos, camino de cursada) — esas siguen
 a cargo de `validar_cronograma` en la tab Validar. El preview sólo
 hace las validaciones tipográficas mínimas que evitan un import roto.
 
-**Preview con calendario + validaciones opt-in** (Fase G del
-rediseño 2026-09-15). Al apretar "Ver preview del archivo" se crea
-un **shadow schedule** (`ScheduleDB.es_shadow_import=True`,
-`shadow_target_schedule_id` apuntando al destino) que combina las
-entries del destino con las nuevas del archivo aplicadas por default
-con decisión "agregar". La UI muestra:
+**Preview per-materia con calendarios Antes / Después** (Fase G del
+rediseño 2026-09-15; rediseñado 2026-09-23). Al apretar "Ver preview
+del archivo" se crea un **shadow schedule**
+(`ScheduleDB.es_shadow_import=True`, `shadow_target_schedule_id`
+apuntando al destino) que aplica las entries del archivo sobre una
+copia del destino. La decisión de merge por default es **"reemplazar"**
+para materias con datos previos y **"agregar"** para materias nuevas.
 
-- Métricas: horarios del archivo, materias detectadas, materias que
-  requieren decisión, y total de horarios en el estado hipotético.
-- Calendario **read-only** del shadow: el mismo widget que Editar
-  pero deshabilitado — no hay drag/resize/click de edición. El
-  propósito es visualizar el estado hipotético para decidir
-  confirmar o descartar; ediciones puntuales se hacen después del
-  merge, desde la tab Ver/Editar.
-- Toggle "Mostrar también datos previos no modificados": si ON
-  incluye todas las materias del cronograma; si OFF acota a las
-  afectadas por el archivo.
-- Toggle "Filtrar por (carrera, año, cuatri)": útil cuando el
-  archivo trae materias de distintos años.
-- Validaciones automáticas al abrir el preview
-  (`validar_cronograma` sobre el shadow): reporta las 4 métricas
-  centrales (faltantes, conflictos horarios, bloqueos de camino,
-  partición teoría/lab). No hay botón "Ejecutar" — corre siempre
-  para dar contexto al usuario antes de confirmar.
-- Confirmar (`finalizar_shadow_import`): reemplaza las entries del
-  destino por las del shadow y borra el shadow.
-- Descartar (`descartar_shadow_import`): borra el shadow sin tocar
-  el destino.
+La UI del preview es un loop de expanders — una tarjeta por cada
+materia que aparece en el archivo. Adentro de cada expander:
+
+- **Radio de decisión** (`reemplazar` / `agregar` / `ignorar`, sólo
+  para materias con datos previos). Cambiar la decisión llama a
+  `regenerar_materia_en_shadow` y recomputa la vista Después.
+  Ediciones manuales previas en el shadow para esa materia se
+  pierden — es predecible.
+- **Columna Antes**: calendario read-only con los horarios de esa
+  materia en el destino (estado actual).
+- **Columna Después**: calendario read-only con los horarios en el
+  shadow (estado hipotético después de aplicar la decisión).
+- **Chequeos estructurales** de la materia
+  (`compute_materia_checks_from_db`), los mismos 10 que muestra el
+  panel Validar → Detalle por materia. Cada tarjeta abre por default
+  si el estado no es OK.
+
+Debajo del listado, un container con **métricas globales** del
+cronograma hipotético (`validar_cronograma` sobre el shadow —
+faltantes, conflictos horarios, bloqueos de camino, partición y
+horarios fuera de config) + los botones **Confirmar** y **Descartar**.
+
+Al confirmar (`finalizar_shadow_import`), el destino se pisa con el
+shadow y el toast reporta las métricas honestas por diff de
+fingerprints (materia + comisión-por-nombre + día + horario + tipo +
+virtual): `entries_agregadas`, `entries_eliminadas`,
+`entries_sin_cambio`. Re-importar los mismos datos reporta "sin
+diferencias".
 
 Si el usuario cierra el navegador con un preview abierto, el shadow
 queda huérfano en la DB. Al reabrir la tab Cargar se muestra un
