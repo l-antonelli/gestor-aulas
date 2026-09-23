@@ -541,7 +541,9 @@ def render_schedule_materia_detail(
                     )
 
     # --- Selector cantidad de comisiones ---
-    derived_ncom = _derive_n_comisiones(entries)
+    derived_ncom = _derive_n_comisiones(
+        entries, schedule_id=schedule_id, materia_codigo=materia_codigo,
+    )
     ncom_key = f"{_kp}_ncom"
     ic3.markdown("**Comisiones:**")
     n_com = ic4.number_input(
@@ -886,8 +888,20 @@ def render_schedule_materia_detail(
 # Helpers
 # =============================================================================
 
-def _derive_n_comisiones(entries: list[ScheduleEntryDB]) -> int:
-    """Derivar n_comisiones del set de entries (max comision asignada o 1)."""
+def _derive_n_comisiones(
+    entries: list[ScheduleEntryDB],
+    schedule_id: str | None = None,
+    materia_codigo: str | None = None,
+) -> int:
+    """Derivar n_comisiones del set de entries (max comision asignada o 1).
+
+    ``schedule_id`` / ``materia_codigo`` acotan la resolución de las
+    comisiones referenciadas (fix auditoría H8.4, 2026-09-23: sin el
+    scope, un ``comision_id`` que apuntara a una comisión de OTRO
+    cronograma — dato corrupto tipo import cross-schedule, como el
+    caso FB15 documentado en el commit 6b21c1f — contribuía su
+    ``numero`` al máximo e inflaba el resultado).
+    """
     if not entries:
         return 1
     # Resolver los numeros de las comisiones referenciadas.
@@ -895,11 +909,16 @@ def _derive_n_comisiones(entries: list[ScheduleEntryDB]) -> int:
     max_com = 1
     if com_ids:
         with next(get_session()) as _s:
-            for c in _s.exec(
-                select(ComisionDB).where(
-                    ComisionDB.id.in_(com_ids)  # type: ignore[attr-defined]
+            _stmt = select(ComisionDB).where(
+                ComisionDB.id.in_(com_ids)  # type: ignore[attr-defined]
+            )
+            if schedule_id is not None:
+                _stmt = _stmt.where(ComisionDB.schedule_id == schedule_id)
+            if materia_codigo is not None:
+                _stmt = _stmt.where(
+                    ComisionDB.materia_codigo == materia_codigo
                 )
-            ).all():
+            for c in _s.exec(_stmt).all():
                 if c.numero > max_com:
                     max_com = c.numero
     # Constraint: paralelas
@@ -1062,10 +1081,11 @@ def _persist_edits(
 def compute_materia_checks_from_db(
     schedule_id: str, materia_codigo: str,
 ) -> dict:
-    """Computa los 10 chequeos estructurales de una materia leyendo el
+    """Computa los chequeos estructurales de una materia leyendo el
     estado persistido en DB (sin depender de un data_editor en vivo).
 
-    Consumido por `Ver / Editar` en `6_📅_Cronogramas.py` para renderar
+    Consumido por `Ver / Editar` en `6_📅_Cronogramas.py` y por las
+    tarjetas per-materia del preview del importer, para renderar
     validaciones inline sin duplicar la lógica del editor por-materia.
 
     Returns:
@@ -1076,18 +1096,50 @@ def compute_materia_checks_from_db(
           ``materia_faltante`` (misma semántica que en el editor).
         - ``worst``: ``'ok' | 'warn' | 'error' | 'info' | 'faltante'``
           — misma prioridad que en `render_schedule_materia_detail`.
-        - ``estado``: label corto derivado de ``worst`` para el badge
-          (``"OK" | "Revisión" | "Faltante"``). No incluye
-          ``Faltante`` (dictado sin entries) del panel Validar porque
-          eso requiere el summary del ciclo; acá sólo se reporta el
-          estado *estructural* de la materia (sin cruces con el ciclo).
+        - ``estado``: label corto para el badge externo, uno de
+          ``"OK" | "Revisión" | "Sin horarios" | "Sin datos"``. Es un
+          subconjunto de los seis estados de
+          ``validation_ui._estado_de_materia`` (`VALIDACIONES.md`
+          § 3.2): los que dependen del cruce con el ciclo
+          (``Conflictiva``, ``No esperada``, ``Faltante``) necesitan
+          el summary de ``validar_cronograma`` y no se computan acá.
+          ``"Sin horarios"`` significa "sin entries en ESTE
+          cronograma", sin verificar si la materia tiene dictado en el
+          ciclo (fix auditoría 2026-09-23: antes se llamaba
+          ``"Faltante"`` y generaba falsos positivos con el
+          vocabulario del panel Validar). ``"Sin datos"`` cubre
+          materia fuera del catálogo y materia con entries pero sin
+          ``horas_semanales`` (prioridad sobre ``"Revisión"``, igual
+          criterio que ``_estado_de_materia``).
         - ``n_entries``: cantidad de entries persistidas.
-        - ``n_comisiones``: derivado de las entries.
+        - ``n_comisiones``: cantidad de ``ComisionDB`` reales del
+          ``(cronograma, materia)`` — fix auditoría H8 (2026-09-23):
+          antes se usaba el **máximo número** de comisión, que con
+          numeración con huecos (comisiones 1 y 3) inventaba
+          comisiones inexistentes y contradecía al panel Validar.
     """
     from src.database.crud import get_or_create_config, materia_crud
 
     with next(get_session()) as session:
         mat_db = materia_crud.get(session, materia_codigo)
+        if mat_db is None:
+            # Guard temprano (fix auditoría 2026-09-23: antes se
+            # ejecutaban las otras cuatro queries antes de chequear).
+            return {
+                "checks": [{
+                    "id": "materia_no_catalogo",
+                    "label": "Materia no está en el catálogo",
+                    "status": "error",
+                    "detail": (
+                        f"El código '{materia_codigo}' no aparece en el "
+                        "catálogo de materias."
+                    ),
+                }],
+                "worst": "error",
+                "estado": "Sin datos",
+                "n_entries": 0,
+                "n_comisiones": 0,
+            }
         entries = list(session.exec(
             select(ScheduleEntryDB)
             .where(ScheduleEntryDB.schedule_id == schedule_id)
@@ -1101,30 +1153,10 @@ def compute_materia_checks_from_db(
         config_global = get_or_create_config(session)
         com_map = _build_comisiones_map(session, schedule_id, materia_codigo)
 
-    if mat_db is None:
-        # Guard defensivo: la materia no está en catálogo. Se reporta
-        # como "sin datos" para no crashear el listado.
-        return {
-            "checks": [{
-                "id": "materia_no_catalogo",
-                "label": "Materia no está en el catálogo",
-                "status": "error",
-                "detail": (
-                    f"El código '{materia_codigo}' no aparece en el "
-                    "catálogo de materias."
-                ),
-            }],
-            "worst": "error",
-            "estado": "Sin datos",
-            "n_entries": len(entries),
-            "n_comisiones": 0,
-        }
-
     if not entries:
-        # Materia sin horarios cargados. Alineado con el badge 📭 del
-        # panel Validar (aunque acá lo llamamos "Sin horarios" porque
-        # no sabemos si tiene dictado en el ciclo — eso lo decide el
-        # summary de `validar_cronograma`).
+        # Materia sin horarios cargados EN ESTE cronograma. No es el
+        # "Faltante" del panel Validar (eso implica dictado en el
+        # ciclo, que acá no se cruza).
         return {
             "checks": [{
                 "id": "materia_faltante",
@@ -1137,16 +1169,30 @@ def compute_materia_checks_from_db(
                 ),
             }],
             "worst": "faltante",
-            "estado": "Faltante",
+            "estado": "Sin horarios",
             "n_entries": 0,
             "n_comisiones": 0,
         }
 
     # Reconstruir el DataFrame que `_compute_checks` espera.
+    #
+    # Fix auditoría H8 (2026-09-23): las entries sin comisión asignada
+    # (o con `comision_id` que no resuelve dentro de este cronograma —
+    # dato corrupto tipo cross-schedule) ya NO se colapsan en la
+    # comisión 1: van con el centinela 0, quedan fuera de
+    # `hours_by_com`, y se reportan con un check propio. Antes
+    # inflaban las horas de la comisión 1 y contradecían la fila
+    # "Sin asignar" del resumen por comisión de la misma pantalla.
+    _SIN_COM = 0
     rows = []
+    n_sin_comision = 0
     for e in entries:
         _com = com_map.get(e.comision_id) if e.comision_id else None
-        _num = _com.numero if _com else 1
+        if _com is None:
+            _num = _SIN_COM
+            n_sin_comision += 1
+        else:
+            _num = _com.numero
         rows.append({
             "_eid": e.id,
             "Día": e.dia,
@@ -1162,8 +1208,17 @@ def compute_materia_checks_from_db(
     h_teo = mat_db.horas_teoria
     h_lab = mat_db.horas_laboratorio
 
-    n_com = _derive_n_comisiones(entries)
-    com_options = list(range(1, n_com + 1))
+    # Fix auditoría H8 (2026-09-23): `n_com` es la CANTIDAD de
+    # comisiones reales del (cronograma, materia); la numeración es
+    # etiqueta, no cardinalidad. Sin piso de `paralelas`: así el check
+    # "Clases paralelas ≤ comisiones" recupera su función (antes el
+    # piso lo volvía estructuralmente incapaz de fallar y el problema
+    # real se disfrazaba de "comisiones vacías").
+    n_com = max(len(com_map), 1)
+    com_options = (
+        sorted({c.numero for c in com_map.values()})
+        if com_map else [1]
+    )
 
     hours_by_com: dict[int, float] = {c: 0.0 for c in com_options}
     for _, r in valid_df.iterrows():
@@ -1182,6 +1237,19 @@ def compute_materia_checks_from_db(
         valid_df=valid_df, com_options=com_options,
         config_global=config_global,
     )
+
+    if n_sin_comision:
+        checks.append({
+            "id": "entries_sin_comision",
+            "label": "Horarios sin comisión asignada",
+            "status": "warn",
+            "detail": (
+                f"{n_sin_comision} horario(s) sin comisión asignada "
+                "(o con una comisión que no pertenece a este "
+                "cronograma) — no entran al cálculo de h/sem × "
+                "comisiones. Asignalos desde el editor por materia."
+            ),
+        })
 
     # Worst status con la misma prioridad que el editor.
     worst = "ok"
@@ -1204,7 +1272,7 @@ def compute_materia_checks_from_db(
     if mat_db.horas_semanales is None:
         estado = "Sin datos"
     elif worst == "faltante":
-        estado = "Faltante"
+        estado = "Sin horarios"
     elif worst in ("warn", "error"):
         estado = "Revisión"
     else:
@@ -1227,6 +1295,10 @@ CHECK_ICON_MAP = {
 ESTADO_ICON_MAP = {
     "OK": "✅",
     "Revisión": "🔎",
+    # "Sin horarios" = sin entries en ESTE cronograma (sin cruce con el
+    # ciclo). 📭 Faltante queda reservado al panel Validar, que sí
+    # verifica dictado en el ciclo (auditoría 2026-09-23).
+    "Sin horarios": "📄",
     "Faltante": "📭",
     "Sin datos": "❓",
 }
@@ -1234,13 +1306,21 @@ ESTADO_ICON_MAP = {
 
 def render_materia_checks_inline(
     result: dict, *, materia_codigo: str, materia_nombre: str,
+    as_expander: bool = True,
 ) -> None:
     """Renderea el resultado de `compute_materia_checks_from_db` como
-    un expander con el badge del estado.
+    un expander (o container) con el badge del estado.
 
     Consumido por el tab "Ver / Editar" tanto en modo "Por materia"
     (una sola materia visible) como en modo "Por grupo" (loop de
-    expanders, uno por materia del filtro).
+    expanders, uno por materia del filtro), y por las tarjetas del
+    preview del importer.
+
+    ``as_expander=False`` renderea un ``st.container(border=True)`` en
+    vez de un expander — para los callers que ya están DENTRO de un
+    expander (el loop per-materia del importer): Streamlit 1.52 tolera
+    expanders anidados pero el rótulo quedaba duplicado y los chequeos
+    a dos clics (auditoría 2026-09-23).
 
     No renderea el calendario ni los controles de edición — sólo el
     listado de chequeos con sus iconos.
@@ -1257,7 +1337,14 @@ def render_materia_checks_inline(
         _resumen += (
             f"  ·  {n_entries} entrada(s) · {n_com} comisión(es)"
         )
-    with st.expander(_resumen, expanded=(estado != "OK")):
+
+    if as_expander:
+        _ctx = st.expander(_resumen, expanded=(estado != "OK"))
+    else:
+        _ctx = st.container(border=True)
+    with _ctx:
+        if not as_expander:
+            st.markdown(f"**Chequeos estructurales** — {estado}")
         for ck in result.get("checks", []):
             ico = CHECK_ICON_MAP.get(ck.get("status", "info"), "•")
             st.markdown(

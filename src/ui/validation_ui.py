@@ -1767,6 +1767,67 @@ def _compute_summary_fingerprint(
     return ("none",)
 
 
+def _contar_por_carrera(filtered: list[dict]) -> dict[str, dict[str, int]]:
+    """Cuenta materias por carrera y estado, deduplicando por
+    ``(carrera, código)``.
+
+    Fix auditoría H6 (2026-09-23): el loop inline anterior iteraba las
+    filas de ``_filtered`` (una por ubicación curricular) e incrementaba
+    el bucket de CADA carrera del ``carreras_set`` de la fila — que es
+    el set completo de carreras de la materia, idéntico en todas sus
+    filas. Una materia común a 2 carreras sumaba 2 en cada una
+    (inflación ×N por ubicaciones). Deduplicar por (carrera, código)
+    da el conteo que el caption promete: "una materia común se cuenta
+    en cada carrera a la que pertenece" — una vez.
+
+    Extraída como función pura para poder testearla sin Streamlit ni
+    base de datos (``tests/test_validation_ui_helpers.py``).
+    """
+    counts: dict[str, dict[str, int]] = {}
+    seen: set[tuple[str, str]] = set()
+    for r in filtered:
+        for cc in (r.get("carreras_set") or set()):
+            key = (cc, r["codigo"])
+            if key in seen:
+                continue
+            seen.add(key)
+            bkt = counts.setdefault(
+                cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
+                     "Conflictiva": 0, "Sin datos": 0, "Revisión": 0},
+            )
+            bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
+    return counts
+
+
+def _contar_totales_unicos(filtered: list[dict]) -> dict[str, int]:
+    """Totales de la fila "Total (únicas)": materias DISTINTAS del set
+    filtrado, por estado.
+
+    Fix auditoría H6.b (2026-09-23): antes se usaba ``len(_filtered)``
+    (filas = ubicaciones curriculares), así que el rótulo "(únicas)"
+    mentía y el número divergía de la métrica "Mostrando" en la misma
+    pantalla. Colapsar por código es válido porque el estado no varía
+    entre filas de un mismo código (se computa desde ``_base_flags``).
+    """
+    uniq: dict[str, dict] = {}
+    for r in filtered:
+        uniq.setdefault(r["codigo"], r)
+    return {
+        "total": len(uniq),
+        "ok": sum(1 for r in uniq.values() if r["estado"] == "OK"),
+        "faltantes": sum(
+            1 for r in uniq.values() if r["estado"] == "Faltante"
+        ),
+        "no_esperadas": sum(
+            1 for r in uniq.values() if r["estado"] == "No esperada"
+        ),
+        "revision": sum(
+            1 for r in uniq.values()
+            if r["estado"] in ("Conflictiva", "Sin datos", "Revisión")
+        ),
+    }
+
+
 def _render_detalle_por_materia(
     summary, key_ns: str,
     *,
@@ -1777,7 +1838,6 @@ def _render_detalle_por_materia(
     save_as_copy: bool = False,
     pending_revalidate_key: Optional[str] = None,
     invalidate_cache_keys: Optional[list[str]] = None,
-    restrict_materias: Optional[set[str]] = None,
 ) -> None:
     """Lista filtrada de materias + esperadas con su estado.
 
@@ -1786,9 +1846,10 @@ def _render_detalle_por_materia(
     cronograma las "comisiones" se cuentan a nivel de `ScheduleEntryDB`
     (cantidad de entries únicas por materia).
 
-    Con `restrict_materias` seteado, solo se muestran las materias de
-    ese conjunto (útil para el preview del importer, que quiere ver
-    solo las afectadas). None (default) → sin restricción.
+    Nota (auditoría H15, 2026-09-23): el parámetro `restrict_materias`
+    (Fase H.3) se retiró — su único consumidor era el preview del
+    importer, que desde el rediseño per-materia (task #360) ya no
+    llama a esta función.
     """
     # Detectar si las entries/comisiones cambiaron en DB respecto del
     # snapshot del summary cacheado. Si cambiaron → marcar pending y
@@ -1825,13 +1886,6 @@ def _render_detalle_por_materia(
     # Construir dataset unificado: union de esperadas + materias del plan
     _esperadas_set = set(summary.esperadas.keys())
     _en_plan_set = set(summary.mat_map.keys())
-
-    # Fase H.3 del rediseño 2026-09-15: `restrict_materias` permite
-    # que el preview del importer muestre solo las materias afectadas
-    # por el archivo. Todo lo demás del pipeline sigue igual.
-    if restrict_materias is not None:
-        _esperadas_set = _esperadas_set & restrict_materias
-        _en_plan_set = _en_plan_set & restrict_materias
 
     _faltantes_set = _esperadas_set - _en_plan_set
     _extras_set = _en_plan_set - _esperadas_set
@@ -2178,8 +2232,9 @@ def _render_detalle_por_materia(
         st.markdown("**🎛 Filtros del detalle por materia**")
         st.caption(
             "Combinan con AND: una materia se muestra si cumple "
-            "todos los filtros activos. Los conteos de arriba y las "
-            "tablas de abajo respetan estos filtros."
+            "todos los filtros activos. El resumen y las tablas de "
+            "abajo respetan estos filtros, salvo la métrica «de un "
+            "total», que siempre cuenta el universo completo."
         )
         _f1, _f2, _f3, _f4, _f5 = st.columns(5)
         with _f1:
@@ -2246,8 +2301,9 @@ def _render_detalle_por_materia(
                 value=False,
                 key=f"{key_ns}_dpm_only_issues",
                 help=(
-                    "Mostrar solo materias cuyo estado no es OK (faltantes, "
-                    "no esperadas, conflictivas o sin datos)."
+                    "Mostrar solo materias cuyo estado no es OK "
+                    "(faltantes, no esperadas, conflictivas, sin datos "
+                    "o en revisión)."
                 ),
             )
 
@@ -2300,16 +2356,13 @@ def _render_detalle_por_materia(
     _filtered = [r for r in _rows if _passes(r)]
     _filtered.sort(key=lambda r: (r["carrera"], r["anio"] or 99, r["codigo"]))
 
-    if not _filtered:
-        st.caption(
-            "Ninguna materia matchea los filtros. Ajustá los filtros."
-        )
-        return
-
     # =========================================================================
     # Resumen del set filtrado (task #361, 2026-09-23)
     # =========================================================================
-    # Contamos materias únicas visibles vs total de materias únicas.
+    # Fix auditoría H14 (2026-09-23): el resumen se renderea SIEMPRE,
+    # incluso cuando el filtro no matchea nada — antes el early return
+    # de abajo lo salteaba, y el usuario que se quedaba sin resultados
+    # perdía justo la referencia de cuántas materias hay en total.
     _n_mat_visibles = len({r["codigo"] for r in _filtered})
     _n_mat_ok_filtered = len({
         r["codigo"] for r in _filtered if r["estado"] == "OK"
@@ -2330,19 +2383,20 @@ def _render_detalle_por_materia(
         if _extra:
             st.caption(_extra.lstrip(" · "))
 
+    if not _filtered:
+        st.caption(
+            "Ninguna materia matchea los filtros. Ajustá los filtros."
+        )
+        return
+
     # =========================================================================
     # Tabla "Resumen por carrera" — counts de status por carrera
     # =========================================================================
-    _carrera_counts: dict[str, dict[str, int]] = {}
-    for r in _filtered:
-        # Una materia comun cuenta en cada carrera a la que pertenece
-        # (se considera "esperada" en cada plan).
-        for cc in (r.get("carreras_set") or set()):
-            bkt = _carrera_counts.setdefault(
-                cc, {"OK": 0, "Faltante": 0, "No esperada": 0,
-                     "Conflictiva": 0, "Sin datos": 0, "Revisión": 0},
-            )
-            bkt[r["estado"]] = bkt.get(r["estado"], 0) + 1
+    # Aritmética extraída a helpers puros y testeada en
+    # `tests/test_validation_ui_helpers.py` (fix auditoría H6,
+    # 2026-09-23: doble conteo por materias comunes + fila "Total
+    # (únicas)" que contaba filas).
+    _carrera_counts = _contar_por_carrera(_filtered)
     if _carrera_counts:
         _cs_rows = []
         for cc in sorted(_carrera_counts.keys()):
@@ -2359,30 +2413,22 @@ def _render_detalle_por_materia(
                 "📭 Faltantes": counts["Faltante"],
                 "📥 No esperadas": counts["No esperada"],
             })
-        # Total al pie: cuenta materias UNICAS del set filtrado (no
-        # sumas de carrera, porque una materia comun se cuenta en cada
-        # carrera y eso inflaria el total).
-        _u_total = len(_filtered)
-        _u_ok = sum(1 for r in _filtered if r["estado"] == "OK")
-        _u_falt = sum(1 for r in _filtered if r["estado"] == "Faltante")
-        _u_noesp = sum(1 for r in _filtered if r["estado"] == "No esperada")
-        _u_rev = sum(
-            1 for r in _filtered
-            if r["estado"] in ("Conflictiva", "Sin datos", "Revisión")
-        )
+        _u = _contar_totales_unicos(_filtered)
         _tot = {
             "Carrera": "**Total (únicas)**",
-            "Materias": _u_total,
-            "✅ OK": _u_ok,
-            "⚠️ Revisión": _u_rev,
-            "📭 Faltantes": _u_falt,
-            "📥 No esperadas": _u_noesp,
+            "Materias": _u["total"],
+            "✅ OK": _u["ok"],
+            "⚠️ Revisión": _u["revision"],
+            "📭 Faltantes": _u["faltantes"],
+            "📥 No esperadas": _u["no_esperadas"],
         }
         st.markdown("**Resumen por carrera (sobre el set filtrado)**")
         st.caption(
-            "Una materia común se cuenta en cada carrera a la que "
-            "pertenece. La fila **Total (únicas)** cuenta materias "
-            "distintas (sin duplicar)."
+            "Una materia común se cuenta una vez en cada carrera a la "
+            "que pertenece. La fila **Total (únicas)** cuenta materias "
+            "distintas (sin duplicar); las materias sin plan de "
+            "estudio asociado entran al total pero no a ninguna fila "
+            "de carrera."
         )
         st.dataframe(
             pd.DataFrame(_cs_rows + [_tot]),

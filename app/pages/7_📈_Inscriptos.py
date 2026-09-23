@@ -386,14 +386,30 @@ with st.expander(
         # candidata; con 1 hoja se fija automáticamente.
         _insc_sheet_choice: str | None = None
         if _upl_file is not None:
+            from src.services.horario_file_parser import hoja_default
             from src.services.inscripcion_import_service import (
+                HOJA_PREFERIDA as _INSC_HOJA_PREF,
                 list_inscriptos_sheets,
             )
-            _insc_sheets = list_inscriptos_sheets(_upl_file)
+            # Cache por archivo (fix auditoría H2-perf, 2026-09-23).
+            _insc_fid = (
+                getattr(_upl_file, "file_id", None) or _upl_file.name
+            )
+            _insc_cache = st.session_state.get("_insc_sheets_cache")
+            if not _insc_cache or _insc_cache[0] != _insc_fid:
+                _insc_cache = (
+                    _insc_fid, list_inscriptos_sheets(_upl_file),
+                )
+                st.session_state["_insc_sheets_cache"] = _insc_cache
+            _insc_sheets = _insc_cache[1]
             if len(_insc_sheets) > 1:
                 _insc_sheet_choice = st.selectbox(
                     "Hoja del Excel a importar",
                     options=_insc_sheets,
+                    # Fix auditoría H2 (2026-09-23): arrancar en la
+                    # hoja preferida del parser ("Inscriptos"), no en
+                    # la primera del workbook.
+                    index=hoja_default(_insc_sheets, _INSC_HOJA_PREF),
                     key="insc_upload_sheet",
                     help=(
                         "El archivo tiene varias hojas. Elegí cuál "

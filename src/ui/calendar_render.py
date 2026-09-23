@@ -147,6 +147,36 @@ def _compute_hidden_days(config: ConfiguracionHoraria) -> list[int]:
     return sorted(all_dow - active_dow)
 
 
+def _legend_por_comision(
+    grid_data, com_colors: dict[int, tuple[str, str]],
+) -> dict[str, tuple[str, str]]:
+    """Etiquetas de la leyenda de comisiones.
+
+    Prefiere el NOMBRE de la comisión (arbitrario, legible: "Mañana",
+    "A", "1") con el número como fallback — fix auditoría H18,
+    2026-09-23. `0` es el centinela "sin comisión asignada".
+    """
+    nombre_por_num: dict[int, str] = {}
+    for blocks in grid_data.values():
+        for b in blocks:
+            _n = (
+                getattr(b, "comision_numero", None)
+                or getattr(b, "comision", None)
+                or 0
+            )
+            if _n and not nombre_por_num.get(_n):
+                _nom = getattr(b, "comision_nombre", None)
+                if _nom:
+                    nombre_por_num[_n] = str(_nom)
+    return {
+        (
+            nombre_por_num.get(cn)
+            or (f"C{cn}" if cn > 0 else "Sin asignar")
+        ): color
+        for cn, color in com_colors.items()
+    }
+
+
 def _render_legend(
     mat_colors: dict[str, tuple[str, str]],
     mat_names: dict[str, str],
@@ -215,10 +245,22 @@ def render_schedule_calendar(
 
     mat_colors, mat_names = _assign_colors(grid_data)
 
+    # Fix auditoría H18 (2026-09-23): `ScheduleBlock` expone
+    # `comision_numero` / `comision_nombre`, no `comision` — el
+    # coloreo por comisión estaba muerto (todas caían al 0 y se
+    # pintaban con el primer color de la paleta). Se mantiene
+    # `comision` como fallback para blocks legacy.
+    def _num_comision(b) -> int:
+        return (
+            getattr(b, "comision_numero", None)
+            or getattr(b, "comision", None)
+            or 0
+        )
+
     _com_colors: dict[int, tuple[str, str]] = {}
     if color_by_comision:
         _com_nums = sorted({
-            getattr(b, "comision", None) or 0
+            _num_comision(b)
             for blocks in grid_data.values() for b in blocks
         })
         _com_colors = {
@@ -232,7 +274,7 @@ def render_schedule_calendar(
         if dow is None:
             continue
         for b in blocks:
-            com = getattr(b, "comision", None)
+            com = _num_comision(b) or None
             # Fase I.3 · Preferimos el NOMBRE de la comisión (arbitrario,
             # legible: "Mañana", "A", "Nocturno", "1") sobre el número.
             # El número queda como fallback si no hay nombre.
@@ -269,10 +311,7 @@ def render_schedule_calendar(
     )
 
     if color_by_comision:
-        _com_legend_colors = {
-            (f"C{cn}" if cn > 0 else "Sin asignar"): color
-            for cn, color in _com_colors.items()
-        }
+        _com_legend_colors = _legend_por_comision(grid_data, _com_colors)
         _com_legend_names = {k: "" for k in _com_legend_colors}
         _render_legend(_com_legend_colors, _com_legend_names, title="Comisiones:")
     else:
@@ -514,9 +553,20 @@ def render_editable_schedule_calendar(
     mat_colors, mat_names = _assign_colors(grid_data)
 
     # Color by comision: assign colors per comision number instead of materia
+    # Fix auditoría H18 (2026-09-23): `ScheduleBlock` expone
+    # `comision_numero`, no `comision` — ver comentario homólogo en
+    # `render_schedule_calendar`.
+    def _num_comision(b) -> int:
+        return (
+            getattr(b, "comision_numero", None)
+            or getattr(b, "comision", None)
+            or 0
+        )
+
+    _com_colors: dict[int, tuple[str, str]] = {}
     if color_by_comision:
         _com_nums = sorted({
-            getattr(b, "comision", None) or 0
+            _num_comision(b)
             for blocks in grid_data.values() for b in blocks
         })
         _com_colors = {
@@ -530,7 +580,7 @@ def render_editable_schedule_calendar(
         if dow is None:
             continue
         for b in blocks:
-            com = getattr(b, "comision", None)
+            com = _num_comision(b) or None
             # Fase I.3 · Nombre de la comisión como etiqueta primaria.
             # Fallback al número si no hay nombre (compat con blocks
             # históricos que no populan `comision_nombre`).
@@ -657,10 +707,7 @@ def render_editable_schedule_calendar(
 
     # Leyenda arriba del calendario (referencia visual para edicion)
     if color_by_comision:
-        _com_legend_colors = {
-            (f"C{cn}" if cn > 0 else "Sin asignar"): color
-            for cn, color in _com_colors.items()
-        }
+        _com_legend_colors = _legend_por_comision(grid_data, _com_colors)
         _com_legend_names = {k: "" for k in _com_legend_colors}
         _render_legend(_com_legend_colors, _com_legend_names, title="Comisiones:")
     else:

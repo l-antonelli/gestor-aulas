@@ -1,3 +1,9 @@
+# NOTA: la fuente de verdad de las versiones es `pyproject.toml` (uv).
+# Este archivo se mantiene como espejo para entornos que instalan con
+# pip directo. Los pines de Streamlit se alinean con pyproject (fix
+# auditoría 2026-09-23: el piso `>=1.28.0` habilitaba versiones donde
+# anidar expanders levanta StreamlitAPIException y rompía la pantalla
+# del importer).
 pydantic>=2.0
 pytest>=7.0
 hypothesis>=6.0
@@ -6,10 +12,12 @@ hypothesis>=6.0
 sqlmodel>=0.0.14
 
 # Frontend
-streamlit>=1.28.0
-streamlit-calendar>=1.2.0
-streamlit-pydantic=0.6.0
-hypothesis
+streamlit==1.52.2
+streamlit-calendar==1.4.0
 
 # Optimization (LP de asignacion de aulas)
 pulp>=2.7
+
+# Parsing de archivos Excel
+pandas>=2.0
+openpyxl>=3.1

@@ -419,6 +419,17 @@ def _dialog_edit_entry():
 # =============================================================================
 # Tabs
 # =============================================================================
+# Toast diferido de la última acción de import. Se consume ANTES de
+# instanciar los tabs (fix auditoría 2026-09-23): si estuviera dentro
+# de `with tab_cargar:` y algo en `tab_lista` levantara una excepción,
+# la clave quedaría en session_state y el toast aparecería fuera de
+# contexto en un rerun posterior.
+if "_crono_import_toast" in st.session_state:
+    st.toast(
+        st.session_state.pop("_crono_import_toast"),
+        icon="✅",
+    )
+
 # Fase I.2 · Unificamos Visualizar con Editar: en vez de dos tabs
 # distintas, dejamos una sola pestaña "Ver / Editar" con un toggle
 # "Solo lectura" arriba (default OFF) para ver sin editar. Simplifica
@@ -551,15 +562,6 @@ with tab_lista:
 # Tab 2: Cargar
 # =============================================================================
 with tab_cargar:
-    # Toast pendiente del último rerun (por ejemplo tras confirmar un
-    # import shadow). Streamlit no permite invocar `st.toast` en el
-    # callback del botón porque el rerun lo pierde; lo diferimos aquí.
-    if "_crono_import_toast" in st.session_state:
-        st.toast(
-            st.session_state.pop("_crono_import_toast"),
-            icon="✅",
-        )
-
     st.subheader("Crear o cargar cronograma")
     st.caption(
         "Un cronograma es un conjunto de horarios (día + rango + "
@@ -724,13 +726,30 @@ with tab_cargar:
             _sheet_choice: str | None = None
             if uploaded is not None:
                 from src.services.horario_file_parser import (
+                    hoja_default,
                     list_horarios_sheets,
                 )
-                _sheets_visible = list_horarios_sheets(uploaded)
+                # Cache por archivo (fix auditoría H2-perf, 2026-09-23):
+                # listar las hojas corre en cada rerun del script — sin
+                # cache se re-leía el workbook con cada interacción de
+                # la página, incluso desde otros tabs.
+                _upl_fid = getattr(uploaded, "file_id", None) or uploaded.name
+                _sheets_cache = st.session_state.get("_crono_sheets_cache")
+                if not _sheets_cache or _sheets_cache[0] != _upl_fid:
+                    _sheets_cache = (_upl_fid, list_horarios_sheets(uploaded))
+                    st.session_state["_crono_sheets_cache"] = _sheets_cache
+                _sheets_visible = _sheets_cache[1]
                 if len(_sheets_visible) > 1:
                     _sheet_choice = st.selectbox(
                         "Hoja del Excel a importar",
                         options=_sheets_visible,
+                        # Fix auditoría H2 (2026-09-23): arrancar en la
+                        # hoja que el parser prefiere ("Horarios"), no
+                        # en la primera del workbook — sin esto, una
+                        # hoja "Resumen" agregada antes de "Horarios"
+                        # rompía un archivo que el fallback importaba
+                        # bien.
+                        index=hoja_default(_sheets_visible),
                         key="crono_upload_sheet",
                         help=(
                             "El archivo tiene varias hojas. Elegí "
@@ -775,7 +794,7 @@ with tab_cargar:
 
     elif modo_carga == "Importar en cronograma existente":
         # Flujo Fase G del rediseño 2026-09-15: preview via shadow
-        # schedule + calendario editable + validaciones opt-in.
+        # schedule + tarjetas per-materia (rediseño 2026-09-23).
         from src.services.cronograma_import_service import (
             crear_shadow_import,
             descartar_shadow_import,
@@ -786,12 +805,51 @@ with tab_cargar:
             render_schedule_calendar,
         )
 
+        def _limpiar_preview_state(
+            sched_id: str, shadow_id: str | None,
+        ) -> None:
+            """Limpia TODAS las claves de session_state de un preview.
+
+            Fix auditoría H13 (2026-09-23): antes cada camino de salida
+            (confirmar, descartar de arriba, descartar de abajo,
+            "preview perdido", re-crear) limpiaba un subconjunto
+            distinto — los bytes del Excel quedaban acumulados en
+            session_state y las decisiones per-materia sobrevivían al
+            preview que las creó.
+            """
+            st.session_state.pop(f"crono_import_shadow_{sched_id}", None)
+            st.session_state.pop(
+                f"crono_import_shadow_val_{sched_id}", None,
+            )
+            if shadow_id:
+                for _pref in (
+                    "crono_import_decisiones",
+                    "crono_import_file_bytes",
+                    "crono_import_file_meta",
+                    "cimp_pending_reval",
+                    "cimp_regen_errs",
+                ):
+                    st.session_state.pop(f"{_pref}_{shadow_id}", None)
+
         # --------------------------------------------------------------
         # Banner de shadows huérfanos (si el usuario cerró el navegador
         # con un preview abierto, quedan en la DB).
         # --------------------------------------------------------------
         with next(get_session()) as _sess:
             _huerfanos = list_shadows_huerfanos(_sess)
+        # Excluir los shadows de previews ABIERTOS en esta sesión —
+        # antes el banner ofrecía descartar el preview que el usuario
+        # estaba mirando (auditoría H13, 2026-09-23).
+        _shadows_abiertos = {
+            v.get("shadow_id")
+            for k, v in st.session_state.items()
+            if isinstance(k, str)
+            and k.startswith("crono_import_shadow_")
+            and isinstance(v, dict)
+        }
+        _huerfanos = [
+            sh for sh in _huerfanos if sh.id not in _shadows_abiertos
+        ]
         if _huerfanos:
             with st.container(border=True):
                 st.warning(
@@ -812,6 +870,9 @@ with tab_cargar:
                     ):
                         with next(get_session()) as _sess:
                             descartar_shadow_import(_sess, _sh.id)
+                        # Limpiar cualquier resto de session_state
+                        # keyed por este shadow (fix auditoría H13).
+                        _limpiar_preview_state("", _sh.id)
                         st.rerun()
 
         if not all_schedules:
@@ -850,6 +911,22 @@ with tab_cargar:
                     key="crono_import_preview_btn",
                 ):
                     try:
+                        # Fix auditoría H13 (2026-09-23): si ya había
+                        # un preview abierto para este destino,
+                        # descartarlo — antes el shadow viejo quedaba
+                        # abandonado en la DB y reaparecía en el
+                        # banner de huérfanos.
+                        _prev_state = st.session_state.get(_shadow_key)
+                        if _prev_state:
+                            _old_shadow = _prev_state.get("shadow_id")
+                            if _old_shadow:
+                                with next(get_session()) as _sess:
+                                    descartar_shadow_import(
+                                        _sess, _old_shadow,
+                                    )
+                            _limpiar_preview_state(
+                                _sel_sched_id, _old_shadow,
+                            )
                         with next(get_session()) as _sess:
                             _shadow, _preview = crear_shadow_import(
                                 _sess, _sel_sched_id, uploaded,
@@ -860,6 +937,16 @@ with tab_cargar:
                             "preview_summary": {
                                 "total_horarios": _preview.total_horarios,
                                 "materias": len(_preview.materias),
+                                # Fix auditoría H5 (2026-09-23): el
+                                # listado per-materia se deriva del
+                                # PREVIEW, no de la DB — sin esto una
+                                # materia cuyo import falló por
+                                # colisión y sin entries previas
+                                # desaparecía de la pantalla.
+                                "materias_codigos": sorted({
+                                    m.materia_codigo
+                                    for m in _preview.materias
+                                }),
                                 "materias_no_resueltas": (
                                     _preview.materias_no_resueltas
                                 ),
@@ -886,8 +973,7 @@ with tab_cargar:
                         )
                         with next(get_session()) as _sess:
                             descartar_shadow_import(_sess, _shadow_id)
-                        st.session_state.pop(_shadow_key, None)
-                        st.session_state.pop(_validation_key, None)
+                        _limpiar_preview_state(_sel_sched_id, _shadow_id)
                         st.rerun()
 
             # ------------------------------------------------------------
@@ -906,14 +992,14 @@ with tab_cargar:
                         "El preview se perdió (shadow borrado). "
                         "Volvé a apretar 'Ver preview'."
                     )
-                    st.session_state.pop(_shadow_key, None)
+                    _limpiar_preview_state(_sel_sched_id, _shadow_id)
                 else:
                     st.info(
                         "👀 Este es un **preview**: los cambios "
                         "todavía **no se guardaron** en el cronograma "
-                        "destino. Revisá el calendario abajo, "
-                        "editá si hace falta, y apretá **Confirmar "
-                        "importación** para persistir."
+                        "destino. Revisá las tarjetas por materia de "
+                        "abajo y apretá **Confirmar importación** "
+                        "para persistir."
                     )
 
                     # Métricas.
@@ -924,13 +1010,17 @@ with tab_cargar:
                     _m2.metric("Materias del archivo", _summary["materias"])
                     _m3.metric(
                         "Requieren decisión", len(_summary["con_conflicto"]),
+                        # Fix auditoría H12/B6 (2026-09-23): el tooltip
+                        # explicaba el default viejo ("agregar") y un
+                        # flujo que ya no existe.
                         help=(
                             "Materias que ya tenían horarios en el "
-                            "destino. Por default se agregaron las "
-                            "nuevas comisiones (agregar). Si querés "
-                            "reemplazar en vez de agregar, editá el "
-                            "calendario o descartá y usá 'reemplazar' "
-                            "manualmente."
+                            "cronograma destino. Por default se "
+                            "**reemplazan**: quedan sólo las "
+                            "comisiones que trae el archivo. Si "
+                            "querés conservar las previas, cambiá la "
+                            "decisión a 'agregar' o 'ignorar' en la "
+                            "tarjeta de la materia, más abajo."
                         ),
                     )
                     with next(get_session()) as _sess:
@@ -976,29 +1066,37 @@ with tab_cargar:
                     # materia en el shadow, más chequeos estructurales.
                     # Todo lo hipotético queda contenido en cada tarjeta
                     # y la revisión se fuerza per-materia.
-                    with next(get_session()) as _sess:
-                        # Materias del archivo = las que están en el
-                        # preview (todas, con o sin datos previos), más
-                        # las que agregó el shadow al aplicar decisiones.
-                        _all_mat_shadow = set(_sess.exec(
-                            select(ScheduleEntryDB.codigo_materia)
-                            .where(ScheduleEntryDB.schedule_id == _shadow_id)
-                            .distinct()
-                        ).all())
-                        _all_mat_dest = set(_sess.exec(
-                            select(ScheduleEntryDB.codigo_materia)
-                            .where(
-                                ScheduleEntryDB.schedule_id == _sel_sched_id
-                            )
-                            .distinct()
-                        ).all())
+                    #
+                    # Fix auditoría H5 (2026-09-23): el listado sale del
+                    # PREVIEW (fuente de verdad de "qué trajo el
+                    # archivo"), no de diffs contra la DB — antes una
+                    # materia cuyo import falló por colisión y sin
+                    # entries previas desaparecía del listado, dejando
+                    # la pantalla autocontradictoria. El fallback cubre
+                    # session_state de previews creados antes del fix.
                     _mats_con_prev = set(_summary["con_conflicto"])
-                    _mats_nuevas_archivo = (
-                        _all_mat_shadow - _all_mat_dest
-                    )
-                    _materias_del_archivo = sorted(
-                        _mats_con_prev | _mats_nuevas_archivo
-                    )
+                    _materias_del_archivo = _summary.get("materias_codigos")
+                    if _materias_del_archivo is None:
+                        with next(get_session()) as _sess:
+                            _all_mat_shadow = set(_sess.exec(
+                                select(ScheduleEntryDB.codigo_materia)
+                                .where(
+                                    ScheduleEntryDB.schedule_id == _shadow_id
+                                )
+                                .distinct()
+                            ).all())
+                            _all_mat_dest = set(_sess.exec(
+                                select(ScheduleEntryDB.codigo_materia)
+                                .where(
+                                    ScheduleEntryDB.schedule_id
+                                    == _sel_sched_id
+                                )
+                                .distinct()
+                            ).all())
+                        _materias_del_archivo = sorted(
+                            _mats_con_prev
+                            | (_all_mat_shadow - _all_mat_dest)
+                        )
 
                     # Estado por-materia (decisión elegida). Persistido
                     # en session_state para que rerun no lo pise.
@@ -1027,17 +1125,35 @@ with tab_cargar:
                         # caso, si ya tenemos bytes guardados no hace
                         # falta re-guardar.
                         if uploaded is not None:
+                            # Fix auditoría (2026-09-23): sin el rewind
+                            # verificado, un `seek` fallido dejaba
+                            # `read()` devolviendo b"" y se persistían
+                            # cero bytes — el mismo antipatrón que la
+                            # task #339 eliminó del servicio. Si no se
+                            # puede rebobinar, avisamos en vez de
+                            # guardar basura.
                             try:
                                 uploaded.seek(0)
+                                _bytes_arch = uploaded.read()
                             except Exception:  # noqa: BLE001
-                                pass
-                            st.session_state[_file_bytes_key] = (
-                                uploaded.read()
-                            )
-                            st.session_state[_file_meta_key] = {
-                                "name": uploaded.name,
-                                "sheet": _sheet_choice,
-                            }
+                                _bytes_arch = b""
+                            if _bytes_arch:
+                                st.session_state[_file_bytes_key] = (
+                                    _bytes_arch
+                                )
+                                st.session_state[_file_meta_key] = {
+                                    "name": uploaded.name,
+                                    "sheet": _sheet_choice,
+                                }
+                            else:
+                                st.warning(
+                                    "No se pudo conservar una copia "
+                                    "del archivo para regenerar "
+                                    "decisiones por materia. Si "
+                                    "cambiás una decisión y falla, "
+                                    "descartá el preview y volvé a "
+                                    "subir el archivo."
+                                )
 
                     def _archivo_para_regenerar():
                         """Reconstruye un file-like con `.name` para
@@ -1089,24 +1205,67 @@ with tab_cargar:
                             f"### 📚 Materias del archivo "
                             f"({len(_materias_del_archivo)})"
                         )
+                        # Fix auditoría H12/B7 (2026-09-23): el caption
+                        # prometía "ajustar horarios manualmente en la
+                        # vista Después", pero ambos calendarios son de
+                        # sólo lectura.
                         st.caption(
                             "Para cada materia elegí si querés "
                             "**reemplazar** las entradas del destino "
                             "por las del archivo, **agregar** las "
                             "nuevas dejando las previas, o "
-                            "**ignorarla** en este import. Podés "
-                            "revisar el antes y después, y ajustar "
-                            "horarios manualmente en la vista "
-                            "**Después** antes de confirmar."
+                            "**ignorarla** en este import. Los dos "
+                            "calendarios son de sólo lectura: sirven "
+                            "para comparar el antes y el después. Los "
+                            "ajustes finos de horario se hacen después "
+                            "de confirmar, desde la pestaña "
+                            "**Ver / Editar**."
                         )
 
                         from src.ui.schedule_materia_editor import (
+                            ESTADO_ICON_MAP,
                             compute_materia_checks_from_db,
                             render_materia_checks_inline,
                         )
                         from src.services.cronograma_import_service import (
                             regenerar_materia_en_shadow,
                         )
+
+                        # Errores de regeneración persistidos por
+                        # materia (fix auditoría H3/H11, 2026-09-23:
+                        # un `st.error` emitido antes del rerun se
+                        # pierde — se guardan acá y se muestran dentro
+                        # del expander de la materia).
+                        _regen_errs_key = f"cimp_regen_errs_{_shadow_id}"
+                        _regen_errs: dict = st.session_state.setdefault(
+                            _regen_errs_key, {},
+                        )
+
+                        # Fix auditoría H4 (2026-09-23): las dos
+                        # grillas se construyen UNA vez y se indexan
+                        # por materia dentro del loop. Antes se llamaba
+                        # `build_schedule_grid` (que carga el
+                        # cronograma COMPLETO) dos veces por materia:
+                        # con 248 materias eran 496 llamadas ≈ 8 s por
+                        # rerun; ahora son 2 (~90 ms).
+                        with next(get_session()) as _sess:
+                            _grid_dest_full = build_schedule_grid(
+                                _sess, _sel_sched_id,
+                            )
+                            _grid_shadow_full = build_schedule_grid(
+                                _sess, _shadow_id,
+                            )
+
+                        def _grid_de_materia(grid_full, mc):
+                            _out = {}
+                            for _dia, _blocks in grid_full.items():
+                                _bs = [
+                                    b for b in _blocks
+                                    if b.materia_codigo == mc
+                                ]
+                                if _bs:
+                                    _out[_dia] = _bs
+                            return _out
 
                         for _mc in _materias_del_archivo:
                             _mat_nombre = materias_map.get(_mc, _mc)
@@ -1117,12 +1276,9 @@ with tab_cargar:
                             _check_res = compute_materia_checks_from_db(
                                 _shadow_id, _mc,
                             )
-                            _estado_badge_icon = {
-                                "OK": "✅",
-                                "Revisión": "🔎",
-                                "Faltante": "📭",
-                                "Sin datos": "❓",
-                            }.get(_check_res["estado"], "•")
+                            _estado_badge_icon = ESTADO_ICON_MAP.get(
+                                _check_res["estado"], "•",
+                            )
                             _tiene_prev = _mc in _mats_con_prev
                             _prev_tag = (
                                 "· 🕰 con datos previos"
@@ -1176,26 +1332,66 @@ with tab_cargar:
                                         horizontal=False,
                                     )
                                     if _new_dec != _decision_actual:
-                                        _decisiones_map[_mc] = _new_dec
+                                        # Fix auditoría H11 (2026-09-23):
+                                        # la decisión se persiste SOLO
+                                        # si la regeneración salió bien
+                                        # — antes se guardaba primero y
+                                        # un fallo dejaba el radio
+                                        # mostrando una decisión que el
+                                        # shadow nunca aplicó (y
+                                        # Confirmar persistía lo que el
+                                        # shadow tenía, no lo que la
+                                        # pantalla decía).
                                         _archivo, _sheet = (
                                             _archivo_para_regenerar()
                                         )
-                                        if _archivo is not None:
+                                        if _archivo is None:
+                                            _regen_errs[_mc] = [
+                                                "Se perdió la copia del "
+                                                "archivo en esta sesión "
+                                                "— descartá el preview "
+                                                "y volvé a subirlo."
+                                            ]
+                                            st.rerun()
+                                        else:
                                             try:
                                                 with next(get_session()) as _sess:  # noqa: E501
-                                                    regenerar_materia_en_shadow(  # noqa: E501
+                                                    _regen_res = regenerar_materia_en_shadow(  # noqa: E501
                                                         _sess, _shadow_id,
                                                         _mc,
                                                         decision=_new_dec,
                                                         file=_archivo,
                                                         sheet_name=_sheet,
                                                     )
+                                                _decisiones_map[_mc] = (
+                                                    _new_dec
+                                                )
+                                                # Fix auditoría H3
+                                                # (2026-09-23): los
+                                                # errores del commit
+                                                # (colisión de nombre
+                                                # de comisión) ya no se
+                                                # descartan — se
+                                                # persisten y se
+                                                # muestran tras el
+                                                # rerun.
+                                                if _regen_res.errors:
+                                                    _regen_errs[_mc] = list(
+                                                        _regen_res.errors
+                                                    )
+                                                else:
+                                                    _regen_errs.pop(
+                                                        _mc, None,
+                                                    )
                                                 st.session_state[
                                                     _pending_reval_key
                                                 ] = True
                                                 st.rerun()
                                             except ValueError as _exc:
-                                                st.error(str(_exc))
+                                                _regen_errs[_mc] = [
+                                                    str(_exc)
+                                                ]
+                                                st.rerun()
                                 else:
                                     st.caption(
                                         "Materia nueva en este "
@@ -1205,25 +1401,23 @@ with tab_cargar:
                                         "archivo."
                                     )
 
-                                # Columnas Antes / Después.
+                                # Errores persistidos de la última
+                                # regeneración de ESTA materia.
+                                for _err_msg in _regen_errs.get(_mc, []):
+                                    st.error(
+                                        f"⚠️ La última decisión no se "
+                                        f"aplicó por completo: {_err_msg}"
+                                    )
+
+                                # Columnas Antes / Después (grillas
+                                # pre-construidas fuera del loop — fix
+                                # auditoría H4).
                                 _col_ab, _col_ds = st.columns(2)
                                 with _col_ab:
                                     st.markdown("**⏮ Antes** (destino actual)")
-                                    with next(get_session()) as _sess:
-                                        _grid_before = build_schedule_grid(
-                                            _sess, _sel_sched_id,
-                                        )
-                                    _grid_before = {
-                                        dia: [
-                                            b for b in blocks
-                                            if b.materia_codigo == _mc
-                                        ]
-                                        for dia, blocks in _grid_before.items()
-                                    }
-                                    _grid_before = {
-                                        d: bs for d, bs in _grid_before.items()
-                                        if bs
-                                    }
+                                    _grid_before = _grid_de_materia(
+                                        _grid_dest_full, _mc,
+                                    )
                                     if _grid_before:
                                         render_schedule_calendar(
                                             _grid_before, config,
@@ -1239,21 +1433,9 @@ with tab_cargar:
                                     st.markdown(
                                         "**⏭ Después** (estado hipotético)"
                                     )
-                                    with next(get_session()) as _sess:
-                                        _grid_after = build_schedule_grid(
-                                            _sess, _shadow_id,
-                                        )
-                                    _grid_after = {
-                                        dia: [
-                                            b for b in blocks
-                                            if b.materia_codigo == _mc
-                                        ]
-                                        for dia, blocks in _grid_after.items()
-                                    }
-                                    _grid_after = {
-                                        d: bs for d, bs in _grid_after.items()
-                                        if bs
-                                    }
+                                    _grid_after = _grid_de_materia(
+                                        _grid_shadow_full, _mc,
+                                    )
                                     if _grid_after:
                                         render_schedule_calendar(
                                             _grid_after, config,
@@ -1268,10 +1450,16 @@ with tab_cargar:
                                         )
 
                                 # Chequeos estructurales de la materia.
+                                # `as_expander=False`: ya estamos dentro
+                                # del expander de la tarjeta — el
+                                # expander anidado duplicaba el rótulo
+                                # y enterraba los chequeos a dos clics
+                                # (auditoría 2026-09-23).
                                 render_materia_checks_inline(
                                     _check_res,
                                     materia_codigo=_mc,
                                     materia_nombre=_mat_nombre,
+                                    as_expander=False,
                                 )
 
                     # ============ Bloque final: métricas + confirmar ============
@@ -1370,18 +1558,8 @@ with tab_cargar:
                                         f"{_fin_res.entries_finales} "
                                         "entrada(s)."
                                     )
-                                    st.session_state.pop(_shadow_key, None)
-                                    st.session_state.pop(
-                                        _validation_key, None,
-                                    )
-                                    st.session_state.pop(
-                                        _decisiones_key, None,
-                                    )
-                                    st.session_state.pop(
-                                        _file_bytes_key, None,
-                                    )
-                                    st.session_state.pop(
-                                        _file_meta_key, None,
+                                    _limpiar_preview_state(
+                                        _sel_sched_id, _shadow_id,
                                     )
                                     st.rerun()
                                 except ValueError as _exc:
@@ -1394,11 +1572,9 @@ with tab_cargar:
                             ):
                                 with next(get_session()) as _sess:
                                     descartar_shadow_import(_sess, _shadow_id)
-                                st.session_state.pop(_shadow_key, None)
-                                st.session_state.pop(_validation_key, None)
-                                st.session_state.pop(_decisiones_key, None)
-                                st.session_state.pop(_file_bytes_key, None)
-                                st.session_state.pop(_file_meta_key, None)
+                                _limpiar_preview_state(
+                                    _sel_sched_id, _shadow_id,
+                                )
                                 st.rerun()
 
     elif modo_carga == "Copiar desde plan":
