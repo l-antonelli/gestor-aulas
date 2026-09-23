@@ -94,12 +94,20 @@ def create_comision_for_schedule(
     cupo: Optional[int] = None,
     descripcion: str = "",
     carrera_asignada: Optional[str] = None,
+    commit: bool = True,
 ) -> ComisionDB:
     """Crea una ``ComisionDB`` asociada a un cronograma.
 
     Si ``numero`` no se especifica, autoderiva el próximo libre para la
     materia en ese cronograma. Si ``cupo`` no se especifica, usa
     ``MateriaDB.cupo`` (o 30 como fallback).
+
+    ``commit=False`` hace ``flush()`` en vez de ``commit()`` — lo usan
+    los flujos que necesitan que varias creaciones queden en una única
+    transacción (fix atomicidad 2026-09-23, auditoría H10: antes un
+    fallo a mitad del loop del importer dejaba el shadow mutilado con
+    comisiones huérfanas porque cada creación commiteaba el borrado
+    previo).
     """
     if numero is None:
         numero = _next_numero_libre(
@@ -124,8 +132,11 @@ def create_comision_for_schedule(
         carrera_asignada=carrera_asignada,
     )
     session.add(com)
-    session.commit()
-    session.refresh(com)
+    if commit:
+        session.commit()
+        session.refresh(com)
+    else:
+        session.flush()
     return com
 
 

@@ -672,6 +672,363 @@ class TestShadowImport:
         assert result.entries_eliminadas == 0
         assert result.entries_sin_cambio == 2
 
+    def test_reemplazar_preserva_atributos_de_comision(
+        self, session, setup_catalogo,
+    ):
+        """Regresión auditoría H1 (2026-09-23): el modo "reemplazar"
+        (default) borraba la ComisionDB y la recreaba con los defaults
+        del catálogo, destruyendo cupo, descripción, coef_asignacion y
+        carrera_asignada (el override de sede del LP, RF-LP-15) — que
+        el archivo de horarios no trae y no puede restituir. Y el toast
+        lo reportaba como "sin cambio".
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+
+        com = create_comision_for_schedule(
+            session, sched.id, "MAT101", nombre="1",
+        )
+        com.cupo = 123
+        com.descripcion = "Turno mañana — aula grande"
+        com.coef_asignacion = 0.6
+        session.add(com)
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Lunes",
+            hora_inicio=time(8, 0), hora_fin=time(11, 0),
+            comision_id=com.id,
+        ))
+        session.commit()
+
+        # Archivo con la MISMA comisión y el MISMO horario.
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+        ])
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
+        res = finalizar_shadow_import(session, shadow.id)
+
+        com2 = session.exec(
+            select(ComisionDB)
+            .where(ComisionDB.schedule_id == sched.id)
+            .where(ComisionDB.materia_codigo == "MAT101")
+        ).one()
+        assert com2.cupo == 123
+        assert com2.descripcion == "Turno mañana — aula grande"
+        assert abs(com2.coef_asignacion - 0.6) < 1e-9
+        # Y el toast reporta honestamente "sin cambio".
+        assert res.entries_sin_cambio == 1
+        assert res.entries_agregadas == 0
+        assert res.entries_eliminadas == 0
+
+    def test_default_reemplazar_no_toca_materias_ausentes_del_archivo(
+        self, session, setup_catalogo,
+    ):
+        """Cobertura A1 de la auditoría 2026-09-23: fija la frontera
+        "materia ausente del archivo ⇒ no se toca". El destino tiene
+        MAT101 (comisiones "1" y "2") y FIS101; el archivo trae sólo
+        la comisión "1" de MAT101. Al confirmar sin tocar nada:
+        - MAT101 pierde la comisión "2" (default reemplazar — el toast
+          lo reporta como eliminada),
+        - FIS101 queda intacta.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+
+        for _nom, _dia in (("1", "Lunes"), ("2", "Jueves")):
+            _c = create_comision_for_schedule(
+                session, sched.id, "MAT101", nombre=_nom,
+            )
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()), schedule_id=sched.id,
+                codigo_materia="MAT101", dia=_dia,
+                hora_inicio=time(8, 0), hora_fin=time(11, 0),
+                comision_id=_c.id,
+            ))
+        _cf = create_comision_for_schedule(
+            session, sched.id, "FIS101", nombre="1",
+        )
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="FIS101", dia="Martes",
+            hora_inicio=time(9, 0), hora_fin=time(12, 0),
+            comision_id=_cf.id,
+        ))
+        session.commit()
+
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+        ])
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
+        res = finalizar_shadow_import(session, shadow.id)
+
+        entries = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == sched.id
+            )
+        ).all()
+        assert {(e.codigo_materia, e.dia) for e in entries} == {
+            ("MAT101", "Lunes"),   # comisión "1" sobrevive
+            ("FIS101", "Martes"),  # ausente del archivo → intacta
+        }
+        # La comisión "2" se eliminó y el toast lo dice. "Sin cambio"
+        # cuenta la comisión "1" de MAT101 y la entry de FIS101.
+        assert res.entries_eliminadas == 1
+        assert res.entries_sin_cambio == 2
+
+    def test_fingerprint_no_colapsa_duplicados_identicos(
+        self, session, setup_catalogo,
+    ):
+        """Regresión auditoría H7 (2026-09-23): el fingerprint usaba un
+        `set`, así que dos entries idénticas colapsaban. Con
+        `Counter`, un archivo con 3 filas idénticas reporta 3
+        agregadas y los invariantes del toast se cumplen.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+        row = {"codigo_materia": "MAT101", "comision": "1",
+               "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"}
+        shadow, _ = crear_shadow_import(
+            session, sched.id, _fake_excel(pd.DataFrame([row, row, row])),
+        )
+        res = finalizar_shadow_import(session, shadow.id)
+
+        assert res.entries_finales == 3
+        assert res.entries_agregadas == 3
+        # Invariantes de multiconjunto:
+        assert (
+            res.entries_agregadas + res.entries_sin_cambio
+            == res.entries_finales
+        )
+        assert (
+            res.entries_eliminadas + res.entries_sin_cambio
+            == res.entries_previas
+        )
+
+    def test_deduplicar_reporta_la_entry_eliminada(
+        self, session, setup_catalogo,
+    ):
+        """Regresión auditoría H7.b (2026-09-23): destino con 2 entries
+        idénticas + archivo con 1 → se borra una entry real. Antes el
+        toast decía "0 eliminadas, 1 sin cambio".
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+        com = create_comision_for_schedule(
+            session, sched.id, "MAT101", nombre="1",
+        )
+        for _ in range(2):
+            session.add(ScheduleEntryDB(
+                id=str(uuid.uuid4()), schedule_id=sched.id,
+                codigo_materia="MAT101", dia="Lunes",
+                hora_inicio=time(8, 0), hora_fin=time(11, 0),
+                comision_id=com.id,
+            ))
+        session.commit()
+
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+        ])
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
+        res = finalizar_shadow_import(session, shadow.id)
+
+        assert res.entries_previas == 2
+        assert res.entries_finales == 1
+        assert res.entries_eliminadas == 1
+        assert res.entries_sin_cambio == 1
+
+    def test_comision_renombrada_cuenta_como_agregada_y_eliminada(
+        self, session, setup_catalogo,
+    ):
+        """Cobertura A3 de la auditoría 2026-09-23: fija la semántica
+        del rename — mismo horario con la comisión renombrada de "1" a
+        "A" se reporta como 1 agregada + 1 eliminada (no "sin cambio").
+        Si alguien saca el nombre de comisión del fingerprint, este
+        test lo detecta.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+        df1 = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+        ])
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df1))
+        finalizar_shadow_import(session, shadow.id)
+
+        df2 = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "A",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "11:00"},
+        ])
+        shadow2, _ = crear_shadow_import(session, sched.id, _fake_excel(df2))
+        res = finalizar_shadow_import(session, shadow2.id)
+
+        assert (res.entries_agregadas, res.entries_eliminadas,
+                res.entries_sin_cambio) == (1, 1, 0)
+
+
+class TestRegenerarDevuelveErrores:
+    """Auditoría H3 (2026-09-23): `regenerar_materia_en_shadow` ahora
+    devuelve el `ImportResult` — los errores de colisión de nombre de
+    comisión ya no se descartan en silencio.
+    """
+
+    def test_agregar_con_colision_devuelve_el_error(
+        self, session, setup_catalogo,
+    ):
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+        sched = setup_catalogo["schedule"]
+        com = create_comision_for_schedule(
+            session, sched.id, "MAT101", nombre="1",
+        )
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Viernes",
+            hora_inicio=time(15, 0), hora_fin=time(18, 0),
+            comision_id=com.id,
+        ))
+        session.commit()
+
+        # Archivo con la MISMA comisión "1" (el caso típico: versión
+        # actualizada de la misma cátedra).
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+
+        excel.seek(0)
+        res = regenerar_materia_en_shadow(
+            session, shadow.id, "MAT101",
+            decision="agregar", file=excel,
+        )
+        assert res.errors, (
+            "La colisión de nombre debe reportarse en result.errors — "
+            "antes se descartaba y el usuario creía que 'agregar' "
+            "había funcionado."
+        )
+        assert any("ya existe" in e for e in res.errors)
+
+    def test_materia_ausente_del_archivo_levanta_valueerror(
+        self, session, setup_catalogo,
+    ):
+        """Guard nuevo: regenerar una materia que no está en la hoja
+        importada era un no-op silencioso equivalente a 'ignorar'.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+        sched = setup_catalogo["schedule"]
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+        excel.seek(0)
+        with pytest.raises(ValueError, match="no aparece en la hoja"):
+            regenerar_materia_en_shadow(
+                session, shadow.id, "FIS101",
+                decision="reemplazar", file=excel,
+            )
+
+    def test_regenerar_shadow_inexistente_falla(self, session):
+        from src.services.cronograma_import_service import (
+            regenerar_materia_en_shadow,
+        )
+        with pytest.raises(ValueError, match="no existe"):
+            regenerar_materia_en_shadow(
+                session, "shadow-fantasma", "MAT101",
+                decision="reemplazar", file=None,
+            )
+
+    def test_regenerar_sobre_schedule_normal_falla(
+        self, session, setup_catalogo,
+    ):
+        from src.services.cronograma_import_service import (
+            regenerar_materia_en_shadow,
+        )
+        sched = setup_catalogo["schedule"]
+        with pytest.raises(ValueError, match="no es un shadow"):
+            regenerar_materia_en_shadow(
+                session, sched.id, "MAT101",
+                decision="reemplazar", file=None,
+            )
+
+
+class TestCodigosDualesMismaMateria:
+    """Auditoría H9 (2026-09-23): el archivo trae el mismo dictado bajo
+    dos códigos que resuelven a la misma materia (código de plan +
+    código Guaraní). Con el default "reemplazar", la segunda iteración
+    borraba lo que acababa de crear la primera — sólo sobrevivía el
+    último grupo.
+    """
+
+    def test_dos_codigos_no_se_pisan_entre_si(self, session, setup_catalogo):
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+        )
+        sched = setup_catalogo["schedule"]
+        # Darle codigo_guarani a MAT101 + datos previos para que la
+        # decisión "reemplazar" aplique.
+        mat = session.get(MateriaDB, "MAT101")
+        mat.codigo_guarani = "G-101"
+        session.add(mat)
+        com_prev = create_comision_for_schedule(
+            session, sched.id, "MAT101", nombre="Vieja",
+        )
+        session.add(ScheduleEntryDB(
+            id=str(uuid.uuid4()), schedule_id=sched.id,
+            codigo_materia="MAT101", dia="Viernes",
+            hora_inicio=time(15, 0), hora_fin=time(18, 0),
+            comision_id=com_prev.id,
+        ))
+        session.commit()
+
+        # Grupo A por código de plan, grupo B por código Guaraní.
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "A",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+            {"codigo_materia": "G-101", "comision": "B",
+             "dia": "Martes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+        ])
+        shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
+        finalizar_shadow_import(session, shadow.id)
+
+        entries = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == sched.id
+            )
+        ).all()
+        dias = {e.dia for e in entries}
+        # Los DOS grupos del archivo sobreviven (antes sólo el último).
+        assert "Lunes" in dias, "el grupo A (código de plan) se perdió"
+        assert "Martes" in dias, "el grupo B (código Guaraní) se perdió"
+        # Y la comisión previa "Vieja" se reemplazó (default).
+        assert "Viernes" not in dias
+
     def test_descartar_shadow_no_toca_destino(
         self, session, setup_catalogo,
     ):

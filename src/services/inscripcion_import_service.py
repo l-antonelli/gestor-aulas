@@ -158,33 +158,23 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Hoja preferida del fallback (espejo de
+# `horario_file_parser.HOJA_PREFERIDA` — ver auditoría H2, 2026-09-23:
+# la UI usa esta constante para el default del selectbox).
+HOJA_PREFERIDA = "Inscriptos"
+
+
 def list_inscriptos_sheets(file) -> list[str]:
     """Devuelve las hojas visibles del Excel candidatas a importar
-    inscriptos, análogo a ``horario_file_parser.list_horarios_sheets``.
+    inscriptos. Delegado en ``horario_file_parser.listar_hojas_visibles``
+    (fix auditoría 2026-09-23: la implementación duplicada usaba
+    pandas, que ignora ``sheet_state`` y parsea el workbook completo).
 
     Para CSV devuelve ``[]``. Excluye hojas ``Instrucciones`` y las
     hojas de sistema con prefijo ``_``. No propaga excepciones.
     """
-    fname = getattr(file, "name", "")
-    if not fname.endswith((".xlsx", ".xls")):
-        return []
-    try:
-        try:
-            file.seek(0)
-        except Exception:  # noqa: BLE001
-            pass
-        _all_sheets = pd.read_excel(file, sheet_name=None)
-    except Exception:  # noqa: BLE001
-        return []
-    finally:
-        try:
-            file.seek(0)
-        except Exception:  # noqa: BLE001
-            pass
-    return [
-        name for name in _all_sheets
-        if not str(name).startswith("_") and str(name) != "Instrucciones"
-    ]
+    from src.services.horario_file_parser import listar_hojas_visibles
+    return listar_hojas_visibles(file)
 
 
 def _read_dataframe(
@@ -203,22 +193,26 @@ def _read_dataframe(
     de la UI para archivos con varias hojas visibles.
     """
     fname = getattr(file, "name", "")
+    _low = str(fname).lower()
     try:
-        if fname.endswith(".csv"):
+        if _low.endswith(".csv"):
             df = pd.read_csv(file)
-        elif fname.endswith((".xlsx", ".xls")):
-            _all_sheets = pd.read_excel(file, sheet_name=None)
-            if sheet_name is not None and sheet_name in _all_sheets:
-                df = _all_sheets[sheet_name]
-            elif "Inscriptos" in _all_sheets:
-                df = _all_sheets["Inscriptos"]
+        elif _low.endswith((".xlsx", ".xlsm", ".xls")):
+            # Rendimiento (fix auditoría 2026-09-23): se lee SOLO la
+            # hoja elegida — antes se materializaba el workbook entero.
+            _xls = pd.ExcelFile(file)
+            _nombres = [str(n) for n in _xls.sheet_names]
+            if sheet_name is not None and sheet_name in _nombres:
+                _elegida = sheet_name
+            elif HOJA_PREFERIDA in _nombres:
+                _elegida = HOJA_PREFERIDA
             else:
                 _visibles = [
-                    name for name in _all_sheets
-                    if not name.startswith("_") and name != "Instrucciones"
+                    n for n in _nombres
+                    if not n.startswith("_") and n != "Instrucciones"
                 ]
-                _preferida = _visibles[0] if _visibles else next(iter(_all_sheets))
-                df = _all_sheets[_preferida]
+                _elegida = _visibles[0] if _visibles else _nombres[0]
+            df = _xls.parse(_elegida)
         else:
             return None, (
                 f"Formato no soportado: '{fname}'. "

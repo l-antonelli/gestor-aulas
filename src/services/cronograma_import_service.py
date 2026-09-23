@@ -39,6 +39,7 @@ canonicalizado (trim + normalización case-insensitive). El campo
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
@@ -329,6 +330,16 @@ def commit_import(
     result = ImportResult()
     schedule_id = preview.schedule_id
 
+    # Auditoría H9 (2026-09-23): si el archivo trae el mismo dictado
+    # bajo dos códigos distintos que resuelven a la misma materia
+    # (código de plan + código Guaraní), el preview genera dos
+    # `MateriaEnPreview` con el mismo `materia_codigo`. Con
+    # "reemplazar", la segunda iteración borraba lo que acababa de
+    # crear la primera. Se trackean las materias ya reemplazadas para
+    # borrar una sola vez; el segundo grupo se comporta como "agregar"
+    # y el chequeo de colisión de nombres (abajo) reporta duplicados.
+    _ya_reemplazadas: set[str] = set()
+
     for mp in preview.materias:
         decision: MergePolicy = decisiones.get(mp.materia_codigo, "agregar")
 
@@ -340,16 +351,20 @@ def commit_import(
             result.materias_ignoradas.append(mp.materia_codigo)
             continue
 
+        attrs_previos: dict[str, dict] = {}
         if decision == "reemplazar":
-            _borrar_entries_y_comisiones_de_materia(
-                session, schedule_id, mp.materia_codigo, result,
-            )
+            if mp.materia_codigo not in _ya_reemplazadas:
+                attrs_previos = _borrar_entries_y_comisiones_de_materia(
+                    session, schedule_id, mp.materia_codigo, result,
+                )
+                _ya_reemplazadas.add(mp.materia_codigo)
             # Después de borrar, el escenario es equivalente a "sin datos
             # previos": todas las comisiones nuevas se pueden crear sin
             # colisión de nombre.
 
         _agregar_comisiones_nuevas(
-            session, schedule_id, mp, decision, result,
+            session, schedule_id, mp, result,
+            attrs_previos=attrs_previos,
         )
 
     session.commit()
@@ -359,8 +374,21 @@ def commit_import(
 def _borrar_entries_y_comisiones_de_materia(
     session: Session, schedule_id: str, materia_codigo: str,
     result: ImportResult,
-) -> None:
-    """Borra todas las entries y comisiones de una materia en un cronograma."""
+) -> dict[str, dict]:
+    """Borra todas las entries y comisiones de una materia en un cronograma.
+
+    Devuelve una instantánea ``{nombre_canónico: atributos}`` de las
+    comisiones borradas (``cupo``, ``descripcion``, ``coef_asignacion``,
+    ``carrera_asignada``, ``numero``) para que el caller pueda
+    restituirlos en las comisiones homónimas que cree después.
+
+    Fix auditoría H1 (2026-09-23): antes el modo "reemplazar" borraba
+    la ``ComisionDB`` y la recreaba desde cero con los defaults del
+    catálogo, destruyendo la configuración manual del usuario (en
+    particular ``carrera_asignada``, el override de sede del LP,
+    RF-LP-15) — y el toast lo reportaba como "sin cambio" porque el
+    fingerprint de entries no mira atributos de comisión.
+    """
     entries = list(session.exec(
         select(ScheduleEntryDB)
         .where(ScheduleEntryDB.schedule_id == schedule_id)
@@ -373,27 +401,41 @@ def _borrar_entries_y_comisiones_de_materia(
     coms = list_comisiones_for_schedule_materia(
         session, schedule_id, materia_codigo,
     )
+    attrs_previos: dict[str, dict] = {}
     for c in coms:
+        attrs_previos[(c.nombre or "").strip().lower()] = {
+            "cupo": c.cupo,
+            "descripcion": c.descripcion,
+            "coef_asignacion": c.coef_asignacion,
+            "carrera_asignada": c.carrera_asignada,
+            "numero": c.numero,
+        }
         session.delete(c)
     result.comisiones_borradas += len(coms)
     session.flush()
+    return attrs_previos
 
 
 def _agregar_comisiones_nuevas(
     session: Session,
     schedule_id: str,
     mp: "MateriaEnPreview",
-    decision: MergePolicy,
     result: ImportResult,
+    attrs_previos: dict[str, dict] | None = None,
 ) -> None:
     """Crea las comisiones + entries nuevas de una materia.
 
-    - Si ``decision == "agregar"`` y la materia tiene comisiones
-      previas, exige que los nombres canónicos de las comisiones
-      nuevas **no colisionen** con los existentes (unicidad).
-    - Si ``decision == "reemplazar"``, se acaba de borrar todo y no
-      hay colisiones posibles.
+    - Si la materia ya tiene una comisión con el mismo nombre canónico,
+      la comisión del archivo se rechaza (unicidad) y el error se
+      acumula en ``result.errors``. Con "reemplazar" recién aplicado no
+      hay colisiones posibles porque se acaba de borrar todo.
+    - ``attrs_previos`` (fix H1, 2026-09-23): instantánea de atributos
+      de las comisiones que el modo "reemplazar" acaba de borrar. Si el
+      nombre canónico coincide, se restituyen ``cupo``, ``descripcion``,
+      ``coef_asignacion``, ``carrera_asignada`` y ``numero`` — el
+      archivo de horarios no trae esos campos y no puede reponerlos.
     """
+    attrs_previos = attrs_previos or {}
     # Nombres canónicos ya usados (comisiones que sobrevivieron).
     coms_actuales = list_comisiones_for_schedule_materia(
         session, schedule_id, mp.materia_codigo,
@@ -404,7 +446,7 @@ def _agregar_comisiones_nuevas(
 
     for com_new in mp.comisiones_nuevas:
         canon = com_new.nombre_canonico
-        if decision == "agregar" and canon in nombres_actuales_canon:
+        if canon in nombres_actuales_canon:
             result.errors.append(
                 f"{mp.materia_codigo}: la comisión "
                 f"'{com_new.nombre_comision}' ya existe en el "
@@ -413,10 +455,21 @@ def _agregar_comisiones_nuevas(
             )
             continue
 
+        _prev = attrs_previos.get(canon)
         com_db = create_comision_for_schedule(
             session, schedule_id, mp.materia_codigo,
             nombre=com_new.nombre_comision,
+            numero=_prev["numero"] if _prev else None,
+            cupo=_prev["cupo"] if _prev else None,
+            carrera_asignada=_prev["carrera_asignada"] if _prev else None,
+            descripcion=_prev["descripcion"] if _prev else "",
+            # Fix H10 (2026-09-23): sin commit interno — todo el import
+            # queda en una única transacción que cierra `commit_import`.
+            commit=False,
         )
+        if _prev is not None:
+            com_db.coef_asignacion = _prev["coef_asignacion"]
+            session.add(com_db)
         result.comisiones_creadas += 1
         nombres_actuales_canon.add(canon)
 
@@ -534,20 +587,25 @@ def crear_shadow_import(
 
     El shadow es un cronograma temporal marcado con
     `es_shadow_import=True` y `shadow_target_schedule_id=destino_id`.
-    Contiene una copia de las entries del destino + las nuevas del
-    archivo (según las decisiones de merge por default: "agregar").
+    Contiene una copia de las entries del destino + las del archivo
+    aplicadas con la decisión de merge por default: **"reemplazar"**
+    para las materias con datos previos, "agregar" para las nuevas.
 
-    Uso previsto: el shadow es **read-only** en la UI. Sirve para que
-    el usuario visualice el estado hipotético del cronograma después
-    del merge (via calendario, `validar_cronograma`, etc.) antes de
-    decidir `finalizar_shadow_import` o `descartar_shadow_import`.
-    Para cambiar la decisión de merge de una materia hay que
-    descartar el shadow y volver a llamar a `crear_shadow_import` con
-    otras decisiones (o hacer el import completo con `commit_import`
-    directamente sobre el destino).
+    Uso previsto: el shadow alimenta las tarjetas per-materia del
+    preview (calendarios Antes / Después, chequeos estructurales) y
+    se puede correr `validar_cronograma` sobre él para ver el estado
+    hipotético global. Los calendarios que ve el usuario son de sólo
+    lectura, pero el shadow **sí** se muta: cambiar la decisión de
+    merge de una materia llama a `regenerar_materia_en_shadow`, que
+    recomputa esa materia dejando las demás intactas. Al final,
+    `finalizar_shadow_import` aplica el shadow al destino y
+    `descartar_shadow_import` lo tira.
 
     Devuelve `(shadow, preview)` para que el caller pueda mostrar
-    tanto el calendario del shadow como el detalle del preview.
+    tanto el calendario del shadow como el detalle del preview. Los
+    errores no bloqueantes del commit inicial sobre el shadow (por
+    ejemplo colisiones de nombre de comisión) se anexan a
+    `preview.warnings`.
     """
     destino = session.get(ScheduleDB, destino_id)
     if destino is None:
@@ -633,7 +691,13 @@ def crear_shadow_import(
         for m in preview_shadow.materias
         if m.tiene_datos_previos
     }
-    commit_import(session, preview_shadow, decisiones)
+    _commit_res = commit_import(session, preview_shadow, decisiones)
+    # Fix auditoría H3 (2026-09-23): los errores no bloqueantes del
+    # commit sobre el shadow (colisiones de nombre) se anexan a los
+    # warnings del preview para que la UI los muestre en vez de
+    # descartarlos en silencio.
+    for _err in _commit_res.errors:
+        preview.warnings.append(f"Al aplicar sobre el preview: {_err}")
 
     session.commit()
     session.refresh(shadow)
@@ -751,12 +815,16 @@ def finalizar_shadow_import(
     session.delete(shadow)
     session.commit()
 
-    # Métricas honestas por diff de fingerprints. Cuando el usuario
-    # re-importa el mismo archivo, `entries_agregadas` y
-    # `entries_eliminadas` son 0 y todo cae en `entries_sin_cambio`.
-    entries_agregadas = len(fp_finales - fp_previas)
-    entries_eliminadas = len(fp_previas - fp_finales)
-    entries_sin_cambio = len(fp_previas & fp_finales)
+    # Métricas honestas por diff de fingerprints (aritmética de
+    # multiconjuntos — fix auditoría H7, 2026-09-23: con `set` las
+    # entries duplicadas idénticas colapsaban y el toast subcontaba
+    # agregadas o reportaba 0 eliminadas al deduplicar). Invariantes
+    # que ahora se cumplen siempre:
+    #   agregadas + sin_cambio == finales
+    #   eliminadas + sin_cambio == previas
+    entries_agregadas = sum((fp_finales - fp_previas).values())
+    entries_eliminadas = sum((fp_previas - fp_finales).values())
+    entries_sin_cambio = sum((fp_previas & fp_finales).values())
 
     return FinalizarShadowResult(
         destino_id=destino_id,
@@ -771,16 +839,21 @@ def finalizar_shadow_import(
 
 def _fingerprint_entries(
     session: Session, entries: list[ScheduleEntryDB],
-) -> set[tuple]:
+) -> "Counter[tuple]":
     """Fingerprint lógico de un conjunto de entries — resuelve el
     ``comision_id`` a ``nombre`` porque el id es distinto entre
     destino y shadow (se copian con nuevos UUIDs).
 
     Cada entry se representa como
     ``(codigo_materia, comision_nombre, dia, hi_str, hf_str, tipo, virtual)``.
+
+    Devuelve un ``Counter`` (multiconjunto), no un ``set``: dos entries
+    idénticas cuentan como dos, para que los contadores del toast no
+    mientan cuando el archivo trae filas duplicadas (auditoría H7,
+    2026-09-23).
     """
     if not entries:
-        return set()
+        return Counter()
 
     com_ids = {e.comision_id for e in entries if e.comision_id}
     com_map: dict[str, str] = {}
@@ -792,12 +865,12 @@ def _fingerprint_entries(
         ).all())
         com_map = {c.id: (c.nombre or "").strip() for c in coms}
 
-    result: set[tuple] = set()
+    result: Counter[tuple] = Counter()
     for e in entries:
         com_nombre = (
             com_map.get(e.comision_id, "") if e.comision_id else ""
         )
-        result.add((
+        result[(
             e.codigo_materia,
             com_nombre,
             e.dia,
@@ -805,7 +878,7 @@ def _fingerprint_entries(
             e.hora_fin.isoformat() if e.hora_fin else "",
             e.tipo_clase or "",
             "1" if e.virtual is True else ("0" if e.virtual is False else "-"),
-        ))
+        )] += 1
     return result
 
 
@@ -816,7 +889,7 @@ def regenerar_materia_en_shadow(
     decision: MergePolicy,
     file,
     sheet_name: str | None = None,
-) -> None:
+) -> ImportResult:
     """Regenera las entries + comisiones de UNA materia en el shadow,
     aplicando la decisión (``reemplazar`` / ``agregar`` / ``ignorar``)
     con el contenido del archivo.
@@ -841,9 +914,20 @@ def regenerar_materia_en_shadow(
         sheet_name: hoja del Excel a usar (mismo criterio que
             ``crear_shadow_import``).
 
+    Returns:
+        El ``ImportResult`` del commit sobre el shadow. Fix auditoría
+        H3 (2026-09-23): antes se descartaba, así que si la decisión
+        ``"agregar"`` colisionaba en nombres de comisión (el caso
+        típico: archivo actualizado de la misma cátedra con la misma
+        comisión "1"), los horarios del archivo se rechazaban en
+        silencio y la UI no mostraba nada. El caller **debe** revisar
+        ``result.errors`` y mostrarlos.
+
     Raises:
-        ValueError: si el shadow no existe, no es un shadow válido, o
-            si el re-parseo del archivo levanta errores bloqueantes.
+        ValueError: si el shadow no existe, no es un shadow válido, si
+            el re-parseo del archivo levanta errores bloqueantes, o si
+            la materia no aparece en la hoja importada (con decisión
+            distinta de ``"ignorar"``).
     """
     shadow = session.get(ScheduleDB, shadow_id)
     if shadow is None:
@@ -889,17 +973,27 @@ def regenerar_materia_en_shadow(
     # `preview.materias`, así que le paso un preview con esa lista
     # acotada.
     _materias_original = list(preview_shadow.materias)
-    preview_shadow.materias = [
+    _materias_target = [
         m for m in _materias_original
         if m.materia_codigo == materia_codigo
     ]
+    if not _materias_target and decision != "ignorar":
+        # Guard (auditoría H5/H6-back, 2026-09-23): sin este raise, la
+        # regeneración de una materia ausente del archivo era un no-op
+        # silencioso equivalente a "ignorar" — el caller creía haber
+        # aplicado la decisión.
+        raise ValueError(
+            f"La materia '{materia_codigo}' no aparece en la hoja "
+            "del archivo que se está importando — no hay nada que "
+            f"aplicar con la decisión '{decision}'."
+        )
+    preview_shadow.materias = _materias_target
     try:
-        commit_import(
+        return commit_import(
             session, preview_shadow,
             {materia_codigo: decision},
         )
     finally:
-        # Restaurar por si el caller reusa el preview.
         preview_shadow.materias = _materias_original
 
 

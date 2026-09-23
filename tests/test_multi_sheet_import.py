@@ -274,3 +274,184 @@ class TestListInscriptosSheets:
             "inscriptos.xlsx",
         )
         assert list_inscriptos_sheets(excel) == ["2024", "2025"]
+
+
+class TestHojasOcultasYPreferencia:
+    """Auditoría H2 (2026-09-23): dos regresiones del selector de hoja.
+
+    1. pandas ignora ``sheet_state``, así que una hoja OCULTA sin
+       prefijo ``_`` (típico en archivos institucionales: "Datos
+       viejos") aparecía como opción válida del selector. El nuevo
+       ``listar_hojas_visibles`` (openpyxl read_only) la filtra.
+    2. El selectbox arrancaba en la primera hoja visible, pisando la
+       preferencia "Horarios" del parser — ``hoja_default`` replica la
+       preferencia para que la UI y el fallback no diverjan.
+    """
+
+    def test_hoja_oculta_sin_prefijo_no_aparece(self):
+        from src.services.horario_file_parser import list_horarios_sheets
+
+        excel = _excel_con_hoja_oculta(
+            sheets_visible={
+                "Horarios": pd.DataFrame([
+                    {"codigo_materia": "M", "dia": "Lunes",
+                     "hora_inicio": "8:00", "hora_fin": "10:00"},
+                ]),
+            },
+            sheets_hidden={"Datos viejos": ["basura"]},
+            filename="institucional.xlsx",
+        )
+        hojas = list_horarios_sheets(excel)
+        assert hojas == ["Horarios"]
+        assert "Datos viejos" not in hojas
+
+    def test_hoja_default_prefiere_horarios(self):
+        from src.services.horario_file_parser import hoja_default
+
+        # Una hoja "Resumen" antes de "Horarios": el default del
+        # selectbox debe ser el índice de "Horarios" (antes era 0 y el
+        # import fallaba con "Columnas faltantes").
+        assert hoja_default(["Resumen", "Horarios"]) == 1
+        assert hoja_default(["Horarios", "2C"]) == 0
+        # Sin la preferida, cae a la primera.
+        assert hoja_default(["1C", "2C"]) == 0
+
+    def test_hoja_default_inscriptos(self):
+        from src.services.horario_file_parser import hoja_default
+        from src.services.inscripcion_import_service import HOJA_PREFERIDA
+
+        assert hoja_default(["Notas", "Inscriptos"], HOJA_PREFERIDA) == 1
+
+
+class TestPreviewImportInscriptosConSheetName:
+    """Cobertura A4 de la auditoría 2026-09-23: `preview_import` de
+    inscriptos con `sheet_name` no tenía ningún test — si la
+    propagación se rompe, el usuario elige la hoja "2025" y se importa
+    la serie de "2024" en silencio (datos que alimentan el forecast y,
+    vía forecast, el LP).
+    """
+
+    def _catalogo(self, session):
+        session.add(MateriaDB(
+            codigo="MAT101", nombre="Análisis I",
+            periodo="cuatrimestral", active=True, horas_semanales=6,
+        ))
+        session.commit()
+
+    def test_preview_lee_la_hoja_elegida(self, session):
+        from src.services.inscripcion_import_service import (
+            preview_import as insc_preview_import,
+        )
+        self._catalogo(session)
+        excel = _excel_con_hojas(
+            {
+                "2024": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "anio": 2024,
+                     "cuatrimestre": "1C", "inscriptos": 100},
+                ]),
+                "2025": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "anio": 2025,
+                     "cuatrimestre": "1C", "inscriptos": 120},
+                ]),
+            },
+            "series.xlsx",
+        )
+        pv = insc_preview_import(session, excel, sheet_name="2025")
+        assert pv.parse_errors == []
+        assert [f.inscriptos for f in pv.filas_ok] == [120]
+        assert {f.anio for f in pv.filas_ok} == {2025}
+
+    def test_preview_sin_sheet_name_prefiere_hoja_inscriptos(self, session):
+        from src.services.inscripcion_import_service import (
+            preview_import as insc_preview_import,
+        )
+        self._catalogo(session)
+        excel = _excel_con_hojas(
+            {
+                "2024": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "anio": 2024,
+                     "cuatrimestre": "1C", "inscriptos": 100},
+                ]),
+                "Inscriptos": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "anio": 2026,
+                     "cuatrimestre": "1C", "inscriptos": 90},
+                ]),
+            },
+            "series.xlsx",
+        )
+        pv = insc_preview_import(session, excel, sheet_name=None)
+        assert {f.anio for f in pv.filas_ok} == {2026}
+
+
+class TestCreateScheduleStandaloneConSheetName:
+    """Cobertura A5 de la auditoría 2026-09-23:
+    `create_schedule_standalone` — el camino en vivo del modo "Crear
+    desde archivo" — no tenía ningún test.
+    """
+
+    def _catalogo(self, session):
+        for cod, nom in (("MAT101", "Análisis I"), ("FIS201", "Física II")):
+            session.add(MateriaDB(
+                codigo=cod, nombre=nom,
+                periodo="cuatrimestral", active=True, horas_semanales=4,
+            ))
+        session.commit()
+
+    def test_respeta_sheet_name(self, session):
+        from src.services.schedule_service import create_schedule_standalone
+
+        self._catalogo(session)
+        excel = _excel_con_hojas(
+            {
+                "1C": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "dia": "Lunes",
+                     "hora_inicio": "8:00", "hora_fin": "10:00"},
+                ]),
+                "2C": pd.DataFrame([
+                    {"codigo_materia": "FIS201", "dia": "Martes",
+                     "hora_inicio": "14:00", "hora_fin": "16:00"},
+                ]),
+            },
+            "cats.xlsx",
+        )
+        res = create_schedule_standalone(
+            session, "Nuevo 2C", excel, sheet_name="2C",
+        )
+        assert res.errors == []
+        assert res.schedule is not None
+        from src.database.models import ScheduleEntryDB
+        from sqlmodel import select
+        entries = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == res.schedule.id
+            )
+        ).all()
+        assert {e.codigo_materia for e in entries} == {"FIS201"}
+
+    def test_sin_sheet_name_usa_fallback(self, session):
+        from src.services.schedule_service import create_schedule_standalone
+
+        self._catalogo(session)
+        excel = _excel_con_hojas(
+            {
+                "Horarios": pd.DataFrame([
+                    {"codigo_materia": "MAT101", "dia": "Lunes",
+                     "hora_inicio": "8:00", "hora_fin": "10:00"},
+                ]),
+                "2C": pd.DataFrame([
+                    {"codigo_materia": "FIS201", "dia": "Martes",
+                     "hora_inicio": "14:00", "hora_fin": "16:00"},
+                ]),
+            },
+            "cats.xlsx",
+        )
+        res = create_schedule_standalone(session, "Nuevo", excel)
+        assert res.errors == []
+        from src.database.models import ScheduleEntryDB
+        from sqlmodel import select
+        entries = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == res.schedule.id
+            )
+        ).all()
+        assert {e.codigo_materia for e in entries} == {"MAT101"}
