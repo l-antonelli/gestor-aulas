@@ -613,8 +613,14 @@ class TestShadowImport:
         shadow, _ = crear_shadow_import(session, sched.id, _fake_excel(df))
         shadow_id = shadow.id
 
-        destino_id = finalizar_shadow_import(session, shadow_id)
-        assert destino_id == sched.id
+        result = finalizar_shadow_import(session, shadow_id)
+        assert result.destino_id == sched.id
+        assert result.destino_nombre == sched.nombre
+        # El destino arrancó vacío (0 previas) y quedan 2 entries.
+        assert result.entries_previas == 0
+        assert result.entries_finales == 2
+        assert result.entries_agregadas == 2
+        assert result.entries_reemplazadas == 0
 
         # Destino ahora tiene las 2 entries del shadow.
         entries = session.exec(

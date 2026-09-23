@@ -551,6 +551,15 @@ with tab_lista:
 # Tab 2: Cargar
 # =============================================================================
 with tab_cargar:
+    # Toast pendiente del último rerun (por ejemplo tras confirmar un
+    # import shadow). Streamlit no permite invocar `st.toast` en el
+    # callback del botón porque el rerun lo pierde; lo diferimos aquí.
+    if "_crono_import_toast" in st.session_state:
+        st.toast(
+            st.session_state.pop("_crono_import_toast"),
+            icon="✅",
+        )
+
     st.subheader("Crear o cargar cronograma")
     st.caption(
         "Un cronograma es un conjunto de horarios (día + rango + "
@@ -707,6 +716,33 @@ with tab_cargar:
                 key="crono_upload",
             )
 
+            # Selector de hoja cuando el Excel trae más de una hoja
+            # visible (típico: un archivo de cátedra con 1C/2C/Verano
+            # como hojas separadas). El fallback automático (elige
+            # "Horarios" si existe, sino la primera visible) no le
+            # sirve al usuario en ese caso.
+            _sheet_choice: str | None = None
+            if uploaded is not None:
+                from src.services.horario_file_parser import (
+                    list_horarios_sheets,
+                )
+                _sheets_visible = list_horarios_sheets(uploaded)
+                if len(_sheets_visible) > 1:
+                    _sheet_choice = st.selectbox(
+                        "Hoja del Excel a importar",
+                        options=_sheets_visible,
+                        key="crono_upload_sheet",
+                        help=(
+                            "El archivo tiene varias hojas. Elegí "
+                            "cuál querés previsualizar e importar."
+                        ),
+                    )
+                elif len(_sheets_visible) == 1:
+                    # Una sola hoja visible — igual la fijamos para
+                    # que el parser use exactamente ésa (por si el
+                    # archivo tiene además hojas ocultas).
+                    _sheet_choice = _sheets_visible[0]
+
     if modo_carga == "Crear desde archivo":
         # Flujo legacy: crea el cronograma y carga en un solo paso.
         # Sin preview — para cronogramas nuevos alcanza con crear +
@@ -720,7 +756,9 @@ with tab_cargar:
         ):
             with next(get_session()) as session:
                 result = create_schedule_standalone(
-                    session, nombre, uploaded, ciclo_id=ciclo_id_val
+                    session, nombre, uploaded,
+                    ciclo_id=ciclo_id_val,
+                    sheet_name=_sheet_choice,
                 )
             if result.errors:
                 for e in result.errors:
@@ -815,6 +853,7 @@ with tab_cargar:
                         with next(get_session()) as _sess:
                             _shadow, _preview = crear_shadow_import(
                                 _sess, _sel_sched_id, uploaded,
+                                sheet_name=_sheet_choice,
                             )
                         st.session_state[_shadow_key] = {
                             "shadow_id": _shadow.id,
@@ -1139,26 +1178,50 @@ with tab_cargar:
                             st.session_state[_validation_key]
                         )
 
-                        # Barra superior de métricas hipotéticas.
-                        _vc1, _vc2, _vc3, _vc4, _vc5 = st.columns(5)
-                        _vc1.metric("Faltantes", _val_sum.n_faltantes)
-                        _vc2.metric(
-                            "Conflictos horarios",
-                            _val_sum.n_conflictos_horarios,
-                        )
-                        _vc3.metric(
-                            "Bloqueos camino", _val_sum.n_camino_bloqueos,
-                        )
-                        _vc4.metric(
-                            "Partición",
-                            "OK" if _val_sum.particion_valid
-                            else f"{_val_sum.particion_n_infactibles} !",
-                        )
-                        _vc5.metric(
-                            "Fuera de config",
-                            _val_sum.n_horarios_fuera_config,
-                        )
+                        # Agrupar la barra superior de métricas
+                        # (globales del cronograma vs ciclo) en un
+                        # contenedor propio. Antes las 5 métricas
+                        # quedaban flat, mezcladas visualmente con las
+                        # métricas del set filtrado del detalle por
+                        # materia que renderea `_render_detalle_por_materia`
+                        # abajo. Ahora hay una separación clara entre
+                        # "estado global" y "set filtrado".
+                        with st.container(border=True):
+                            st.markdown(
+                                "**📊 Estado global del cronograma "
+                                "hipotético (vs ciclo)**"
+                            )
+                            st.caption(
+                                "Estas métricas cubren todo el "
+                                "cronograma, no sólo lo que estás "
+                                "importando. Cambios: al confirmar el "
+                                "import, así queda el cronograma "
+                                "destino."
+                            )
+                            _vc1, _vc2, _vc3, _vc4, _vc5 = st.columns(5)
+                            _vc1.metric("Faltantes", _val_sum.n_faltantes)
+                            _vc2.metric(
+                                "Conflictos horarios",
+                                _val_sum.n_conflictos_horarios,
+                            )
+                            _vc3.metric(
+                                "Bloqueos camino",
+                                _val_sum.n_camino_bloqueos,
+                            )
+                            _vc4.metric(
+                                "Partición",
+                                "OK" if _val_sum.particion_valid
+                                else f"{_val_sum.particion_n_infactibles} !",
+                            )
+                            _vc5.metric(
+                                "Fuera de config",
+                                _val_sum.n_horarios_fuera_config,
+                            )
 
+                        st.markdown(
+                            "**🎯 Detalle por materia (acotado al "
+                            "archivo)**"
+                        )
                         from src.ui.validation_ui import (
                             _render_detalle_por_materia,
                         )
@@ -1192,13 +1255,20 @@ with tab_cargar:
                         ):
                             try:
                                 with next(get_session()) as _sess:
-                                    _dest_id = finalizar_shadow_import(
+                                    _fin_res = finalizar_shadow_import(
                                         _sess, _shadow_id,
                                     )
-                                st.success(
-                                    "Import confirmado. "
-                                    "Los cambios del preview quedaron "
-                                    "en el cronograma destino."
+                                # Toast con métricas concretas: mucho
+                                # más útil que un genérico "Import
+                                # confirmado".
+                                st.session_state["_crono_import_toast"] = (
+                                    f"✅ Se insertaron "
+                                    f"{_fin_res.entries_agregadas} y se "
+                                    f"pisaron {_fin_res.entries_reemplazadas} "
+                                    f"entrada(s) en "
+                                    f"«{_fin_res.destino_nombre}». "
+                                    f"Total ahora: "
+                                    f"{_fin_res.entries_finales}."
                                 )
                                 st.session_state.pop(_shadow_key, None)
                                 st.session_state.pop(_validation_key, None)

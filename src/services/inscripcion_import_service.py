@@ -158,7 +158,38 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _read_dataframe(file) -> tuple[pd.DataFrame | None, str | None]:
+def list_inscriptos_sheets(file) -> list[str]:
+    """Devuelve las hojas visibles del Excel candidatas a importar
+    inscriptos, análogo a ``horario_file_parser.list_horarios_sheets``.
+
+    Para CSV devuelve ``[]``. Excluye hojas ``Instrucciones`` y las
+    hojas de sistema con prefijo ``_``. No propaga excepciones.
+    """
+    fname = getattr(file, "name", "")
+    if not fname.endswith((".xlsx", ".xls")):
+        return []
+    try:
+        try:
+            file.seek(0)
+        except Exception:  # noqa: BLE001
+            pass
+        _all_sheets = pd.read_excel(file, sheet_name=None)
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        try:
+            file.seek(0)
+        except Exception:  # noqa: BLE001
+            pass
+    return [
+        name for name in _all_sheets
+        if not str(name).startswith("_") and str(name) != "Instrucciones"
+    ]
+
+
+def _read_dataframe(
+    file, sheet_name: str | None = None,
+) -> tuple[pd.DataFrame | None, str | None]:
     """Lee un file-like en pandas. Devuelve (df, error) — sólo uno no None.
 
     Cuando el archivo es un Excel con múltiples hojas (como la
@@ -166,6 +197,10 @@ def _read_dataframe(file) -> tuple[pd.DataFrame | None, str | None]:
     preferentemente la hoja ``Inscriptos``; sino, la primera hoja
     visible no-``Instrucciones``. Sin esto pandas leería
     ``Instrucciones`` porque es la primera hoja del workbook.
+
+    Si ``sheet_name`` viene explícito y existe en el workbook, gana
+    sobre el fallback automático — es lo que usa el selector de hoja
+    de la UI para archivos con varias hojas visibles.
     """
     fname = getattr(file, "name", "")
     try:
@@ -173,7 +208,9 @@ def _read_dataframe(file) -> tuple[pd.DataFrame | None, str | None]:
             df = pd.read_csv(file)
         elif fname.endswith((".xlsx", ".xls")):
             _all_sheets = pd.read_excel(file, sheet_name=None)
-            if "Inscriptos" in _all_sheets:
+            if sheet_name is not None and sheet_name in _all_sheets:
+                df = _all_sheets[sheet_name]
+            elif "Inscriptos" in _all_sheets:
                 df = _all_sheets["Inscriptos"]
             else:
                 _visibles = [
@@ -193,7 +230,7 @@ def _read_dataframe(file) -> tuple[pd.DataFrame | None, str | None]:
 
 
 def preview_import(
-    session: Session, file,
+    session: Session, file, sheet_name: str | None = None,
 ) -> InscripcionImportPreview:
     """Arma el preview de una importación masiva de inscriptos.
 
@@ -201,13 +238,17 @@ def preview_import(
         session: sesión activa.
         file: file-like con ``.name`` (Streamlit UploadedFile o
             similar). Puede ser CSV o Excel.
+        sheet_name: nombre de la hoja del Excel a importar cuando el
+            archivo tiene varias hojas visibles. ``None`` mantiene el
+            fallback tradicional (hoja ``Inscriptos`` si existe, sino
+            primera hoja no-sistema). No aplica a CSV.
 
     Returns:
         ``InscripcionImportPreview`` con filas OK / error / warnings.
     """
     preview = InscripcionImportPreview()
 
-    df, err = _read_dataframe(file)
+    df, err = _read_dataframe(file, sheet_name=sheet_name)
     if err is not None:
         preview.parse_errors.append(err)
         return preview

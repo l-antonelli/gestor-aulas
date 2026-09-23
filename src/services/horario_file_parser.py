@@ -84,7 +84,49 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def parse_horarios_file(file) -> tuple[List[HorarioInput], list[str]]:
+def list_horarios_sheets(file) -> list[str]:
+    """Lista las hojas visibles de un archivo Excel candidatas a
+    importar horarios.
+
+    Se filtran las hojas del sistema (``Instrucciones``, ``_materias``,
+    ``_dias``, etc., que la plantilla generada esconde con prefijo
+    ``_``). Si el archivo es CSV, devuelve ``[]`` (no aplica).
+
+    Returns:
+        Lista de nombres de hoja en el orden del workbook. Si sólo hay
+        una hoja visible (o cero), igual la devuelve para que el
+        caller pueda decidir si mostrar selector o no.
+
+    Raises:
+        No propaga excepciones — si el archivo no se puede leer,
+        devuelve ``[]`` y el caller ya reporta via ``parse_horarios_file``.
+    """
+    fname = getattr(file, "name", "")
+    if not fname.endswith((".xlsx", ".xls")):
+        return []
+    try:
+        # `file` puede ser un Streamlit UploadedFile — necesita rewind.
+        try:
+            file.seek(0)
+        except Exception:  # noqa: BLE001
+            pass
+        _all_sheets = pd.read_excel(file, sheet_name=None)
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        try:
+            file.seek(0)
+        except Exception:  # noqa: BLE001
+            pass
+    return [
+        name for name in _all_sheets
+        if not str(name).startswith("_") and str(name) != "Instrucciones"
+    ]
+
+
+def parse_horarios_file(
+    file, sheet_name: str | None = None,
+) -> tuple[List[HorarioInput], list[str]]:
     """
     Parse a CSV or Excel file into HorarioInput objects.
 
@@ -97,6 +139,11 @@ def parse_horarios_file(file) -> tuple[List[HorarioInput], list[str]]:
 
     Args:
         file: Streamlit UploadedFile (has .name attribute)
+        sheet_name: nombre de la hoja a leer cuando el archivo es
+            Excel con múltiples hojas. Si es ``None`` se aplica el
+            fallback tradicional: hoja ``Horarios`` si existe, sino la
+            primera visible que no sea ``Instrucciones`` o de sistema
+            (prefijo ``_``). No aplica a CSV.
 
     Returns:
         Tuple of (list of HorarioInput, list of parse errors)
@@ -115,7 +162,9 @@ def parse_horarios_file(file) -> tuple[List[HorarioInput], list[str]]:
             # Cover: sin esto, pandas leería 'Instrucciones' porque
             # es la primera hoja del workbook.
             _all_sheets = pd.read_excel(file, sheet_name=None)
-            if "Horarios" in _all_sheets:
+            if sheet_name is not None and sheet_name in _all_sheets:
+                df = _all_sheets[sheet_name]
+            elif "Horarios" in _all_sheets:
                 df = _all_sheets["Horarios"]
             else:
                 # Primera hoja no oculta (nombre sin prefijo '_').

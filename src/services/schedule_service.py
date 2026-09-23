@@ -190,11 +190,16 @@ def create_schedule_standalone(
     nombre: str,
     file,
     ciclo_id: Optional[str] = None,
+    sheet_name: str | None = None,
 ) -> ScheduleCreationResult:
     """Crear un cronograma sin requerir ciclo.
 
     Si ciclo_id se provee, valida que exista.  Si no, crea el schedule sin
     asociacion a ciclo.
+
+    Si el archivo es Excel con múltiples hojas y ``sheet_name`` es
+    ``None``, se aplica el fallback tradicional del parser (hoja
+    ``Horarios`` si existe; sino la primera visible).
     """
     result = ScheduleCreationResult()
 
@@ -205,7 +210,7 @@ def create_schedule_standalone(
             return result
 
     # Parse the file
-    entries, parse_errors = parse_horarios_file(file)
+    entries, parse_errors = parse_horarios_file(file, sheet_name=sheet_name)
     result.errors.extend(parse_errors)
 
     if not entries:

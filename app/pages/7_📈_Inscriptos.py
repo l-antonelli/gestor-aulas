@@ -28,6 +28,15 @@ from scripts.load_inscriptos import _normalize_code, _build_name_map
 init_db()
 
 st.set_page_config(page_title="Inscriptos", page_icon="📈", layout="wide")
+
+# Toast diferido de la última acción de import (creado antes del
+# rerun por el bloque de commit_import más abajo).
+if "_insc_import_toast" in st.session_state:
+    st.toast(
+        st.session_state.pop("_insc_import_toast"),
+        icon="✅",
+    )
+
 st.title("📈 Inscriptos históricos")
 st.caption(
     "Cargá y visualizá la cantidad de inscriptos por materia y "
@@ -371,6 +380,29 @@ with st.expander(
             key="insc_upload",
         )
 
+        # Selector de hoja para Excel con múltiples hojas visibles
+        # (por ejemplo un archivo institucional con "1C" y "2C" como
+        # hojas separadas). Aparece sólo si hay más de una hoja
+        # candidata; con 1 hoja se fija automáticamente.
+        _insc_sheet_choice: str | None = None
+        if _upl_file is not None:
+            from src.services.inscripcion_import_service import (
+                list_inscriptos_sheets,
+            )
+            _insc_sheets = list_inscriptos_sheets(_upl_file)
+            if len(_insc_sheets) > 1:
+                _insc_sheet_choice = st.selectbox(
+                    "Hoja del Excel a importar",
+                    options=_insc_sheets,
+                    key="insc_upload_sheet",
+                    help=(
+                        "El archivo tiene varias hojas. Elegí cuál "
+                        "querés previsualizar e importar."
+                    ),
+                )
+            elif len(_insc_sheets) == 1:
+                _insc_sheet_choice = _insc_sheets[0]
+
         _pv_key = "insc_import_preview"
         _c_prev, _c_reset = st.columns([3, 1])
         with _c_prev:
@@ -384,6 +416,7 @@ with st.expander(
                 with next(get_session()) as _sess:
                     st.session_state[_pv_key] = _insc_preview_import(
                         _sess, _upl_file,
+                        sheet_name=_insc_sheet_choice,
                     )
         with _c_reset:
             if _pv_key in st.session_state:
@@ -478,10 +511,14 @@ with st.expander(
             ):
                 with next(get_session()) as _sess:
                     _res = _insc_commit_import(_sess, _pv)
-                st.success(
-                    f"Import completado. Creadas: {_res.filas_creadas}, "
-                    f"Actualizadas: {_res.filas_actualizadas}, "
-                    f"Sin cambio: {_res.filas_sin_cambio}."
+                # Toast diferido — el rerun barre `st.success` porque
+                # se renderea antes del reload. Uso la misma técnica
+                # que el importer de cronograma (`_crono_import_toast`).
+                st.session_state["_insc_import_toast"] = (
+                    f"✅ Se insertaron {_res.filas_creadas} y se "
+                    f"actualizaron {_res.filas_actualizadas} "
+                    f"registro(s) de inscriptos. "
+                    f"{_res.filas_sin_cambio} quedaron sin cambio."
                 )
                 st.session_state.pop(_pv_key, None)
                 st.session_state.pop("insc_upload", None)

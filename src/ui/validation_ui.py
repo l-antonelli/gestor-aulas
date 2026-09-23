@@ -2150,7 +2150,15 @@ def _render_detalle_por_materia(
     _carreras_opts = sorted(_all_carreras)
     _anios_opts = sorted({r["anio"] for r in _rows if r["anio"] is not None})
     _cuatris_opts = sorted({r["cuatri"] for r in _rows if r["cuatri"] != "—"})
-    _estados_opts = ["OK", "Faltante", "No esperada", "Conflictiva", "Sin datos"]
+    # Bugfix (2026-09-23): faltaba "Revisión" — el estado se agregó
+    # en la Fase F pero no se sumó al filtro. El usuario no podía
+    # filtrar exactamente las materias que tenían warnings
+    # estructurales (h/sem × comisiones ≠ total, no divisible,
+    # desequilibrado).
+    _estados_opts = [
+        "OK", "Faltante", "No esperada", "Conflictiva",
+        "Sin datos", "Revisión",
+    ]
     _tipo_opts = ["Todas", "Comunes", "Específicas"]
     # Atributos de materia: cada uno es un multi-state (sí/no/cualquiera)
     # representado como dos opciones por atributo.

@@ -178,6 +178,7 @@ def preview_import(
     session: Session,
     schedule_id: str,
     file,
+    sheet_name: str | None = None,
 ) -> ImportPreview:
     """Arma un preview de la importación sin commitear nada.
 
@@ -185,6 +186,10 @@ def preview_import(
         session: sesión activa.
         schedule_id: cronograma destino.
         file: file-like con ``.name`` (Streamlit UploadedFile o similar).
+        sheet_name: nombre de la hoja del Excel a importar cuando el
+            archivo tiene múltiples hojas visibles. ``None`` mantiene
+            el fallback tradicional (``Horarios`` si existe, sino
+            primera hoja no-sistema). No aplica a CSV.
 
     Returns:
         ``ImportPreview`` con las materias detectadas y los conflictos
@@ -200,7 +205,7 @@ def preview_import(
         return preview
 
     # Parsear el archivo.
-    entries, parse_errors = parse_horarios_file(file)
+    entries, parse_errors = parse_horarios_file(file, sheet_name=sheet_name)
     preview.parse_errors.extend(parse_errors)
     if not entries:
         if not parse_errors:
@@ -510,6 +515,7 @@ def crear_shadow_import(
     session: Session,
     destino_id: str,
     file,
+    sheet_name: str | None = None,
 ) -> tuple[ScheduleDB, ImportPreview]:
     """Crea un shadow ScheduleDB con los datos del destino + import.
 
@@ -535,7 +541,7 @@ def crear_shadow_import(
         raise ValueError(f"Cronograma destino '{destino_id}' no existe.")
 
     # Preview inicial para tener el desglose de comisiones nuevas.
-    preview = preview_import(session, destino_id, file)
+    preview = preview_import(session, destino_id, file, sheet_name=sheet_name)
     if preview.tiene_errores_bloqueantes:
         # Devolvemos un shadow "vacío" descartable — la UI mostrará
         # los parse_errors y no ofrecerá calendario.
@@ -586,7 +592,9 @@ def crear_shadow_import(
             "No se pudo re-leer el archivo para armar el shadow "
             f"({exc}). Subí el archivo de nuevo."
         ) from exc
-    preview_shadow = preview_import(session, shadow.id, file)
+    preview_shadow = preview_import(
+        session, shadow.id, file, sheet_name=sheet_name,
+    )
     if preview_shadow.tiene_errores_bloqueantes:
         # Bugfix (2026-09-22, task #339): antes se commiteaba un
         # shadow vacío en este caso, lo que dejaba un preview inútil
@@ -616,16 +624,32 @@ def crear_shadow_import(
     return shadow, preview
 
 
+@dataclass
+class FinalizarShadowResult:
+    """Métricas de la aplicación de un shadow al destino.
+
+    Sirve para armar el toast de confirmación en la UI:
+    "Se agregaron X entradas, se pisaron Y, en el cronograma 'Z'".
+    """
+    destino_id: str
+    destino_nombre: str
+    entries_previas: int
+    entries_finales: int
+    entries_agregadas: int
+    entries_reemplazadas: int
+
+
 def finalizar_shadow_import(
     session: Session, shadow_id: str,
-) -> str:
+) -> FinalizarShadowResult:
     """Aplica los cambios del shadow al schedule destino y borra el shadow.
 
     Estrategia: reemplaza completamente las entries + comisiones del
     destino con las del shadow. Es más simple y consistente que
     calcular diffs — el shadow ya representa el estado deseado.
 
-    Devuelve el id del schedule destino.
+    Devuelve un ``FinalizarShadowResult`` con métricas para la UI
+    (destino, entries previas/finales, agregadas, reemplazadas).
 
     Nota (task #355, 2026-09-22): esta operación **no** tiene lock
     optimista sobre el destino. Si otro proceso edita el destino
@@ -655,12 +679,23 @@ def finalizar_shadow_import(
             f"Destino '{destino_id}' del shadow ya no existe."
         )
 
-    # 1) Borrar entries + comisiones del destino.
+    # 1) Snapshot conteos previos.
     entries_dst = list(session.exec(
         select(ScheduleEntryDB).where(
             ScheduleEntryDB.schedule_id == destino_id,
         )
     ).all())
+    n_entries_previas = len(entries_dst)
+
+    # Total en shadow (será el conteo final).
+    entries_shadow = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == shadow_id,
+        )
+    ).all())
+    n_entries_finales = len(entries_shadow)
+
+    # 2) Borrar entries + comisiones del destino.
     for e in entries_dst:
         session.delete(e)
     coms_dst = list(session.exec(
@@ -670,14 +705,30 @@ def finalizar_shadow_import(
         session.delete(c)
     session.flush()
 
-    # 2) Copiar shadow → destino.
+    # 3) Copiar shadow → destino.
     _copiar_entries_y_comisiones(session, shadow_id, destino_id)
 
-    # 3) Borrar el shadow (entries + comisiones + fila del schedule).
+    # 4) Borrar el shadow (entries + comisiones + fila del schedule).
     _borrar_shadow_datos(session, shadow_id)
     session.delete(shadow)
     session.commit()
-    return destino_id
+
+    # Métricas para el toast. Como el shadow *pisa* al destino, la
+    # semántica es: `agregadas = finales - previas` cuando el shadow
+    # trae más y `reemplazadas = min(previas, finales)` — aproximación
+    # simple porque no rastreamos identidad de entry entre ambos lados.
+    # Es un contador honesto para el toast, no una auditoría fina.
+    entries_agregadas = max(0, n_entries_finales - n_entries_previas)
+    entries_reemplazadas = min(n_entries_previas, n_entries_finales)
+
+    return FinalizarShadowResult(
+        destino_id=destino_id,
+        destino_nombre=destino.nombre,
+        entries_previas=n_entries_previas,
+        entries_finales=n_entries_finales,
+        entries_agregadas=entries_agregadas,
+        entries_reemplazadas=entries_reemplazadas,
+    )
 
 
 def descartar_shadow_import(session: Session, shadow_id: str) -> None:
