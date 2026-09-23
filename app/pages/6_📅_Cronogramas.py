@@ -1999,6 +1999,25 @@ with tab_editar:
                                 hide_index=True,
                             )
 
+                    # Chequeos estructurales de la materia seleccionada.
+                    # Reusa la misma máquina que el editor por-materia y
+                    # el panel Validar → mantiene el estado alineado sin
+                    # duplicar lógica (Fase I.3 del rediseño, 2026-09-23).
+                    from src.ui.schedule_materia_editor import (
+                        compute_materia_checks_from_db,
+                        render_materia_checks_inline,
+                    )
+                    st.divider()
+                    st.markdown("### 🔎 Chequeos estructurales")
+                    _sm_check_result = compute_materia_checks_from_db(
+                        sel_edit_id, _sm_sel,
+                    )
+                    render_materia_checks_inline(
+                        _sm_check_result,
+                        materia_codigo=_sm_sel,
+                        materia_nombre=materias_map.get(_sm_sel, _sm_sel),
+                    )
+
                 else:
                     st.caption(
                         "Seleccioná una materia para ver y editar "
@@ -2150,6 +2169,46 @@ with tab_editar:
                         action = render_editable_schedule_calendar(
                             grid_data, config, key="edit_cal",
                         )
+
+                    # Chequeos estructurales por materia del grupo (Fase
+                    # I.3 del rediseño, 2026-09-23). Recorre las
+                    # materias que quedaron visibles según los filtros
+                    # y las muestra como expanders con el mismo layout
+                    # que "Detalle por materia" del panel Validar, sin
+                    # duplicar la lógica (comparten
+                    # `compute_materia_checks_from_db`).
+                    from src.ui.schedule_materia_editor import (
+                        compute_materia_checks_from_db,
+                        render_materia_checks_inline,
+                    )
+                    _mats_para_chequear = sorted(
+                        m for m in _edit_selected_set
+                        if any(
+                            b.materia_codigo == m
+                            for blocks in grid_data.values()
+                            for b in blocks
+                        )
+                    )
+                    if _mats_para_chequear:
+                        st.divider()
+                        st.markdown(
+                            f"### 🔎 Chequeos por materia ({len(_mats_para_chequear)})"
+                        )
+                        st.caption(
+                            "Mismos chequeos estructurales que aparecen "
+                            "en el panel Validar → Detalle por materia. "
+                            "Cada tarjeta se abre por default cuando el "
+                            "estado no es OK."
+                        )
+                        for _mc in _mats_para_chequear:
+                            _res = compute_materia_checks_from_db(
+                                sel_edit_id, _mc,
+                            )
+                            render_materia_checks_inline(
+                                _res,
+                                materia_codigo=_mc,
+                                materia_nombre=materias_map.get(_mc, _mc),
+                            )
 
                     # --- Selector de materia para agregar ---
                     # Fase I.2 · Solo aplica en modo edición. En modo

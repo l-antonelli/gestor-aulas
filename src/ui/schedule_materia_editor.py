@@ -1058,6 +1058,214 @@ def _persist_edits(
 # Computación de los 10 chequeos estructurados
 # =============================================================================
 
+
+def compute_materia_checks_from_db(
+    schedule_id: str, materia_codigo: str,
+) -> dict:
+    """Computa los 10 chequeos estructurales de una materia leyendo el
+    estado persistido en DB (sin depender de un data_editor en vivo).
+
+    Consumido por `Ver / Editar` en `6_📅_Cronogramas.py` para renderar
+    validaciones inline sin duplicar la lógica del editor por-materia.
+
+    Returns:
+        dict con:
+        - ``checks``: lista de dicts ``{id, label, status, detail}``
+          (misma forma que ``_compute_checks``). Cuando la materia no
+          tiene ninguna entry, contiene un único check
+          ``materia_faltante`` (misma semántica que en el editor).
+        - ``worst``: ``'ok' | 'warn' | 'error' | 'info' | 'faltante'``
+          — misma prioridad que en `render_schedule_materia_detail`.
+        - ``estado``: label corto derivado de ``worst`` para el badge
+          (``"OK" | "Revisión" | "Faltante"``). No incluye
+          ``Faltante`` (dictado sin entries) del panel Validar porque
+          eso requiere el summary del ciclo; acá sólo se reporta el
+          estado *estructural* de la materia (sin cruces con el ciclo).
+        - ``n_entries``: cantidad de entries persistidas.
+        - ``n_comisiones``: derivado de las entries.
+    """
+    from src.database.crud import get_or_create_config, materia_crud
+
+    with next(get_session()) as session:
+        mat_db = materia_crud.get(session, materia_codigo)
+        entries = list(session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == schedule_id)
+            .where(ScheduleEntryDB.codigo_materia == materia_codigo)
+        ).all())
+        has_lab = session.exec(
+            select(MateriaLaboratorioDB)
+            .where(MateriaLaboratorioDB.materia_codigo == materia_codigo)
+            .limit(1)
+        ).first() is not None
+        config_global = get_or_create_config(session)
+        com_map = _build_comisiones_map(session, schedule_id, materia_codigo)
+
+    if mat_db is None:
+        # Guard defensivo: la materia no está en catálogo. Se reporta
+        # como "sin datos" para no crashear el listado.
+        return {
+            "checks": [{
+                "id": "materia_no_catalogo",
+                "label": "Materia no está en el catálogo",
+                "status": "error",
+                "detail": (
+                    f"El código '{materia_codigo}' no aparece en el "
+                    "catálogo de materias."
+                ),
+            }],
+            "worst": "error",
+            "estado": "Sin datos",
+            "n_entries": len(entries),
+            "n_comisiones": 0,
+        }
+
+    if not entries:
+        # Materia sin horarios cargados. Alineado con el badge 📭 del
+        # panel Validar (aunque acá lo llamamos "Sin horarios" porque
+        # no sabemos si tiene dictado en el ciclo — eso lo decide el
+        # summary de `validar_cronograma`).
+        return {
+            "checks": [{
+                "id": "materia_faltante",
+                "label": "Sin horarios",
+                "status": "faltante",
+                "detail": (
+                    "Esta materia no tiene horarios cargados en el "
+                    "cronograma. Cargá clases desde el editor por "
+                    "materia o desde el importer masivo."
+                ),
+            }],
+            "worst": "faltante",
+            "estado": "Faltante",
+            "n_entries": 0,
+            "n_comisiones": 0,
+        }
+
+    # Reconstruir el DataFrame que `_compute_checks` espera.
+    rows = []
+    for e in entries:
+        _com = com_map.get(e.comision_id) if e.comision_id else None
+        _num = _com.numero if _com else 1
+        rows.append({
+            "_eid": e.id,
+            "Día": e.dia,
+            "Inicio": _time_str(e.hora_inicio),
+            "Fin": _time_str(e.hora_fin),
+            "Comisión": _num,
+            "Tipo": e.tipo_clase or "sin determinar",
+        })
+    valid_df = pd.DataFrame(rows)
+    valid_df["Hs"] = valid_df.apply(_entry_hours, axis=1)
+
+    h_sem = float(mat_db.horas_semanales or 0.0)
+    h_teo = mat_db.horas_teoria
+    h_lab = mat_db.horas_laboratorio
+
+    n_com = _derive_n_comisiones(entries)
+    com_options = list(range(1, n_com + 1))
+
+    hours_by_com: dict[int, float] = {c: 0.0 for c in com_options}
+    for _, r in valid_df.iterrows():
+        cn = r.get("Comisión")
+        if cn in hours_by_com:
+            hours_by_com[cn] += _entry_hours(r)
+    hours_by_com = {c: round(h, 2) for c, h in hours_by_com.items()}
+
+    total = sum(_entry_hours(r) for _, r in valid_df.iterrows())
+    paralelas = _max_clases_paralelas(valid_df)
+
+    checks = _compute_checks(
+        h_sem=h_sem, n_com=n_com, total=total,
+        paralelas=paralelas, hours_by_com=hours_by_com,
+        has_lab=has_lab, h_teo=h_teo, h_lab=h_lab,
+        valid_df=valid_df, com_options=com_options,
+        config_global=config_global,
+    )
+
+    # Worst status con la misma prioridad que el editor.
+    worst = "ok"
+    for ck in checks:
+        if ck["status"] == "faltante":
+            worst = "faltante"
+            break
+        if ck["status"] == "error":
+            worst = "error"
+            break
+        if ck["status"] == "warn" and worst != "error":
+            worst = "warn"
+    if worst == "ok" and not any(c["status"] == "ok" for c in checks):
+        worst = "info"
+
+    # `estado` para el badge externo. La categoría "Sin datos" cubre
+    # `h_sem is None` (que el editor deja como info/warn en algunos
+    # checks pero necesita representarse como estado propio en el badge
+    # tal como en `_estado_de_materia`).
+    if mat_db.horas_semanales is None:
+        estado = "Sin datos"
+    elif worst == "faltante":
+        estado = "Faltante"
+    elif worst in ("warn", "error"):
+        estado = "Revisión"
+    else:
+        estado = "OK"
+
+    return {
+        "checks": checks,
+        "worst": worst,
+        "estado": estado,
+        "n_entries": len(entries),
+        "n_comisiones": n_com,
+    }
+
+
+CHECK_ICON_MAP = {
+    "ok": "✅", "warn": "⚠️", "error": "🔺", "info": "ℹ️",
+    "faltante": "📭",
+}
+
+ESTADO_ICON_MAP = {
+    "OK": "✅",
+    "Revisión": "🔎",
+    "Faltante": "📭",
+    "Sin datos": "❓",
+}
+
+
+def render_materia_checks_inline(
+    result: dict, *, materia_codigo: str, materia_nombre: str,
+) -> None:
+    """Renderea el resultado de `compute_materia_checks_from_db` como
+    un expander con el badge del estado.
+
+    Consumido por el tab "Ver / Editar" tanto en modo "Por materia"
+    (una sola materia visible) como en modo "Por grupo" (loop de
+    expanders, uno por materia del filtro).
+
+    No renderea el calendario ni los controles de edición — sólo el
+    listado de chequeos con sus iconos.
+    """
+    estado = result.get("estado", "OK")
+    icon = ESTADO_ICON_MAP.get(estado, "•")
+    n_entries = result.get("n_entries", 0)
+    n_com = result.get("n_comisiones", 0)
+
+    _resumen = (
+        f"{icon} **{materia_codigo}** · {materia_nombre} — {estado}"
+    )
+    if n_entries:
+        _resumen += (
+            f"  ·  {n_entries} entrada(s) · {n_com} comisión(es)"
+        )
+    with st.expander(_resumen, expanded=(estado != "OK")):
+        for ck in result.get("checks", []):
+            ico = CHECK_ICON_MAP.get(ck.get("status", "info"), "•")
+            st.markdown(
+                f"{ico} **{ck.get('label', '')}:** "
+                f"{ck.get('detail', '')}"
+            )
+
+
 def _compute_checks(
     *,
     h_sem: float, n_com: int, total: float, paralelas: int,

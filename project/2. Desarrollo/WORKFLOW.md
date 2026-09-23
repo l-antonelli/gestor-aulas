@@ -532,6 +532,21 @@ Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
   mover, resize → cambiar duración, click → editar (dialog con
   materia/día/inicio/fin/comisión/tipo + Eliminar/Cancelar), drag
   sobre celdas vacías → agregar entrada (requiere materia activa).
+- **Chequeos estructurales inline** (Fase I.3 del rediseño,
+  2026-09-23): debajo del calendario aparecen los mismos 10 chequeos
+  del panel "Validar → Detalle por materia" (h/sem × comisiones,
+  divisibles, equilibradas, paralelas ≤ comisiones, sin comisiones
+  vacías, h/sem definidas, teoría + lab = h/sem, modo lab, tipo
+  predeterminado consistente, horarios respetan la config), con
+  badge de estado por materia. En modo "Por materia" muestra un
+  único bloque; en modo "Por grupo" muestra una tarjeta por materia
+  del filtro. Los estados de la tarjeta (`OK` / `Revisión` /
+  `Faltante` / `Sin datos`) son un subconjunto de los del panel
+  Validar — acá no se cruzan con el summary del ciclo (faltantes vs
+  esperadas, conflictos horarios), así que los estados que dependen
+  del ciclo (`Conflictiva`, `No esperada`) siguen viviendo sólo en
+  Validar. Helper `compute_materia_checks_from_db` en
+  `src/ui/schedule_materia_editor.py`.
 
 ### 4.4 ✅ Validar (panel unificado)
 
