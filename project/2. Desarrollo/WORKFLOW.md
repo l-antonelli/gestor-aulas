@@ -1,6 +1,6 @@
 # Workflow End-to-End del sistema (referencia técnica interna)
 
-> **Última actualización**: 2026-09-11.
+> **Última actualización**: 2026-09-23.
 >
 > ⚙️ **Este documento es la referencia técnica interna**: usa nombres
 > de tablas, servicios y detalles de implementación. Es útil para el
@@ -424,6 +424,27 @@ La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
 se blindan errores tipográficos y datos fuera del catálogo.
 
+**Selector de hoja del Excel** (Fase I.4 del rediseño, 2026-09-23).
+Los archivos que llegan de las cátedras suelen traer una hoja por
+cuatrimestre (`1C`, `2C`, `Verano`) dentro del mismo libro, y el
+fallback automático del parser — preferir la hoja `Horarios`, y si no
+existe la primera visible — elige mal en ese escenario. Por eso, en
+cuanto se sube un archivo, la tab Cargar lista las hojas candidatas
+con `horario_file_parser.listar_hojas_visibles` (openpyxl en modo
+read-only: se descartan `Instrucciones`, las hojas de sistema con
+prefijo `_` y las marcadas ocultas en el workbook) y, si hay más de
+una, ofrece un selector **"Hoja del Excel a importar"** que arranca
+pre-seleccionado en la hoja preferida del parser
+(`hoja_default(sheets)`). Con una sola hoja visible el selector no se
+muestra pero la hoja se fija igual, de modo que el parser no pueda
+caer en una hoja oculta. La elección se propaga como `sheet_name` a
+`parse_horarios_file`, `preview_import`, `crear_shadow_import`,
+`regenerar_materia_en_shadow` y `create_schedule_standalone`; con
+`None` se conserva el fallback tradicional. Para CSV no aplica. La
+página **📈 Inscriptos** tiene el selector análogo, con la hoja
+`Inscriptos` como preferida — el caso típico ahí es un libro con una
+hoja por año lectivo.
+
 **Importer con preview + merge por materia** (Fase C2 del rediseño
 2026-09-15). La tab Cargar tiene tres modos:
 
@@ -434,20 +455,31 @@ se blindan errores tipográficos y datos fuera del catálogo.
 - **Importar en cronograma existente** (nuevo): pipeline de dos pasos
   a través de `src/services/cronograma_import_service.py`:
 
-  1. `preview_import(session, schedule_id, file) → ImportPreview`:
-     parsea el archivo, resuelve códigos contra el catálogo (con
-     fallback via ``codigo_guarani``), agrupa por
-     `(materia, comisión)` y detecta qué materias ya tienen
-     horarios en el cronograma destino. La UI muestra tres
-     métricas (horarios a importar, materias detectadas, materias
-     que requieren decisión) y, por cada materia con datos previos,
-     un radio "agregar / reemplazar / ignorar".
+  1. `preview_import(session, schedule_id, file, sheet_name=None) →
+     ImportPreview`: parsea el archivo — la hoja que indique
+     `sheet_name`, o el fallback tradicional si viene en `None` —,
+     resuelve códigos contra el catálogo (con fallback via
+     ``codigo_guarani``), agrupa por `(materia, comisión)` y detecta
+     qué materias ya tienen horarios en el cronograma destino. La UI
+     muestra cuatro métricas (horarios del archivo, materias
+     detectadas, materias que requieren decisión y horarios totales
+     del estado hipotético) y, por cada materia con datos previos,
+     un radio **"reemplazar / agregar / ignorar"** con `reemplazar`
+     como opción por default.
   2. `commit_import(session, preview, decisiones) → ImportResult`:
      aplica las decisiones en una sola transacción. Con `agregar`,
-     falla si el nombre de comisión choca (unicidad
-     case-insensitive dentro de la misma materia). Con `reemplazar`,
-     borra entries + comisiones previas antes de crear las nuevas.
-     Con `ignorar`, la materia queda intacta.
+     la comisión del archivo se rechaza si el nombre choca (unicidad
+     case-insensitive dentro de la misma materia) y el error se
+     acumula en `result.errors`. Con `reemplazar`, borra entries +
+     comisiones previas antes de crear las nuevas, **preservando los
+     atributos manuales de las comisiones homónimas** (cupo,
+     descripción, coeficiente de asignación, carrera asignada — el
+     archivo de horarios no trae esos campos y no puede reponerlos;
+     fix auditoría 2026-09-23). Con `ignorar`, la materia queda
+     intacta. Si el archivo trae el mismo dictado bajo dos códigos
+     que resuelven a la misma materia (código de plan + Guaraní), el
+     borrado del `reemplazar` se hace una sola vez y el segundo
+     grupo se suma con chequeo de colisión.
 
 Los "nombres" de comisión son strings arbitrarios (`"1"`, `"A"`,
 `"Mañana"`, `"Comisión 3 turno tarde"`). La deduplicación se hace
@@ -541,19 +573,25 @@ Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
   materia/día/inicio/fin/comisión/tipo + Eliminar/Cancelar), drag
   sobre celdas vacías → agregar entrada (requiere materia activa).
 - **Chequeos estructurales inline** (Fase I.3 del rediseño,
-  2026-09-23): debajo del calendario aparecen los mismos 10 chequeos
-  del panel "Validar → Detalle por materia" (h/sem × comisiones,
-  divisibles, equilibradas, paralelas ≤ comisiones, sin comisiones
-  vacías, h/sem definidas, teoría + lab = h/sem, modo lab, tipo
-  predeterminado consistente, horarios respetan la config), con
-  badge de estado por materia. En modo "Por materia" muestra un
-  único bloque; en modo "Por grupo" muestra una tarjeta por materia
-  del filtro. Los estados de la tarjeta (`OK` / `Revisión` /
-  `Faltante` / `Sin datos`) son un subconjunto de los del panel
-  Validar — acá no se cruzan con el summary del ciclo (faltantes vs
-  esperadas, conflictos horarios), así que los estados que dependen
-  del ciclo (`Conflictiva`, `No esperada`) siguen viviendo sólo en
-  Validar. Helper `compute_materia_checks_from_db` en
+  2026-09-23): debajo del calendario aparecen los mismos once
+  chequeos del panel "Validar → Detalle por materia" (h/sem ×
+  comisiones, horas divisibles entre comisiones, comisiones
+  equilibradas, clases paralelas ≤ comisiones, sin comisiones
+  vacías, h/sem definidas, teoría + lab = h/sem, modo lab,
+  predeterminados consistentes, partición teoría/lab factible y
+  horarios dentro de la configuración horaria), más el chequeo
+  `entries_sin_comision` cuando hay horarios sin comisión asignada,
+  con badge de estado por materia. En modo "Por materia" muestra un
+  único bloque; en modo "Por grupo" muestra una tarjeta por cada
+  materia del filtro **que ya tenga horarios cargados** — las que no
+  tienen ninguna entrada no generan tarjeta acá (su condición de
+  faltante se reporta en el panel Validar, que es el que cruza
+  contra los dictados del ciclo). Los estados de la tarjeta (`OK` /
+  `Revisión` / `Sin horarios` / `Sin datos`) son un subconjunto de
+  los del panel Validar — acá no se cruzan con el summary del ciclo,
+  así que los estados que dependen del ciclo (`Conflictiva`,
+  `No esperada`, `Faltante`) siguen viviendo sólo en Validar.
+  Helper `compute_materia_checks_from_db` en
   `src/ui/schedule_materia_editor.py`.
 
 ### 4.4 ✅ Validar (panel unificado)
@@ -898,14 +936,15 @@ Detalle completo de la implementación:
 
 | Página | Tabs principales |
 |---|---|
-| `0_🏠_Home.py` | Landing |
+| `main.py` | Landing |
 | `1_📚_Materias.py` | CRUD Materias / Laboratorios |
 | `2_🏛️_Aulas.py` | CRUD Aulas |
 | `3_🎓_Carreras.py` | CRUD Carreras + plan versions |
 | `4_📆_Ciclos.py` | Lista, Crear, Plan versions, **📚 Dictados** |
 | `5_📊_Planes.py` | **Generar plan**, **Detalle**, **Grilla horaria**, Clases, **🏛️ Aulas** (LP), Config |
-| `6_📅_Cronogramas.py` | Lista, **Cargar**, **Ver / Editar** (toggle "Solo lectura"), **Validar** |
-| `7_📝_Inscriptos.py` | Carga histórica de inscriptos por materia/cuatri |
+| `6_📅_Cronogramas.py` | Lista, **Cargar** (selector de hoja + preview per-materia), **Ver / Editar** (toggle "Solo lectura" + chequeos inline), **Validar** |
+| `7_📈_Inscriptos.py` | Carga histórica por materia/cuatri (manual) + **importer masivo desde plantilla Excel** con selector de hoja |
+| `8_📜_Historial.py` | Auditoría de cambios (feed global + vista por entidad) |
 
 ---
 

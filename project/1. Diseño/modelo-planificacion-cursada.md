@@ -375,7 +375,7 @@ Carga validada de horarios desde un archivo.
 | `nombre` | `str` | |
 | `fecha_upload` | `datetime` | |
 | `source_filename` | `str` | |
-| `es_shadow_import` | `bool` | Fase G del rediseño 2026-09-15. Si `True`, este schedule es una copia temporal creada por el importer masivo que combina las entries del destino con las nuevas del archivo (bajo decisiones de merge por default: "agregar"). Se usa como *preview read-only* — el usuario visualiza el estado hipotético y decide `finalizar_shadow_import` (reemplaza al destino) o `descartar_shadow_import` (borra el shadow). Los shadows se filtran de `get_all_schedules` y del wizard del plan. |
+| `es_shadow_import` | `bool` | Fase G del rediseño 2026-09-15; semántica revisada el 2026-09-23. Si `True`, este schedule es una copia temporal que el importer masivo crea para materializar el estado hipotético del destino después de aplicar el archivo. La decisión de merge por default es **"reemplazar"** para las materias que ya tenían horarios en el destino y "agregar" para las nuevas. El shadow no es una vista estática: mientras el preview está abierto, cambiar la decisión de una materia dispara `regenerar_materia_en_shadow`, que recomputa las entries y comisiones de esa materia sin tocar el resto (preservando los atributos manuales de las comisiones homónimas: cupo, descripción, coeficiente, carrera asignada). Al confirmar, `finalizar_shadow_import` pisa el destino con el shadow y lo elimina; `descartar_shadow_import` lo borra sin tocar el destino. Los shadows se filtran de `get_all_schedules` y del wizard del plan. |
 | `shadow_target_schedule_id` | `Optional[str]` FK a `schedules.id` | Sólo relevante cuando `es_shadow_import=True`. Apunta al schedule destino real. |
 
 #### `ScheduleEntryDB`

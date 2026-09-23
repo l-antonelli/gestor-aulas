@@ -1,5 +1,18 @@
 # Auditoría del importer masivo — 2026-09-23
 
+> **Estado: RESUELTA (2026-09-23).** Los 18 hallazgos se corrigieron
+> el mismo día en tres commits: backend (`fix(import)`), interfaz
+> (`fix(ui)`) y documentación (`docs`). Cada corrección quedó fijada
+> con tests de regresión — ver `tests/test_cronograma_import_service.py`
+> (H1, H3, H7, H9, A1-A3, A7), `tests/test_multi_sheet_import.py`
+> (H2, A4, A5), `tests/test_compute_materia_checks_from_db.py`
+> (H8, A6) y `tests/test_validation_ui_helpers.py` (H6). El único
+> punto diferido conscientemente es la paginación o lazy-render de
+> los calendarios per-materia (H4, segunda parte): con las grillas
+> fuera del loop el costo de Python bajó de ~8 s a ~90 ms, pero con
+> archivos de decenas de materias se siguen montando dos iframes de
+> FullCalendar por tarjeta.
+
 > **Alcance**: los tres commits del 2026-09-23 — `6b21c1f` (chequeos
 > inline en Ver/Editar), `391677b` (selector de hoja + toast + estado
 > Revisión) y `b8dd639` (preview per-materia con Antes/Después).

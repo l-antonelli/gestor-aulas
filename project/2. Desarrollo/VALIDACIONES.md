@@ -496,7 +496,7 @@ agregador llamar y qué bloques mostrar. La estructura común es:
      - **Cronograma**:
        `schedule_materia_editor.render_schedule_materia_detail`
        (controles de horas / calendario editable / data_editor /
-       resumen / 10 chequeos).
+       resumen / once chequeos).
 7. **Activación gate** (solo plan): botón "Activar plan" deshabilitado
    si hay conflictos no ignorados.
 
@@ -541,11 +541,33 @@ los 6 valores.
 
 ## 4. Validaciones inline del editor por materia (cronograma)
 
-> Estas son las validaciones del **editor por materia del cronograma**
-> (`schedule_materia_editor.render_schedule_materia_detail`) que se
-> ejecutan en vivo a medida que el usuario edita los entries del
-> cronograma. Vivieron antes en `validacion_cronograma_tab.py` (en lo
-> que internamente se llamó "Phase 2") y se rescatan como parte del
+> Estas son las validaciones estructurales **de una materia dentro de
+> un cronograma**. La máquina de cálculo es una sola —
+> `schedule_materia_editor._compute_checks` — y la consumen tres
+> lugares distintos:
+>
+> - `render_schedule_materia_detail`: las evalúa **en vivo** sobre lo
+>   que el usuario está tipeando en el `data_editor`, antes de
+>   guardar.
+> - `compute_materia_checks_from_db(schedule_id, materia_codigo)`:
+>   las evalúa sobre el **estado persistido** en la base, sin
+>   depender de ningún editor abierto. Es la puerta que usan el tab
+>   "Ver / Editar" (§ 4.3 de `WORKFLOW.md`) y las tarjetas
+>   per-materia del preview del importer masivo. Devuelve, además de
+>   los chequeos, un `worst` y un `estado` corto (`OK` / `Revisión` /
+>   `Sin horarios` / `Sin datos`) que es un **subconjunto** de los
+>   seis estados de § 3.2: los que dependen del cruce con el ciclo
+>   (`Conflictiva`, `No esperada`, `Faltante`) no se pueden computar
+>   sin el summary de `validar_cronograma` y por lo tanto viven sólo
+>   en el panel Validar. `Sin horarios` significa "sin entries en
+>   este cronograma", sin verificar dictado en el ciclo. Cuando hay
+>   horarios sin comisión asignada agrega el chequeo extra
+>   `entries_sin_comision` (warn) en vez de atribuirlos a la
+>   comisión 1.
+> - `plan_materia_editor`: el espejo del lado del plan (§ 4bis).
+>
+> Vivieron antes en `validacion_cronograma_tab.py` (en lo que
+> internamente se llamó "Phase 2") y se rescatan como parte del
 > editor inline.
 
 Para cada materia activa del cronograma, el editor renderiza:
@@ -574,8 +596,8 @@ Para cada materia activa del cronograma, el editor renderiza:
 
 - **`status = faltante`** (solo si la materia tiene dictado activo
   pero **0 entries** en el cronograma).
-- **Comportamiento**: cuando este check se dispara, los 10 chequeos
-  de las secciones 4.1-4.10 **no se ejecutan** (no aplican porque no
+- **Comportamiento**: cuando este check se dispara, los once chequeos
+  de las secciones 4.1-4.11 **no se ejecutan** (no aplican porque no
   hay datos sobre los cuales validar). El editor muestra un único
   card con icono 📭 y un detail que invita al usuario a cargar
   clases con el calendario o a desactivar el dictado si la materia
@@ -677,10 +699,36 @@ Para cada comisión:
   `Cn: clases [d1, d2, ...] no se pueden particionar para sumar Hs
   lab Xh`.
 
+### 4.11. `config_horaria` — Horarios respetan la configuración
+
+Fase I.1 del rediseño 2026-09-21. Contrasta cada horario de la
+materia contra la `ConfiguracionHoraria` global:
+
+- **OK**: todos los horarios caen dentro del rango operativo, en días
+  operativos, y tanto inicio como fin son múltiplos de la
+  granularidad medidos desde la hora de inicio operativo.
+- **WARN**: hay al menos un horario que rompe alguna de las tres
+  condiciones. El detalle lista los primeros con la razón concreta
+  (día no operativo, inicio/fin fuera de rango, no múltiplo de N
+  minutos). Nunca es error: la configuración horaria es una
+  convención operativa, no una restricción del modelo (ver § 1.9).
+
+### 4.12. `entries_sin_comision` — Horarios sin comisión asignada
+
+Sólo lo emite `compute_materia_checks_from_db` (fix auditoría H8,
+2026-09-23). Los horarios sin comisión asignada — o con una comisión
+que no pertenece a este cronograma, dato corrupto tipo import
+cross-schedule — quedan fuera del cálculo de `h/sem × comisiones` y
+se reportan con este chequeo (**WARN**) en vez de atribuirse en
+silencio a la comisión 1, que era lo que hacía la versión anterior y
+contradecía la fila "Sin asignar" del resumen por comisión de la
+misma pantalla.
+
 ### Worst status (badge del header del expander)
 
-El editor calcula el **peor `status`** entre los 10 chequeos (más el
-posible `materia_faltante`), con prioridad
+El editor calcula el **peor `status`** entre los once chequeos (más
+los posibles `materia_faltante` y `entries_sin_comision`), con
+prioridad
 `error > faltante > warn > info > ok`. Se cachea en
 `session_state[f"{kp}_chk_worst"]` y el caller
 (`validation_ui._render_detalle_por_materia`) lo lee al renderear el
@@ -712,7 +760,7 @@ header de cada expander del loop paginado:
 > cronograma pero operando sobre `ComisionDB` + `HorarioDB` reales del
 > plan en lugar de `ScheduleEntryDB`.
 
-El editor del plan rendea **los mismos 10 chequeos** que el del
+El editor del plan rendea **los mismos chequeos** que el del
 cronograma, vía `_render_plan_checks` que reusa la función
 `_compute_checks` de `schedule_materia_editor`. La adaptación
 construye un DataFrame compatible con los datos del plan:
@@ -723,7 +771,7 @@ construye un DataFrame compatible con los datos del plan:
 - `Tipo` desde `HorarioDB.tipo_clase`.
 - `Hs` calculado.
 
-Los 10 chequeos (4.1-4.10) se evalúan idénticamente. La lógica de
+Los chequeos (4.1-4.11) se evalúan idénticamente. La lógica de
 `materia_faltante` aplica análogamente cuando la materia está en
 `mat_coms` pero todas las comisiones tienen 0 horarios.
 
