@@ -422,17 +422,29 @@ El archivo trae:
   nombre. La columna `codigo_materia` de `Horarios` viene
   pre-cargada (filas 2–1001) con una fórmula
   `=IFERROR(INDEX(...);MATCH(...))` que **autopopula el código al
-  elegir el nombre** en la columna `nombre_materia`.
+  elegir el nombre** en la columna `nombre_materia`. La columna del
+  código NO tiene lista desplegable propia: dos selectores
+  independientes permitían elegir un código y un nombre que no se
+  corresponden, y elegir de la lista pisaba la fórmula. Quien
+  prefiere cargar por código lo tipea a mano (y deja el nombre
+  vacío); el importador rechaza filas donde código y nombre no se
+  correspondan.
 - Hojas ocultas `_dias`, `_tipos`, `_virtual` con las listas
-  cerradas restantes. La lista de códigos/nombres válidos sale de
-  los dictados activos del ciclo elegido (misma fuente que
-  `validar_cronograma`) — por eso el botón queda deshabilitado
-  hasta que se elija ciclo.
+  cerradas restantes. `_virtual` contiene los **booleanos reales**
+  de Excel (se muestran VERDADERO/FALSO): elegir del desplegable
+  deja un `bool` en la celda — con textos tipo "SI"/"NO" la celda
+  no se alineaba con la semántica booleana de la columna. La lista
+  de nombres válidos sale de los dictados activos del ciclo elegido
+  (misma fuente que `validar_cronograma`) — por eso el botón queda
+  deshabilitado hasta que se elija ciclo.
 - `openpyxl.DataValidation` en cada columna crítica: listas
-  desplegables para código y nombre de materia (referencian la hoja
+  desplegables para nombre de materia (referencia la hoja
   `Materias`), día, tipo y virtual; entero ≥ 1 para
   `codigo_comision`; validación tipográfica de hora en formato
   `HH:MM`. `nombre_comision` es texto libre y no lleva validación.
+- `fullCalcOnLoad` activado para que la fórmula de autopoblación se
+  recalcule al abrir el archivo (openpyxl no guarda valores
+  cacheados).
 
 La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
@@ -447,6 +459,11 @@ frenar el resto del archivo):
 - `tipo_clase = laboratorio` marcado `virtual` — un laboratorio
   requiere aula física.
 - `codigo_comision` no numérico o menor a 1.
+- Fila que declara `codigo_materia` **y** `nombre_materia` que no se
+  corresponden en el catálogo (esta guardia corre en el preview del
+  importador, que es quien tiene acceso al catálogo): tipear un
+  código pisa la fórmula de autopoblación, así que el Excel solo no
+  alcanza para impedir la mezcla.
 
 Además: la columna `virtual` es un **booleano** — vacío o NaN se
 interpreta `False` (presencial); `tipo_clase` puede quedar vacío
