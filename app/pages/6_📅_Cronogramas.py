@@ -652,12 +652,12 @@ with tab_cargar:
             ):
                 st.caption(
                     "Genera un Excel con la hoja Horarios como tabla, "
-                    "donde la materia se elige por código o por nombre "
-                    "(desplegable en ambas columnas, con autocompletado "
-                    "y verificación cruzada), más listas de días, tipos "
-                    "y VERDADERO/FALSO para virtual. Ideal para pasarle "
-                    "a las cátedras: no pueden escribir códigos "
-                    "inválidos."
+                    "donde la materia se ingresa por código (lista "
+                    "desplegable) y el nombre se autocompleta como "
+                    "verificación de sólo lectura, más listas de días, "
+                    "tipos y VERDADERO/FALSO para virtual. Ideal para "
+                    "pasarle a las cátedras: no pueden escribir "
+                    "códigos inválidos."
                 )
                 if ciclo_id_val is None:
                     st.info(

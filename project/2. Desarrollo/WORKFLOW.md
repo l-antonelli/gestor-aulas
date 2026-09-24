@@ -418,23 +418,20 @@ El archivo trae:
   la borraba — fix auditoría 2026-09-23; el ejemplo vive ahora en
   Instrucciones).
 - Hoja **visible** `Materias` con los pares código + nombre del
-  ciclo elegido. La materia se puede elegir **por código o por
-  nombre** (desplegable en ambas columnas). Al elegir el nombre, la
-  columna `codigo_materia` — pre-cargada (filas 2–1001) con una
-  fórmula `=IFERROR(INDEX(...);MATCH(...))` — **autopopula el
-  código**; al elegir el código, la columna `verificacion` (fórmula,
-  no se completa a mano) **muestra el nombre** y, si la fila quedó
-  con un código y un nombre que no se corresponden, lo avisa en el
-  momento ("⚠ el código y el nombre no se corresponden"). La
-  dirección inversa no puede ir como fórmula en la celda del nombre:
-  A y B se referenciarían mutuamente (referencia circular, que Excel
-  sólo tolera con cálculo iterativo — un ajuste de sesión frágil que
-  depende de qué libro se abrió primero). El importador rechaza las
-  filas inconsistentes de todos modos.
+  ciclo elegido. La materia se ingresa **sólo por código**
+  (desplegable en `codigo_materia`; simplificación 2026-09-24: quien
+  carga debe conocer el código correcto). La columna
+  `nombre_materia` viene pre-cargada (filas 2–1001) con una fórmula
+  `=IFERROR(INDEX(...);MATCH(...))` que **muestra el nombre al
+  elegir el código**, como verificación visual: la hoja está
+  **protegida sin contraseña** con esa columna bloqueada (las de
+  carga están desbloqueadas celda a celda), así que el nombre no se
+  puede editar ni elegir a mano y no puede haber código y nombre
+  que no se correspondan. La protección permite expresamente
+  ordenar, filtrar, insertar/eliminar filas y ajustar anchos; sin
+  contraseña, se quita en un clic (Revisar → Desproteger hoja).
 - El área de datos es una **tabla de Excel** (`TablaHorarios`,
-  `A1:J1001`): al escribir debajo de la última fila la tabla se
-  extiende sola copiando fórmulas y validaciones, y las columnas
-  ganan filtros y bandeado de filas.
+  `A1:I1001`): filtros por columna y bandeado de filas.
 - Hojas ocultas `_dias`, `_tipos`, `_virtual` con las listas
   cerradas restantes. `_virtual` contiene los **booleanos reales**
   de Excel (se muestran VERDADERO/FALSO): elegir del desplegable
@@ -448,11 +445,11 @@ El archivo trae:
   elegido (misma fuente que `validar_cronograma`) — por eso el
   botón queda deshabilitado hasta que se elija ciclo.
 - `openpyxl.DataValidation` en cada columna crítica: listas
-  desplegables para código y nombre de materia (referencian la hoja
+  desplegables para código de materia (referencia la hoja
   `Materias`), día, tipo y virtual; entero ≥ 1 para
   `codigo_comision`; validación tipográfica de hora en formato
-  `HH:MM`. `verificacion` (fórmula) y `nombre_comision` (texto
-  libre) no llevan validación.
+  `HH:MM`. `nombre_materia` (fórmula de sólo lectura) y
+  `nombre_comision` (texto libre) no llevan validación.
 - `fullCalcOnLoad` activado para que las fórmulas se recalculen al
   abrir el archivo (openpyxl no guarda valores cacheados).
 

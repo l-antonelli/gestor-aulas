@@ -72,23 +72,16 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     # (nombre_columna, ayuda, ancho_columna)
     (
         "codigo_materia",
-        "Código de la materia (lista de la hoja 'Materias'). Se "
-        "autocompleta al elegir el nombre en la columna de al lado; "
-        "si lo elegís directo, el nombre aparece en la columna "
-        "'verificacion'.",
+        "Código de la materia (lista de la hoja 'Materias'). Es el "
+        "único dato de materia que se carga: al elegirlo, el nombre "
+        "aparece solo en la columna de al lado.",
         16,
     ),
     (
         "nombre_materia",
-        "Nombre de la materia (lista de la hoja 'Materias'). Al "
-        "elegirlo se autocompleta el código.",
-        34,
-    ),
-    (
-        "verificacion",
-        "NO completar: se llena sola. Muestra el nombre de la materia "
-        "al elegir un código, y avisa si el código y el nombre no se "
-        "corresponden.",
+        "NO se completa: aparece solo al elegir el código, para que "
+        "verifiques que es la materia correcta. La columna está "
+        "protegida.",
         34,
     ),
     (
@@ -247,15 +240,13 @@ def _agregar_data_validations_horarios(
     max_row = 1001  # rango generoso para cargas típicas
     n_mat = len(materias_codigos)
 
-    # Materia: desplegable en AMBAS columnas (pedido 2026-09-23) —
-    # por código (A) y por nombre (B), las dos contra la hoja VISIBLE
-    # `Materias`. Al elegir el nombre, la fórmula precargada en A
-    # autocompleta el código; al elegir el código, la columna
-    # `verificacion` (C) muestra el nombre — no se puede poner una
-    # fórmula espejo en B porque A y B se referenciarían mutuamente
-    # (referencia circular). La misma columna C avisa si el usuario
-    # dejó un código y un nombre que no se corresponden, y el
-    # importador rechaza esas filas de todos modos.
+    # Materia: el CÓDIGO (columna A, desplegable contra la hoja
+    # VISIBLE `Materias`) es el único punto de entrada (2026-09-24 —
+    # simplificación pedida por el usuario: quien carga debe conocer
+    # el código correcto). El nombre (B) se autocompleta por fórmula
+    # y queda bloqueado por la protección de la hoja: es una
+    # verificación visual, no un dato a cargar. Así no puede haber
+    # un código y un nombre que no se correspondan.
     if n_mat:
         dv_mat_cod = DataValidation(
             type="list",
@@ -271,17 +262,6 @@ def _agregar_data_validations_horarios(
         dv_mat_cod.add(f"A2:A{max_row}")
         ws.add_data_validation(dv_mat_cod)
 
-        dv_mat_nom = DataValidation(
-            type="list",
-            formula1=f"=Materias!$B$2:$B${n_mat + 1}",
-            allow_blank=True,
-            errorTitle="Nombre no válido",
-            error="Elegí un nombre de la lista (hoja 'Materias').",
-            showErrorMessage=True,
-        )
-        dv_mat_nom.add(f"B2:B{max_row}")
-        ws.add_data_validation(dv_mat_nom)
-
     # Código de comisión — entero >= 1, obligatorio.
     dv_cod_com = DataValidation(
         type="whole", operator="greaterThanOrEqual",
@@ -295,7 +275,7 @@ def _agregar_data_validations_horarios(
         ),
         showErrorMessage=True,
     )
-    dv_cod_com.add(f"D2:D{max_row}")
+    dv_cod_com.add(f"C2:C{max_row}")
     ws.add_data_validation(dv_cod_com)
 
     # Día — lista cerrada según config.
@@ -311,7 +291,7 @@ def _agregar_data_validations_horarios(
         ),
         showErrorMessage=True,
     )
-    dv_dia.add(f"F2:F{max_row}")
+    dv_dia.add(f"E2:E{max_row}")
     ws.add_data_validation(dv_dia)
 
     # Hora inicio / hora fin — lista desplegable de horas discretas
@@ -319,8 +299,8 @@ def _agregar_data_validations_horarios(
     ref_horas = _escribir_hoja_lista(wb, "_horas", slots_horarios)
     if ref_horas:
         for col_letra, err_msg in (
-            ("G", "Elegí la hora de inicio de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser anterior a hora_fin."),  # noqa: E501
-            ("H", "Elegí la hora de fin de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser posterior a hora_inicio."),  # noqa: E501
+            ("F", "Elegí la hora de inicio de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser anterior a hora_fin."),  # noqa: E501
+            ("G", "Elegí la hora de fin de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser posterior a hora_inicio."),  # noqa: E501
         ):
             dv_hora = DataValidation(
                 type="list", formula1=ref_horas, allow_blank=False,
@@ -343,7 +323,7 @@ def _agregar_data_validations_horarios(
         ),
         showErrorMessage=True,
     )
-    dv_tipo.add(f"I2:I{max_row}")
+    dv_tipo.add(f"H2:H{max_row}")
     ws.add_data_validation(dv_tipo)
 
     # Virtual — booleano: lista de VERDADERO/FALSO reales; vacío =
@@ -358,40 +338,34 @@ def _agregar_data_validations_horarios(
         ),
         showErrorMessage=True,
     )
-    dv_virt.add(f"J2:J{max_row}")
+    dv_virt.add(f"I2:I{max_row}")
     ws.add_data_validation(dv_virt)
 
-    # Fórmulas precargadas (notación canónica inglesa — Excel las
-    # localiza solo):
+    # Fórmula precargada en la columna B (notación canónica inglesa —
+    # Excel la localiza solo): el nombre de la materia a partir del
+    # código elegido en A. Junto con la protección de la hoja (ver
+    # el generador), B queda como verificación visual de sólo
+    # lectura: el usuario no puede pisarla ni tipear un nombre que
+    # no se corresponda con el código.
     #
-    # - Columna A: auto-población del código a partir del nombre. Si
-    #   el usuario elige/escribe el código, pisa la fórmula —
-    #   comportamiento esperado.
-    # - Columna C (`verificacion`): la dirección inversa. Muestra el
-    #   nombre de la materia cuando la fila trae sólo el código, "OK"
-    #   cuando código y nombre se corresponden, y una advertencia
-    #   cuando no. No puede ir como fórmula en la celda B porque A y
-    #   B se referenciarían mutuamente (referencia circular — Excel
-    #   sólo lo tolera con cálculo iterativo, un ajuste de sesión
-    #   frágil que depende de qué libro se abrió primero).
-    if n_mat:
-        _rango_cod = f"Materias!$A$2:$A${n_mat + 1}"
-        _rango_nom = f"Materias!$B$2:$B${n_mat + 1}"
-        for _r in range(2, max_row + 1):
-            ws.cell(row=_r, column=1).value = (
-                f'=IFERROR(INDEX({_rango_cod},'
-                f'MATCH($B{_r},{_rango_nom},0)),"")'
+    # Además se DESBLOQUEAN las celdas de las columnas de carga
+    # (todas menos B) — openpyxl deja `locked=True` por default y la
+    # protección de hoja bloquearía todo.
+    _cols_entrada = [
+        i for i in range(1, len(HORARIO_COLUMNS) + 1) if i != 2
+    ]
+    _rango_cod = f"Materias!$A$2:$A${n_mat + 1}" if n_mat else ""
+    _rango_nom = f"Materias!$B$2:$B${n_mat + 1}" if n_mat else ""
+    from openpyxl.styles import Protection as _Protection
+    _desbloqueada = _Protection(locked=False)
+    for _r in range(2, max_row + 1):
+        if n_mat:
+            ws.cell(row=_r, column=2).value = (
+                f'=IFERROR(INDEX({_rango_nom},'
+                f'MATCH($A{_r},{_rango_cod},0)),"")'
             )
-            _nom_de_a = (
-                f'INDEX({_rango_nom},MATCH($A{_r},{_rango_cod},0))'
-            )
-            ws.cell(row=_r, column=3).value = (
-                f'=IF($A{_r}="","",IFERROR('
-                f'IF($B{_r}="",{_nom_de_a},'
-                f'IF({_nom_de_a}=$B{_r},"OK",'
-                f'"⚠ el código y el nombre no se corresponden")),'
-                f'"⚠ código desconocido"))'
-            )
+        for _c in _cols_entrada:
+            ws.cell(row=_r, column=_c).protection = _desbloqueada
 
 
 def _escribir_hoja_materias(
@@ -445,14 +419,13 @@ def _escribir_hoja_instrucciones_cronograma(
        "comisión (ej: 'MAT101, comisión C1, lunes 8 a 11').")
     row += 1
     _t(row,
-       "2) La materia se puede elegir por CÓDIGO o por NOMBRE (las "
-       "dos columnas tienen lista desplegable). Al elegir el nombre, "
-       "el código se completa solo; al elegir el código, el nombre "
-       "aparece en la columna 'verificacion'. Esa misma columna "
-       "avisa si quedó un código y un nombre que no se corresponden "
-       "— la aplicación rechaza esas filas al importar. La hoja "
-       "'Materias' tiene la referencia completa de códigos y "
-       "nombres.")
+       "2) La materia se ingresa por CÓDIGO (lista desplegable en la "
+       "columna 'codigo_materia'). Al elegirlo, el nombre aparece "
+       "solo en la columna de al lado, para que verifiques que es "
+       "la materia correcta — esa columna está protegida y no se "
+       "completa a mano. La hoja 'Materias' tiene la referencia "
+       "completa de códigos y nombres para buscar el código que "
+       "necesitás.")
     row += 1
     _t(row,
        "3) Guardar el archivo y subirlo desde la aplicación en la "
@@ -470,8 +443,9 @@ def _escribir_hoja_instrucciones_cronograma(
     row += 1
     _t(row,
        f"• Materias: {n_materias} materias con dictado activo en el "
-       "ciclo, elegibles por código o por nombre. Sólo se aceptan "
-       "valores de la lista.")
+       "ciclo, elegibles por código en la columna 'codigo_materia'. "
+       "Sólo se aceptan códigos de la lista; el nombre se completa "
+       "solo.")
     row += 1
     _t(row,
        "• Días: los días operativos configurados en el sistema, tal "
@@ -502,9 +476,10 @@ def _escribir_hoja_instrucciones_cronograma(
        "laboratorio requiere un aula física).")
     row += 1
     _t(row,
-       "• Si completás código Y nombre de materia, tienen que "
-       "corresponderse — la columna 'verificacion' te avisa en el "
-       "momento si no.")
+       "• La hoja está protegida (sin contraseña) para cuidar la "
+       "columna del nombre y las fórmulas. Si necesitás algo fuera "
+       "de lo previsto, podés desprotegerla desde Revisar → "
+       "Desproteger hoja.")
     row += 1
     _t(row,
        "• El código de comisión es obligatorio y debe ser un entero "
@@ -525,9 +500,8 @@ def _escribir_hoja_instrucciones_cronograma(
        "mismo código de comisión.")
     row += 1
     _t(row,
-       "• La hoja Horarios es una tabla de Excel: si necesitás más "
-       "de 1000 filas, escribí debajo de la última y la tabla se "
-       "extiende sola con sus listas y fórmulas.")
+       "• La hoja Horarios es una tabla de Excel con capacidad para "
+       "1000 filas, con filtros por columna para revisar lo cargado.")
     row += 1
     _t(row,
        "• Antes de importar, la aplicación muestra una vista previa "
@@ -550,15 +524,15 @@ def generar_plantilla_cronograma_excel(
     - Hoja "Horarios" con headers, ancho de columnas y freeze (sin
       fila de ejemplo — task #341).
     - Hoja VISIBLE "Materias" con la referencia código+nombre de las
-      materias con dictado activo (2026-09-23): alimenta los
-      desplegables por código y por nombre, la fórmula que
-      autocompleta el código al elegir un nombre, y la columna
-      ``verificacion`` que muestra el nombre al elegir un código y
-      avisa si código y nombre no se corresponden (la fórmula espejo
-      en la celda del nombre sería una referencia circular).
+      materias con dictado activo. La materia se ingresa SOLO por
+      código (desplegable, 2026-09-24): el nombre se autocompleta
+      por fórmula en la columna de al lado como verificación visual
+      y queda de sólo lectura (hoja protegida sin contraseña, con
+      las columnas de carga desbloqueadas). Quien carga debe conocer
+      el código correcto; no puede haber código y nombre que no se
+      correspondan.
     - El área de datos es una TABLA de Excel (``TablaHorarios``):
-      filas nuevas heredan fórmulas y validaciones, filtros por
-      columna y bandeado de filas.
+      filtros por columna y bandeado de filas.
     - Hojas ocultas ``_dias``, ``_horas``, ``_tipos``, ``_virtual``
       que alimentan el resto de las listas desplegables.
     - Validaciones: código de comisión entero >= 1 (obligatorio),
@@ -664,6 +638,26 @@ def generar_plantilla_cronograma_excel(
         showLastColumn=False,
     )
     ws_main.add_table(_tabla)
+
+    # Proteger la hoja SIN contraseña (2026-09-24): la columna del
+    # nombre de materia queda de sólo lectura (celdas bloqueadas con
+    # la fórmula de autocompletado); las columnas de carga están
+    # desbloqueadas celda a celda en
+    # `_agregar_data_validations_horarios`. Se permiten expresamente
+    # ordenar, filtrar, insertar/eliminar filas y ajustar
+    # anchos/altos — en openpyxl estos flags en True significan
+    # acción BLOQUEADA, por eso van en False. Sin contraseña, quien
+    # necesite algo fuera de lo previsto desprotege la hoja en un
+    # clic (Revisar → Desproteger hoja).
+    ws_main.protection.sheet = True
+    ws_main.protection.selectLockedCells = False
+    ws_main.protection.selectUnlockedCells = False
+    ws_main.protection.sort = False
+    ws_main.protection.autoFilter = False
+    ws_main.protection.insertRows = False
+    ws_main.protection.deleteRows = False
+    ws_main.protection.formatColumns = False
+    ws_main.protection.formatRows = False
 
     _escribir_hoja_instrucciones_cronograma(wb, ciclo, len(codigos_ordenados))
 

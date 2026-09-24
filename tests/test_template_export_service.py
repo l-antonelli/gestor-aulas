@@ -167,14 +167,13 @@ class TestEstructuraDelArchivo:
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        headers = [ws.cell(row=1, column=c).value for c in range(1, 11)]
-        # Esquema 2026-09-23: comisión con código numérico obligatorio
-        # + nombre opcional, materia elegible por código o por nombre
-        # y columna `verificacion` (fórmula, no se completa) que
-        # muestra el nombre al elegir un código y avisa si código y
-        # nombre no se corresponden.
+        headers = [ws.cell(row=1, column=c).value for c in range(1, 10)]
+        # Esquema 2026-09-24: la materia se ingresa por CÓDIGO
+        # (desplegable); el nombre se autocompleta por fórmula y es
+        # de sólo lectura (verificación visual). Comisión con código
+        # numérico obligatorio + nombre opcional.
         assert headers == [
-            "codigo_materia", "nombre_materia", "verificacion",
+            "codigo_materia", "nombre_materia",
             "codigo_comision", "nombre_comision",
             "dia", "hora_inicio", "hora_fin",
             "tipo_clase", "virtual",
@@ -194,20 +193,20 @@ class TestEstructuraDelArchivo:
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        # Las columnas A (código autopoblado) y C (verificación)
-        # llevan fórmulas (2026-09-23) — que evalúan a "" mientras no
-        # se elija materia.
-        _a2 = ws.cell(row=2, column=1).value
-        assert _a2 is None or str(_a2).startswith("=IFERROR"), (
-            f"Fila 2 col A debería ser fórmula o vacía: {_a2!r}"
+        # La columna A es entrada pura del usuario (2026-09-24: sin
+        # fórmula). La B (nombre) lleva la fórmula de autocompletado,
+        # que evalúa a "" mientras no se elija código.
+        assert ws.cell(row=2, column=1).value in (None, ""), (
+            f"Fila 2 col A debería estar vacía: "
+            f"{ws.cell(row=2, column=1).value!r}"
         )
-        _c2 = ws.cell(row=2, column=3).value
-        assert _c2 is None or str(_c2).startswith("=IF"), (
-            f"Fila 2 col C debería ser fórmula o vacía: {_c2!r}"
+        _b2 = ws.cell(row=2, column=2).value
+        assert _b2 is None or str(_b2).startswith("=IFERROR"), (
+            f"Fila 2 col B debería ser fórmula o vacía: {_b2!r}"
         )
         # Las demás celdas de la fila 2 deben estar vacías (sin datos
         # de ejemplo).
-        for col in (2, 4, 5, 6, 7, 8, 9, 10):
+        for col in range(3, 10):
             assert ws.cell(row=2, column=col).value in (None, ""), (
                 f"Fila 2 columna {col} no está vacía: "
                 f"{ws.cell(row=2, column=col).value!r}"
@@ -302,12 +301,12 @@ class TestDataValidations:
         self, session, ciclo_con_2_materias,
     ):
         """La hoja Horarios tiene DataValidation configurados para
-        codigo_materia (A), nombre_materia (B), codigo_comision (D),
-        dia (F), hora_inicio (G), hora_fin (H), tipo_clase (I) y
-        virtual (J).
+        codigo_materia (A), codigo_comision (C), dia (E),
+        hora_inicio (F), hora_fin (G), tipo_clase (H) y virtual (I).
 
-        Las columnas C (verificacion, fórmula) y E (nombre_comision,
-        texto libre) no llevan validación.
+        La columna B (nombre_materia) NO lleva desplegable
+        (2026-09-24): es de sólo lectura, se autocompleta por fórmula
+        al elegir el código. La D (nombre_comision) es texto libre.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -321,7 +320,7 @@ class TestDataValidations:
                 ranges_cubiertos.append(str(r))
 
         # Cada columna crítica debe tener al menos un rango.
-        cols_letra = ["A", "B", "D", "F", "G", "H", "I", "J"]
+        cols_letra = ["A", "C", "E", "F", "G", "H", "I"]
         for letra in cols_letra:
             assert any(
                 r.startswith(f"{letra}2") for r in ranges_cubiertos
@@ -329,8 +328,8 @@ class TestDataValidations:
                 f"Falta DataValidation para columna {letra}. "
                 f"Rangos vistos: {ranges_cubiertos}"
             )
-        # Verificación (C) y nombre de comisión (E) quedan libres.
-        for letra in ("C", "E"):
+        # Nombre de materia (B) y nombre de comisión (D) sin validación.
+        for letra in ("B", "D"):
             assert not any(
                 r.startswith(f"{letra}2") for r in ranges_cubiertos
             ), (
@@ -341,9 +340,9 @@ class TestDataValidations:
     def test_lista_materias_referencia_hoja_materias(
         self, session, ciclo_con_2_materias,
     ):
-        """Las validaciones de codigo_materia (A) y nombre_materia (B)
-        referencian las columnas correspondientes de la hoja visible
-        `Materias` — desplegable en ambas (pedido 2026-09-23).
+        """La validación de codigo_materia (A) referencia la columna
+        de códigos de la hoja visible `Materias`. El nombre (B) no
+        tiene desplegable: se autocompleta por fórmula.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -351,43 +350,60 @@ class TestDataValidations:
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
 
-        dv_por_col = {}
+        dv_materias = None
         for dv in ws.data_validations.dataValidation:
-            for r in dv.sqref.ranges:
-                if str(r).startswith("A2"):
-                    dv_por_col["A"] = dv
-                if str(r).startswith("B2"):
-                    dv_por_col["B"] = dv
+            if any(str(r).startswith("A2") for r in dv.sqref.ranges):
+                dv_materias = dv
+                break
 
-        assert "A" in dv_por_col and dv_por_col["A"].type == "list"
-        assert "Materias!$A$" in (dv_por_col["A"].formula1 or "")
-        assert "B" in dv_por_col and dv_por_col["B"].type == "list"
-        assert "Materias!$B$" in (dv_por_col["B"].formula1 or "")
+        assert dv_materias is not None
+        assert dv_materias.type == "list"
+        assert "Materias!$A$" in (dv_materias.formula1 or "")
 
-    def test_columna_verificacion_tiene_formula(
+    def test_nombre_materia_se_autocompleta_por_formula(
         self, session, ciclo_con_2_materias,
     ):
-        """La columna C (verificacion) trae una fórmula que muestra el
-        nombre al elegir un código y avisa cuando código y nombre no
-        se corresponden (2026-09-23). No es bidireccional en las
-        celdas de A y B porque eso sería una referencia circular.
+        """La columna B (nombre_materia) trae la fórmula que muestra
+        el nombre al elegir un código (2026-09-24): es de sólo
+        lectura, el usuario no la completa.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        _c2 = str(ws.cell(row=2, column=3).value or "")
-        assert _c2.startswith("=IF")
-        assert "Materias!" in _c2
-        assert "no se corresponden" in _c2
+        for fila in (2, 500, 1001):
+            _b = str(ws.cell(row=fila, column=2).value or "")
+            assert _b.startswith("=IFERROR"), f"Fila {fila}: {_b!r}"
+            assert "Materias!$B$" in _b
+            assert f"$A{fila}" in _b
+
+    def test_hoja_protegida_con_nombre_bloqueado(
+        self, session, ciclo_con_2_materias,
+    ):
+        """La hoja Horarios queda protegida (sin contraseña,
+        2026-09-24) para que la columna del nombre no se pueda editar
+        ni elegir a mano: sólo el código es entrada del usuario. Las
+        celdas de las demás columnas están desbloqueadas.
+        """
+        ciclo = ciclo_con_2_materias["ciclo"]
+        contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
+
+        wb = load_workbook(io.BytesIO(contenido))
+        ws = wb["Horarios"]
+        assert ws.protection.sheet is True
+        # B (nombre_materia) bloqueada; el resto editable.
+        assert ws.cell(row=2, column=2).protection.locked is True
+        for col in (1, 3, 4, 5, 6, 7, 8, 9):
+            assert ws.cell(row=2, column=col).protection.locked is False, (
+                f"Columna {col} debería estar desbloqueada"
+            )
 
     def test_hoja_horarios_es_tabla_de_excel(
         self, session, ciclo_con_2_materias,
     ):
         """La hoja Horarios queda definida como tabla de Excel
-        (2026-09-23): filas nuevas heredan fórmulas y validaciones al
-        extenderse, y la cátedra gana filtros y bandas de color.
+        (2026-09-23): filtros por columna y bandas de color.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -395,7 +411,7 @@ class TestDataValidations:
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
         assert "TablaHorarios" in ws.tables
-        assert ws.tables["TablaHorarios"].ref == "A1:J1001"
+        assert ws.tables["TablaHorarios"].ref == "A1:I1001"
 
     def test_recalculo_al_abrir_activado(
         self, session, ciclo_con_2_materias,
