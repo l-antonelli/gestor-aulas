@@ -805,6 +805,10 @@ class TimetableBlock:
     hora_fin: time
     virtual: bool
     en_periodo: Optional[bool] = None  # True=en su cuatrimestre planificado, False=fuera, None=indeterminado
+    # Tipo de clase predeterminado ('teorica' | 'laboratorio' | None).
+    # El render lo usa para el ícono 🧪/📖 (2026-09-24: antes sólo
+    # existía vía getattr defensivo y ningún builder lo poblaba acá).
+    tipo_clase: Optional[str] = None
     # Etiqueta corta del aula asignada al patrón ("Sede · Aula"). Si es
     # None, el horario no tiene aula del patron asignada; el render
     # muestra "Sin aula" en el bloque.

@@ -123,3 +123,41 @@ class TestFiltroCombinadoEstricto:
         filtros = {"tipos": ["teorica"], "carreras": [], "anios": [], "cuatris": []}
         out = _aplicar_filtros_horarios_v2(rows, filtros, sede_map={})
         assert [r["materia_codigo"] for r in out] == ["A20"]
+
+
+class TestGridSemanalPropagaVirtualYTipo:
+    """Regresión 2026-09-24 (reporte del usuario): la "Vista de
+    cronograma semanal" del gestor de asignaciones (pestaña Aulas de
+    Cursada) construía los bloques con ``virtual=False`` hardcodeado
+    — el ícono 💻 nunca aparecía aunque la fila ya traía
+    ``es_virtual`` resuelto con la jerarquía completa. Tampoco
+    propagaba ``tipo_clase`` (🧪/📖).
+    """
+
+    def test_bloque_virtual_y_tipo(self):
+        from datetime import time
+
+        from src.ui.aula_cronograma_view import _build_grid_from_rows
+
+        rows = [
+            {
+                **_mk_row("LF7", {("LF", 3, "1C")}, aula_id=None,
+                          es_virtual=True, tipo_clase=None),
+                "hora_inicio": time(8, 30),
+                "hora_fin": time(10, 0),
+                "comision_nombre": "Comision 1",
+            },
+            {
+                **_mk_row("M2", {("M", 2, "1C")}, aula_id=None,
+                          es_virtual=False, tipo_clase="laboratorio"),
+                "hora_inicio": time(10, 0),
+                "hora_fin": time(12, 0),
+                "comision_nombre": "Comision 1",
+            },
+        ]
+        grid = _build_grid_from_rows(rows, sede_map={})
+        bloques = grid["Lunes"]
+        _por_mat = {b.materia_codigo: b for b in bloques}
+        assert _por_mat["LF7"].virtual is True
+        assert _por_mat["M2"].virtual is False
+        assert _por_mat["M2"].tipo_clase == "laboratorio"

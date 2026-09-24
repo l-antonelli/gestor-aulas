@@ -590,9 +590,14 @@ def _build_grid_from_rows(
             comision_nombre=r["comision_nombre"],
             hora_inicio=r["hora_inicio"],
             hora_fin=r["hora_fin"],
-            virtual=False,
+            # 2026-09-24 (reporte del usuario): antes iba False
+            # hardcodeado y el 💻 nunca aparecía en esta vista,
+            # aunque la fila ya traía `es_virtual` resuelto con la
+            # jerarquía horario > dictado > materia.
+            virtual=bool(r.get("es_virtual")),
             en_periodo=True,
             aula_label=aula_label,
+            tipo_clase=r.get("tipo_clase"),
         )
         grid.setdefault(r["dia"], []).append(block)
     return grid
