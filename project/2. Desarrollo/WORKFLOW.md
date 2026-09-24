@@ -402,27 +402,61 @@ comisión (opcional)`. Se valida la estructura y se persiste como un
   aula asignada; el LP la resuelve al armar el plan siguiente) ni
   `dictado_id` (se re-resuelve contra el ciclo destino).
 
-**Plantilla descargable con dropdowns** (Fase C1 del rediseño
-2026-09-15). Antes de subir, el usuario puede descargar una plantilla
-Excel armada dinámicamente por
+**Plantilla descargable con listas desplegables** (Fase C1 del
+rediseño 2026-09-15; rediseñada 2026-09-23). Antes de subir, el
+usuario puede descargar una plantilla Excel armada dinámicamente por
 `src/services/template_export_service.py::generar_plantilla_cronograma_excel`.
 El archivo trae:
 
 - Hoja `Instrucciones` con guía en castellano sobre cómo completar
-  cada columna.
-- Hoja `Horarios` con headers, ancho de columna, freeze pane y una
-  fila de ejemplo estilizada para pisar.
-- Hojas ocultas `_materias`, `_dias`, `_tipos`, `_virtual` con las
-  listas cerradas. La lista de códigos válidos sale de los dictados
-  activos del ciclo elegido (misma fuente que `validar_cronograma`) —
-  por eso el botón queda deshabilitado hasta que se elija ciclo.
-- `openpyxl.DataValidation` en cada columna crítica: dropdown para
-  código de materia, día, tipo y virtual; validación tipográfica de
-  hora en formato `HH:MM`.
+  cada columna y las reglas que valida la aplicación al importar.
+- Hoja `Horarios` con 9 columnas (`codigo_materia`,
+  `nombre_materia`, `codigo_comision`, `nombre_comision`, `dia`,
+  `hora_inicio`, `hora_fin`, `tipo_clase`, `virtual`), headers
+  estilizados, freeze pane y **sin fila de ejemplo** (la fila de
+  ejemplo pre-cargada se importaba como dato real si el usuario no
+  la borraba — fix auditoría 2026-09-23; el ejemplo vive ahora en
+  Instrucciones).
+- Hoja **visible** `Materias` con los pares código + nombre del
+  ciclo elegido, para que la cátedra pueda buscar la materia por
+  nombre. La columna `codigo_materia` de `Horarios` viene
+  pre-cargada (filas 2–1001) con una fórmula
+  `=IFERROR(INDEX(...);MATCH(...))` que **autopopula el código al
+  elegir el nombre** en la columna `nombre_materia`.
+- Hojas ocultas `_dias`, `_tipos`, `_virtual` con las listas
+  cerradas restantes. La lista de códigos/nombres válidos sale de
+  los dictados activos del ciclo elegido (misma fuente que
+  `validar_cronograma`) — por eso el botón queda deshabilitado
+  hasta que se elija ciclo.
+- `openpyxl.DataValidation` en cada columna crítica: listas
+  desplegables para código y nombre de materia (referencian la hoja
+  `Materias`), día, tipo y virtual; entero ≥ 1 para
+  `codigo_comision`; validación tipográfica de hora en formato
+  `HH:MM`. `nombre_comision` es texto libre y no lleva validación.
 
 La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
 se blindan errores tipográficos y datos fuera del catálogo.
+
+**Validaciones de entrada del parser** (2026-09-23).
+`horario_file_parser.parse_horarios_file` rechaza por fila (sin
+frenar el resto del archivo):
+
+- `hora_inicio >= hora_fin` (antes la fila invertida entraba y
+  recién rompía en las validaciones del cronograma).
+- `tipo_clase = laboratorio` marcado `virtual` — un laboratorio
+  requiere aula física.
+- `codigo_comision` no numérico o menor a 1.
+
+Además: la columna `virtual` es un **booleano** — vacío o NaN se
+interpreta `False` (presencial); `tipo_clase` puede quedar vacío
+(= "sin determinar", lo resuelve la asignación automática por
+programación lineal); las filas totalmente vacías (típico: filas de
+la plantilla que sólo traen la fórmula de auto-población) se
+saltean en silencio; y si `codigo_materia` viene vacío pero hay
+`nombre_materia`, el importador resuelve la materia por nombre
+(match exacto case-insensitive, sólo si es único — orden de
+resolución: código de plan > código Guaraní > nombre).
 
 **Selector de hoja del Excel** (Fase I.4 del rediseño, 2026-09-23).
 Los archivos que llegan de las cátedras suelen traer una hoja por
@@ -481,12 +515,19 @@ hoja por año lectivo.
      borrado del `reemplazar` se hace una sola vez y el segundo
      grupo se suma con chequeo de colisión.
 
-Los "nombres" de comisión son strings arbitrarios (`"1"`, `"A"`,
-`"Mañana"`, `"Comisión 3 turno tarde"`). La deduplicación se hace
-sobre la forma canónica `strip().lower()` para evitar chocar por
-espacios o mayúsculas. El campo `ComisionDB.numero` se sigue
-autoderivando (para `comision_key` y ordenamiento) pero el usuario
-no lo ve.
+**Identidad de las comisiones** (2026-09-23). Las comisiones del
+cronograma son entidades (`ComisionDB`) con **código numérico**
+(`numero`, el identificador estable que declara la cátedra en la
+columna `codigo_comision` de la plantilla) y **nombre** opcional
+(`nombre_comision`; si falta se autogenera `C{código}`). En los
+calendarios de cronograma se visualiza el código (`[C2]`); el
+nombre aparece en la leyenda por comisión y en los editores. Si la
+fila declara código, los horarios se agrupan por código y la
+colisión en `agregar` se chequea tanto por número como por nombre
+canónico. La columna histórica `comision` (texto libre: `"1"`,
+`"A"`, `"Mañana"`) se sigue aceptando por compatibilidad: se
+interpreta como nombre, se deduplica sobre la forma canónica
+`strip().lower()` y el `numero` se autoderiva.
 
 El importer no ejecuta las validaciones estructurales completas del
 cronograma (cobertura, conflictos, camino de cursada) — esas siguen

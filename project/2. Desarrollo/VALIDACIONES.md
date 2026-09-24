@@ -724,10 +724,22 @@ silencio a la comisión 1, que era lo que hacía la versión anterior y
 contradecía la fila "Sin asignar" del resumen por comisión de la
 misma pantalla.
 
+### 4.13. `lab_virtual` — Laboratorio marcado virtual
+
+Sólo lo emite `compute_materia_checks_from_db` (2026-09-23). Si la
+materia tiene al menos un horario con `tipo_clase = laboratorio` y
+`virtual = True`, se reporta un **ERROR**: un laboratorio requiere
+aula física, la combinación no tiene sentido. El dato no puede entrar
+por los caminos normales (el parser del importador rechaza la fila y
+los data editors la bloquean antes de persistir vía
+`_validar_filas_editor`), así que este chequeo cubre datos históricos
+o cargados por fuera de esos caminos.
+
 ### Worst status (badge del header del expander)
 
 El editor calcula el **peor `status`** entre los once chequeos (más
-los posibles `materia_faltante` y `entries_sin_comision`), con
+los posibles `materia_faltante`, `entries_sin_comision` y
+`lab_virtual`), con
 prioridad
 `error > faltante > warn > info > ok`. Se cachea en
 `session_state[f"{kp}_chk_worst"]` y el caller
