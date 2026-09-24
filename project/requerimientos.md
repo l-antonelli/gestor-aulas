@@ -250,6 +250,21 @@ Las capacidades que **quedan** en producción y no eran puntuales:
 
 ## Decisiones cerradas
 
+- **2026-09-24 (invariante laboratorio/virtual: sin constraint de DB)**:
+  se evaluó y descartó reforzar "un laboratorio no puede ser virtual"
+  a nivel de base de datos. Razones: un `CHECK` de SQLite solo ve la
+  fila (no cubre el caso de herencia `virtual=None` + materia/dictado
+  virtual de catálogo, que es justamente el que se le puede escapar a
+  las capas de aplicación y que ya ataja el chequeo `lab_virtual`);
+  SQLite no permite agregar un `CHECK` a tablas existentes sin
+  recrearlas; y los modelos `SQLModel(table=True)` no corren
+  validadores Pydantic. La garantía queda en las cuatro capas de
+  aplicación existentes (listas dependientes del Excel, parser,
+  `_validar_filas_editor` en los editores y chequeo estructural
+  `lab_virtual`). También se descartó por ahora el autocompletado
+  `virtual=True => tipo_clase=teorica`: virtual con tipo "sin
+  determinar" sigue permitido.
+
 - **2026-07-07 (deprecación clases puntuales)**: se decidió eliminar
   del sistema el concepto de "clase puntual" (`ClaseDB` como unidad
   editable). El LP trabaja exclusivamente sobre el patrón semanal
