@@ -514,6 +514,22 @@ La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
 se blindan errores tipográficos y datos fuera del catálogo.
 
+**Exportación como plantilla precargada, una hoja por grupo**
+(2026-09-24). En la lista de cronogramas (tab Gestionar), cada
+cronograma con ciclo asociado tiene la acción "📤 Exportar horarios
+a Excel": `template_export_service.exportar_cronograma_por_grupos_excel`
+genera el MISMO archivo de la plantilla (Instrucciones, hoja
+`Materias` con contexto, validaciones, listas dependientes,
+protección y tabla por hoja) pero **precargado** con las entradas
+del cronograma, repartidas en **una hoja por `GrupoMateriaDB`**
+(nombres saneados para Excel: sin `[]:*?/\`, sin prefijo `_`,
+máximo 31 caracteres, desambiguados con sufijos). Uso previsto:
+repartir a cada cátedra/departamento la hoja de su grupo, corregir
+en Excel y reimportar hoja por hoja con el selector de hoja del
+importador. La virtualidad se exporta sólo cuando es un override
+explícito en VERDADERO (vacío = presencial) y las horas van como
+texto `HH:MM` (el formato de las listas de la plantilla).
+
 **Validaciones de entrada del parser** (2026-09-23).
 `horario_file_parser.parse_horarios_file` rechaza por fila (sin
 frenar el resto del archivo):

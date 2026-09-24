@@ -218,31 +218,43 @@ def _escribir_headers_horarios(ws) -> None:
     ws.freeze_panes = "A2"
 
 
-def _agregar_data_validations_horarios(
-    ws,
+def _preparar_listas_horarios(
     wb: Workbook,
-    materias_codigos: list[str],
     dias_operativos: list[str],
     slots_horarios: list[str],
+) -> tuple[str, str]:
+    """Crea (una sola vez por workbook) las hojas ocultas de listas
+    de la plantilla de horarios y devuelve las referencias de días y
+    horas. Extraído en 2026-09-24 para poder configurar VARIAS hojas
+    de horarios en el mismo archivo (exportación por grupos).
+    """
+    ref_dias = _escribir_hoja_lista(
+        wb, "_dias", dias_operativos or DIAS_SEMANA,
+    )
+    ref_horas = _escribir_hoja_lista(wb, "_horas", slots_horarios)
+    _escribir_hoja_lista(wb, "_tipos", TIPOS_CLASE)
+    _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
+    return ref_dias, ref_horas
+
+
+def _agregar_data_validations_horarios(
+    ws,
+    n_mat: int,
+    ref_dias: str,
+    ref_horas: str,
 ) -> None:
-    """Configura los ``DataValidation`` de la hoja Horarios.
+    """Configura los ``DataValidation`` de UNA hoja de horarios.
 
-    Fase H.2 del rediseño 2026-09-15: los días y las horas ahora
-    salen de ``ConfiguracionHoraria`` en vez de estar hardcodeadas.
+    Fase H.2 del rediseño 2026-09-15: los días y las horas salen de
+    ``ConfiguracionHoraria``. Desde 2026-09-24 las hojas ocultas de
+    listas se crean aparte (``_preparar_listas_horarios``) para poder
+    configurar varias hojas de horarios en el mismo workbook.
 
-    - `dias_operativos`: lista ordenada de días válidos (ej: sin
-      Domingo si la config lo excluye).
-    - `slots_horarios`: lista de horas HH:MM discretizadas por
-      granularidad de la config, en el rango operativo. Se usan
-      tanto para ``hora_inicio`` como para ``hora_fin``.
-
-    Cada validación se agrega a la hoja principal y referencia las
-    hojas ocultas de listas. Se aplican a un rango generoso (filas
-    2..1001) para cubrir importaciones grandes sin re-generar la
-    plantilla.
+    Cada validación referencia las hojas ocultas de listas y se
+    aplica a un rango generoso (filas 2..1001) para cubrir
+    importaciones grandes sin re-generar la plantilla.
     """
     max_row = 1001  # rango generoso para cargas típicas
-    n_mat = len(materias_codigos)
 
     # Materia: el CÓDIGO (columna B, desplegable contra la hoja
     # VISIBLE `Materias`) es el único punto de entrada (2026-09-24 —
@@ -286,9 +298,6 @@ def _agregar_data_validations_horarios(
     ws.add_data_validation(dv_cod_com)
 
     # Día — lista cerrada según config.
-    ref_dias = _escribir_hoja_lista(
-        wb, "_dias", dias_operativos or DIAS_SEMANA,
-    )
     dv_dia = DataValidation(
         type="list", formula1=ref_dias, allow_blank=False,
         errorTitle="Día no válido",
@@ -303,7 +312,6 @@ def _agregar_data_validations_horarios(
 
     # Hora inicio / hora fin — lista desplegable de horas discretas
     # según granularidad + rango operativo.
-    ref_horas = _escribir_hoja_lista(wb, "_horas", slots_horarios)
     if ref_horas:
         for col_letra, err_msg in (
             ("F", "Elegí la hora de inicio de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser anterior a hora_fin."),  # noqa: E501
@@ -327,8 +335,6 @@ def _agregar_data_validations_horarios(
     # Si el valor se tipea a mano, la validación lo rechaza igual
     # contra la lista restringida. Pegar valores saltea cualquier
     # DataValidation — para eso queda la guardia del importador.
-    _escribir_hoja_lista(wb, "_tipos", TIPOS_CLASE)
-    _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
 
     # Con virtual = VERDADERO, el tipo sólo puede ser teorica
     # (_tipos!A1); sino, la lista completa (_tipos!A1:A2).
@@ -678,10 +684,242 @@ def _escribir_hoja_materias(
     ws.protection.formatRows = False
 
 
+def _tabular_y_proteger_hoja_horarios(ws, tabla_nombre: str) -> None:
+    """Define el área de datos de UNA hoja de horarios como tabla de
+    Excel y protege la hoja sin contraseña (2026-09-24, extraído del
+    generador para reuso en la exportación por grupos).
+
+    La tabla aporta filtros por columna y bandeado de filas. La
+    protección deja la columna del nombre de materia de sólo lectura
+    (celdas bloqueadas con la fórmula de autocompletado); las
+    columnas de carga están desbloqueadas celda a celda en
+    ``_agregar_data_validations_horarios``. Se permiten expresamente
+    ordenar, filtrar, insertar/eliminar filas y ajustar anchos/altos
+    — en openpyxl estos flags en True significan acción BLOQUEADA,
+    por eso van en False. Sin contraseña, quien necesite algo fuera
+    de lo previsto desprotege la hoja en un clic (Revisar →
+    Desproteger hoja).
+    """
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    _tabla = Table(
+        displayName=tabla_nombre,
+        ref=f"A1:{get_column_letter(len(HORARIO_COLUMNS))}1001",
+    )
+    _tabla.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showRowStripes=True,
+        showColumnStripes=False,
+        showFirstColumn=False,
+        showLastColumn=False,
+    )
+    ws.add_table(_tabla)
+
+    ws.protection.sheet = True
+    ws.protection.selectLockedCells = False
+    ws.protection.selectUnlockedCells = False
+    ws.protection.sort = False
+    ws.protection.autoFilter = False
+    ws.protection.insertRows = False
+    ws.protection.deleteRows = False
+    ws.protection.formatColumns = False
+    ws.protection.formatRows = False
+
+
+def _nombre_hoja_excel(nombre: str, usados: set[str]) -> str:
+    """Sanea un nombre de grupo para usarlo como nombre de hoja de
+    Excel: sin caracteres prohibidos (``[]:*?/\\``), sin prefijo
+    ``_`` (el selector de hojas de la app lo trataría como hoja de
+    sistema), máximo 31 caracteres y único dentro del workbook.
+    """
+    limpio = "".join(c for c in nombre if c not in "[]:*?/\\").strip()
+    limpio = limpio.lstrip("_'").rstrip("'") or "Grupo"
+    if limpio in HOJAS_SISTEMA_PLANTILLA:
+        limpio = f"{limpio} (grupo)"
+    limpio = limpio[:31]
+    base, sufijo = limpio, 2
+    while limpio in usados:
+        limpio = f"{base[:31 - len(f' ({sufijo})')]} ({sufijo})"
+        sufijo += 1
+    usados.add(limpio)
+    return limpio
+
+
+# Nombres reservados dentro del archivo de plantilla/exportación.
+HOJAS_SISTEMA_PLANTILLA = {"Instrucciones", "Materias", "Horarios"}
+
+
+def exportar_cronograma_por_grupos_excel(
+    session: Session, schedule_id: str,
+) -> bytes:
+    """Exporta un cronograma existente como plantilla PRECARGADA
+    (2026-09-24): el mismo archivo que genera
+    ``generar_plantilla_cronograma_excel`` (Instrucciones, hoja
+    ``Materias`` con contexto, validaciones, listas dependientes,
+    protección y tabla) pero con **una hoja de horarios por grupo de
+    materias**, cada una precargada con las entradas del cronograma
+    de las materias de ese grupo.
+
+    Uso previsto: repartir a cada cátedra/departamento la hoja de su
+    grupo para que revise y corrija, y reimportar hoja por hoja con
+    el selector de hoja del importador.
+
+    Raises:
+        ValueError: cronograma inexistente, sin ciclo asociado (las
+            validaciones necesitan los dictados del ciclo) o con más
+            de 1000 horarios en un mismo grupo.
+    """
+    from src.database.models import (
+        ComisionDB,
+        GrupoMateriaDB,
+        ScheduleDB,
+        ScheduleEntryDB,
+    )
+
+    sched = session.get(ScheduleDB, schedule_id)
+    if sched is None:
+        raise ValueError(f"Cronograma '{schedule_id}' no existe.")
+    if not sched.ciclo_id:
+        raise ValueError(
+            f"El cronograma '{sched.nombre}' no tiene ciclo asociado "
+            "— las listas de la plantilla salen de los dictados del "
+            "ciclo. Asocialo a un ciclo antes de exportar."
+        )
+    ciclo = session.get(CicloDB, sched.ciclo_id)
+    assert ciclo is not None
+
+    _contexto = obtener_contexto_materias_del_ciclo(session, sched.ciclo_id)
+    if not _contexto:
+        raise ValueError(
+            f"El ciclo '{sched.ciclo_id}' no tiene dictados creados. "
+            "Ir a Ciclos → Dictados antes de exportar."
+        )
+
+    # Config horaria (misma fuente que el generador de plantillas).
+    from src.database.models import ConfiguracionHoraria
+    _config = session.exec(select(ConfiguracionHoraria).limit(1)).first()
+    if _config is not None:
+        _dias_operativos = [
+            d.strip() for d in (_config.dias_operativos or "").split(",")
+            if d.strip()
+        ]
+        _slots = _slots_horarios_validos(
+            _config.granularidad_minutos or 15,
+            _config.hora_inicio_operativo,
+            _config.hora_fin_operativo,
+        )
+    else:
+        from datetime import time as _time
+        _dias_operativos = list(DIAS_SEMANA)
+        _slots = _slots_horarios_validos(15, _time(7, 0), _time(23, 0))
+
+    # Entradas del cronograma agrupadas por grupo de materias.
+    entries = list(session.exec(
+        select(ScheduleEntryDB).where(
+            ScheduleEntryDB.schedule_id == schedule_id
+        )
+    ).all())
+    comisiones = {
+        c.id: c for c in session.exec(
+            select(ComisionDB).where(ComisionDB.schedule_id == schedule_id)
+        ).all()
+    }
+    materias = {
+        m.codigo: m for m in session.exec(select(MateriaDB)).all()
+    }
+    grupos = {
+        g.id: g.nombre for g in session.exec(select(GrupoMateriaDB)).all()
+    }
+
+    _orden_dia = {d: i for i, d in enumerate(DIAS_SEMANA)}
+    filas_por_grupo: dict[str, list[tuple]] = {}
+    for e in entries:
+        mat = materias.get(e.codigo_materia)
+        _grupo = (
+            grupos.get(mat.grupo_id, "Sin grupo")
+            if mat is not None and mat.grupo_id
+            else "Sin grupo"
+        )
+        com = comisiones.get(e.comision_id) if e.comision_id else None
+        filas_por_grupo.setdefault(_grupo, []).append((
+            e.codigo_materia,
+            com.numero if com else None,
+            (com.nombre or "") if com else "",
+            e.dia,
+            e.hora_inicio.strftime("%H:%M"),
+            e.hora_fin.strftime("%H:%M"),
+            e.tipo_clase or None,
+            True if e.virtual is True else None,
+        ))
+
+    wb = Workbook()
+    _default = wb.active
+    assert _default is not None
+    wb.remove(_default)
+
+    # Hojas de grupo (orden alfabético, nombres saneados).
+    _usados: set[str] = set()
+    _hojas_grupo: list[tuple[str, str]] = []  # (nombre_hoja, grupo)
+    for _grupo in sorted(filas_por_grupo):
+        _hoja = _nombre_hoja_excel(_grupo, _usados)
+        _hojas_grupo.append((_hoja, _grupo))
+
+    _escribir_hoja_materias(wb, _contexto)
+    _ref_dias, _ref_horas = _preparar_listas_horarios(
+        wb, _dias_operativos, _slots,
+    )
+
+    for _idx, (_hoja, _grupo) in enumerate(_hojas_grupo, start=1):
+        filas = sorted(
+            filas_por_grupo[_grupo],
+            key=lambda f: (
+                f[0], f[1] if f[1] is not None else 10**6,
+                _orden_dia.get(f[3], 99), f[4],
+            ),
+        )
+        if len(filas) > 1000:
+            raise ValueError(
+                f"El grupo '{_grupo}' tiene {len(filas)} horarios — "
+                "supera las 1000 filas de la plantilla."
+            )
+        ws = wb.create_sheet(title=_hoja, index=_idx - 1)
+        _escribir_headers_horarios(ws)
+        _agregar_data_validations_horarios(
+            ws, len(_contexto), _ref_dias, _ref_horas,
+        )
+        # Precarga (después de las validaciones: las celdas de carga
+        # ya están desbloqueadas y la fórmula del nombre escrita).
+        for _r, fila in enumerate(filas, start=2):
+            for _c, valor in enumerate(fila, start=2):
+                if valor is not None and valor != "":
+                    ws.cell(row=_r, column=_c, value=valor)
+        _tabular_y_proteger_hoja_horarios(ws, f"TablaHorarios{_idx}")
+
+    _escribir_hoja_instrucciones_cronograma(
+        wb, ciclo, len(_contexto),
+        hojas_grupo=[h for h, _ in _hojas_grupo],
+        nombre_cronograma=sched.nombre,
+    )
+    wb.active = 0
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def _escribir_hoja_instrucciones_cronograma(
-    wb: Workbook, ciclo: CicloDB, n_materias: int,
+    wb: Workbook,
+    ciclo: CicloDB,
+    n_materias: int,
+    hojas_grupo: list[str] | None = None,
+    nombre_cronograma: str | None = None,
 ) -> None:
-    """Hoja de guía en castellano, se posiciona como primera pestaña."""
+    """Hoja de guía en castellano, se posiciona como primera pestaña.
+
+    Con ``hojas_grupo`` (exportación 2026-09-24) la guía explica que
+    el archivo viene PRECARGADO con los horarios de un cronograma,
+    repartidos en una hoja por grupo de materias.
+    """
     ws = wb.create_sheet(title="Instrucciones", index=0)
     ws.column_dimensions["A"].width = 100
 
@@ -692,15 +930,39 @@ def _escribir_hoja_instrucciones_cronograma(
         cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     row = 1
-    _t(row, f"Plantilla de horarios — Ciclo {ciclo.id}",
-       INSTRUCCIONES_TITLE_FONT)
-    row += 2
+    if hojas_grupo is not None:
+        _t(row,
+           f"Horarios del cronograma \"{nombre_cronograma}\" — "
+           f"Ciclo {ciclo.id}",
+           INSTRUCCIONES_TITLE_FONT)
+        row += 2
+        _t(row, "Qué es este archivo", INSTRUCCIONES_HEADER_FONT)
+        row += 1
+        _t(row,
+           "Este archivo viene PRECARGADO con los horarios ya "
+           "cargados en el sistema, repartidos en una hoja por "
+           "grupo de materias: "
+           + ", ".join(f"'{h}'" for h in hojas_grupo)
+           + ". Cada hoja funciona igual que la plantilla vacía: "
+           "podés corregir, agregar o borrar filas y volver a "
+           "importar la hoja que corresponda (el importador te deja "
+           "elegir la hoja y decidir por materia si reemplazás o "
+           "agregás).")
+        row += 2
+    else:
+        _t(row, f"Plantilla de horarios — Ciclo {ciclo.id}",
+           INSTRUCCIONES_TITLE_FONT)
+        row += 2
     _t(row, "Cómo usar esta plantilla", INSTRUCCIONES_HEADER_FONT)
     row += 1
+    _hoja_ejemplo = (
+        f"'{hojas_grupo[0]}'" if hojas_grupo else "'Horarios'"
+    )
     _t(row,
-       "1) Abrir la hoja 'Horarios' e ir completando una fila por "
-       "horario. Cada horario es una aparición semanal de una "
-       "comisión (ej: 'MAT101, comisión C1, lunes 8 a 11').")
+       f"1) Abrir la hoja de horarios ({_hoja_ejemplo}) e ir "
+       "completando una fila por horario. Cada horario es una "
+       "aparición semanal de una comisión (ej: 'MAT101, comisión "
+       "C1, lunes 8 a 11').")
     row += 1
     _t(row,
        "2) La materia se ingresa por CÓDIGO (lista desplegable en la "
@@ -921,52 +1183,13 @@ def generar_plantilla_cronograma_excel(
     # Bugfix (2026-09-22, task #341): no se escribe fila de ejemplo en
     # la hoja Horarios porque el parser no distingue ejemplo de dato
     # real; el ejemplo textual queda en la hoja Instrucciones.
+    _ref_dias, _ref_horas = _preparar_listas_horarios(
+        wb, _dias_operativos, _slots,
+    )
     _agregar_data_validations_horarios(
-        ws_main, wb, [f["Código"] for f in _contexto_materias],
-        dias_operativos=_dias_operativos,
-        slots_horarios=_slots,
+        ws_main, len(_contexto_materias), _ref_dias, _ref_horas,
     )
-
-    # Definir el área de datos como TABLA de Excel (2026-09-23). Qué
-    # aporta: al escribir debajo de la última fila, la tabla se
-    # extiende sola copiando fórmulas y validaciones (las filas más
-    # allá de la 1001 no quedan "sueltas"), las columnas ganan
-    # filtros y el bandeado de filas facilita la lectura. No afecta
-    # al parser: pandas lee el rango de celdas igual.
-    from openpyxl.worksheet.table import Table, TableStyleInfo
-    _n_cols = len(HORARIO_COLUMNS)
-    _tabla = Table(
-        displayName="TablaHorarios",
-        ref=f"A1:{get_column_letter(_n_cols)}1001",
-    )
-    _tabla.tableStyleInfo = TableStyleInfo(
-        name="TableStyleMedium2",
-        showRowStripes=True,
-        showColumnStripes=False,
-        showFirstColumn=False,
-        showLastColumn=False,
-    )
-    ws_main.add_table(_tabla)
-
-    # Proteger la hoja SIN contraseña (2026-09-24): la columna del
-    # nombre de materia queda de sólo lectura (celdas bloqueadas con
-    # la fórmula de autocompletado); las columnas de carga están
-    # desbloqueadas celda a celda en
-    # `_agregar_data_validations_horarios`. Se permiten expresamente
-    # ordenar, filtrar, insertar/eliminar filas y ajustar
-    # anchos/altos — en openpyxl estos flags en True significan
-    # acción BLOQUEADA, por eso van en False. Sin contraseña, quien
-    # necesite algo fuera de lo previsto desprotege la hoja en un
-    # clic (Revisar → Desproteger hoja).
-    ws_main.protection.sheet = True
-    ws_main.protection.selectLockedCells = False
-    ws_main.protection.selectUnlockedCells = False
-    ws_main.protection.sort = False
-    ws_main.protection.autoFilter = False
-    ws_main.protection.insertRows = False
-    ws_main.protection.deleteRows = False
-    ws_main.protection.formatColumns = False
-    ws_main.protection.formatRows = False
+    _tabular_y_proteger_hoja_horarios(ws_main, "TablaHorarios")
 
     _escribir_hoja_instrucciones_cronograma(wb, ciclo, len(codigos_ordenados))
 

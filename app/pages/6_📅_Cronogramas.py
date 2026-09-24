@@ -528,6 +528,60 @@ with tab_lista:
                         "ning\u00fan ciclo. Abr\u00ed la pesta\u00f1a **Validar** para hacerlo."
                     )
 
+                # Exportar como plantilla precargada, una hoja por
+                # grupo de materias (2026-09-24): para repartir a
+                # cada cátedra/departamento la hoja de su grupo,
+                # corregir en Excel y reimportar hoja por hoja.
+                with st.container(border=True):
+                    st.markdown("**📤 Exportar horarios a Excel**")
+                    st.caption(
+                        "Genera la misma plantilla del importador "
+                        "pero precargada con los horarios de este "
+                        "cronograma, con una hoja por grupo de "
+                        "materias. Ideal para repartir, corregir y "
+                        "reimportar hoja por hoja."
+                    )
+                    if not s.ciclo_id:
+                        st.caption(
+                            "⚠️ Este cronograma no tiene ciclo "
+                            "asociado — se necesita para armar las "
+                            "listas de la plantilla."
+                        )
+                    else:
+                        _exp_key = f"exp_bytes_{s.id}"
+                        if st.button(
+                            "Generar Excel por grupos",
+                            key=f"exp_btn_{s.id}",
+                        ):
+                            from src.services.template_export_service import (
+                                exportar_cronograma_por_grupos_excel,
+                            )
+                            try:
+                                with next(get_session()) as _sess:
+                                    st.session_state[_exp_key] = (
+                                        exportar_cronograma_por_grupos_excel(
+                                            _sess, s.id,
+                                        )
+                                    )
+                            except ValueError as _exc:
+                                st.error(f"No se pudo exportar: {_exc}")
+                                st.session_state.pop(_exp_key, None)
+                        if _exp_key in st.session_state:
+                            _exp_nombre = (
+                                f"horarios_{s.nombre}".replace(" ", "_")
+                                + ".xlsx"
+                            )
+                            st.download_button(
+                                "⬇️ Descargar Excel precargado",
+                                data=st.session_state[_exp_key],
+                                file_name=_exp_nombre,
+                                mime=(
+                                    "application/vnd.openxmlformats-"
+                                    "officedocument.spreadsheetml.sheet"
+                                ),
+                                key=f"exp_dl_{s.id}",
+                            )
+
                 # Acciones (duplicar, eliminar)
                 with st.container(border=True):
                     st.markdown("**📄 Duplicar cronograma**")

@@ -535,3 +535,176 @@ class TestReferenciaMaterias:
         session.add(c)
         session.commit()
         assert obtener_referencia_materias_del_ciclo(session, c.id) == []
+
+
+# =============================================================================
+# Exportar cronograma como plantilla precargada (por grupo de materias)
+# =============================================================================
+
+
+class TestExportarCronogramaPorGrupos:
+    """2026-09-24: función "exportar" — genera la MISMA plantilla de
+    cronograma (Instrucciones, hoja Materias con contexto,
+    validaciones, protección, tabla) pero precargada con los horarios
+    de un cronograma existente, con una hoja por grupo de materias.
+    """
+
+    @pytest.fixture
+    def cronograma_con_grupos(self, session, ciclo_con_2_materias):
+        from datetime import time as _time
+
+        from src.database.models import (
+            GrupoMateriaDB,
+            ScheduleDB,
+            ScheduleEntryDB,
+        )
+        from src.services.comision_service import (
+            create_comision_for_schedule,
+        )
+
+        g1 = GrupoMateriaDB(nombre="Básicas")
+        g2 = GrupoMateriaDB(nombre="Física/Especiales: rara*?")
+        session.add(g1)
+        session.add(g2)
+        session.flush()
+        mat = session.get(MateriaDB, "MAT101")
+        fis = session.get(MateriaDB, "FIS101")
+        mat.grupo_id = g1.id
+        fis.grupo_id = g2.id
+        session.add(mat)
+        session.add(fis)
+
+        sched = ScheduleDB(
+            id="sched-exp", ciclo_id=ciclo_con_2_materias["ciclo"].id,
+            nombre="Consolidado", fecha_upload=date(2026, 3, 1),
+        )
+        session.add(sched)
+        session.commit()
+
+        com_mat = create_comision_for_schedule(
+            session, "sched-exp", "MAT101",
+            nombre="Mañana", numero=1,
+        )
+        com_fis = create_comision_for_schedule(
+            session, "sched-exp", "FIS101",
+            nombre="C1", numero=1,
+        )
+        for eid, cod, com, dia, hi, hf, tipo, virt in (
+            ("e1", "MAT101", com_mat.id, "Lunes",
+             _time(8, 0), _time(10, 0), "teorica", True),
+            ("e2", "MAT101", com_mat.id, "Miércoles",
+             _time(8, 0), _time(10, 0), None, None),
+            ("e3", "FIS101", com_fis.id, "Martes",
+             _time(14, 0), _time(16, 0), "laboratorio", False),
+        ):
+            session.add(ScheduleEntryDB(
+                id=eid, schedule_id="sched-exp", codigo_materia=cod,
+                comision_id=com, dia=dia, hora_inicio=hi, hora_fin=hf,
+                tipo_clase=tipo, virtual=virt,
+            ))
+        session.commit()
+        return sched
+
+    def test_hojas_por_grupo(self, session, cronograma_con_grupos):
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        contenido = exportar_cronograma_por_grupos_excel(
+            session, "sched-exp",
+        )
+        wb = load_workbook(io.BytesIO(contenido))
+        assert "Instrucciones" in wb.sheetnames
+        assert "Materias" in wb.sheetnames
+        assert "Básicas" in wb.sheetnames
+        # Nombre de grupo sanitizado para Excel (sin / : * ?).
+        _hojas_grupo = [
+            n for n in wb.sheetnames
+            if n.startswith("Física")
+        ]
+        assert len(_hojas_grupo) == 1
+        for _c in "/:*?[]\\":
+            assert _c not in _hojas_grupo[0]
+        # No queda una hoja "Horarios" vacía.
+        assert "Horarios" not in wb.sheetnames
+
+    def test_hoja_precargada_con_datos_del_grupo(
+        self, session, cronograma_con_grupos,
+    ):
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        contenido = exportar_cronograma_por_grupos_excel(
+            session, "sched-exp",
+        )
+        wb = load_workbook(io.BytesIO(contenido))
+        ws = wb["Básicas"]
+        # Headers idénticos a la plantilla.
+        headers = [ws.cell(row=1, column=c).value for c in range(1, 10)]
+        assert headers[0] == "nombre_materia"
+        assert headers[1] == "codigo_materia"
+        # Fila 2: Lunes 08:00 de MAT101, comisión 1 "Mañana".
+        assert str(ws.cell(row=2, column=1).value).startswith("=IFERROR")
+        assert ws.cell(row=2, column=2).value == "MAT101"
+        assert ws.cell(row=2, column=3).value == 1
+        assert ws.cell(row=2, column=4).value == "Mañana"
+        assert ws.cell(row=2, column=5).value == "Lunes"
+        assert ws.cell(row=2, column=6).value == "08:00"
+        assert ws.cell(row=2, column=7).value == "10:00"
+        assert ws.cell(row=2, column=8).value == "teorica"
+        assert ws.cell(row=2, column=9).value is True
+        # Fila 3: Miércoles, sin tipo ni virtual (vacíos).
+        assert ws.cell(row=3, column=5).value == "Miércoles"
+        assert ws.cell(row=3, column=8).value in (None, "")
+        assert ws.cell(row=3, column=9).value in (None, "")
+        # Sólo entries del grupo: no aparece FIS101.
+        _cods = {
+            ws.cell(row=r, column=2).value for r in range(2, 6)
+        }
+        assert "FIS101" not in _cods
+        # Protección y tabla como la plantilla.
+        assert ws.protection.sheet is True
+        assert len(ws.tables) == 1
+
+    def test_roundtrip_hoja_de_grupo(self, session, cronograma_con_grupos):
+        from src.services.horario_file_parser import parse_horarios_file
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        contenido = exportar_cronograma_por_grupos_excel(
+            session, "sched-exp",
+        )
+        upload = io.BytesIO(contenido)
+        upload.name = "export.xlsx"
+        entries, errors = parse_horarios_file(upload, sheet_name="Básicas")
+        assert errors == []
+        assert len(entries) == 2
+        assert {e.codigo_materia for e in entries} == {"MAT101"}
+        assert entries[0].comision_codigo == 1
+        # Invariante: la fila virtual exportada vuelve como teorica+True.
+        _virts = {(e.tipo_clase, e.virtual) for e in entries}
+        assert ("teorica", True) in _virts
+
+    def test_sin_ciclo_falla(self, session, ciclo_con_2_materias):
+        from src.database.models import ScheduleDB
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        session.add(ScheduleDB(
+            id="sched-sin-ciclo", nombre="Suelto",
+            fecha_upload=date(2026, 3, 1),
+        ))
+        session.commit()
+        with pytest.raises(ValueError, match="ciclo"):
+            exportar_cronograma_por_grupos_excel(session, "sched-sin-ciclo")
+
+    def test_cronograma_inexistente_falla(self, session):
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        with pytest.raises(ValueError, match="no existe"):
+            exportar_cronograma_por_grupos_excel(session, "nope")
