@@ -835,3 +835,68 @@ class TestValidarFilasEditor:
         errs = _validar_filas_editor(df)
         assert len(errs) == 1
         assert "laboratorio" in errs[0]
+
+
+class TestOpcionesHorariasDinamicas:
+    """Fix 2026-09-24 (reporte del usuario): las opciones de
+    Inicio/Fin de los data editors de horarios se generan
+    dinámicamente desde ``ConfiguracionHoraria`` (granularidad +
+    rango operativo) — antes eran una lista hardcodeada con pasos de
+    30 minutos y las horas :15/:45 no aparecían.
+    """
+
+    def _con_config(self, monkeypatch, granularidad, inicio, fin):
+        from src.database.models import ConfiguracionHoraria
+        import src.ui.schedule_materia_editor as sme
+
+        cfg = ConfiguracionHoraria(
+            granularidad_minutos=granularidad,
+            hora_inicio_operativo=inicio,
+            hora_fin_operativo=fin,
+        )
+
+        class _FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        monkeypatch.setattr(
+            sme, "get_session", lambda: iter([_FakeSession()]),
+        )
+        monkeypatch.setattr(
+            sme, "get_or_create_config", lambda _s: cfg,
+        )
+        return sme._opciones_horarias()
+
+    def test_granularidad_15_incluye_cuartos(self, monkeypatch):
+        opts = self._con_config(
+            monkeypatch, 15, time(7, 0), time(23, 0),
+        )
+        assert "07:15" in opts and "13:45" in opts and "22:45" in opts
+
+    def test_granularidad_30_no_ofrece_cuartos(self, monkeypatch):
+        opts = self._con_config(
+            monkeypatch, 30, time(8, 0), time(20, 0),
+        )
+        assert "08:30" in opts
+        assert "08:15" not in opts and "08:45" not in opts
+
+    def test_respeta_rango_operativo(self, monkeypatch):
+        opts = self._con_config(
+            monkeypatch, 15, time(9, 0), time(18, 0),
+        )
+        assert opts[0] == "09:00" and opts[-1] == "18:00"
+        assert "07:00" not in opts and "22:00" not in opts
+
+    def test_config_ilegible_cae_al_fallback(self, monkeypatch):
+        import src.ui.schedule_materia_editor as sme
+
+        def _boom():
+            raise RuntimeError("sin DB")
+
+        monkeypatch.setattr(sme, "get_session", _boom)
+        opts = sme._opciones_horarias()
+        # Fallback: paso de 15 minutos, 07:00-23:00.
+        assert "07:15" in opts and "22:45" in opts

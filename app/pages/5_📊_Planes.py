@@ -49,11 +49,6 @@ def _time_str(val) -> str:
     return str(val)
 
 
-_BASE_TIME_OPTIONS = [
-    f"{h:02d}:{m:02d}" for h in range(7, 24) for m in (0, 15, 30, 45)
-]
-
-
 st.set_page_config(page_title="Planes de Cursada", page_icon="📊", layout="wide")
 st.title("📊 Planes de Cursada")
 

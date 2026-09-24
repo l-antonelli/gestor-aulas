@@ -207,13 +207,20 @@ def _dialog_edit_entry():
             index=dias_list.index(pending["dia"]) if pending["dia"] in dias_list else 0,
             key="dlg_edit_dia",
         )
+    # Paso del selector según la granularidad configurada
+    # (2026-09-24: antes quedaba el default de 15' sin importar la
+    # config).
+    from datetime import timedelta as _td
+    _paso_cfg = _td(minutes=config.granularidad_minutos or 15)
     with col_ini:
         new_inicio = st.time_input(
             "Inicio", value=pending["hora_inicio"], key="dlg_edit_ini",
+            step=_paso_cfg,
         )
     with col_fin:
         new_fin = st.time_input(
             "Fin", value=pending["hora_fin"], key="dlg_edit_fin",
+            step=_paso_cfg,
         )
 
     # Selector de comisión: comisiones existentes para (schedule, materia)
