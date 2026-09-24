@@ -418,33 +418,43 @@ El archivo trae:
   la borraba — fix auditoría 2026-09-23; el ejemplo vive ahora en
   Instrucciones).
 - Hoja **visible** `Materias` con los pares código + nombre del
-  ciclo elegido, para que la cátedra pueda buscar la materia por
-  nombre. La columna `codigo_materia` de `Horarios` viene
-  pre-cargada (filas 2–1001) con una fórmula
-  `=IFERROR(INDEX(...);MATCH(...))` que **autopopula el código al
-  elegir el nombre** en la columna `nombre_materia`. La columna del
-  código NO tiene lista desplegable propia: dos selectores
-  independientes permitían elegir un código y un nombre que no se
-  corresponden, y elegir de la lista pisaba la fórmula. Quien
-  prefiere cargar por código lo tipea a mano (y deja el nombre
-  vacío); el importador rechaza filas donde código y nombre no se
-  correspondan.
+  ciclo elegido. La materia se puede elegir **por código o por
+  nombre** (desplegable en ambas columnas). Al elegir el nombre, la
+  columna `codigo_materia` — pre-cargada (filas 2–1001) con una
+  fórmula `=IFERROR(INDEX(...);MATCH(...))` — **autopopula el
+  código**; al elegir el código, la columna `verificacion` (fórmula,
+  no se completa a mano) **muestra el nombre** y, si la fila quedó
+  con un código y un nombre que no se corresponden, lo avisa en el
+  momento ("⚠ el código y el nombre no se corresponden"). La
+  dirección inversa no puede ir como fórmula en la celda del nombre:
+  A y B se referenciarían mutuamente (referencia circular, que Excel
+  sólo tolera con cálculo iterativo — un ajuste de sesión frágil que
+  depende de qué libro se abrió primero). El importador rechaza las
+  filas inconsistentes de todos modos.
+- El área de datos es una **tabla de Excel** (`TablaHorarios`,
+  `A1:J1001`): al escribir debajo de la última fila la tabla se
+  extiende sola copiando fórmulas y validaciones, y las columnas
+  ganan filtros y bandeado de filas.
 - Hojas ocultas `_dias`, `_tipos`, `_virtual` con las listas
   cerradas restantes. `_virtual` contiene los **booleanos reales**
   de Excel (se muestran VERDADERO/FALSO): elegir del desplegable
   deja un `bool` en la celda — con textos tipo "SI"/"NO" la celda
-  no se alineaba con la semántica booleana de la columna. La lista
-  de nombres válidos sale de los dictados activos del ciclo elegido
-  (misma fuente que `validar_cronograma`) — por eso el botón queda
-  deshabilitado hasta que se elija ciclo.
+  no se alineaba con la semántica booleana de la columna. En Excel
+  365 la columna puede convertirse en casillas de verificación
+  nativas (seleccionar la columna → Insertar → Casilla); openpyxl
+  todavía no puede generarlas, así que la plantilla trae el
+  desplegable booleano y la sugerencia queda en Instrucciones. La
+  lista de materias válidas sale de los dictados activos del ciclo
+  elegido (misma fuente que `validar_cronograma`) — por eso el
+  botón queda deshabilitado hasta que se elija ciclo.
 - `openpyxl.DataValidation` en cada columna crítica: listas
-  desplegables para nombre de materia (referencia la hoja
+  desplegables para código y nombre de materia (referencian la hoja
   `Materias`), día, tipo y virtual; entero ≥ 1 para
   `codigo_comision`; validación tipográfica de hora en formato
-  `HH:MM`. `nombre_comision` es texto libre y no lleva validación.
-- `fullCalcOnLoad` activado para que la fórmula de autopoblación se
-  recalcule al abrir el archivo (openpyxl no guarda valores
-  cacheados).
+  `HH:MM`. `verificacion` (fórmula) y `nombre_comision` (texto
+  libre) no llevan validación.
+- `fullCalcOnLoad` activado para que las fórmulas se recalculen al
+  abrir el archivo (openpyxl no guarda valores cacheados).
 
 La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
