@@ -410,13 +410,13 @@ El archivo trae:
 
 - Hoja `Instrucciones` con guía en castellano sobre cómo completar
   cada columna y las reglas que valida la aplicación al importar.
-- Hoja `Horarios` con 9 columnas (`codigo_materia`,
-  `nombre_materia`, `codigo_comision`, `nombre_comision`, `dia`,
-  `hora_inicio`, `hora_fin`, `tipo_clase`, `virtual`), headers
-  estilizados, freeze pane y **sin fila de ejemplo** (la fila de
-  ejemplo pre-cargada se importaba como dato real si el usuario no
-  la borraba — fix auditoría 2026-09-23; el ejemplo vive ahora en
-  Instrucciones).
+- Hoja `Horarios` con 9 columnas (`nombre_materia` primero — pedido
+  2026-09-24 —, `codigo_materia`, `codigo_comision`,
+  `nombre_comision`, `dia`, `hora_inicio`, `hora_fin`, `tipo_clase`,
+  `virtual`), headers estilizados, freeze pane y **sin fila de
+  ejemplo** (la fila de ejemplo pre-cargada se importaba como dato
+  real si el usuario no la borraba — fix auditoría 2026-09-23; el
+  ejemplo vive ahora en Instrucciones).
 - Hoja **visible** `Materias` (2026-09-24: **protegida**, sólo
   consulta) con el contexto completo de cada materia con dictado
   activo en el ciclo: nombre y código primero (los referencian los
