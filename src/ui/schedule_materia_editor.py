@@ -645,12 +645,19 @@ def render_schedule_materia_detail(
                 "Fin": _time_str(e.hora_fin),
                 "Comisión": _num,
                 "Tipo": e.tipo_clase or "sin determinar",
+                # 2026-09-23: virtual como booleano; None (heredar
+                # histórico) se muestra como False — "un nulo se
+                # interpreta como falso por defecto".
+                "Virtual": bool(e.virtual),
             })
         df = (
             pd.DataFrame(rows)
             if rows
             else pd.DataFrame(
-                columns=["_eid", "Día", "Inicio", "Fin", "Comisión", "Tipo"]
+                columns=[
+                    "_eid", "Día", "Inicio", "Fin",
+                    "Comisión", "Tipo", "Virtual",
+                ]
             )
         )
         if not df.empty:
@@ -704,8 +711,20 @@ def render_schedule_materia_detail(
                 options=["sin determinar", "teorica", "laboratorio"],
                 default="sin determinar",
                 help=(
-                    "sin determinar (lo decide la asignación "
-                    "automática), teórica o laboratorio"
+                    "Podés dejarlo en 'sin determinar': el tipo lo "
+                    "resuelve la asignación automática (LP). Elegí "
+                    "teórica o laboratorio sólo si la cátedra lo "
+                    "predetermina."
+                ),
+                width="small",
+            ),
+            "Virtual": st.column_config.CheckboxColumn(
+                "Virtual",
+                default=False,
+                help=(
+                    "Tildado = la clase se dicta virtual (no requiere "
+                    "aula). Destildado = presencial. Una clase de "
+                    "laboratorio no puede ser virtual."
                 ),
                 width="small",
             ),
@@ -833,8 +852,9 @@ def render_schedule_materia_detail(
     )
 
     # --- Save / Discard ---
-    orig_cmp = df[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
-    edit_cmp = edited[["Día", "Inicio", "Fin", "Comisión"]].reset_index(drop=True)
+    _cmp_cols = ["Día", "Inicio", "Fin", "Comisión", "Tipo", "Virtual"]
+    orig_cmp = df[_cmp_cols].reset_index(drop=True)
+    edit_cmp = edited[_cmp_cols].reset_index(drop=True)
     has_changes = (
         len(orig_cmp) != len(edit_cmp) or not orig_cmp.equals(edit_cmp)
     )
@@ -865,21 +885,27 @@ def render_schedule_materia_detail(
                 type="primary",
                 key=f"{_kp}_save",
             ):
-                _persist_edits(
-                    schedule_id, materia_codigo, valid_df,
-                )
-                # Limpiar caches
-                for _k in list(st.session_state.keys()):
-                    if isinstance(_k, str) and _k.startswith((
-                        f"{_kp}_init_df",
-                        f"{_kp}_de",
-                        f"{_kp}_has_changes",
-                        f"{_kp}_saved",
-                        f"{_kp}_chk_worst",
-                    )):
-                        del st.session_state[_k]
-                st.toast("Cronograma actualizado.")
-                st.rerun()
+                try:
+                    _persist_edits(
+                        schedule_id, materia_codigo, valid_df,
+                    )
+                except ValueError as _exc:
+                    # Validaciones de coherencia (2026-09-23):
+                    # inicio >= fin o laboratorio virtual.
+                    st.error(f"No se pudo guardar: {_exc}")
+                else:
+                    # Limpiar caches
+                    for _k in list(st.session_state.keys()):
+                        if isinstance(_k, str) and _k.startswith((
+                            f"{_kp}_init_df",
+                            f"{_kp}_de",
+                            f"{_kp}_has_changes",
+                            f"{_kp}_saved",
+                            f"{_kp}_chk_worst",
+                        )):
+                            del st.session_state[_k]
+                    st.toast("Cronograma actualizado.")
+                    st.rerun()
 
     return worst
 
@@ -1006,6 +1032,39 @@ def _reassign_round_robin(
     return assignments
 
 
+def _validar_filas_editor(valid_df: pd.DataFrame) -> list[str]:
+    """Validaciones de coherencia de las filas de un data editor de
+    horarios, antes de persistir (2026-09-23).
+
+    Reglas:
+    - ``hora_inicio`` debe ser estrictamente menor que ``hora_fin``.
+    - Una clase de tipo ``laboratorio`` no puede ser virtual.
+
+    Devuelve la lista de mensajes de error (vacía si todo está bien).
+    Compartida por el editor por materia, el editor "Por materia" del
+    tab Ver/Editar y los ajustes manuales del importador.
+    """
+    errores: list[str] = []
+    for _idx, r in valid_df.iterrows():
+        _hi = str(r.get("Inicio", ""))[:5]
+        _hf = str(r.get("Fin", ""))[:5]
+        _dia = r.get("Día", "?")
+        if ":" in _hi and ":" in _hf and _hi >= _hf:
+            errores.append(
+                f"{_dia} {_hi}–{_hf}: la hora de inicio debe ser "
+                "anterior a la hora de fin."
+            )
+        _tipo = str(r.get("Tipo", "") or "")
+        _virt = bool(r.get("Virtual", False))
+        if _tipo == "laboratorio" and _virt:
+            errores.append(
+                f"{_dia} {_hi}–{_hf}: una clase de laboratorio no "
+                "puede ser virtual — el laboratorio requiere un aula "
+                "física."
+            )
+    return errores
+
+
 def _persist_edits(
     schedule_id: str, materia_codigo: str, valid_df: pd.DataFrame,
 ) -> None:
@@ -1018,7 +1077,15 @@ def _persist_edits(
     Convierte el numero de comisión (columna "Comisión") a comision_id
     usando `get_or_create_comision_by_numero` — crea la ComisionDB si
     todavía no existe para ese (schedule, materia, numero).
+
+    Raises:
+        ValueError: si alguna fila rompe las reglas de coherencia
+            (``_validar_filas_editor``): inicio >= fin, o laboratorio
+            marcado virtual.
     """
+    _errs = _validar_filas_editor(valid_df)
+    if _errs:
+        raise ValueError("; ".join(_errs))
     sync_entries = []
     # Pre-resolver numero -> comision_id para no crear duplicados en
     # la misma pasada (evita race si aparece un mismo numero varias
@@ -1065,6 +1132,10 @@ def _persist_edits(
             ),
             "comision_id": com_id,
             "tipo_clase": tipo,
+            # 2026-09-23: la columna Virtual (checkbox) se persiste
+            # como booleano — un nulo se interpreta como False. Antes
+            # el sync recibía None y pisaba el flag de las entries.
+            "virtual": bool(r.get("Virtual", False)),
         })
 
     with next(get_session()) as session:
@@ -1248,6 +1319,30 @@ def compute_materia_checks_from_db(
                 "(o con una comisión que no pertenece a este "
                 "cronograma) — no entran al cálculo de h/sem × "
                 "comisiones. Asignalos desde el editor por materia."
+            ),
+        })
+
+    # Chequeo lab + virtual (2026-09-23): una clase de laboratorio no
+    # puede ser virtual — el laboratorio requiere aula física. El
+    # importador y los editores lo bloquean; este chequeo lo hace
+    # visible cuando el dato ya está persistido (por ejemplo entradas
+    # cargadas antes de la regla).
+    _lab_virtuales = [
+        e for e in entries
+        if e.tipo_clase == "laboratorio" and e.virtual is True
+    ]
+    if _lab_virtuales:
+        _ej = _lab_virtuales[0]
+        checks.append({
+            "id": "lab_virtual",
+            "label": "Laboratorio marcado virtual",
+            "status": "error",
+            "detail": (
+                f"{len(_lab_virtuales)} clase(s) de laboratorio "
+                f"marcada(s) como virtuales (ej: {_ej.dia} "
+                f"{_ej.hora_inicio.strftime('%H:%M')}). El "
+                "laboratorio requiere aula física — destildá Virtual "
+                "o cambiá el tipo."
             ),
         })
 

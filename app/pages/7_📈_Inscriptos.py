@@ -315,8 +315,8 @@ with st.expander(
     st.caption(
         "Descargá la plantilla, completala con los datos de "
         "inscriptos por (materia, año, cuatri), y subila para "
-        "importar de una. La app muestra un preview antes de "
-        "commitear, indicando qué filas son nuevas y cuáles pisan "
+        "importar de una. La app muestra una vista previa antes de "
+        "confirmar, indicando qué filas son nuevas y cuáles pisan "
         "valores existentes."
     )
 
@@ -335,7 +335,8 @@ with st.expander(
             key="insc_tpl_btn",
             help=(
                 "Arma un Excel con los códigos del catálogo como "
-                "dropdown y validaciones de cuatri, año e inscriptos."
+                "lista desplegable y validaciones de cuatri, año e "
+                "inscriptos."
             ),
         ):
             try:
@@ -365,7 +366,7 @@ with st.expander(
                 _refs = obtener_referencia_materias_activas(_sess)
             st.caption(
                 f"Plantilla lista con **{len(_refs)}** códigos "
-                "válidos en el dropdown."
+                "válidos en la lista desplegable."
             )
 
     with _upl_col:
@@ -423,7 +424,7 @@ with st.expander(
         _c_prev, _c_reset = st.columns([3, 1])
         with _c_prev:
             if st.button(
-                "🔍 Ver preview",
+                "🔍 Ver vista previa",
                 disabled=not _upl_file,
                 type="primary",
                 width="stretch",
@@ -438,7 +439,7 @@ with st.expander(
             if _pv_key in st.session_state:
                 if st.button(
                     "🗑",
-                    help="Cancelar preview",
+                    help="Cancelar vista previa",
                     key="insc_import_reset_btn",
                     width="stretch",
                 ):

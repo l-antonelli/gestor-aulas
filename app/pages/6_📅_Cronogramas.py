@@ -472,7 +472,7 @@ with tab_lista:
             ciclo_label = s.ciclo_id if s.ciclo_id else "sin ciclo"
             _header = (
                 f"**{s.nombre}** \u2014 {n_entries} entradas \u2014 "
-                f"ciclo upload: {ciclo_label} \u2014 {s.fecha_upload} \u2014 "
+                f"ciclo: {ciclo_label} \u2014 {s.fecha_upload} \u2014 "
                 f"{_val_badge}"
             )
             with st.expander(_header):
@@ -591,8 +591,8 @@ with tab_cargar:
                 "carga las entradas del archivo de una.\n\n"
                 "**Importar en cronograma existente**: toma un "
                 "cronograma que ya está en la lista y le suma / "
-                "reemplaza horarios desde un archivo. Con preview y "
-                "decisión de merge por materia.\n\n"
+                "reemplaza horarios desde un archivo. Con vista previa "
+                "y decisión de combinación por materia.\n\n"
                 "**Copiar desde plan**: crea un cronograma nuevo con "
                 "el estado consolidado de un plan de cursada — útil "
                 "para archivar la versión que quedó firme tras las "
@@ -651,10 +651,11 @@ with tab_cargar:
                 expanded=False,
             ):
                 st.caption(
-                    "Genera un Excel con los códigos de materia del ciclo "
-                    "elegido como dropdown, más listas de días, tipos y "
-                    "SI/NO para virtual. Ideal para pasarle a las "
-                    "cátedras: no pueden escribir códigos inválidos."
+                    "Genera un Excel con los códigos y nombres de materia "
+                    "del ciclo elegido como listas desplegables, más "
+                    "listas de días, tipos y SI/NO para virtual. Ideal "
+                    "para pasarle a las cátedras: no pueden escribir "
+                    "códigos inválidos."
                 )
                 if ciclo_id_val is None:
                     st.info(
@@ -709,7 +710,7 @@ with tab_cargar:
                             )
                         st.caption(
                             f"Plantilla lista con **{len(_refs)}** códigos "
-                            "válidos en el dropdown."
+                            "válidos en la lista desplegable."
                         )
 
             uploaded = st.file_uploader(
@@ -853,15 +854,16 @@ with tab_cargar:
         if _huerfanos:
             with st.container(border=True):
                 st.warning(
-                    f"🧹 Hay {len(_huerfanos)} preview(s) de import "
-                    "sin finalizar. Se crean cuando abrís un preview "
-                    "y no lo confirmás ni cancelás (por ejemplo si "
-                    "cerraste el navegador). Podés limpiarlos acá:"
+                    f"🧹 Hay {len(_huerfanos)} vista(s) previa(s) de "
+                    "importación sin finalizar. Se crean cuando abrís "
+                    "una vista previa y no la confirmás ni cancelás "
+                    "(por ejemplo si cerraste el navegador). Podés "
+                    "limpiarlas acá:"
                 )
                 for _sh in _huerfanos:
                     _c1, _c2 = st.columns([3, 1])
                     _c1.caption(
-                        f"**{_sh.nombre}** · target "
+                        f"**{_sh.nombre}** · destino "
                         f"`{_sh.shadow_target_schedule_id or '?'}` · "
                         f"{_sh.fecha_upload}"
                     )
@@ -892,8 +894,8 @@ with tab_cargar:
                 key="crono_import_sched",
                 help=(
                     "El archivo se va a importar dentro de este "
-                    "cronograma. Se muestra un preview con calendario "
-                    "editable antes de confirmar."
+                    "cronograma. Se muestra una vista previa con "
+                    "calendario editable antes de confirmar."
                 ),
             )
 
@@ -904,7 +906,7 @@ with tab_cargar:
             col_pv, col_reset = st.columns([3, 1])
             with col_pv:
                 if st.button(
-                    "🔍 Ver preview del archivo",
+                    "🔍 Ver vista previa del archivo",
                     disabled=not uploaded,
                     type="primary",
                     width="stretch",
@@ -989,13 +991,13 @@ with tab_cargar:
                     _shadow_db = _sess.get(ScheduleDB, _shadow_id)
                 if _shadow_db is None:
                     st.warning(
-                        "El preview se perdió (shadow borrado). "
-                        "Volvé a apretar 'Ver preview'."
+                        "La vista previa se perdió (la copia temporal "
+                        "se borró). Volvé a apretar 'Ver vista previa'."
                     )
                     _limpiar_preview_state(_sel_sched_id, _shadow_id)
                 else:
                     st.info(
-                        "👀 Este es un **preview**: los cambios "
+                        "👀 Esta es una **vista previa**: los cambios "
                         "todavía **no se guardaron** en el cronograma "
                         "destino. Revisá las tarjetas por materia de "
                         "abajo y apretá **Confirmar importación** "
@@ -1015,7 +1017,7 @@ with tab_cargar:
                         # flujo que ya no existe.
                         help=(
                             "Materias que ya tenían horarios en el "
-                            "cronograma destino. Por default se "
+                            "cronograma destino. Por defecto se "
                             "**reemplazan**: quedan sólo las "
                             "comisiones que trae el archivo. Si "
                             "querés conservar las previas, cambiá la "
@@ -1029,7 +1031,7 @@ with tab_cargar:
                             .where(ScheduleEntryDB.schedule_id == _shadow_id)
                         ).one()
                     _m4.metric(
-                        "Horarios en el preview", _n_ent,
+                        "Horarios en la vista previa", _n_ent,
                         help=(
                             "Total de horarios que quedan en el "
                             "cronograma después de confirmar (mezcla "
@@ -1151,8 +1153,8 @@ with tab_cargar:
                                     "del archivo para regenerar "
                                     "decisiones por materia. Si "
                                     "cambiás una decisión y falla, "
-                                    "descartá el preview y volvé a "
-                                    "subir el archivo."
+                                    "descartá la vista previa y volvé "
+                                    "a subir el archivo."
                                 )
 
                     def _archivo_para_regenerar():
@@ -1198,7 +1200,7 @@ with tab_cargar:
                     if not _materias_del_archivo:
                         st.info(
                             "El archivo no aportó materias "
-                            "reconocibles al preview."
+                            "reconocibles a la vista previa."
                         )
                     else:
                         st.markdown(
@@ -1216,7 +1218,8 @@ with tab_cargar:
                             "de sólo lectura para comparar; los "
                             "ajustes finos se hacen en la sección "
                             "**✏️ Ajustes manuales** de cada tarjeta, "
-                            "que edita el preview antes de confirmar."
+                            "que edita la vista previa antes de "
+                            "confirmar."
                         )
 
                         from src.ui.schedule_materia_editor import (
@@ -1320,7 +1323,7 @@ with tab_cargar:
                                 # tapar el radio ni los calendarios. Streamlit 1.52
                                 # tolera el anidamiento (verificado en la auditoría).
                                 with st.expander(
-                                    "✏️ Ajustes manuales (se aplican al preview, no al destino)",
+                                    "✏️ Ajustes manuales (se aplican a la vista previa, no al destino)",
                                     expanded=False,
                                 ):
                                     # --- Ajustes manuales del "Después" ---
@@ -1375,12 +1378,15 @@ with tab_cargar:
                                                 _e.tipo_clase
                                                 or "sin determinar"
                                             ),
+                                            # 2026-09-23: booleano; un
+                                            # nulo se interpreta False.
+                                            "Virtual": bool(_e.virtual),
                                         })
                                     _ed_df = pd.DataFrame(
                                         _ed_rows,
                                         columns=[
                                             "_eid", "Día", "Inicio", "Fin",
-                                            "Comisión", "Tipo",
+                                            "Comisión", "Tipo", "Virtual",
                                         ],
                                     )
                                     # Fingerprint de las entries: cuando la
@@ -1393,7 +1399,7 @@ with tab_cargar:
                                     _ed_fp = abs(hash(tuple(sorted(
                                         (r["_eid"], r["Día"], r["Inicio"],
                                          r["Fin"], str(r["Comisión"]),
-                                         r["Tipo"])
+                                         r["Tipo"], str(r["Virtual"]))
                                         for r in _ed_rows
                                     )))) % 10**10
                                     _ed_com_nums = sorted(
@@ -1453,6 +1459,24 @@ with tab_cargar:
                                                     "laboratorio",
                                                 ],
                                                 default="sin determinar",
+                                                help=(
+                                                    "Podés dejarlo en "
+                                                    "'sin determinar': "
+                                                    "lo resuelve la "
+                                                    "asignación "
+                                                    "automática (LP)."
+                                                ),
+                                                width="small",
+                                            ),
+                                            "Virtual": st.column_config.CheckboxColumn(
+                                                "Virtual",
+                                                default=False,
+                                                help=(
+                                                    "Tildado = clase "
+                                                    "virtual (sin aula). "
+                                                    "Un laboratorio no "
+                                                    "puede ser virtual."
+                                                ),
                                                 width="small",
                                             ),
                                         },
@@ -1463,7 +1487,7 @@ with tab_cargar:
                                     )
                                     _ed_cols_cmp = [
                                         "Día", "Inicio", "Fin",
-                                        "Comisión", "Tipo",
+                                        "Comisión", "Tipo", "Virtual",
                                     ]
                                     _ed_changed = (
                                         len(_ed_edited) != len(_ed_df)
@@ -1475,7 +1499,7 @@ with tab_cargar:
                                         )
                                     )
                                     if _ed_changed and st.button(
-                                        "💾 Aplicar ajustes al preview",
+                                        "💾 Aplicar ajustes a la vista previa",
                                         key=f"cimp_ed_apply_{_shadow_id}_{_mc}",
                                         type="primary",
                                     ):
@@ -1565,8 +1589,8 @@ with tab_cargar:
                                         _regen_errs[_mc] = [
                                             "Se perdió la copia del "
                                             "archivo en esta sesión "
-                                            "— descartá el preview "
-                                            "y volvé a subirlo."
+                                            "— descartá la vista "
+                                            "previa y volvé a subirlo."
                                         ]
                                         st.rerun()
                                     else:
@@ -1714,7 +1738,7 @@ with tab_cargar:
                         st.warning(
                             "⚠️ Los cambios todavía no se guardaron. "
                             "Apretá **Confirmar** para persistir el "
-                            "estado del preview en el cronograma "
+                            "estado de la vista previa en el cronograma "
                             "destino, o **Descartar** para tirarlo."
                         )
                         _bc1, _bc2 = st.columns(2)
@@ -1774,7 +1798,7 @@ with tab_cargar:
                                     st.error(str(_exc))
                         with _bc2:
                             if st.button(
-                                "🗑 Descartar preview",
+                                "🗑 Descartar vista previa",
                                 width="stretch",
                                 key="crono_import_discard_bottom_btn",
                             ):
@@ -2139,18 +2163,18 @@ with tab_editar:
                         + [_CREAR_NUEVA_LABEL]
                     )
 
-                    def _virtual_to_label(v: bool | None) -> str:
-                        """Optional[bool] → label del selectbox."""
-                        if v is None:
-                            return "Heredar"
-                        return "Sí" if v else "No"
+                    def _virtual_to_label(v: bool | None) -> bool:
+                        """2026-09-23: virtual es booleano — un nulo
+                        (heredar histórico) se interpreta False."""
+                        return bool(v)
 
-                    def _label_to_virtual(lbl: str) -> bool | None:
-                        if lbl == "Sí":
-                            return True
-                        if lbl == "No":
-                            return False
-                        return None
+                    def _label_to_virtual(lbl) -> bool:
+                        """Checkbox → bool. Compat con los labels
+                        viejos del selectbox por si quedan en el
+                        estado del widget."""
+                        if isinstance(lbl, bool):
+                            return lbl
+                        return str(lbl).strip().lower() in ("sí", "si", "true", "1")
 
                     def _com_id_to_label(cid: str | None) -> str:
                         if cid is None:
@@ -2238,6 +2262,35 @@ with tab_editar:
                                             changes["Virtual"]
                                         )
                                     if _cambios:
+                                        # Validaciones de coherencia
+                                        # (2026-09-23): inicio < fin y
+                                        # laboratorio nunca virtual.
+                                        _f_hi = _cambios.get(
+                                            "hora_inicio", _e.hora_inicio,
+                                        )
+                                        _f_hf = _cambios.get(
+                                            "hora_fin", _e.hora_fin,
+                                        )
+                                        _f_tipo = _cambios.get(
+                                            "tipo_clase", _e.tipo_clase,
+                                        )
+                                        _f_virt = _cambios.get(
+                                            "virtual", bool(_e.virtual),
+                                        )
+                                        if _f_hi >= _f_hf:
+                                            st.session_state["_edit_toast"] = (
+                                                "⚠️ No se guardó: la hora "
+                                                "de inicio debe ser "
+                                                "anterior a la de fin."
+                                            )
+                                            continue
+                                        if _f_tipo == "laboratorio" and _f_virt:
+                                            st.session_state["_edit_toast"] = (
+                                                "⚠️ No se guardó: una "
+                                                "clase de laboratorio no "
+                                                "puede ser virtual."
+                                            )
+                                            continue
                                         update_schedule_entry(
                                             sess, _e.id, **_cambios,
                                         )
@@ -2260,8 +2313,24 @@ with tab_editar:
                                     _tipo_raw = row.get("Tipo")
                                     _tipo = None if (not _tipo_raw or _tipo_raw == "sin determinar") else _tipo_raw
                                     _virtual_val = _label_to_virtual(
-                                        row.get("Virtual") or "Heredar"
+                                        row.get("Virtual") or False
                                     )
+                                    _n_hi = _coerce_time(row["Inicio"])
+                                    _n_hf = _coerce_time(row["Fin"])
+                                    if _n_hi >= _n_hf:
+                                        st.session_state["_edit_toast"] = (
+                                            "⚠️ Fila nueva no guardada: "
+                                            "inicio debe ser anterior a "
+                                            "fin."
+                                        )
+                                        continue
+                                    if _tipo == "laboratorio" and _virtual_val:
+                                        st.session_state["_edit_toast"] = (
+                                            "⚠️ Fila nueva no guardada: "
+                                            "un laboratorio no puede ser "
+                                            "virtual."
+                                        )
+                                        continue
                                     add_schedule_entry(
                                         sess,
                                         sel_edit_id,
@@ -2324,16 +2393,15 @@ with tab_editar:
                                 ),
                                 width="small",
                             ),
-                            "Virtual": column_config.SelectboxColumn(
-                                options=["Heredar", "Sí", "No"],
-                                default="Heredar",
+                            "Virtual": column_config.CheckboxColumn(
+                                "Virtual",
+                                default=False,
                                 help=(
-                                    "Virtual de este horario. "
-                                    "**Heredar**: usa lo configurado "
-                                    "en la materia o el dictado. "
-                                    "**Sí**: forzá virtual (no se "
-                                    "asigna aula). **No**: forzá "
-                                    "presencial."
+                                    "Tildado = la clase se dicta "
+                                    "virtual (no requiere aula). "
+                                    "Destildado = presencial. Una "
+                                    "clase de laboratorio no puede "
+                                    "ser virtual."
                                 ),
                                 width="small",
                             ),
@@ -2765,7 +2833,7 @@ with tab_editar:
                         st.caption(
                             "Mismos chequeos estructurales que aparecen "
                             "en el panel Validar → Detalle por materia. "
-                            "Cada tarjeta se abre por default cuando el "
+                            "Cada tarjeta se abre por defecto cuando el "
                             "estado no es OK."
                         )
                         for _mc in _mats_para_chequear:

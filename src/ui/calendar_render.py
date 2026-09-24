@@ -275,22 +275,24 @@ def render_schedule_calendar(
             continue
         for b in blocks:
             com = _num_comision(b) or None
-            # Fase I.3 · Preferimos el NOMBRE de la comisión (arbitrario,
-            # legible: "Mañana", "A", "Nocturno", "1") sobre el número.
-            # El número queda como fallback si no hay nombre.
-            _com_nombre = getattr(b, "comision_nombre", None)
-            if _com_nombre:
-                com_tag = f" [{_com_nombre}]"
-            elif com:
-                com_tag = f" [{com}]"
-            else:
-                com_tag = ""
+            # 2026-09-23: en las vistas de cronograma se muestra el
+            # CÓDIGO de la comisión (`C{numero}`) — corto y estable.
+            # El nombre (texto libre, opcional) queda para la leyenda
+            # y los editores.
+            com_tag = f" [C{com}]" if com else ""
             if color_by_comision:
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
                 bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
+            # 💻 cuando el horario está resuelto como virtual (bugfix
+            # 2026-09-23: el flag existía en ScheduleBlock pero la
+            # grilla nunca lo populaba y esta vista nunca lo mostraba).
+            _v_tag = "💻 " if getattr(b, "virtual", False) else ""
             events.append({
-                "title": f"{b.materia_codigo}{com_tag} - {b.materia_nombre}",
+                "title": (
+                    f"{_v_tag}{b.materia_codigo}{com_tag} - "
+                    f"{b.materia_nombre}"
+                ),
                 "daysOfWeek": [dow],
                 "startTime": _fmt_time(b.hora_inicio),
                 "endTime": _fmt_time(b.hora_fin),
@@ -581,16 +583,10 @@ def render_editable_schedule_calendar(
             continue
         for b in blocks:
             com = _num_comision(b) or None
-            # Fase I.3 · Nombre de la comisión como etiqueta primaria.
-            # Fallback al número si no hay nombre (compat con blocks
-            # históricos que no populan `comision_nombre`).
-            _com_nombre = getattr(b, "comision_nombre", None)
-            if _com_nombre:
-                com_tag = f" [{_com_nombre}]"
-            elif com:
-                com_tag = f" [{com}]"
-            else:
-                com_tag = ""
+            # 2026-09-23: en las vistas de cronograma se muestra el
+            # CÓDIGO de la comisión (`C{numero}`). El nombre (texto
+            # libre, opcional) queda para la leyenda y los editores.
+            com_tag = f" [C{com}]" if com else ""
             if color_by_comision:
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
