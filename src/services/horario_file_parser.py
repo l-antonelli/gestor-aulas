@@ -284,6 +284,14 @@ def parse_horarios_file(
     has_tipo = "tipo_clase" in df.columns
     has_virtual = "virtual" in df.columns
 
+    # Correspondencia código ↔ nombre de comisión POR MATERIA
+    # (2026-09-24): si se declara nombre, tiene que ser 1 a 1. Se
+    # acumulan sólo los nombres DECLARADOS (las filas que dejan el
+    # default C{código} no participan) y al final del archivo se
+    # emiten los errores de consistencia.
+    _nombres_por_codigo: dict[tuple[str, int], set[str]] = {}
+    _codigos_por_nombre: dict[tuple[str, str], set[int]] = {}
+
     for idx, row in df.iterrows():
         row_num = idx + 2  # +2: 0-based idx + header row
 
@@ -352,6 +360,13 @@ def parse_horarios_file(
                     )
                     continue
                 comision_nombre = _nom_com_raw or f"C{comision_codigo}"
+                if _nom_com_raw:
+                    _nombres_por_codigo.setdefault(
+                        (codigo_raw, comision_codigo), set(),
+                    ).add(_nom_com_raw)
+                    _codigos_por_nombre.setdefault(
+                        (codigo_raw, _nom_com_raw.strip().lower()), set(),
+                    ).add(comision_codigo)
             elif _nom_com_raw:
                 comision_nombre = _nom_com_raw
             elif _legacy_com:
@@ -391,6 +406,25 @@ def parse_horarios_file(
             inputs.append(entry)
         except Exception as e:
             errors.append(f"Fila {row_num}: {e}")
+
+    # Chequeo 1:1 código ↔ nombre de comisión (por materia).
+    for (_mat, _cod), _noms in sorted(_nombres_por_codigo.items()):
+        _canon = {n.strip().lower() for n in _noms}
+        if len(_canon) > 1:
+            _lst = ", ".join(f"'{n}'" for n in sorted(_noms))
+            errors.append(
+                f"Materia {_mat}: el código de comisión {_cod} "
+                f"aparece con nombres distintos ({_lst}) — usá un "
+                "único nombre por código."
+            )
+    for (_mat, _nom), _cods in sorted(_codigos_por_nombre.items()):
+        if len(_cods) > 1:
+            _lst = ", ".join(str(c) for c in sorted(_cods))
+            errors.append(
+                f"Materia {_mat}: el nombre de comisión '{_nom}' "
+                f"aparece con códigos distintos ({_lst}) — un nombre "
+                "identifica una única comisión."
+            )
 
     return inputs, errors
 

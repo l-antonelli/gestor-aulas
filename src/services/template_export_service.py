@@ -71,18 +71,18 @@ INSTRUCCIONES_HEADER_FONT = Font(bold=True, size=11)
 HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     # (nombre_columna, ayuda, ancho_columna)
     (
+        "nombre_materia",
+        "NO se completa: aparece solo al elegir el código en la "
+        "columna de al lado, para que verifiques que es la materia "
+        "correcta. La columna está protegida.",
+        34,
+    ),
+    (
         "codigo_materia",
         "Código de la materia (lista de la hoja 'Materias'). Es el "
         "único dato de materia que se carga: al elegirlo, el nombre "
-        "aparece solo en la columna de al lado.",
+        "aparece solo en la primera columna.",
         16,
-    ),
-    (
-        "nombre_materia",
-        "NO se completa: aparece solo al elegir el código, para que "
-        "verifiques que es la materia correcta. La columna está "
-        "protegida.",
-        34,
     ),
     (
         "codigo_comision",
@@ -240,17 +240,20 @@ def _agregar_data_validations_horarios(
     max_row = 1001  # rango generoso para cargas típicas
     n_mat = len(materias_codigos)
 
-    # Materia: el CÓDIGO (columna A, desplegable contra la hoja
+    # Materia: el CÓDIGO (columna B, desplegable contra la hoja
     # VISIBLE `Materias`) es el único punto de entrada (2026-09-24 —
     # simplificación pedida por el usuario: quien carga debe conocer
-    # el código correcto). El nombre (B) se autocompleta por fórmula
-    # y queda bloqueado por la protección de la hoja: es una
-    # verificación visual, no un dato a cargar. Así no puede haber
-    # un código y un nombre que no se correspondan.
+    # el código correcto). El nombre (columna A, primera a pedido
+    # del usuario) se autocompleta por fórmula y queda bloqueado por
+    # la protección de la hoja: es una verificación visual, no un
+    # dato a cargar. Así no puede haber un código y un nombre que no
+    # se correspondan. En la hoja `Materias` el nombre también va
+    # primero: los nombres viven en Materias!$A y los códigos en
+    # Materias!$B.
     if n_mat:
         dv_mat_cod = DataValidation(
             type="list",
-            formula1=f"=Materias!$A$2:$A${n_mat + 1}",
+            formula1=f"=Materias!$B$2:$B${n_mat + 1}",
             allow_blank=True,
             errorTitle="Código no válido",
             error=(
@@ -259,7 +262,7 @@ def _agregar_data_validations_horarios(
             ),
             showErrorMessage=True,
         )
-        dv_mat_cod.add(f"A2:A{max_row}")
+        dv_mat_cod.add(f"B2:B{max_row}")
         ws.add_data_validation(dv_mat_cod)
 
     # Código de comisión — entero >= 1, obligatorio.
@@ -365,57 +368,221 @@ def _agregar_data_validations_horarios(
     dv_virt.add(f"I2:I{max_row}")
     ws.add_data_validation(dv_virt)
 
-    # Fórmula precargada en la columna B (notación canónica inglesa —
+    # Fórmula precargada en la columna A (notación canónica inglesa —
     # Excel la localiza solo): el nombre de la materia a partir del
-    # código elegido en A. Junto con la protección de la hoja (ver
-    # el generador), B queda como verificación visual de sólo
+    # código elegido en B. Junto con la protección de la hoja (ver
+    # el generador), A queda como verificación visual de sólo
     # lectura: el usuario no puede pisarla ni tipear un nombre que
     # no se corresponda con el código.
     #
     # Además se DESBLOQUEAN las celdas de las columnas de carga
-    # (todas menos B) — openpyxl deja `locked=True` por default y la
+    # (todas menos A) — openpyxl deja `locked=True` por default y la
     # protección de hoja bloquearía todo.
-    _cols_entrada = [
-        i for i in range(1, len(HORARIO_COLUMNS) + 1) if i != 2
-    ]
-    _rango_cod = f"Materias!$A$2:$A${n_mat + 1}" if n_mat else ""
-    _rango_nom = f"Materias!$B$2:$B${n_mat + 1}" if n_mat else ""
+    _cols_entrada = list(range(2, len(HORARIO_COLUMNS) + 1))
+    _rango_nom = f"Materias!$A$2:$A${n_mat + 1}" if n_mat else ""
+    _rango_cod = f"Materias!$B$2:$B${n_mat + 1}" if n_mat else ""
     from openpyxl.styles import Protection as _Protection
     _desbloqueada = _Protection(locked=False)
     for _r in range(2, max_row + 1):
         if n_mat:
-            ws.cell(row=_r, column=2).value = (
+            ws.cell(row=_r, column=1).value = (
                 f'=IFERROR(INDEX({_rango_nom},'
-                f'MATCH($A{_r},{_rango_cod},0)),"")'
+                f'MATCH($B{_r},{_rango_cod},0)),"")'
             )
         for _c in _cols_entrada:
             ws.cell(row=_r, column=_c).protection = _desbloqueada
 
 
-def _escribir_hoja_materias(
-    wb: Workbook, materias: list[tuple[str, str]],
-) -> None:
-    """Hoja VISIBLE `Materias` con la referencia código + nombre.
+# Columnas de la hoja `Materias` (2026-09-24): nombre y código
+# primero (los referencian la lista desplegable y la fórmula de la
+# hoja Horarios: nombres en $A, códigos en $B) y después el contexto
+# completo pedido por el usuario — atributos del catálogo, ubicación
+# en los planes de carrera y configuración del dictado del ciclo.
+MATERIAS_CONTEXT_COLUMNS: list[tuple[str, int]] = [
+    ("Nombre", 42),
+    ("Código", 11),
+    ("Código Guaraní", 14),
+    ("Período", 13),
+    ("Hs/sem", 9),
+    ("Hs teoría", 10),
+    ("Hs laboratorio", 13),
+    ("Cupo", 8),
+    ("Optativa", 10),
+    ("Virtual (catálogo)", 16),
+    ("Regla de recursado", 22),
+    ("Planes de carrera (año y cuatrimestre)", 44),
+    ("Dictado del ciclo", 20),
+    ("Modalidad del dictado", 30),
+    ("Dictado de recursado", 18),
+]
 
-    2026-09-23: el usuario pidió tener los datos de las materias a la
-    vista dentro del archivo, y poder elegir por nombre. Esta hoja
-    alimenta las dos listas desplegables de la hoja `Horarios` y la
-    fórmula que autocompleta el código. No es una hoja de datos a
-    importar: el selector de hoja de la app la excluye.
+
+def _si_no(valor: bool) -> str:
+    return "sí" if valor else "no"
+
+
+def obtener_contexto_materias_del_ciclo(
+    session: Session, ciclo_id: str,
+) -> list[dict]:
+    """Contexto completo de cada materia con dictado activo en el
+    ciclo, para la hoja `Materias` de la plantilla (2026-09-24).
+
+    Por materia (orden por código, el mismo que usan los rangos de
+    la hoja Horarios): atributos del catálogo, en qué planes de
+    carrera del ciclo aparece y en qué momento (año/cuatrimestre,
+    optativa), y cómo quedó configurado el dictado para el ciclo
+    (código de dictado, modalidad resuelta con la jerarquía
+    dictado > catálogo, y si es un dictado de recursado — es decir,
+    si todas sus apariciones en los planes del ciclo son del
+    cuatrimestre opuesto).
+    """
+    from src.database.models import (
+        CicloPlanVersionDB,
+        DictadoCicloDB,
+        DictadoDB,
+        PlanEstudioDB,
+    )
+    from src.services.dictado_service import _is_opposite_cuatrimestre
+
+    ciclo = session.get(CicloDB, ciclo_id)
+    if ciclo is None:
+        return []
+    pares = obtener_referencia_materias_del_ciclo(session, ciclo_id)
+    if not pares:
+        return []
+    codigos = [c for c, _ in pares]
+    materias = {
+        m.codigo: m for m in session.exec(
+            select(MateriaDB).where(
+                MateriaDB.codigo.in_(codigos)  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+    plan_version_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id).where(
+            CicloPlanVersionDB.ciclo_id == ciclo_id
+        )
+    ).all())
+    planes_por_materia: dict[str, list] = {}
+    if plan_version_ids:
+        for pe in session.exec(
+            select(PlanEstudioDB)
+            .where(PlanEstudioDB.materia_codigo.in_(codigos))  # type: ignore[attr-defined]
+            .where(PlanEstudioDB.plan_version_id.in_(plan_version_ids))  # type: ignore[attr-defined]
+        ).all():
+            planes_por_materia.setdefault(pe.materia_codigo, []).append(pe)
+    dictados = {
+        d.materia_codigo: d for d in session.exec(
+            select(DictadoDB)
+            .join(DictadoCicloDB, DictadoDB.id == DictadoCicloDB.dictado_id)
+            .where(DictadoCicloDB.ciclo_id == ciclo_id)
+        ).all()
+    }
+
+    filas: list[dict] = []
+    for cod, nom in pares:
+        mat = materias.get(cod)
+        if mat is None:
+            continue
+
+        _planes = sorted(
+            planes_por_materia.get(cod, []),
+            key=lambda e: (e.carrera_codigo, e.anio_plan or 0),
+        )
+        _planes_str = "; ".join(
+            f"{e.carrera_codigo} — "
+            f"{f'{e.anio_plan}° año' if e.anio_plan else 'año s/d'}, "
+            f"{e.cuatrimestre_plan or 's/cuatrimestre'}"
+            + (" (optativa)" if e.optativa else "")
+            for e in _planes
+        )
+
+        d = dictados.get(cod)
+        if d is None:
+            _dictado_str = "-"
+            _modalidad = "-"
+        else:
+            _dictado_str = d.dictado_codigo or d.id
+            if d.virtual is True:
+                _modalidad = "virtual (definida en el dictado)"
+            elif d.virtual is False and mat.virtual:
+                _modalidad = "presencial (definida en el dictado)"
+            elif mat.virtual:
+                _modalidad = "virtual (heredada del catálogo)"
+            else:
+                _modalidad = "presencial"
+
+        _recursado = "no"
+        if (
+            mat.periodo == "cuatrimestral"
+            and plan_version_ids
+            and _is_opposite_cuatrimestre(
+                session, mat, ciclo, plan_version_ids,
+            )
+        ):
+            _recursado = "sí"
+
+        if mat.dicta_recursado is None:
+            _regla_rec = "según carrera"
+        else:
+            _regla_rec = _si_no(mat.dicta_recursado)
+
+        filas.append({
+            "Nombre": nom,
+            "Código": cod,
+            "Código Guaraní": mat.codigo_guarani or "",
+            "Período": mat.periodo,
+            "Hs/sem": mat.horas_semanales,
+            "Hs teoría": mat.horas_teoria,
+            "Hs laboratorio": mat.horas_laboratorio,
+            "Cupo": mat.cupo,
+            "Optativa": _si_no(mat.optativa),
+            "Virtual (catálogo)": _si_no(mat.virtual),
+            "Regla de recursado": _regla_rec,
+            "Planes de carrera (año y cuatrimestre)": _planes_str,
+            "Dictado del ciclo": _dictado_str,
+            "Modalidad del dictado": _modalidad,
+            "Dictado de recursado": _recursado,
+        })
+    return filas
+
+
+def _escribir_hoja_materias(wb: Workbook, contexto: list[dict]) -> None:
+    """Hoja VISIBLE `Materias`: referencia nombre + código y el
+    contexto completo de cada materia (2026-09-24).
+
+    Alimenta la lista desplegable de códigos y la fórmula del nombre
+    de la hoja `Horarios` (por eso el orden de filas — por código —
+    tiene que coincidir con el de los rangos referenciados). Queda
+    **protegida sin contraseña**: es material de consulta, la cátedra
+    no debe poder editar códigos ni nombres. No es una hoja de datos
+    a importar: el selector de hoja de la app la excluye.
     """
     ws = wb.create_sheet(title="Materias")
     for col_idx, (titulo, ancho) in enumerate(
-        (("codigo", 16), ("nombre", 50)), start=1,
+        MATERIAS_CONTEXT_COLUMNS, start=1,
     ):
         cell = ws.cell(row=1, column=col_idx, value=titulo)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = HEADER_ALIGN
         ws.column_dimensions[get_column_letter(col_idx)].width = ancho
-    for i, (cod, nom) in enumerate(materias, start=2):
-        ws.cell(row=i, column=1, value=cod)
-        ws.cell(row=i, column=2, value=nom)
-    ws.freeze_panes = "A2"
+    for i, fila in enumerate(contexto, start=2):
+        for col_idx, (titulo, _ancho) in enumerate(
+            MATERIAS_CONTEXT_COLUMNS, start=1,
+        ):
+            ws.cell(row=i, column=col_idx, value=fila.get(titulo))
+    # Nombre y código siempre visibles al scrollear el contexto.
+    ws.freeze_panes = "C2"
+    # Sólo lectura: todas las celdas quedan bloqueadas (default de
+    # openpyxl); se permite ordenar/filtrar y ajustar anchos.
+    ws.protection.sheet = True
+    ws.protection.selectLockedCells = False
+    ws.protection.selectUnlockedCells = False
+    ws.protection.sort = False
+    ws.protection.autoFilter = False
+    ws.protection.formatColumns = False
+    ws.protection.formatRows = False
 
 
 def _escribir_hoja_instrucciones_cronograma(
@@ -445,11 +612,13 @@ def _escribir_hoja_instrucciones_cronograma(
     _t(row,
        "2) La materia se ingresa por CÓDIGO (lista desplegable en la "
        "columna 'codigo_materia'). Al elegirlo, el nombre aparece "
-       "solo en la columna de al lado, para que verifiques que es "
-       "la materia correcta — esa columna está protegida y no se "
+       "solo en la primera columna, para que verifiques que es la "
+       "materia correcta — esa columna está protegida y no se "
        "completa a mano. La hoja 'Materias' tiene la referencia "
-       "completa de códigos y nombres para buscar el código que "
-       "necesitás.")
+       "completa para buscar el código que necesitás: nombre, "
+       "código, atributos de la materia, en qué planes de carrera "
+       "aparece (año y cuatrimestre) y cómo está configurado el "
+       "dictado para este ciclo (modalidad, recursado).")
     row += 1
     _t(row,
        "3) Guardar el archivo y subirlo desde la aplicación en la "
@@ -503,15 +672,22 @@ def _escribir_hoja_instrucciones_cronograma(
        "'teorica'.")
     row += 1
     _t(row,
-       "• La hoja está protegida (sin contraseña) para cuidar la "
-       "columna del nombre y las fórmulas. Si necesitás algo fuera "
-       "de lo previsto, podés desprotegerla desde Revisar → "
-       "Desproteger hoja.")
+       "• Las hojas 'Horarios' y 'Materias' están protegidas (sin "
+       "contraseña) para cuidar las fórmulas, la columna del nombre "
+       "y la referencia de materias. Si necesitás algo fuera de lo "
+       "previsto, podés desprotegerlas desde Revisar → Desproteger "
+       "hoja.")
     row += 1
     _t(row,
        "• El código de comisión es obligatorio y debe ser un entero "
        "mayor o igual a 1. Dos comisiones distintas de la misma "
        "materia no pueden compartir código ni nombre.")
+    row += 1
+    _t(row,
+       "• Si le ponés nombre a una comisión, la correspondencia "
+       "código-nombre tiene que ser uno a uno dentro de la materia: "
+       "un mismo código siempre con el mismo nombre, y un mismo "
+       "nombre siempre con el mismo código.")
     row += 2
 
     _t(row, "Consejos", INSTRUCCIONES_HEADER_FONT)
@@ -550,14 +726,17 @@ def generar_plantilla_cronograma_excel(
     - Hoja "Instrucciones" con guía en castellano rioplatense.
     - Hoja "Horarios" con headers, ancho de columnas y freeze (sin
       fila de ejemplo — task #341).
-    - Hoja VISIBLE "Materias" con la referencia código+nombre de las
-      materias con dictado activo. La materia se ingresa SOLO por
-      código (desplegable, 2026-09-24): el nombre se autocompleta
-      por fórmula en la columna de al lado como verificación visual
-      y queda de sólo lectura (hoja protegida sin contraseña, con
-      las columnas de carga desbloqueadas). Quien carga debe conocer
-      el código correcto; no puede haber código y nombre que no se
-      correspondan.
+    - Hoja VISIBLE "Materias" (protegida, sólo consulta) con el
+      contexto completo de cada materia con dictado activo: nombre y
+      código primero, atributos del catálogo, en qué planes de
+      carrera aparece y en qué momento, y la configuración del
+      dictado del ciclo (modalidad resuelta, recursado). La materia
+      se ingresa SOLO por código (desplegable, 2026-09-24): el
+      nombre — primera columna de Horarios — se autocompleta por
+      fórmula como verificación visual y queda de sólo lectura
+      (hoja protegida sin contraseña, con las columnas de carga
+      desbloqueadas). Quien carga debe conocer el código correcto;
+      no puede haber código y nombre que no se correspondan.
     - El área de datos es una TABLA de Excel (``TablaHorarios``):
       filtros por columna y bandeado de filas.
     - Hojas ocultas ``_dias``, ``_horas``, ``_tipos``, ``_virtual``
@@ -625,22 +804,22 @@ def generar_plantilla_cronograma_excel(
     ws_main.title = "Horarios"
 
     _escribir_headers_horarios(ws_main)
-    # Hoja VISIBLE `Materias` (2026-09-23): referencia código+nombre
-    # de todas las materias con dictado activo. Alimenta los dos
-    # desplegables (por código y por nombre) y la fórmula que
-    # autocompleta el código. Se crea ANTES de las validaciones porque
-    # las fórmulas la referencian.
-    _pares_materias = obtener_referencia_materias_del_ciclo(
+    # Hoja VISIBLE `Materias` (2026-09-24): referencia nombre+código
+    # más el contexto completo de cada materia (catálogo, planes,
+    # dictado del ciclo), protegida contra edición. Alimenta el
+    # desplegable de códigos y la fórmula del nombre. Se crea ANTES
+    # de las validaciones porque las fórmulas la referencian, y el
+    # orden de filas (por código) tiene que coincidir con el de los
+    # rangos.
+    _contexto_materias = obtener_contexto_materias_del_ciclo(
         session, ciclo_id,
     )
-    _escribir_hoja_materias(wb, _pares_materias)
+    _escribir_hoja_materias(wb, _contexto_materias)
     # Bugfix (2026-09-22, task #341): no se escribe fila de ejemplo en
     # la hoja Horarios porque el parser no distingue ejemplo de dato
     # real; el ejemplo textual queda en la hoja Instrucciones.
-    # Los rangos de las listas referencian la hoja Materias, así que
-    # la cantidad tiene que salir de los mismos pares.
     _agregar_data_validations_horarios(
-        ws_main, wb, [c for c, _ in _pares_materias],
+        ws_main, wb, [f["Código"] for f in _contexto_materias],
         dias_operativos=_dias_operativos,
         slots_horarios=_slots,
     )

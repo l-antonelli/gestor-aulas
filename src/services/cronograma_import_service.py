@@ -292,8 +292,19 @@ def preview_import(
         # Comisiones nuevas del archivo.
         comisiones_nuevas: list[ComisionEnPreview] = []
         for _, horarios in por_comision.items():
-            # Tomar el primer nombre como el "canónico" para display.
-            nombre_display = horarios[0][1].comision_nombre.strip()
+            # Nombre para display: el primer nombre DECLARADO si lo
+            # hay (2026-09-24 — antes se tomaba el de la primera fila
+            # y una fila sin nombre, que cae al default C{código},
+            # podía pisar al declarado según el orden del archivo).
+            _cod0 = horarios[0][1].comision_codigo
+            _cands = [h.comision_nombre.strip() for _, h in horarios]
+            nombre_display = next(
+                (
+                    n for n in _cands
+                    if _cod0 is None or n != f"C{_cod0}"
+                ),
+                _cands[0],
+            )
             com = ComisionEnPreview(
                 materia_codigo=codigo_resuelto,
                 nombre_comision=nombre_display,

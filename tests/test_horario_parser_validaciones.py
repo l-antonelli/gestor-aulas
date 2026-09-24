@@ -216,6 +216,106 @@ class TestCodigoComision:
         assert entries[0].comision_nombre == "Comision A"
 
 
+class TestComisionCodigoNombreUnoAUno:
+    """Validación 1:1 dentro del archivo (2026-09-24): si se declara
+    nombre de comisión, la correspondencia código ↔ nombre tiene que
+    ser unívoca dentro de cada materia. Un mismo código no puede
+    aparecer con dos nombres, ni un mismo nombre con dos códigos.
+    """
+
+    def test_mismo_codigo_dos_nombres_es_error(self):
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,Mañana,Lunes,08:00,10:00\n"
+            "MAT101,1,Tarde,Miércoles,08:00,10:00\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert len(errors) == 1
+        assert "nombres distintos" in errors[0]
+        assert "Mañana" in errors[0] and "Tarde" in errors[0]
+
+    def test_mismo_nombre_dos_codigos_es_error(self):
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,Mañana,Lunes,08:00,10:00\n"
+            "MAT101,2,Mañana,Miércoles,08:00,10:00\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert len(errors) == 1
+        assert "códigos distintos" in errors[0]
+
+    def test_correspondencia_consistente_ok(self):
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,Mañana,Lunes,08:00,10:00\n"
+            "MAT101,1,Mañana,Miércoles,08:00,10:00\n"
+            "MAT101,2,Tarde,Lunes,14:00,16:00\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+        assert len(entries) == 3
+
+    def test_mismo_nombre_en_materias_distintas_ok(self):
+        """La unicidad es POR MATERIA: dos materias pueden tener cada
+        una su comisión 'Mañana' con códigos distintos.
+        """
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,Mañana,Lunes,08:00,10:00\n"
+            "FIS201,2,Mañana,Martes,08:00,10:00\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+
+    def test_nombre_omitido_en_algunas_filas_no_es_error(self):
+        """Filas sin nombre declarado (queda el default C{código}) no
+        participan del chequeo: declarar el nombre en una sola fila
+        de la comisión es válido.
+        """
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,Mañana,Lunes,08:00,10:00\n"
+            "MAT101,1,,Miércoles,08:00,10:00\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+
+    def test_import_prefiere_el_nombre_declarado(self, session):
+        """Al agrupar en la vista previa, si una fila de la comisión
+        declara nombre y otra no, gana el declarado (antes dependía
+        del orden de las filas).
+        """
+        from src.services.cronograma_import_service import (
+            commit_import,
+            preview_import,
+        )
+
+        session.add(MateriaDB(
+            codigo="MAT101", nombre="Análisis I",
+            periodo="cuatrimestral", active=True, horas_semanales=6,
+        ))
+        sched = ScheduleDB(
+            id="sched1", nombre="test", fecha_upload=date(2026, 3, 1),
+        )
+        session.add(sched)
+        session.commit()
+
+        archivo = _csv(
+            "codigo_materia,codigo_comision,nombre_comision,dia,hora_inicio,hora_fin\n"
+            "MAT101,1,,Lunes,08:00,10:00\n"
+            "MAT101,1,Mañana,Miércoles,08:00,10:00\n"
+        )
+        pv = preview_import(session, sched.id, archivo)
+        assert pv.parse_errors == []
+        commit_import(session, pv, {})
+        coms = session.exec(
+            select(ComisionDB).where(ComisionDB.schedule_id == sched.id)
+        ).all()
+        assert len(coms) == 1
+        assert coms[0].numero == 1
+        assert coms[0].nombre == "Mañana"
+
+
 class TestResolucionPorNombre:
     def _catalogo(self, session):
         session.add(MateriaDB(

@@ -417,11 +417,22 @@ El archivo trae:
   ejemplo pre-cargada se importaba como dato real si el usuario no
   la borraba — fix auditoría 2026-09-23; el ejemplo vive ahora en
   Instrucciones).
-- Hoja **visible** `Materias` con los pares código + nombre del
-  ciclo elegido. La materia se ingresa **sólo por código**
-  (desplegable en `codigo_materia`; simplificación 2026-09-24: quien
-  carga debe conocer el código correcto). La columna
-  `nombre_materia` viene pre-cargada (filas 2–1001) con una fórmula
+- Hoja **visible** `Materias` (2026-09-24: **protegida**, sólo
+  consulta) con el contexto completo de cada materia con dictado
+  activo en el ciclo: nombre y código primero (los referencian los
+  rangos de la hoja Horarios), atributos del catálogo (Guaraní,
+  período, horas, cupo, optativa, virtual, regla de recursado), en
+  qué **planes de carrera** aparece y en qué momento (carrera, año,
+  cuatrimestre, optativa por plan) y cómo quedó configurado el
+  **dictado del ciclo** (código de dictado, modalidad resuelta con
+  la jerarquía dictado > catálogo, y si es un dictado de recursado
+  — todas sus apariciones en los planes del ciclo son del
+  cuatrimestre opuesto). Fuente:
+  `template_export_service.obtener_contexto_materias_del_ciclo`.
+- La materia se ingresa **sólo por código** (desplegable en
+  `codigo_materia`; quien carga debe conocer el código correcto).
+  `nombre_materia` es la **primera columna** de Horarios (pedido
+  2026-09-24) y viene pre-cargada (filas 2–1001) con una fórmula
   `=IFERROR(INDEX(...);MATCH(...))` que **muestra el nombre al
   elegir el código**, como verificación visual: la hoja está
   **protegida sin contraseña** con esa columna bloqueada (las de
@@ -473,6 +484,12 @@ frenar el resto del archivo):
 - `tipo_clase = laboratorio` marcado `virtual` — un laboratorio
   requiere aula física.
 - `codigo_comision` no numérico o menor a 1.
+- Correspondencia código ↔ nombre de comisión **no unívoca** dentro
+  de una materia (2026-09-24): si se declara nombre, un mismo código
+  no puede aparecer con dos nombres distintos ni un mismo nombre con
+  dos códigos. Las filas que no declaran nombre (queda el default
+  `C{código}`) no participan del chequeo, y al agrupar en la vista
+  previa gana el nombre declarado sobre el default.
 - Fila que declara `codigo_materia` **y** `nombre_materia` que no se
   corresponden en el catálogo (esta guardia corre en el preview del
   importador, que es quien tiene acceso al catálogo): tipear un
