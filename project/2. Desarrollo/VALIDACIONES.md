@@ -735,6 +735,14 @@ los data editors la bloquean antes de persistir vía
 `_validar_filas_editor`), así que este chequeo cubre datos históricos
 o cargados por fuera de esos caminos.
 
+> Desde 2026-09-24 la invariante completa (`virtual ⇒ teorica`,
+> `laboratorio ⇒ presencial explícito`) además se deriva en el ORM
+> (listeners de `ScheduleEntryDB`/`HorarioDB`) y se refuerza con
+> `CHECK` de tabla en bases creadas a partir de esa fecha — este
+> chequeo queda como red para las bases anteriores, cuyas tablas no
+> tienen los constraints. Ver WORKFLOW.md § semántica de
+> virtual/tipo.
+
 ### Worst status (badge del header del expander)
 
 El editor calcula el **peor `status`** entre los once chequeos (más

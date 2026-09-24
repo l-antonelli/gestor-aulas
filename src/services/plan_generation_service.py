@@ -16,7 +16,28 @@ from src.database.models import (
     PlanEstudioDB, CicloPlanVersionDB, DictadoDB,
 )
 from src.database.crud import schedule_crud, planificacion_crud, materia_crud
-from src.services.horario_loading_service import derive_comision_count
+from src.services.horario_loading_service import (
+    derive_comision_count,
+    normalizar_tipo_virtual,
+)
+
+
+def _tipo_virtual_saneados(
+    tipo_clase: Optional[str], virtual: Optional[bool],
+) -> tuple[Optional[str], Optional[bool]]:
+    """Normaliza la invariante virtual/tipo al MATERIALIZAR horarios
+    desde entries de cronograma (2026-09-24).
+
+    A diferencia de los caminos de edición del usuario (que levantan
+    ``ValueError``), acá un dato legacy inconsistente (laboratorio
+    marcado virtual en una base anterior a los CHECK) no debe abortar
+    la generación del plan: gana el laboratorio y la clase queda
+    presencial explícita.
+    """
+    try:
+        return normalizar_tipo_virtual(tipo_clase, virtual)
+    except ValueError:
+        return "laboratorio", False
 
 
 @dataclass
@@ -453,6 +474,10 @@ def generate_plan_from_preview(
             result.comisiones_created += 1
 
             for ep in com_entries[com_num]:
+                _tipo_ep, _virt_ep = _tipo_virtual_saneados(
+                    getattr(ep, "tipo_clase", None),
+                    getattr(ep, "virtual", None),
+                )
                 horario = HorarioDB(
                     id=str(uuid.uuid4()),
                     comision_id=comision_id,
@@ -460,8 +485,8 @@ def generate_plan_from_preview(
                     dia=ep.dia,
                     hora_inicio=ep.hora_inicio,
                     hora_fin=ep.hora_fin,
-                    tipo_clase=getattr(ep, "tipo_clase", None),
-                    virtual=getattr(ep, "virtual", None),
+                    tipo_clase=_tipo_ep,
+                    virtual=_virt_ep,
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -605,6 +630,10 @@ def generate_plan_from_schedule(
 
             for entry in group:
                 horario_id = str(uuid.uuid4())
+                _tipo_en, _virt_en = _tipo_virtual_saneados(
+                    getattr(entry, "tipo_clase", None),
+                    getattr(entry, "virtual", None),
+                )
                 horario = HorarioDB(
                     id=horario_id,
                     comision_id=comision_id,
@@ -612,8 +641,8 @@ def generate_plan_from_schedule(
                     dia=entry.dia,
                     hora_inicio=entry.hora_inicio,
                     hora_fin=entry.hora_fin,
-                    tipo_clase=getattr(entry, "tipo_clase", None),
-                    virtual=getattr(entry, "virtual", None),
+                    tipo_clase=_tipo_en,
+                    virtual=_virt_en,
                 )
                 session.add(horario)
                 result.horarios_created += 1
@@ -680,6 +709,16 @@ def apply_horario_edits(
         # Nueva columna "virtual" del data_editor: viene como
         # Optional[bool]. Si la row no la tiene (paths viejos), None.
         _row_virtual = row.get("virtual")
+        # Invariante virtual/tipo (2026-09-24): virtual ⇒ teorica;
+        # laboratorio ⇒ presencial explícito. Edición del usuario:
+        # laboratorio + virtual levanta ValueError (el caller lo
+        # muestra como error de UI).
+        from src.services.horario_loading_service import (
+            normalizar_tipo_virtual,
+        )
+        _row_tipo, _row_virtual = normalizar_tipo_virtual(
+            _row_tipo, _row_virtual,
+        )
 
         if isinstance(hid, str) and hid.startswith("new_"):
             # Create new horario

@@ -5,6 +5,7 @@ These models mirror the domain entities but add database persistence.
 They use SQLModel which combines Pydantic validation with SQLAlchemy ORM.
 """
 
+from sqlalchemy import CheckConstraint, event
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional
 from datetime import date, datetime, time
@@ -438,8 +439,29 @@ class HorarioDB(SQLModel, table=True):
     ``ClaseDB`` heredan por default ese aula. Las excepciones puntuales
     por fecha se modelan en ``ClaseDB.aula_id`` con
     ``aula_asignada_manualmente=True``.
+
+    Invariante virtual/tipo (2026-09-24, ver
+    ``normalizar_tipo_virtual``): virtual explícito ⇒ teorica;
+    laboratorio ⇒ presencial explícito (virtual=0, no NULL — así la
+    herencia del dictado nunca vuelve virtual a un laboratorio). Los
+    CHECK sólo rigen en tablas creadas a partir de esta fecha (SQLite
+    no permite agregarlos a tablas existentes); para bases viejas la
+    garantía sigue siendo el service layer + el chequeo estructural
+    ``lab_virtual``.
     """
     __tablename__ = "horarios"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (virtual = 1 AND "
+            "(tipo_clase IS NULL OR tipo_clase <> 'teorica'))",
+            name="ck_horarios_virtual_teorica",
+        ),
+        CheckConstraint(
+            "NOT (tipo_clase = 'laboratorio' AND "
+            "(virtual IS NULL OR virtual <> 0))",
+            name="ck_horarios_lab_presencial",
+        ),
+    )
 
     id: str = Field(primary_key=True)
     comision_id: str = Field(foreign_key="comisiones.id", index=True)
@@ -518,8 +540,24 @@ class ScheduleEntryDB(SQLModel, table=True):
     ``comision_id`` es la FK a ``ComisionDB`` (una comisión "template"
     del cronograma). Puede ser None si el entry todavía no fue asignado
     a una comisión concreta.
+
+    Invariante virtual/tipo (2026-09-24): misma que en ``HorarioDB``
+    (virtual explícito ⇒ teorica; laboratorio ⇒ presencial
+    explícito). Ver ``normalizar_tipo_virtual``.
     """
     __tablename__ = "schedule_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (virtual = 1 AND "
+            "(tipo_clase IS NULL OR tipo_clase <> 'teorica'))",
+            name="ck_schedule_entries_virtual_teorica",
+        ),
+        CheckConstraint(
+            "NOT (tipo_clase = 'laboratorio' AND "
+            "(virtual IS NULL OR virtual <> 0))",
+            name="ck_schedule_entries_lab_presencial",
+        ),
+    )
 
     id: str = Field(primary_key=True)  # UUID
     schedule_id: str = Field(foreign_key="schedules.id", index=True)
@@ -982,3 +1020,40 @@ class ChangeLogDB(SQLModel, table=True):
     # Origen del cambio para trazabilidad ("ui:ciclos", "ui:validacion",
     # "script:nombre", "auto" para hooks sin contexto explicito).
     origin: str = Field(default="auto", index=True)
+
+
+# =============================================================================
+# Invariante virtual/tipo de clase (2026-09-24)
+# =============================================================================
+#
+# Derivación automática en la frontera del ORM, espejo de
+# `normalizar_tipo_virtual` (service layer) y de los CHECK de tabla:
+#
+# - virtual=True con tipo sin determinar → tipo='teorica' (una clase
+#   virtual es siempre teórica).
+# - tipo='laboratorio' con virtual=None → virtual=False EXPLÍCITO (el
+#   presencial explícito pisa la herencia del dictado/catálogo: un
+#   laboratorio nunca puede terminar virtual por herencia).
+# - laboratorio + virtual=True NO se corrige acá: es una contradicción
+#   real y la rechaza el CHECK de la tabla (IntegrityError).
+#
+# El service layer sigue siendo la validación primaria (con mensajes
+# de error amigables); esto cubre los caminos de escritura que crean
+# las filas directo por ORM.
+
+def _derivar_invariante_virtual_tipo(mapper, connection, target) -> None:
+    if target.virtual is True and target.tipo_clase is None:
+        target.tipo_clase = "teorica"
+    elif target.tipo_clase == "laboratorio" and target.virtual is None:
+        target.virtual = False
+
+
+for _modelo_horario in (ScheduleEntryDB, HorarioDB):
+    event.listen(
+        _modelo_horario, "before_insert",
+        _derivar_invariante_virtual_tipo, propagate=True,
+    )
+    event.listen(
+        _modelo_horario, "before_update",
+        _derivar_invariante_virtual_tipo, propagate=True,
+    )

@@ -407,6 +407,16 @@ def parse_horarios_file(
                 )
                 continue
 
+            # Invariante (2026-09-24): virtual ⇒ teorica (autocompleta
+            # el tipo sin determinar) y laboratorio ⇒ presencial
+            # explícito. El caso de error ya se filtró arriba.
+            from src.services.horario_loading_service import (
+                normalizar_tipo_virtual,
+            )
+            tipo_clase, virtual = normalizar_tipo_virtual(
+                tipo_clase, virtual,
+            )
+
             entry = HorarioInput(
                 codigo_materia=codigo_raw,
                 nombre_materia=nombre_declarado,

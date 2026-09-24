@@ -1111,15 +1111,21 @@ def _render_bulk_horario_editor(
                     ),
                 })
 
-            with next(get_session()) as session:
-                _u, _c, _d = apply_horario_edits(
-                    session, plan_id, materia_codigo, _de_edit_rows,
+            try:
+                with next(get_session()) as session:
+                    _u, _c, _d = apply_horario_edits(
+                        session, plan_id, materia_codigo, _de_edit_rows,
+                    )
+            except ValueError as _exc:
+                # Invariante virtual/tipo (2026-09-24): laboratorio +
+                # virtual se rechaza antes de persistir.
+                st.error(f"No se guardó: {_exc}")
+            else:
+                st.toast(
+                    f"Horarios actualizados: {_u} modificados, "
+                    f"{_c} agregados, {_d} eliminados"
                 )
-            st.toast(
-                f"Horarios actualizados: {_u} modificados, "
-                f"{_c} agregados, {_d} eliminados"
-            )
-            st.rerun()
+                st.rerun()
 
 
 # =============================================================================

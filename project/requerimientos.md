@@ -250,20 +250,28 @@ Las capacidades que **quedan** en producción y no eran puntuales:
 
 ## Decisiones cerradas
 
-- **2026-09-24 (invariante laboratorio/virtual: sin constraint de DB)**:
-  se evaluó y descartó reforzar "un laboratorio no puede ser virtual"
-  a nivel de base de datos. Razones: un `CHECK` de SQLite solo ve la
-  fila (no cubre el caso de herencia `virtual=None` + materia/dictado
-  virtual de catálogo, que es justamente el que se le puede escapar a
-  las capas de aplicación y que ya ataja el chequeo `lab_virtual`);
-  SQLite no permite agregar un `CHECK` a tablas existentes sin
-  recrearlas; y los modelos `SQLModel(table=True)` no corren
-  validadores Pydantic. La garantía queda en las cuatro capas de
-  aplicación existentes (listas dependientes del Excel, parser,
-  `_validar_filas_editor` en los editores y chequeo estructural
-  `lab_virtual`). También se descartó por ahora el autocompletado
-  `virtual=True => tipo_clase=teorica`: virtual con tipo "sin
-  determinar" sigue permitido.
+- **2026-09-24 (invariante virtual/tipo de clase, revisada el mismo
+  día)**: primero se descartó el refuerzo a nivel de base de datos;
+  horas después el usuario pidió lo contrario y quedó así: **una
+  clase virtual es siempre teórica** (`virtual=True =>
+  tipo_clase='teorica'`, autocompletado si venía sin determinar) y
+  **un laboratorio es siempre presencial explícito**
+  (`tipo_clase='laboratorio' => virtual=False`, no `None`: el
+  presencial explícito pisa la herencia del dictado/catálogo, con lo
+  que un laboratorio no puede terminar virtual ni siquiera por
+  herencia). La invariante se deriva/valida en capas: (1)
+  `normalizar_tipo_virtual` en todos los caminos de escritura del
+  service layer (parser, `add/update_schedule_entry`, sync de
+  editores, `apply_horario_edits`, generación del plan) con
+  `ValueError` amigable en los flujos de edición; (2) listeners ORM
+  `before_insert`/`before_update` en `ScheduleEntryDB` y `HorarioDB`
+  que derivan los casos incompletos; (3) `CHECK` de tabla
+  (`ck_*_virtual_teorica`, `ck_*_lab_presencial`) que rechazan hasta
+  el SQL crudo — sólo rigen en tablas creadas a partir de esta fecha
+  (SQLite no permite agregarlos a tablas existentes; para bases
+  viejas cubre el chequeo estructural `lab_virtual`). En la
+  generación del plan, un dato legacy contradictorio no aborta:
+  gana el laboratorio y queda presencial.
 
 - **2026-07-07 (deprecación clases puntuales)**: se decidió eliminar
   del sistema el concepto de "clase puntual" (`ClaseDB` como unidad

@@ -284,13 +284,24 @@ def render_schedule_calendar(
                 bg, fg = _com_colors.get(com or 0, (PALETTE[0], TEXT_COLOR))
             else:
                 bg, fg = mat_colors.get(b.materia_codigo, (PALETTE[0], TEXT_COLOR))
-            # 💻 cuando el horario está resuelto como virtual (bugfix
-            # 2026-09-23: el flag existía en ScheduleBlock pero la
-            # grilla nunca lo populaba y esta vista nunca lo mostraba).
+            # Íconos (mismos que el render editable, para que TODAS
+            # las vistas de cronograma sean consistentes):
+            #   💻 → virtual; 🧪 → laboratorio predeterminado;
+            #   📖 → teórica predeterminada.
+            # (bugfix 2026-09-23/24: los flags existían en
+            # ScheduleBlock pero la grilla no los populaba y esta
+            # vista no los mostraba.)
             _v_tag = "💻 " if getattr(b, "virtual", False) else ""
+            _tipo = getattr(b, "tipo_clase", None)
+            if _tipo == "laboratorio":
+                _t_tag = "🧪 "
+            elif _tipo == "teorica":
+                _t_tag = "📖 "
+            else:
+                _t_tag = ""
             events.append({
                 "title": (
-                    f"{_v_tag}{b.materia_codigo}{com_tag} - "
+                    f"{_v_tag}{_t_tag}{b.materia_codigo}{com_tag} - "
                     f"{b.materia_nombre}"
                 ),
                 "daysOfWeek": [dow],

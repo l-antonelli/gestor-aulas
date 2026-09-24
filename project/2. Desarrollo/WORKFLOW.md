@@ -491,6 +491,25 @@ cargue la cátedra:
   según las horas de teoría/laboratorio de la materia. Predeterminarlo
   a mano es la excepción, no la regla.
 
+**Invariante virtual/tipo de clase** (2026-09-24, pedido del
+usuario): **una clase virtual es siempre teórica** (`virtual=True ⇒
+tipo_clase='teorica'`, autocompletado si venía sin determinar) y
+**un laboratorio es siempre presencial explícito**
+(`tipo_clase='laboratorio' ⇒ virtual=False`, no `None` — el
+presencial explícito pisa la herencia del dictado/catálogo, así un
+laboratorio no puede terminar virtual ni por herencia). Se
+deriva/valida en tres capas: `normalizar_tipo_virtual`
+(`horario_loading_service`) en todos los caminos de escritura del
+service layer, con `ValueError` amigable en los flujos de edición;
+listeners ORM `before_insert`/`before_update` en `ScheduleEntryDB` y
+`HorarioDB` que derivan los casos incompletos; y `CHECK` de tabla
+(`ck_*_virtual_teorica`, `ck_*_lab_presencial`) que rechazan hasta
+el SQL crudo. Los CHECK sólo rigen en tablas creadas a partir de
+esta fecha (SQLite no permite agregarlos a tablas existentes); para
+bases viejas cubre el chequeo estructural `lab_virtual`
+(VALIDACIONES.md § 4.13). En la generación del plan, un dato legacy
+contradictorio no aborta: gana el laboratorio y queda presencial.
+
 La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
 se blindan errores tipográficos y datos fuera del catálogo.

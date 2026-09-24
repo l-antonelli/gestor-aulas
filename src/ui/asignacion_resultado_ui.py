@@ -1992,7 +1992,16 @@ def _dialog_editar_horario(
         _db_h = _sess.get(_HorarioDB, horario_id)
         if _db_h is None:
             return False
-        _db_h.virtual = _new_virtual_val
+        # Invariante virtual/tipo (2026-09-24): virtual ⇒ teorica;
+        # marcar virtual un laboratorio se rechaza.
+        from src.services.horario_loading_service import (
+            normalizar_tipo_virtual,
+        )
+        _tipo_n, _virt_n = normalizar_tipo_virtual(
+            _db_h.tipo_clase, _new_virtual_val,
+        )
+        _db_h.tipo_clase = _tipo_n
+        _db_h.virtual = _virt_n
         _sess.add(_db_h)
         return True
 
@@ -2019,13 +2028,17 @@ def _dialog_editar_horario(
                 use_container_width=True,
                 key=f"edith_{horario_id}_save_virtual",
             ):
-                with next(get_session()) as _sess:
-                    _persist_virtual_if_changed(_sess)
-                    _sess.commit()
-                st.success(
-                    "Virtualidad del horario actualizada."
-                )
-                st.rerun()
+                try:
+                    with next(get_session()) as _sess:
+                        _persist_virtual_if_changed(_sess)
+                        _sess.commit()
+                except ValueError as _exc:
+                    st.error(f"No se guardó: {_exc}")
+                else:
+                    st.success(
+                        "Virtualidad del horario actualizada."
+                    )
+                    st.rerun()
         elif preview is None or preview.error:
             # Caso C.
             st.button(
@@ -2048,14 +2061,18 @@ def _dialog_editar_horario(
                 use_container_width=True,
                 key=f"edith_{horario_id}_save",
             ):
-                with next(get_session()) as _sess:
-                    ok = aplicar_cambio_horario(
-                        _sess, horario_id,
-                        nuevo_dia, nuevo_hi, nuevo_hf,
-                    )
-                    if ok:
-                        _persist_virtual_if_changed(_sess)
-                        _sess.commit()
+                try:
+                    with next(get_session()) as _sess:
+                        ok = aplicar_cambio_horario(
+                            _sess, horario_id,
+                            nuevo_dia, nuevo_hi, nuevo_hf,
+                        )
+                        if ok:
+                            _persist_virtual_if_changed(_sess)
+                            _sess.commit()
+                except ValueError as _exc:
+                    st.error(f"No se guardó: {_exc}")
+                    ok = False
                 if ok:
                     st.success("Horario actualizado.")
                     st.rerun()

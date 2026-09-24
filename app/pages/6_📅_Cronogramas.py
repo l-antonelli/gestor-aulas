@@ -385,8 +385,15 @@ def _dialog_edit_entry():
                 cambios["virtual"] = _new_virtual_val
             mat_label = materias_map.get(new_mat, new_mat)
             if cambios:
-                with next(get_session()) as session:
-                    update_schedule_entry(session, pending["entry_id"], **cambios)
+                try:
+                    with next(get_session()) as session:
+                        update_schedule_entry(
+                            session, pending["entry_id"], **cambios,
+                        )
+                except ValueError as _exc:
+                    # Invariante virtual/tipo (2026-09-24).
+                    st.error(f"No se guardó: {_exc}")
+                    st.stop()
                 st.session_state["_edit_toast"] = (
                     f"{mat_label} actualizada: {new_dia} "
                     f"{new_inicio.strftime('%H:%M')}-{new_fin.strftime('%H:%M')}"

@@ -216,6 +216,30 @@ def _dialog_edit_horario():
                 with next(get_session()) as session:
                     h = session.get(HorarioDB, pending["horario_id"])
                     if h is not None:
+                        # Invariante virtual/tipo (2026-09-24):
+                        # normalizar la combinación resultante antes
+                        # de persistir (virtual ⇒ teorica; lab ⇒
+                        # presencial explícito; lab+virtual = error).
+                        from src.services.horario_loading_service import (
+                            normalizar_tipo_virtual,
+                        )
+                        try:
+                            (
+                                cambios["tipo_clase"],
+                                cambios["virtual"],
+                            ) = normalizar_tipo_virtual(
+                                cambios.get("tipo_clase", h.tipo_clase),
+                                cambios.get("virtual", h.virtual),
+                            )
+                        except ValueError as _exc:
+                            st.session_state["_pge_toast"] = (
+                                f"⚠️ No se guardó: {_exc}"
+                            )
+                            st.session_state["_pge_processed_click"] = (
+                                pending["_key"]
+                            )
+                            del st.session_state["_pge_pending_click"]
+                            st.rerun()
                         for k, v in cambios.items():
                             setattr(h, k, v)
                         session.add(h)
@@ -1425,6 +1449,25 @@ def _render_tabla_editable_por_materia(
                 if cambios:
                     db_h = sess.get(HorarioDB, h.id)
                     if db_h is not None:
+                        # Invariante virtual/tipo (2026-09-24).
+                        from src.services.horario_loading_service import (
+                            normalizar_tipo_virtual,
+                        )
+                        try:
+                            (
+                                cambios["tipo_clase"],
+                                cambios["virtual"],
+                            ) = normalizar_tipo_virtual(
+                                cambios.get(
+                                    "tipo_clase", db_h.tipo_clase,
+                                ),
+                                cambios.get("virtual", db_h.virtual),
+                            )
+                        except ValueError as _exc:
+                            st.session_state["_pge_toast"] = (
+                                f"⚠️ Fila {idx + 1} no guardada: {_exc}"
+                            )
+                            continue
                         # HorarioDB no esta en TRACKED_ENTITIES (evita
                         # ruido cuando se generan 600 filas de golpe).
                         # Para el cambio de `virtual` — que afecta al
@@ -1477,6 +1520,19 @@ def _render_tabla_editable_por_materia(
                     virtual_val = _label_to_virtual(
                         row.get("Virtual") or "Heredar"
                     )
+                    # Invariante virtual/tipo (2026-09-24).
+                    from src.services.horario_loading_service import (
+                        normalizar_tipo_virtual,
+                    )
+                    try:
+                        tipo_val, virtual_val = normalizar_tipo_virtual(
+                            tipo_val, virtual_val,
+                        )
+                    except ValueError as _exc:
+                        st.session_state["_pge_toast"] = (
+                            f"⚠️ Fila nueva no guardada: {_exc}"
+                        )
+                        continue
                     new_h = HorarioDB(
                         id=str(uuid.uuid4()),
                         comision_id=new_com.id,

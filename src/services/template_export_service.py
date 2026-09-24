@@ -667,7 +667,9 @@ def _escribir_hoja_instrucciones_cronograma(
        "seleccionar la columna 'virtual' e insertar una 'Casilla de "
        "verificación' (pestaña Insertar) — la columna queda con "
        "casillas para tildar, que son exactamente estos mismos "
-       "valores VERDADERO/FALSO.")
+       "valores VERDADERO/FALSO. Al importar, una clase marcada "
+       "VERDADERO queda automáticamente como teórica (una clase "
+       "virtual es siempre teórica).")
     row += 2
 
     _t(row, "Reglas que valida la aplicación al importar",

@@ -538,7 +538,15 @@ def add_schedule_entry(
 
     Nota: el override de carrera de sede (``carrera_asignada``) vive
     ahora a nivel ``ComisionDB``, no a nivel entry.
+
+    Raises:
+        ValueError: si la combinación viola la invariante
+            virtual/tipo (laboratorio + virtual).
     """
+    from src.services.horario_loading_service import (
+        normalizar_tipo_virtual,
+    )
+    tipo_clase, virtual = normalizar_tipo_virtual(tipo_clase, virtual)
     entry = ScheduleEntryDB(
         id=str(uuid.uuid4()),
         schedule_id=schedule_id,
@@ -557,7 +565,13 @@ def add_schedule_entry(
 
 
 def update_schedule_entry(session: Session, entry_id: str, **campos) -> ScheduleEntryDB:
-    """Actualizar campos individuales de una entrada de cronograma."""
+    """Actualizar campos individuales de una entrada de cronograma.
+
+    Raises:
+        ValueError: campo no permitido, entry inexistente, o
+            combinación resultante que viola la invariante
+            virtual/tipo (laboratorio + virtual).
+    """
     entry = session.get(ScheduleEntryDB, entry_id)
     if entry is None:
         raise ValueError(f"Entry '{entry_id}' no encontrada")
@@ -566,9 +580,25 @@ def update_schedule_entry(session: Session, entry_id: str, **campos) -> Schedule
         "dia", "hora_inicio", "hora_fin", "codigo_materia",
         "comision_id", "tipo_clase", "virtual",
     }
-    for key, value in campos.items():
+    for key in campos:
         if key not in allowed:
             raise ValueError(f"Campo '{key}' no permitido")
+
+    # Invariante virtual/tipo (2026-09-24): normalizar la COMBINACIÓN
+    # resultante (los campos que llegan + los que ya tiene la entry),
+    # antes de tocar nada — un update parcial (ej. sólo virtual=True)
+    # también debe autocompletar teorica o rechazar el laboratorio.
+    if "tipo_clase" in campos or "virtual" in campos:
+        from src.services.horario_loading_service import (
+            normalizar_tipo_virtual,
+        )
+        _tipo = campos.get("tipo_clase", entry.tipo_clase)
+        _virt = campos.get("virtual", entry.virtual)
+        campos["tipo_clase"], campos["virtual"] = (
+            normalizar_tipo_virtual(_tipo, _virt)
+        )
+
+    for key, value in campos.items():
         setattr(entry, key, value)
 
     session.add(entry)
@@ -729,6 +759,10 @@ def build_schedule_grid(
             comision_numero=com.numero if com else None,
             comision_nombre=com.nombre if com else None,
             virtual=_virt,
+            # 2026-09-24: sin esto el ícono 🧪/📖 no aparecía en las
+            # vistas que usan el render simple (ej. los calendarios
+            # Antes/Después de la vista previa del importador).
+            tipo_clase=e.tipo_clase,
         )
         grid.setdefault(e.dia, []).append(block)
 

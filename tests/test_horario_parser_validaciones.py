@@ -562,6 +562,8 @@ class TestBuildScheduleGridVirtual:
             id=eid, schedule_id=sched.id, codigo_materia="MAT101",
             dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
             virtual=virtual,
+            # Invariante 2026-09-24: virtual explícito exige teorica.
+            tipo_clase="teorica" if virtual else None,
         ))
         session.commit()
 
@@ -588,6 +590,209 @@ class TestBuildScheduleGridVirtual:
         self._entry(session, sched, "e1", False)
         grid = build_schedule_grid(session, sched.id)
         assert grid["Lunes"][0].virtual is False
+
+
+class TestInvarianteVirtualTeorica:
+    """Invariante 2026-09-24 (pedido del usuario): una clase virtual
+    es siempre teórica, y un laboratorio es siempre presencial
+    EXPLÍCITO (virtual=False, no None — así la herencia del dictado
+    nunca puede volver virtual a un laboratorio). Se deriva en todos
+    los caminos de escritura y se refuerza con CHECK de base de datos
+    en ``schedule_entries`` y ``horarios``.
+    """
+
+    def test_helper_normalizacion(self):
+        from src.services.horario_loading_service import (
+            normalizar_tipo_virtual,
+        )
+
+        # virtual=True sin tipo → teorica.
+        assert normalizar_tipo_virtual(None, True) == ("teorica", True)
+        assert normalizar_tipo_virtual("teorica", True) == ("teorica", True)
+        # laboratorio → presencial explícito (pisa la herencia).
+        assert normalizar_tipo_virtual("laboratorio", None) == (
+            "laboratorio", False,
+        )
+        assert normalizar_tipo_virtual("laboratorio", False) == (
+            "laboratorio", False,
+        )
+        # laboratorio + virtual → error.
+        with pytest.raises(ValueError):
+            normalizar_tipo_virtual("laboratorio", True)
+        # Sin virtual ni lab, no toca nada.
+        assert normalizar_tipo_virtual(None, None) == (None, None)
+        assert normalizar_tipo_virtual("teorica", False) == (
+            "teorica", False,
+        )
+
+    def test_parser_virtual_autocompleta_teorica(self):
+        archivo = _csv(
+            "codigo_materia,dia,hora_inicio,hora_fin,tipo_clase,virtual\n"
+            "MAT101,Lunes,08:00,10:00,,SI\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+        assert entries[0].virtual is True
+        assert entries[0].tipo_clase == "teorica"
+
+    def test_parser_laboratorio_queda_presencial_explicito(self):
+        archivo = _csv(
+            "codigo_materia,dia,hora_inicio,hora_fin,tipo_clase,virtual\n"
+            "MAT101,Lunes,08:00,10:00,laboratorio,\n"
+        )
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+        assert entries[0].tipo_clase == "laboratorio"
+        assert entries[0].virtual is False
+
+    def _setup(self, session):
+        session.add(MateriaDB(
+            codigo="MAT101", nombre="Análisis I",
+            periodo="cuatrimestral", active=True, horas_semanales=6,
+        ))
+        session.add(ScheduleDB(
+            id="sched1", nombre="test", fecha_upload=date(2026, 3, 1),
+        ))
+        session.commit()
+
+    def test_add_schedule_entry_normaliza(self, session):
+        from src.services.schedule_service import add_schedule_entry
+
+        self._setup(session)
+        e1 = add_schedule_entry(
+            session, "sched1", "MAT101", "Lunes",
+            time(8, 0), time(10, 0), virtual=True,
+        )
+        assert e1.tipo_clase == "teorica"
+        assert e1.virtual is True
+        e2 = add_schedule_entry(
+            session, "sched1", "MAT101", "Martes",
+            time(8, 0), time(10, 0), tipo_clase="laboratorio",
+        )
+        assert e2.virtual is False
+
+    def test_update_schedule_entry_normaliza_y_valida(self, session):
+        from src.services.schedule_service import (
+            add_schedule_entry,
+            update_schedule_entry,
+        )
+
+        self._setup(session)
+        e = add_schedule_entry(
+            session, "sched1", "MAT101", "Lunes",
+            time(8, 0), time(10, 0),
+        )
+        # Marcar virtual sin tipo → autocompleta teorica.
+        e = update_schedule_entry(session, e.id, virtual=True)
+        assert e.tipo_clase == "teorica"
+        # Cambiar a laboratorio una clase virtual → error.
+        with pytest.raises(ValueError):
+            update_schedule_entry(session, e.id, tipo_clase="laboratorio")
+        # Despejar virtual y pasar a laboratorio → presencial explícito.
+        e = update_schedule_entry(
+            session, e.id, virtual=False, tipo_clase="laboratorio",
+        )
+        assert e.virtual is False
+
+    def test_orm_deriva_en_insert_directo(self, session):
+        """Escrituras directas por ORM (sin pasar por el service
+        layer) también derivan la invariante: listener
+        ``before_insert``/``before_update`` en los modelos.
+        """
+        self._setup(session)
+        session.add(ScheduleEntryDB(
+            id="d1", schedule_id="sched1", codigo_materia="MAT101",
+            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase=None, virtual=True,
+        ))
+        session.add(ScheduleEntryDB(
+            id="d2", schedule_id="sched1", codigo_materia="MAT101",
+            dia="Martes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="laboratorio", virtual=None,
+        ))
+        session.commit()
+        assert session.get(ScheduleEntryDB, "d1").tipo_clase == "teorica"
+        assert session.get(ScheduleEntryDB, "d2").virtual is False
+
+    def test_check_constraint_lab_virtual_es_integrity_error(self, session):
+        """La contradicción real (laboratorio + virtual) no se
+        auto-corrige: la rechaza el CHECK de la tabla.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        self._setup(session)
+        session.add(ScheduleEntryDB(
+            id="bad1", schedule_id="sched1", codigo_materia="MAT101",
+            dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(10, 0),
+            tipo_clase="laboratorio", virtual=True,
+        ))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+    def test_check_constraint_protege_sql_crudo(self, session):
+        """El CHECK también cubre escrituras que salteen el ORM (SQL
+        crudo): virtual sin teorica y laboratorio sin presencial
+        explícito se rechazan a nivel de base de datos.
+        """
+        from sqlalchemy import text
+        from sqlalchemy.exc import IntegrityError
+
+        self._setup(session)
+        _ins = (
+            "INSERT INTO schedule_entries "
+            "(id, schedule_id, codigo_materia, dia, hora_inicio, "
+            "hora_fin, tipo_clase, virtual, comision_id) "
+            "VALUES (:id, 'sched1', 'MAT101', 'Lunes', '08:00:00', "
+            "'10:00:00', :tipo, :virt, NULL)"
+        )
+        with pytest.raises(IntegrityError):
+            session.connection().execute(
+                text(_ins), {"id": "raw1", "tipo": None, "virt": 1},
+            )
+        session.rollback()
+        with pytest.raises(IntegrityError):
+            session.connection().execute(
+                text(_ins),
+                {"id": "raw2", "tipo": "laboratorio", "virt": None},
+            )
+        session.rollback()
+
+
+class TestBuildScheduleGridTipoClase:
+    """Regresión 2026-09-24: `ScheduleBlock.tipo_clase` existía pero
+    `build_schedule_grid` no lo populaba — el ícono 🧪/📖 no se veía
+    en las vistas de cronograma que usan el render simple (por
+    ejemplo, los calendarios Antes/Después de la vista previa).
+    """
+
+    def test_grid_propaga_tipo_clase(self, session):
+        from src.services.schedule_service import build_schedule_grid
+
+        session.add(MateriaDB(
+            codigo="MAT101", nombre="Análisis I",
+            periodo="cuatrimestral", active=True, horas_semanales=6,
+        ))
+        sched = ScheduleDB(
+            id="sched1", nombre="test", fecha_upload=date(2026, 3, 1),
+        )
+        session.add(sched)
+        for eid, dia, tipo, virt in (
+            ("e1", "Lunes", "laboratorio", False),
+            ("e2", "Martes", "teorica", None),
+            ("e3", "Miércoles", None, None),
+        ):
+            session.add(ScheduleEntryDB(
+                id=eid, schedule_id="sched1", codigo_materia="MAT101",
+                dia=dia, hora_inicio=time(8, 0), hora_fin=time(10, 0),
+                tipo_clase=tipo, virtual=virt,
+            ))
+        session.commit()
+
+        grid = build_schedule_grid(session, "sched1")
+        assert grid["Lunes"][0].tipo_clase == "laboratorio"
+        assert grid["Martes"][0].tipo_clase == "teorica"
+        assert grid["Miércoles"][0].tipo_clase is None
 
 
 class TestValidarFilasEditor:

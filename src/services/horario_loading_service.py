@@ -79,6 +79,41 @@ class HorarioInput(BaseModel):
         return v
 
 
+def normalizar_tipo_virtual(
+    tipo_clase: Optional[str], virtual: Optional[bool],
+) -> tuple[Optional[str], Optional[bool]]:
+    """Deriva la invariante virtual/tipo de clase (2026-09-24).
+
+    Reglas (pedido del usuario, para evitar inconsistencias):
+
+    - ``virtual=True`` ⇒ el tipo es **teorica** (se autocompleta si
+      venía sin determinar; una clase virtual no puede quedar con
+      tipo sin determinar ni ser laboratorio).
+    - ``tipo_clase='laboratorio'`` ⇒ ``virtual=False`` **explícito**
+      (no ``None``): el presencial explícito pisa la herencia del
+      dictado/catálogo, así un laboratorio nunca puede terminar
+      virtual por herencia.
+
+    La misma invariante está reforzada con ``CHECK`` de base de datos
+    en ``schedule_entries`` y ``horarios`` (sólo tablas creadas a
+    partir de 2026-09-24: SQLite no permite agregar constraints a
+    tablas existentes).
+
+    Raises:
+        ValueError: si la combinación es laboratorio + virtual.
+    """
+    if virtual is True:
+        if tipo_clase == "laboratorio":
+            raise ValueError(
+                "una clase de laboratorio no puede ser virtual — el "
+                "laboratorio requiere un aula física"
+            )
+        return "teorica", True
+    if tipo_clase == "laboratorio":
+        return "laboratorio", False
+    return tipo_clase, virtual
+
+
 @dataclass
 class CodeResolution:
     """Result of resolving a materia code."""
