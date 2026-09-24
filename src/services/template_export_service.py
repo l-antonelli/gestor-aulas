@@ -311,26 +311,50 @@ def _agregar_data_validations_horarios(
             dv_hora.add(f"{col_letra}2:{col_letra}{max_row}")
             ws.add_data_validation(dv_hora)
 
-    # Tipo de clase — lista cerrada, permite blanco (= lo determina
-    # la asignación automática).
-    ref_tipos = _escribir_hoja_lista(wb, "_tipos", TIPOS_CLASE)
+    # Tipo de clase y virtual: desplegables DEPENDIENTES entre sí
+    # (2026-09-24) para que Excel no deje combinar laboratorio +
+    # virtual. La fuente de cada lista es una fórmula IF por fila
+    # (truco estándar de listas dependientes: la validación de tipo
+    # `list` acepta una fórmula que devuelve un rango). No hay
+    # circularidad: cada fórmula LEE la otra celda, no la escribe.
+    # Si el valor se tipea a mano, la validación lo rechaza igual
+    # contra la lista restringida. Pegar valores saltea cualquier
+    # DataValidation — para eso queda la guardia del importador.
+    _escribir_hoja_lista(wb, "_tipos", TIPOS_CLASE)
+    _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
+
+    # Con virtual = VERDADERO, el tipo sólo puede ser teorica
+    # (_tipos!A1); sino, la lista completa (_tipos!A1:A2).
     dv_tipo = DataValidation(
-        type="list", formula1=ref_tipos, allow_blank=True,
+        type="list",
+        formula1=(
+            "=IF($I2=TRUE,"
+            "_tipos!$A$1:$A$1,"
+            f"_tipos!$A$1:$A${len(TIPOS_CLASE)})"
+        ),
+        allow_blank=True,
         errorTitle="Tipo de clase no válido",
         error=(
             "Dejalo vacío (lo determina la asignación automática) o "
-            "elegí 'teorica' / 'laboratorio'."
+            "elegí 'teorica' / 'laboratorio'. Ojo: una clase marcada "
+            "virtual no puede ser laboratorio — el laboratorio "
+            "requiere aula física."
         ),
         showErrorMessage=True,
     )
     dv_tipo.add(f"H2:H{max_row}")
     ws.add_data_validation(dv_tipo)
 
-    # Virtual — booleano: lista de VERDADERO/FALSO reales; vacío =
-    # FALSO (presencial).
-    ref_virt = _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
+    # Con tipo = laboratorio, virtual sólo puede ser FALSO
+    # (_virtual!A2); sino, VERDADERO/FALSO (_virtual!A1:A2).
     dv_virt = DataValidation(
-        type="list", formula1=ref_virt, allow_blank=True,
+        type="list",
+        formula1=(
+            '=IF($H2="laboratorio",'
+            "_virtual!$A$2:$A$2,"
+            "_virtual!$A$1:$A$2)"
+        ),
+        allow_blank=True,
         errorTitle="Valor no válido",
         error=(
             "Elegí VERDADERO o FALSO (vacío equivale a FALSO). "
@@ -473,7 +497,10 @@ def _escribir_hoja_instrucciones_cronograma(
     row += 1
     _t(row,
        "• Una clase de laboratorio no puede ser virtual (el "
-       "laboratorio requiere un aula física).")
+       "laboratorio requiere un aula física). Los desplegables ya lo "
+       "impiden: con tipo 'laboratorio' la columna virtual sólo "
+       "ofrece FALSO, y con virtual VERDADERO el tipo sólo ofrece "
+       "'teorica'.")
     row += 1
     _t(row,
        "• La hoja está protegida (sin contraseña) para cuidar la "

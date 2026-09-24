@@ -449,7 +449,14 @@ El archivo trae:
   `Materias`), día, tipo y virtual; entero ≥ 1 para
   `codigo_comision`; validación tipográfica de hora en formato
   `HH:MM`. `nombre_materia` (fórmula de sólo lectura) y
-  `nombre_comision` (texto libre) no llevan validación.
+  `nombre_comision` (texto libre) no llevan validación. Las listas
+  de **tipo y virtual son dependientes entre sí** (2026-09-24): la
+  fuente de cada una es una fórmula `IF` por fila, así con tipo
+  `laboratorio` la lista de virtual sólo ofrece FALSO y con virtual
+  VERDADERO la de tipo sólo ofrece `teorica` — Excel mismo impide
+  la combinación laboratorio + virtual (pegar valores saltea
+  cualquier validación de Excel; para eso queda la guardia del
+  parser).
 - `fullCalcOnLoad` activado para que las fórmulas se recalculen al
   abrir el archivo (openpyxl no guarda valores cacheados).
 

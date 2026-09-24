@@ -399,6 +399,45 @@ class TestDataValidations:
                 f"Columna {col} debería estar desbloqueada"
             )
 
+    def test_laboratorio_y_virtual_son_desplegables_dependientes(
+        self, session, ciclo_con_2_materias,
+    ):
+        """Excel no debe dejar combinar laboratorio + virtual
+        (2026-09-24): las fuentes de los desplegables son fórmulas
+        condicionales por fila. Con tipo = laboratorio, la lista de
+        virtual sólo ofrece FALSO; con virtual = VERDADERO, la lista
+        de tipo sólo ofrece teorica. La validación también rechaza el
+        valor si se tipea a mano.
+        """
+        ciclo = ciclo_con_2_materias["ciclo"]
+        contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
+
+        wb = load_workbook(io.BytesIO(contenido))
+        ws = wb["Horarios"]
+
+        dv_tipo = dv_virt = None
+        for dv in ws.data_validations.dataValidation:
+            if any(str(r).startswith("H2") for r in dv.sqref.ranges):
+                dv_tipo = dv
+            if any(str(r).startswith("I2") for r in dv.sqref.ranges):
+                dv_virt = dv
+
+        assert dv_virt is not None
+        _f_virt = dv_virt.formula1 or ""
+        assert _f_virt.startswith("=IF(")
+        assert "$H2" in _f_virt
+        # Rama restringida: sólo FALSO (fila 2 de _virtual).
+        assert "_virtual!$A$2:$A$2" in _f_virt
+        assert "_virtual!$A$1:$A$2" in _f_virt
+
+        assert dv_tipo is not None
+        _f_tipo = dv_tipo.formula1 or ""
+        assert _f_tipo.startswith("=IF(")
+        assert "$I2" in _f_tipo
+        # Rama restringida: sólo teorica (fila 1 de _tipos).
+        assert "_tipos!$A$1:$A$1" in _f_tipo
+        assert "_tipos!$A$1:$A$2" in _f_tipo
+
     def test_hoja_horarios_es_tabla_de_excel(
         self, session, ciclo_con_2_materias,
     ):
