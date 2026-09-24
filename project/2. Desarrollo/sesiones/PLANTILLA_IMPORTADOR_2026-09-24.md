@@ -113,6 +113,27 @@ del usuario probándola en Excel:
   render simple muestra los íconos 💻/🧪/📖 en todas las vistas de
   cronograma (antes faltaban en los calendarios de la vista previa).
 
+## Lote 4 — Espejo en Inscriptos (post-smoke exitoso del usuario)
+
+Tras validar el flujo de cronograma en Excel real, el usuario pidió
+llevar las mismas mejoras al módulo Inscriptos:
+
+- **Plantilla espejo**: hoja visible `Materias` protegida con el
+  contexto del catálogo (incluido el código Guaraní, para cruzar con
+  las planillas de las cátedras) vía
+  `obtener_contexto_materias_catalogo`; nombre primero de sólo
+  lectura, código como única entrada, tabla `TablaInscriptos`,
+  protección y salteo de filas con sólo fórmula en el parser.
+- **Match forzado con asociación inline**: se eliminó la sección
+  legacy "Sin matchear" (re-parseaba en cada render el Excel
+  hardcodeado de la carga inicial y mostraba 41 códigos que no viven
+  en la base). El preview expone `codigos_no_resueltos` y la vista
+  previa ofrece asociar el código a una materia (alias persistido) y
+  regenerarse con esas filas resueltas.
+- **Cobertura por período**: tabla materias × períodos con ✓/— y
+  conteo de huecos, filtrable, para ver qué materias no tienen datos
+  para qué períodos.
+
 ## Decisiones técnicas que conviene recordar
 
 - **Referencia circular**: la autopopulación bidireccional
