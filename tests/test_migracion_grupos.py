@@ -320,3 +320,118 @@ class TestBootstrapSinSedes:
             )
         ).all())
         assert sedes == []
+
+
+# =============================================================================
+# Regresión 2026-09-24: renombrar un grupo no debe hacer que el
+# bootstrap lo re-cree vacío en la siguiente corrida (reporte del
+# usuario). Ver docstring de la clase.
+# =============================================================================
+
+
+def _seed(engine) -> None:
+    from datetime import date
+
+    with Session(engine) as s:
+        s.add(CarreraDB(codigo="AGR", nombre="Agrimensura"))
+        s.add(MateriaDB(
+            codigo="A10", nombre="Topografía",
+            periodo="cuatrimestral", active=True,
+        ))
+        s.flush()
+        pv = PlanCarreraVersionDB(
+            id="pv1", carrera_codigo="AGR", nombre="Plan",
+            fecha_creacion=date(2025, 1, 1),
+        )
+        s.add(pv)
+        s.flush()
+        s.add(PlanEstudioDB(
+            plan_version_id="pv1", materia_codigo="A10",
+            carrera_codigo="AGR", anio_plan=1, cuatrimestre_plan="1C",
+        ))
+        s.commit()
+
+
+def _nombres_grupos(engine) -> list[str]:
+    with Session(engine) as s:
+        return sorted(
+            g.nombre for g in s.exec(select(GrupoMateriaDB)).all()
+        )
+
+
+
+class TestBootstrapNoRecreaGruposRenombrados:
+    def test_rename_sobrevive_a_reejecuciones(self, engine):
+        _seed(engine)
+        _migrate_grupos_materia(engine)
+        assert "Específicas de Agrimensura" in _nombres_grupos(engine)
+
+        # El usuario renombra el grupo desde la UI.
+        with Session(engine) as s:
+            g = s.exec(select(GrupoMateriaDB).where(
+                GrupoMateriaDB.nombre == "Específicas de Agrimensura"
+            )).one()
+            g.nombre = "Agrimensura"
+            s.add(g)
+            s.commit()
+            gid_renombrado = g.id
+
+        # Nueva carga de página → el bootstrap NO debe re-crear el
+        # grupo con el nombre viejo ni ningún otro.
+        nombres_antes = _nombres_grupos(engine)
+        _migrate_grupos_materia(engine)
+        assert _nombres_grupos(engine) == nombres_antes
+        assert "Específicas de Agrimensura" not in _nombres_grupos(engine)
+
+        # La materia sigue en el grupo renombrado.
+        with Session(engine) as s:
+            mat = s.get(MateriaDB, "A10")
+            assert mat.grupo_id == gid_renombrado
+
+    def test_materia_nueva_post_rename_cae_a_sin_clasificar(self, engine):
+        """Con el grupo esperado renombrado, una materia nueva de esa
+        carrera no debe resucitar el grupo viejo: cae a "Sin
+        clasificar" y el usuario la reubica desde la UI.
+        """
+        _seed(engine)
+        _migrate_grupos_materia(engine)
+        with Session(engine) as s:
+            g = s.exec(select(GrupoMateriaDB).where(
+                GrupoMateriaDB.nombre == "Específicas de Agrimensura"
+            )).one()
+            g.nombre = "Agrimensura"
+            s.add(g)
+            # Materia nueva sin grupo, exclusiva de AGR.
+            s.add(MateriaDB(
+                codigo="A11", nombre="Geodesia",
+                periodo="cuatrimestral", active=True,
+            ))
+            s.add(PlanEstudioDB(
+                plan_version_id="pv1", materia_codigo="A11",
+                carrera_codigo="AGR", anio_plan=2,
+                cuatrimestre_plan="1C",
+            ))
+            s.commit()
+
+        nombres_antes = _nombres_grupos(engine)
+        _migrate_grupos_materia(engine)
+        assert _nombres_grupos(engine) == nombres_antes
+
+        with Session(engine) as s:
+            mat = s.get(MateriaDB, "A11")
+            sin_clasificar = s.exec(select(GrupoMateriaDB).where(
+                GrupoMateriaDB.es_sin_clasificar == True  # noqa: E712
+            )).one()
+            assert mat.grupo_id == sin_clasificar.id
+
+    def test_bootstrap_inicial_sigue_creando_todo(self, engine):
+        _seed(engine)
+        _migrate_grupos_materia(engine)
+        nombres = _nombres_grupos(engine)
+        for esperado in ("Sin clasificar", "F", "FB", "FI", "CE",
+                         "Específicas de Agrimensura"):
+            assert esperado in nombres
+        with Session(engine) as s:
+            mat = s.get(MateriaDB, "A10")
+            g = s.get(GrupoMateriaDB, mat.grupo_id)
+            assert g.nombre == "Específicas de Agrimensura"

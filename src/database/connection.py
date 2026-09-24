@@ -1131,11 +1131,29 @@ def _migrate_grupos_materia(eng):
             )
             return
 
-        # ¿Ya se ejecutó? Chequeo por existencia del grupo "Sin clasificar"
-        # y por si todas las materias tienen grupo asignado.
+        # ¿Ya se ejecutó? El grupo "Sin clasificar" existe ⇔ el
+        # bootstrap ya corrió. Fix 2026-09-24 (reporte del usuario):
+        # antes la "idempotencia" era POR NOMBRE de grupo, así que
+        # renombrar un grupo desde la UI hacía que la siguiente carga
+        # de página lo RE-CREARA vacío. Semántica correcta:
+        #
+        # - Bootstrap inicial (DB fresca): crear todos los grupos y
+        #   asignar todas las materias.
+        # - Corridas posteriores: NO crear ningún grupo. Si hay
+        #   materias sin grupo (materias nuevas del catálogo), se
+        #   asignan contra los grupos QUE EXISTAN; si el grupo
+        #   esperado fue renombrado o borrado, caen a "Sin
+        #   clasificar" y el usuario las reubica desde la UI.
         existente_sin_clasificar = conn.exec_driver_sql(
             "SELECT id FROM grupo_materia WHERE es_sin_clasificar = 1 LIMIT 1"
         ).fetchone()
+        bootstrap_inicial = existente_sin_clasificar is None
+        if not bootstrap_inicial:
+            _n_sin_grupo = conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM materias WHERE grupo_id IS NULL"
+            ).fetchone()[0]
+            if _n_sin_grupo == 0:
+                return
 
         # Todas las sedes activas (usadas para el grupo "Sin clasificar"
         # y para chequear qué grupos base tienen sede válida).
@@ -1209,6 +1227,9 @@ def _migrate_grupos_materia(eng):
             if existente:
                 grupo_id_por_nombre[nombre] = existente[0]
                 continue
+            if not bootstrap_inicial:
+                # Re-corrida: no resucitar grupos renombrados/borrados.
+                continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
                 "INSERT INTO grupo_materia "
@@ -1241,6 +1262,9 @@ def _migrate_grupos_materia(eng):
             ).fetchone()
             if existente:
                 grupo_id_por_carrera[cod] = existente[0]
+                continue
+            if not bootstrap_inicial:
+                # Re-corrida: no resucitar grupos renombrados/borrados.
                 continue
             gid = str(uuid_mod.uuid4())
             conn.exec_driver_sql(
@@ -1278,15 +1302,22 @@ def _migrate_grupos_materia(eng):
         for (codigo,) in materias_sin_grupo:
             grupo_asignado: str
             # (a) Match por prefijo.
+            # `.get(..., sin_clasificar)`: en re-corridas el grupo
+            # base puede haber sido renombrado — la materia nueva cae
+            # a "Sin clasificar" en vez de resucitarlo (2026-09-24).
             cod_upper = (codigo or "").upper()
             if cod_upper.startswith("FB"):
-                grupo_asignado = grupo_id_por_nombre["FB"]
+                grupo_asignado = grupo_id_por_nombre.get(
+                    "FB", grupo_sin_clasificar_id)
             elif cod_upper.startswith("FI"):
-                grupo_asignado = grupo_id_por_nombre["FI"]
+                grupo_asignado = grupo_id_por_nombre.get(
+                    "FI", grupo_sin_clasificar_id)
             elif cod_upper.startswith("CE"):
-                grupo_asignado = grupo_id_por_nombre["CE"]
+                grupo_asignado = grupo_id_por_nombre.get(
+                    "CE", grupo_sin_clasificar_id)
             elif cod_upper.startswith("F"):
-                grupo_asignado = grupo_id_por_nombre["F"]
+                grupo_asignado = grupo_id_por_nombre.get(
+                    "F", grupo_sin_clasificar_id)
             else:
                 # (b) Carreras donde aparece la materia. Si es
                 # exactamente una → grupo de esa carrera. Si no,
