@@ -71,12 +71,27 @@ def _parse_virtual(value) -> bool:
         return False
     if isinstance(value, bool):
         return value
+    # Números 0/1 (2026-09-24, reporte de usuario): cuando la columna
+    # mezcla booleanos con celdas vacías, pandas la convierte a
+    # numérica y un VERDADERO llega acá como ``1.0`` (float) — el
+    # caso más común al marcar virtual sólo algunas filas.
+    if isinstance(value, (int, float)):
+        if pd.isna(value):
+            return False
+        if float(value) == 1.0:
+            return True
+        if float(value) == 0.0:
+            return False
+        raise ValueError(
+            f"virtual '{value}' no reconocido "
+            "(esperado: VERDADERO/FALSO, SI/NO o vacío = FALSO)"
+        )
     s = str(value).strip().lower()
     if s == "" or s == "nan":
         return False
-    if s in ("si", "sí", "s", "true", "verdadero", "1", "yes", "y"):
+    if s in ("si", "sí", "s", "true", "verdadero", "1", "1.0", "yes", "y"):
         return True
-    if s in ("no", "n", "false", "falso", "0"):
+    if s in ("no", "n", "false", "falso", "0", "0.0"):
         return False
     raise ValueError(
         f"virtual '{value}' no reconocido "

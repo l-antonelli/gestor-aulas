@@ -148,6 +148,52 @@ class TestVirtualBooleano:
         assert "virtual" in errors[0]
 
 
+class TestVirtualBooleanoDesdeExcel:
+    """Regresión 2026-09-24 (reporte del usuario): en un Excel real,
+    una columna `virtual` con UN solo booleano y el resto vacío llega
+    al parser como float — pandas convierte la mezcla bool + NaN a
+    numérica (True → 1.0). El parser rechazaba '1.0' como no
+    reconocido, con lo que la plantilla nueva fallaba en el caso más
+    normal (marcar virtual una sola fila).
+    """
+
+    def _xlsx(self, virtuales: list) -> io.BytesIO:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Horarios"
+        ws.append(["codigo_materia", "dia", "hora_inicio",
+                   "hora_fin", "virtual"])
+        dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+        for i, v in enumerate(virtuales):
+            ws.append(["MAT101", dias[i], "08:00", "10:00", v])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        buf.name = "horarios.xlsx"  # type: ignore[attr-defined]
+        return buf
+
+    def test_bool_true_mezclado_con_vacios(self):
+        archivo = self._xlsx([None, True, None])
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+        assert [e.virtual for e in entries] == [False, True, False]
+
+    def test_bool_false_y_true_mezclados_con_vacios(self):
+        archivo = self._xlsx([False, None, True, None])
+        entries, errors = parse_horarios_file(archivo)
+        assert errors == []
+        assert [e.virtual for e in entries] == [False, False, True, False]
+
+    def test_numero_distinto_de_cero_y_uno_es_error(self):
+        archivo = self._xlsx([2])
+        entries, errors = parse_horarios_file(archivo)
+        assert entries == []
+        assert len(errors) == 1
+        assert "virtual" in errors[0]
+
+
 class TestFilasVacias:
     def test_fila_totalmente_vacia_se_saltea_sin_error(self):
         """Las filas de la plantilla con la fórmula de auto-población
