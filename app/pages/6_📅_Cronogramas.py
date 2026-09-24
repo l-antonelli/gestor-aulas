@@ -1205,27 +1205,31 @@ with tab_cargar:
                             f"### 📚 Materias del archivo "
                             f"({len(_materias_del_archivo)})"
                         )
-                        # Fix auditoría H12/B7 (2026-09-23): el caption
-                        # prometía "ajustar horarios manualmente en la
-                        # vista Después", pero ambos calendarios son de
-                        # sólo lectura.
                         st.caption(
                             "Para cada materia elegí si querés "
                             "**reemplazar** las entradas del destino "
                             "por las del archivo, **agregar** las "
                             "nuevas dejando las previas, o "
-                            "**ignorarla** en este import. Los dos "
-                            "calendarios son de sólo lectura: sirven "
-                            "para comparar el antes y el después. Los "
-                            "ajustes finos de horario se hacen después "
-                            "de confirmar, desde la pestaña "
-                            "**Ver / Editar**."
+                            "**ignorarla** en este import (también "
+                            "para materias nuevas, si el archivo vino "
+                            "mal). Los calendarios Antes/Después son "
+                            "de sólo lectura para comparar; los "
+                            "ajustes finos se hacen en la sección "
+                            "**✏️ Ajustes manuales** de cada tarjeta, "
+                            "que edita el preview antes de confirmar."
                         )
 
                         from src.ui.schedule_materia_editor import (
+                            _BASE_TIME_OPTIONS as _SME_BASE_TIME_OPTIONS,
+                            _DIAS_LIST as _SME_DIAS_LIST,
+                            _persist_edits as _sme_persist_edits,
+                            _time_str as _sme_time_str,
                             ESTADO_ICON_MAP,
                             compute_materia_checks_from_db,
                             render_materia_checks_inline,
+                        )
+                        from src.services.comision_service import (
+                            list_comisiones_for_schedule_materia,
                         )
                         from src.services.cronograma_import_service import (
                             regenerar_materia_en_shadow,
@@ -1284,122 +1288,326 @@ with tab_cargar:
                                 "· 🕰 con datos previos"
                                 if _tiene_prev else "· 🆕 nueva"
                             )
+                            # El título refleja también los errores de
+                            # la última regeneración (pedido
+                            # 2026-09-23): el estado estructural solo
+                            # no alcanza si la decisión no se pudo
+                            # aplicar por completo.
+                            _err_tag = (
+                                " · ⚠️ con errores"
+                                if _regen_errs.get(_mc) else ""
+                            )
+                            _dec_tag = (
+                                " · 🚫 se ignora"
+                                if _decision_actual == "ignorar" else ""
+                            )
                             _exp_label = (
                                 f"{_estado_badge_icon} **{_mc}** · "
                                 f"{_mat_nombre} — "
                                 f"{_check_res['estado']} · "
                                 f"{_check_res['n_entries']} entrada(s) "
-                                f"{_prev_tag}"
+                                f"{_prev_tag}{_dec_tag}{_err_tag}"
                             )
                             _default_open = (
                                 _check_res["estado"] != "OK"
+                                or bool(_regen_errs.get(_mc))
                             )
                             with st.expander(
                                 _exp_label, expanded=_default_open,
                             ):
-                                # Radio de decisión. Sólo aplica si la
-                                # materia tenía datos previos (para las
-                                # nuevas no hay nada que reemplazar).
+                                # --- Ajustes manuales, arriba de todo (pedido
+                                # 2026-09-23): expander anidado colapsado para no
+                                # tapar el radio ni los calendarios. Streamlit 1.52
+                                # tolera el anidamiento (verificado en la auditoría).
+                                with st.expander(
+                                    "✏️ Ajustes manuales (se aplican al preview, no al destino)",
+                                    expanded=False,
+                                ):
+                                    # --- Ajustes manuales del "Después" ---
+                                    # (Pedido 2026-09-23, cierre del punto
+                                    # que quedó sin implementar del rediseño
+                                    # per-materia: "respeta ediciones
+                                    # manuales posteriores que haga el
+                                    # usuario con los controles".)
+                                    # Data editor precargado con las entries
+                                    # del shadow para esta materia. Al
+                                    # aplicar, persiste al shadow (no al
+                                    # destino) y refresca el Después + los
+                                    # chequeos + las métricas globales.
+                                    # Cambiar la decisión del radio regenera
+                                    # la materia y pisa estos ajustes
+                                    # (semántica documentada).
+                                    with next(get_session()) as _sess:
+                                        _ed_entries = list(_sess.exec(
+                                            select(ScheduleEntryDB)
+                                            .where(
+                                                ScheduleEntryDB.schedule_id
+                                                == _shadow_id
+                                            )
+                                            .where(
+                                                ScheduleEntryDB.codigo_materia
+                                                == _mc
+                                            )
+                                        ).all())
+                                        _ed_coms = (
+                                            list_comisiones_for_schedule_materia(
+                                                _sess, _shadow_id, _mc,
+                                            )
+                                        )
+                                    _ed_com_by_id = {c.id: c for c in _ed_coms}
+                                    _ed_rows = []
+                                    for _e in _ed_entries:
+                                        _ec = (
+                                            _ed_com_by_id.get(_e.comision_id)
+                                            if _e.comision_id else None
+                                        )
+                                        _ed_rows.append({
+                                            "_eid": _e.id,
+                                            "Día": _e.dia,
+                                            "Inicio": _sme_time_str(
+                                                _e.hora_inicio,
+                                            ),
+                                            "Fin": _sme_time_str(_e.hora_fin),
+                                            "Comisión": (
+                                                _ec.numero if _ec else None
+                                            ),
+                                            "Tipo": (
+                                                _e.tipo_clase
+                                                or "sin determinar"
+                                            ),
+                                        })
+                                    _ed_df = pd.DataFrame(
+                                        _ed_rows,
+                                        columns=[
+                                            "_eid", "Día", "Inicio", "Fin",
+                                            "Comisión", "Tipo",
+                                        ],
+                                    )
+                                    # Fingerprint de las entries: cuando la
+                                    # regeneración (u otro apply) cambia el
+                                    # shadow, cambia la key y el editor se
+                                    # resetea con los datos frescos. Con
+                                    # ediciones sin aplicar, el fingerprint
+                                    # no cambia y el estado del widget
+                                    # sobrevive al rerun.
+                                    _ed_fp = abs(hash(tuple(sorted(
+                                        (r["_eid"], r["Día"], r["Inicio"],
+                                         r["Fin"], str(r["Comisión"]),
+                                         r["Tipo"])
+                                        for r in _ed_rows
+                                    )))) % 10**10
+                                    _ed_com_nums = sorted(
+                                        {c.numero for c in _ed_coms}
+                                    ) or [1]
+                                    _ed_com_opts = _ed_com_nums + [
+                                        max(_ed_com_nums) + 1,
+                                    ]
+                                    _ed_times = sorted(
+                                        set(_SME_BASE_TIME_OPTIONS)
+                                        | {r["Inicio"] for r in _ed_rows}
+                                        | {r["Fin"] for r in _ed_rows}
+                                    )
+                                    st.caption(
+                                        "Corregí acá los horarios que "
+                                        "vinieron mal en el archivo antes "
+                                        "de confirmar: editá celdas, "
+                                        "agregá filas con «+» o borrá "
+                                        "filas con la papelera (una fila "
+                                        "borrada no se importa). Si "
+                                        "cambiás la decisión de arriba, "
+                                        "estos ajustes se pierden."
+                                    )
+                                    _ed_edited = st.data_editor(
+                                        _ed_df,
+                                        column_config={
+                                            "_eid": None,
+                                            "Día": st.column_config.SelectboxColumn(
+                                                "Día",
+                                                options=_SME_DIAS_LIST,
+                                                required=True,
+                                                width="medium",
+                                            ),
+                                            "Inicio": st.column_config.SelectboxColumn(
+                                                "Inicio",
+                                                options=_ed_times,
+                                                required=True,
+                                                width="small",
+                                            ),
+                                            "Fin": st.column_config.SelectboxColumn(
+                                                "Fin",
+                                                options=_ed_times,
+                                                required=True,
+                                                width="small",
+                                            ),
+                                            "Comisión": st.column_config.SelectboxColumn(
+                                                "Comisión",
+                                                options=_ed_com_opts,
+                                                required=True,
+                                                width="small",
+                                            ),
+                                            "Tipo": st.column_config.SelectboxColumn(
+                                                "Tipo",
+                                                options=[
+                                                    "sin determinar",
+                                                    "teorica",
+                                                    "laboratorio",
+                                                ],
+                                                default="sin determinar",
+                                                width="small",
+                                            ),
+                                        },
+                                        num_rows="dynamic",
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        key=f"cimp_ed_{_shadow_id}_{_mc}_{_ed_fp}",
+                                    )
+                                    _ed_cols_cmp = [
+                                        "Día", "Inicio", "Fin",
+                                        "Comisión", "Tipo",
+                                    ]
+                                    _ed_changed = (
+                                        len(_ed_edited) != len(_ed_df)
+                                        or not _ed_edited[_ed_cols_cmp]
+                                        .reset_index(drop=True)
+                                        .equals(
+                                            _ed_df[_ed_cols_cmp]
+                                            .reset_index(drop=True)
+                                        )
+                                    )
+                                    if _ed_changed and st.button(
+                                        "💾 Aplicar ajustes al preview",
+                                        key=f"cimp_ed_apply_{_shadow_id}_{_mc}",
+                                        type="primary",
+                                    ):
+                                        _ed_valid = _ed_edited.dropna(
+                                            subset=["Día", "Inicio", "Fin"],
+                                        )
+                                        try:
+                                            _sme_persist_edits(
+                                                _shadow_id, _mc, _ed_valid,
+                                            )
+                                            st.session_state[
+                                                _pending_reval_key
+                                            ] = True
+                                            st.rerun()
+                                        except ValueError as _exc:
+                                            st.error(
+                                                f"No se pudieron aplicar "
+                                                f"los ajustes: {_exc}"
+                                            )
+
+                                # Radio de decisión. Para materias con
+                                # datos previos: reemplazar / agregar /
+                                # ignorar. Para materias nuevas
+                                # (2026-09-23): agregar / ignorar — el
+                                # usuario puede excluir del import una
+                                # materia cuyo archivo vino mal, sin
+                                # comprometerse a subirla, y corregirla
+                                # en el Excel de origen o con el editor
+                                # de abajo.
                                 if _tiene_prev:
                                     _dec_options = [
                                         "reemplazar",
                                         "agregar",
                                         "ignorar",
                                     ]
-                                    _dec_labels = {
-                                        "reemplazar": (
-                                            "Reemplazar (borrar previas + "
-                                            "usar sólo las del archivo)"
-                                        ),
-                                        "agregar": (
-                                            "Agregar (dejar previas + "
-                                            "sumar comisiones nuevas del "
-                                            "archivo)"
-                                        ),
-                                        "ignorar": (
-                                            "Ignorar (dejar exactamente "
-                                            "como está el destino)"
-                                        ),
-                                    }
-                                    _new_dec = st.radio(
-                                        "Decisión al confirmar el import",
-                                        options=_dec_options,
-                                        index=_dec_options.index(
-                                            _decision_actual
-                                        ),
-                                        format_func=lambda k: _dec_labels[k],
-                                        key=f"cimp_dec_{_shadow_id}_{_mc}",
-                                        horizontal=False,
+                                else:
+                                    _dec_options = [
+                                        "agregar",
+                                        "ignorar",
+                                    ]
+                                _dec_labels = {
+                                    "reemplazar": (
+                                        "Reemplazar (borrar previas + "
+                                        "usar sólo las del archivo)"
+                                    ),
+                                    "agregar": (
+                                        "Agregar (dejar previas + "
+                                        "sumar comisiones nuevas del "
+                                        "archivo)"
+                                        if _tiene_prev else
+                                        "Agregar (importar los "
+                                        "horarios del archivo)"
+                                    ),
+                                    "ignorar": (
+                                        "Ignorar (dejar exactamente "
+                                        "como está el destino)"
+                                        if _tiene_prev else
+                                        "Ignorar (no importar esta "
+                                        "materia en este import)"
+                                    ),
+                                }
+                                _new_dec = st.radio(
+                                    "Decisión al confirmar el import",
+                                    options=_dec_options,
+                                    index=_dec_options.index(
+                                        _decision_actual
+                                    ),
+                                    format_func=lambda k: _dec_labels[k],
+                                    key=f"cimp_dec_{_shadow_id}_{_mc}",
+                                    horizontal=False,
+                                )
+                                if _new_dec != _decision_actual:
+                                    # Fix auditoría H11 (2026-09-23):
+                                    # la decisión se persiste SOLO
+                                    # si la regeneración salió bien
+                                    # — antes se guardaba primero y
+                                    # un fallo dejaba el radio
+                                    # mostrando una decisión que el
+                                    # shadow nunca aplicó (y
+                                    # Confirmar persistía lo que el
+                                    # shadow tenía, no lo que la
+                                    # pantalla decía).
+                                    _archivo, _sheet = (
+                                        _archivo_para_regenerar()
                                     )
-                                    if _new_dec != _decision_actual:
-                                        # Fix auditoría H11 (2026-09-23):
-                                        # la decisión se persiste SOLO
-                                        # si la regeneración salió bien
-                                        # — antes se guardaba primero y
-                                        # un fallo dejaba el radio
-                                        # mostrando una decisión que el
-                                        # shadow nunca aplicó (y
-                                        # Confirmar persistía lo que el
-                                        # shadow tenía, no lo que la
-                                        # pantalla decía).
-                                        _archivo, _sheet = (
-                                            _archivo_para_regenerar()
-                                        )
-                                        if _archivo is None:
+                                    if _archivo is None:
+                                        _regen_errs[_mc] = [
+                                            "Se perdió la copia del "
+                                            "archivo en esta sesión "
+                                            "— descartá el preview "
+                                            "y volvé a subirlo."
+                                        ]
+                                        st.rerun()
+                                    else:
+                                        try:
+                                            with next(get_session()) as _sess:  # noqa: E501
+                                                _regen_res = regenerar_materia_en_shadow(  # noqa: E501
+                                                    _sess, _shadow_id,
+                                                    _mc,
+                                                    decision=_new_dec,
+                                                    file=_archivo,
+                                                    sheet_name=_sheet,
+                                                )
+                                            _decisiones_map[_mc] = (
+                                                _new_dec
+                                            )
+                                            # Fix auditoría H3
+                                            # (2026-09-23): los
+                                            # errores del commit
+                                            # (colisión de nombre
+                                            # de comisión) ya no se
+                                            # descartan — se
+                                            # persisten y se
+                                            # muestran tras el
+                                            # rerun.
+                                            if _regen_res.errors:
+                                                _regen_errs[_mc] = list(
+                                                    _regen_res.errors
+                                                )
+                                            else:
+                                                _regen_errs.pop(
+                                                    _mc, None,
+                                                )
+                                            st.session_state[
+                                                _pending_reval_key
+                                            ] = True
+                                            st.rerun()
+                                        except ValueError as _exc:
                                             _regen_errs[_mc] = [
-                                                "Se perdió la copia del "
-                                                "archivo en esta sesión "
-                                                "— descartá el preview "
-                                                "y volvé a subirlo."
+                                                str(_exc)
                                             ]
                                             st.rerun()
-                                        else:
-                                            try:
-                                                with next(get_session()) as _sess:  # noqa: E501
-                                                    _regen_res = regenerar_materia_en_shadow(  # noqa: E501
-                                                        _sess, _shadow_id,
-                                                        _mc,
-                                                        decision=_new_dec,
-                                                        file=_archivo,
-                                                        sheet_name=_sheet,
-                                                    )
-                                                _decisiones_map[_mc] = (
-                                                    _new_dec
-                                                )
-                                                # Fix auditoría H3
-                                                # (2026-09-23): los
-                                                # errores del commit
-                                                # (colisión de nombre
-                                                # de comisión) ya no se
-                                                # descartan — se
-                                                # persisten y se
-                                                # muestran tras el
-                                                # rerun.
-                                                if _regen_res.errors:
-                                                    _regen_errs[_mc] = list(
-                                                        _regen_res.errors
-                                                    )
-                                                else:
-                                                    _regen_errs.pop(
-                                                        _mc, None,
-                                                    )
-                                                st.session_state[
-                                                    _pending_reval_key
-                                                ] = True
-                                                st.rerun()
-                                            except ValueError as _exc:
-                                                _regen_errs[_mc] = [
-                                                    str(_exc)
-                                                ]
-                                                st.rerun()
-                                else:
-                                    st.caption(
-                                        "Materia nueva en este "
-                                        "cronograma — no hay entradas "
-                                        "previas que reemplazar. Se "
-                                        "agregan tal cual vienen del "
-                                        "archivo."
-                                    )
 
                                 # Errores persistidos de la última
                                 # regeneración de ESTA materia.

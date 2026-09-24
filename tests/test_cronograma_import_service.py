@@ -976,6 +976,54 @@ class TestRegenerarDevuelveErrores:
                 decision="reemplazar", file=None,
             )
 
+    def test_ignorar_materia_nueva_la_excluye_del_import(
+        self, session, setup_catalogo,
+    ):
+        """Pedido 2026-09-23: el usuario puede ignorar una materia
+        NUEVA (sin datos previos) cuyo archivo vino mal, sin
+        comprometerse a subirla. Antes `commit_import` forzaba
+        "agregar" para materias sin datos previos, pisando el
+        "ignorar" — la decisión era imposible de aplicar.
+        """
+        from src.services.cronograma_import_service import (
+            crear_shadow_import,
+            finalizar_shadow_import,
+            regenerar_materia_en_shadow,
+        )
+        sched = setup_catalogo["schedule"]
+        df = pd.DataFrame([
+            {"codigo_materia": "MAT101", "comision": "1",
+             "dia": "Lunes", "hora_inicio": "08:00", "hora_fin": "10:00"},
+            {"codigo_materia": "FIS101", "comision": "1",
+             "dia": "Martes", "hora_inicio": "09:00", "hora_fin": "12:00"},
+        ])
+        excel = _fake_excel(df)
+        shadow, _ = crear_shadow_import(session, sched.id, excel)
+
+        # El usuario decide ignorar FIS101 (vino mal en el archivo).
+        excel.seek(0)
+        regenerar_materia_en_shadow(
+            session, shadow.id, "FIS101",
+            decision="ignorar", file=excel,
+        )
+        fis_shadow = session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == shadow.id)
+            .where(ScheduleEntryDB.codigo_materia == "FIS101")
+        ).all()
+        assert fis_shadow == [], (
+            "Con 'ignorar', FIS101 no debe quedar en el shadow"
+        )
+
+        res = finalizar_shadow_import(session, shadow.id)
+        entries = session.exec(
+            select(ScheduleEntryDB).where(
+                ScheduleEntryDB.schedule_id == sched.id
+            )
+        ).all()
+        assert {e.codigo_materia for e in entries} == {"MAT101"}
+        assert res.entries_finales == 1
+
 
 class TestCodigosDualesMismaMateria:
     """Auditoría H9 (2026-09-23): el archivo trae el mismo dictado bajo

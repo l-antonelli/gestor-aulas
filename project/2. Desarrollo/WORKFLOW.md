@@ -502,21 +502,41 @@ copia del destino. La decisión de merge por default es **"reemplazar"**
 para materias con datos previos y **"agregar"** para materias nuevas.
 
 La UI del preview es un loop de expanders — una tarjeta por cada
-materia que aparece en el archivo. Adentro de cada expander:
+materia que aparece en el archivo. El título de cada tarjeta lleva el
+ícono y el estado estructural de la materia, más los tags "con datos
+previos" / "nueva", "🚫 se ignora" cuando la decisión activa es
+ignorar, y "⚠️ con errores" cuando la última regeneración no se pudo
+aplicar por completo. Adentro de cada expander, en orden:
 
-- **Radio de decisión** (`reemplazar` / `agregar` / `ignorar`, sólo
-  para materias con datos previos). Cambiar la decisión llama a
-  `regenerar_materia_en_shadow` y recomputa la vista Después.
-  Ediciones manuales previas en el shadow para esa materia se
-  pierden — es predecible.
+- **✏️ Ajustes manuales** (expander anidado, colapsado): un
+  `data_editor` precargado con las entries del shadow para esa
+  materia (Día / Inicio / Fin / Comisión / Tipo, filas dinámicas).
+  "Aplicar ajustes al preview" persiste **al shadow** (no al destino)
+  con la misma maquinaria del editor por materia (`_persist_edits` →
+  `sync_preview_edits_to_schedule`) y refresca el Después, los
+  chequeos y las métricas globales. Borrar una fila = esa entrada no
+  se importa. La key del editor lleva un fingerprint de las entries:
+  cuando la decisión del radio regenera la materia, el editor se
+  resetea solo con los datos frescos (los ajustes manuales de esa
+  materia se pierden — semántica documentada y deliberada).
+- **Radio de decisión**: `reemplazar` / `agregar` / `ignorar` para
+  materias con datos previos; `agregar` / `ignorar` para materias
+  nuevas (2026-09-23 — el usuario puede excluir del import una
+  materia cuyo archivo vino mal, sin comprometerse a subirla, y
+  corregirla en el Excel de origen o con los ajustes manuales).
+  Cambiar la decisión llama a `regenerar_materia_en_shadow` y
+  recomputa la vista Después; los errores del resultado
+  (`ImportResult.errors`) se persisten y se muestran dentro de la
+  tarjeta. La decisión se guarda sólo si la regeneración salió bien.
 - **Columna Antes**: calendario read-only con los horarios de esa
   materia en el destino (estado actual).
 - **Columna Después**: calendario read-only con los horarios en el
-  shadow (estado hipotético después de aplicar la decisión).
+  shadow (estado hipotético después de aplicar la decisión y los
+  ajustes manuales).
 - **Chequeos estructurales** de la materia
-  (`compute_materia_checks_from_db`), los mismos 10 que muestra el
+  (`compute_materia_checks_from_db`), los mismos once que muestra el
   panel Validar → Detalle por materia. Cada tarjeta abre por default
-  si el estado no es OK.
+  si el estado no es OK o si hay errores de regeneración pendientes.
 
 Debajo del listado, un container con **métricas globales** del
 cronograma hipotético (`validar_cronograma` sobre el shadow —

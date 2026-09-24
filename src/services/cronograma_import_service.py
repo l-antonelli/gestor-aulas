@@ -343,13 +343,17 @@ def commit_import(
     for mp in preview.materias:
         decision: MergePolicy = decisiones.get(mp.materia_codigo, "agregar")
 
-        if not mp.tiene_datos_previos:
-            # Nada previo — siempre agregar, sin importar la decisión.
-            decision = "agregar"
-
+        # "ignorar" se respeta SIEMPRE, tenga o no datos previos
+        # (2026-09-23): el usuario puede excluir del import una materia
+        # nueva cuyo archivo vino mal, sin comprometerse a subirla.
+        # Antes el forzado a "agregar" de abajo pisaba el "ignorar".
         if decision == "ignorar":
             result.materias_ignoradas.append(mp.materia_codigo)
             continue
+
+        if not mp.tiene_datos_previos:
+            # Nada previo — "reemplazar" no tiene sentido; se agrega.
+            decision = "agregar"
 
         attrs_previos: dict[str, dict] = {}
         if decision == "reemplazar":
