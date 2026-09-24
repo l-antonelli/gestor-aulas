@@ -64,7 +64,7 @@ comunes, errores frecuentes y preguntas frecuentes específicas:
   estudio.
 - **[04 — Ciclos](modulos/04_Ciclos.md)** — períodos lectivos y
   dictados.
-- **[05 — Planes y asignación de aulas](modulos/05_Planes_y_Asignacion_de_Aulas.md)**
+- **[05 — Cursada: planes y asignación de aulas](modulos/05_Planes_y_Asignacion_de_Aulas.md)**
   — plan de cursada, asignador de aulas, diagnóstico. Es el módulo más
   denso; conviene leer primero la sección "Modelo mental" antes de
   meterse en las tareas.

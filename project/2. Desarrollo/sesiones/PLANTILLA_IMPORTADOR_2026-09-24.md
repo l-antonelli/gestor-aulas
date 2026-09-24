@@ -134,6 +134,24 @@ llevar las mismas mejoras al módulo Inscriptos:
   conteo de huecos, filtrable, para ver qué materias no tienen datos
   para qué períodos.
 
+## Lote 5 — Retoques post-release v0.11.0 (revisión del usuario)
+
+- `cb8242b` — exportador con opción "catálogo completo de materias";
+  fix de las horas :15/:45 en los data editors (opciones derivadas de
+  `ConfiguracionHoraria`, antes lista hardcodeada de 30'); formato
+  condicional en el resumen por carrera.
+- `76abd7c` — auditoría completa de fuentes de opciones horarias:
+  tests de la dinámica, `st.time_input` del diálogo con paso según
+  granularidad, lista muerta eliminada en Planes.
+- `7496abe` — página "Planes" renombrada a "Cursada" (sólo la hoja).
+- `15f2e83` — ícono 💻 (y 🧪/📖) en la vista semanal del gestor de
+  asignaciones: `_build_grid_from_rows` hardcodeaba `virtual=False`.
+- Manual de usuario actualizado a todo el rediseño (capítulos de
+  Cronogramas e Inscriptos reescritos en sus secciones de carga,
+  plantilla, exportación, asociación de códigos y cobertura;
+  advertencias de bugs ya corregidos eliminadas; renombre
+  Planes → Cursada en todo el manual).
+
 ## Decisiones técnicas que conviene recordar
 
 - **Referencia circular**: la autopopulación bidireccional

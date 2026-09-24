@@ -32,13 +32,13 @@ guía para reflejar los cambios sin romper el trabajo previo.
 Dependiendo de qué cambió, andá a la página correspondiente:
 
 - **Comisión nueva o cerrada, o cambio de cupo/peso/carrera
-  asignada**: 📊 Planes → 🔍 Detalle del Plan (o 📋 Grilla Horaria) →
+  asignada**: 📊 Cursada → 🔍 Detalle del Plan (o 📋 Grilla Horaria) →
   editar la materia y ajustar comisiones.
-- **Horario movido o agregado**: 📊 Planes → 📋 Grilla Horaria →
+- **Horario movido o agregado**: 📊 Cursada → 📋 Grilla Horaria →
   drag/click/select en el calendario.
 - **Modalidad virtual de una materia**: 📆 Ciclos → 📚 Dictados →
   toggle virtual → aplicar cambios.
-- **Modalidad virtual de un horario específico**: 📊 Planes → 📋
+- **Modalidad virtual de un horario específico**: 📊 Cursada → 📋
   Grilla Horaria → editar horario → cambiar virtual.
 - **Aula nueva o baja de aula**: 🏛️ Aulas y Sedes.
 - **Sedes admisibles de una carrera**: 🎓 Carreras → editar carrera →
@@ -67,7 +67,7 @@ revalidar el cronograma.
 
 ### Paso 3 — Correr el asignador de nuevo
 
-**Página**: 📊 Planes, solapa **🏛️ Aulas**.
+**Página**: 📊 Cursada, solapa **🏛️ Aulas**.
 
 1. Revisá la configuración. Probablemente ya está OK del run
    anterior, pero fijate especialmente en:

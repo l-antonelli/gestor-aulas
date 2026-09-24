@@ -186,7 +186,7 @@ lista todas las páginas. Cada página cubre un módulo:
 🏛️ Aulas y Sedes
 🎓 Carreras
 📆 Ciclos
-📊 Planes
+📊 Cursada
 📅 Cronogramas
 📈 Inscriptos
 📜 Historial

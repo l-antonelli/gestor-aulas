@@ -17,13 +17,15 @@ En resumen, este módulo te sirve para:
 - Corregir o completar datos que faltan o son incorrectos.
 - Comparar tres métodos distintos de estimación para el próximo
   cuatrimestre.
-- Asociar códigos del Excel de inscriptos que no matchearon
-  automáticamente con las materias del sistema.
+- Importar datos masivamente desde una plantilla Excel, con vista
+  previa antes de confirmar.
+- Asociar códigos externos que el sistema no reconoce a materias
+  del catálogo, directamente desde la vista previa de importación.
 
 > Importante: esta página no ejecuta la estimación por sí sola ni la
 > aplica al asignador. Sólo administra los datos históricos y muestra las
 > proyecciones a modo informativo. La estimación efectiva que usa el
-> asignador se elige desde **📊 Planes → Detalle** de cada plan.
+> asignador se elige desde **📊 Cursada → Detalle** de cada plan.
 
 ---
 
@@ -32,8 +34,8 @@ En resumen, este módulo te sirve para:
 Vas a entrar a **Inscriptos** en estos momentos típicos:
 
 - **Después de reinstalar el sistema o resetear la base**: para volver a
-  cargar la serie histórica desde el Excel maestro corriendo el script
-  correspondiente.
+  cargar la serie histórica, ya sea importando la plantilla desde la
+  propia página o corriendo el script de carga inicial.
 - **Al iniciar un nuevo cuatrimestre**, para verificar que la serie
   histórica esté al día antes de generar el plan de cursada.
 - **Cuando el asignador reporta capacidades raras**: si una materia
@@ -41,9 +43,10 @@ Vas a entrar a **Inscriptos** en estos momentos típicos:
   cargado o falta un año.
 - **Cuando hay materias nuevas** que no tienen serie histórica y querés
   cargarles datos manualmente para que la estimación tenga base.
-- **Para revisar códigos "sin matchear"**: cuando el Excel de la
-  facultad usa un código que el sistema no reconoce y hay que asociarlo
-  a una materia existente.
+- **Cuando un Excel trae códigos que el sistema no reconoce**: la
+  vista previa de importación los rechaza y te deja asociarlos a una
+  materia existente ahí mismo (el sistema recuerda la asociación
+  para siempre).
 
 No es una página que uses todos los días. Es más bien un módulo de
 mantenimiento: se toca al principio de cada cuatrimestre y después queda
@@ -64,7 +67,7 @@ el asignador de aulas. La cadena de dependencias es la siguiente:
 4. El asignador usa esos esperados por comisión para elegir aulas con
    capacidad adecuada.
 
-> **Atajo importante**: si en la página **📊 Planes → Detalle** de una
+> **Atajo importante**: si en la página **📊 Cursada → Detalle** de una
 > materia setés un "Total esperado (manual)", ese valor **le gana a la
 > estimación calculada desde acá**. Es decir: si viste que el forecast
 > automático da un número raro, podés pisarlo desde el plan, y los
@@ -111,7 +114,7 @@ pendiente para drift, ventana para media móvil) y el error interno.
 ### Override manual del esperado
 
 Hay una tercera forma de decidir el esperado de una materia: **pisar la
-estimación con un valor fijo**. Eso se hace desde **📊 Planes → Detalle**
+estimación con un valor fijo**. Eso se hace desde **📊 Cursada → Detalle**
 (no desde acá) y **le gana a los tres métodos**. Cuando hay override
 manual, el sistema muestra "Total esperado (manual)" en el detalle del
 plan, y los cambios que hagas en la serie histórica quedan sin efecto
@@ -139,8 +142,17 @@ los filtros del sidebar.
 - **Modalidad**: `Presencial` o `Virtual` (según el catálogo de
   materia).
 
-**Toggles de visibilidad**: te permiten mostrar u ocultar cada una de
-las tres secciones.
+**Importador masivo** (arriba de todo): el bloque "📥 Cargar masivo
+desde plantilla Excel", con la descarga de la plantilla y la subida
+del archivo completado, con vista previa antes de confirmar.
+
+**Cobertura por período**: un desplegable con una tabla de materias
+por período (año + cuatrimestre) que marca con ✓ o — qué materias
+tienen datos para qué períodos, con una columna "Faltan" que cuenta
+los huecos. Sirve para ver de un vistazo qué falta cargar.
+
+**Toggles de visibilidad**: te permiten mostrar u ocultar las dos
+secciones de materias.
 
 **Sección 1 — Materias con datos**: lista las materias que ya tienen
 serie histórica cargada. Cada materia aparece como un desplegable
@@ -150,38 +162,40 @@ gráfico con las tres estimaciones.
 **Sección 2 — Materias sin datos**: lista las materias del catálogo que
 todavía no tienen ninguna fila cargada. Podés agregar filas a mano acá.
 
-**Sección 3 — Sin matchear**: lista códigos del Excel de la facultad
-que el sistema no pudo asociar automáticamente a ninguna materia. Para
-cada código sin matchear te ofrece un selector para elegir la materia
-destino y un botón para asociar.
-
----
-
-## ⚠️ Advertencia importante — pérdida de datos al filtrar por cuatri
-
-> **Cuidado**: por un problema conocido, si tenés filtrado el
-> cuatrimestre (por ejemplo, "1C") y guardás cambios en una materia de
-> la sección **"Materias con datos"**, los datos del otro cuatri
-> (`2C` y `Anual`) de esa materia **se van a perder sin aviso**.
-
-Esto pasa porque el guardado borra todo lo que tenía esa materia y
-reescribe únicamente lo visible en el editor. Como el filtro esconde
-las filas del otro cuatri, esas filas se pierden.
-
-**Como precaución, siempre trabajá con el filtro "Cuatrimestre" puesto
-en "Todos" antes de guardar cambios en una materia.**
-
-Si necesitás concentrarte visualmente en un cuatri, usá la búsqueda por
-código/nombre y dejá el cuatri en `Todos`.
-
 ---
 
 ## Tareas comunes
 
-### Cargar la serie histórica desde el Excel maestro
+### Importar datos masivamente desde la plantilla Excel
 
-La carga inicial (o la reinicialización) se hace desde la línea de
-comandos, no desde la UI. Los pasos son:
+**Cuándo hacerlo**: cuando tenés que cargar o actualizar muchos datos
+de una (por ejemplo, la serie del último año que llegó de la
+facultad).
+
+**Paso a paso**:
+
+1. En el bloque **📥 Cargar masivo desde plantilla Excel**, generá y
+   descargá la **plantilla**. La materia se ingresa por código (lista
+   desplegable); el nombre aparece solo, como verificación. La hoja
+   **Materias** trae el contexto del catálogo, incluido el **código
+   Guaraní**, útil para cruzar con las planillas de la facultad.
+2. Completá una fila por combinación (materia, año, cuatrimestre) y
+   subí el archivo.
+3. Apretá **🔍 Ver vista previa**. El sistema muestra cuántas filas
+   son nuevas, cuántas pisan valores existentes y cuáles tienen
+   errores (que no se importan).
+4. Si el archivo trae **códigos que el sistema no reconoce**, la
+   vista previa te ofrece asociarlos: elegís la materia destino,
+   apretás **Asociar**, y la vista previa se regenera con esas filas
+   ya resueltas. La asociación queda recordada para futuras
+   importaciones.
+5. Confirmá. La semántica es de sobreescritura: si la combinación
+   (materia, año, cuatri) ya existía, el valor del archivo la pisa.
+
+### Cargar la serie histórica desde el Excel maestro (script)
+
+Para la carga inicial del sistema también existe un script de línea
+de comandos. Los pasos son:
 
 1. Asegurate de que el Excel maestro esté en su ruta esperada:
    `data/input/inscriptos/final_df.xlsx`. El archivo debe tener las
@@ -216,8 +230,9 @@ códigos del Excel con las materias del sistema:
 - Tabla de correcciones manuales para tipos de nombre (por ejemplo,
   "Algebra" ↔ "Álgebra", "del Software" ↔ "de Software").
 
-Los códigos que no matchean por ninguna de esas capas quedan disponibles
-en la sección "Sin matchear" de la UI para que los asocies a mano.
+Los códigos que no matchean por ninguna de esas capas se pueden
+asociar a mano desde la vista previa del importador de la página
+(subiendo el mismo archivo por la UI).
 
 ### Ver la proyección de inscriptos para una materia
 
@@ -239,7 +254,7 @@ SES. Debajo del gráfico, tres cajitas con el valor proyectado de cada
 método, para que puedas compararlos rápidamente.
 
 Los tres métodos se calculan siempre. La elección de **cuál se usa en
-la asignación** se hace más adelante, desde **📊 Planes → Detalle** del
+la asignación** se hace más adelante, desde **📊 Cursada → Detalle** del
 plan del ciclo que corresponda.
 
 ### Editar o corregir un dato histórico
@@ -247,11 +262,8 @@ plan del ciclo que corresponda.
 1. En **"Materias con datos"**, expandí la materia.
 2. Editá el valor de inscriptos directamente en la tabla del editor.
 3. Podés cambiar el año, el cuatri o la cantidad.
-4. Apretá **Guardar**.
-
-> Recordatorio: antes de guardar, **dejá el filtro de cuatrimestre en
-> "Todos"** para no perder datos del otro cuatri (ver advertencia
-> arriba).
+4. Apretá **Guardar**. Los cuatrimestres que el filtro esconde quedan
+   intactos: el guardado sólo toca lo visible en el editor.
 
 ### Agregar datos manualmente a una materia sin serie histórica
 
@@ -262,24 +274,33 @@ plan del ciclo que corresponda.
 3. Apretá **Guardar**. La materia va a pasar automáticamente a la
    sección "Materias con datos" en el próximo refresco.
 
-### Asociar un código del Excel que no matcheó automáticamente
+### Asociar un código externo que el sistema no reconoce
 
-Cuando un código del Excel de inscriptos no matchea con ninguna materia
-del sistema, aparece en la sección **"Sin matchear"** con su propia
-tabla de datos y su gráfico.
+Cuando un archivo trae códigos que no matchean con ninguna materia
+(ni por código, ni por código Guaraní, ni por una asociación
+previa), la **vista previa de importación** rechaza esas filas y
+muestra el bloque **🔗 Asociar códigos sin match**:
 
-1. Verificá los datos del código sin matchear en su tabla y gráfico.
-2. Elegí la **materia destino** en el selector "Materia destino".
-3. Apretá **Asociar**.
+1. Elegí el código del archivo y la **materia destino**.
+2. Apretá **Asociar**. La asociación queda guardada como alias: en
+   esta y en todas las importaciones futuras, ese código resuelve
+   solo.
+3. La vista previa se regenera al instante con esas filas ya
+   resueltas; confirmá cuando te cierre.
 
-Los registros del código se insertan bajo el código de la materia
-elegida.
+Si la materia destino ya tenía datos para un (año, cuatri), el valor
+del archivo **pisa** al existente (la vista previa te muestra qué
+filas pisan valores antes de confirmar).
 
-> **Advertencia**: si la materia destino ya tenía datos para (año,
-> cuatri), el asociador **suma** los nuevos inscriptos a los
-> existentes, no reemplaza. Verificá antes de asociar que no haya
-> superposición, o el número final va a quedar inflado sin que el
-> sistema te avise.
+### Ver qué materias no tienen datos para qué períodos
+
+1. Abrí el desplegable **🧩 Cobertura por período**.
+2. Elegí los períodos que te interesan (por defecto están todos) y
+   dejá tildado "Sólo materias con huecos".
+3. La tabla muestra una fila por materia, con ✓ o — por período y la
+   columna **Faltan** con la cantidad de huecos, ordenada por los
+   huecos más grandes. Respeta los filtros de búsqueda y carrera del
+   sidebar.
 
 ### Filtrar por carrera / año / cuatri / modalidad
 
@@ -302,40 +323,17 @@ visibles, después las tres secciones se recalculan sobre ese subconjunto.
 
 ## Errores frecuentes y qué hacer
 
-### Guardé cambios y ahora faltan filas del otro cuatri
+### La vista previa rechaza filas por el código de materia
 
-Es el problema descripto en la advertencia arriba: guardaste con el
-filtro de cuatri activo y las filas del otro cuatri se borraron. La
-única forma de recuperarlas es:
+**Síntoma**: la vista previa lista filas con errores del estilo
+"código X no está en el catálogo".
 
-- Si hiciste backup reciente de `data/database.db`, restaurá desde el
-  backup.
-- Si tenés el Excel maestro, correr `python -m scripts.load_inscriptos`
-  (sin `--reset`) para reinsertar los valores del Excel (el upsert
-  respeta las filas que quedaron).
-- Si no hay backup ni Excel, tenés que cargar los datos a mano.
+**Causa**: el código del archivo no matchea ni por código interno,
+ni por código Guaraní, ni por una asociación previa.
 
-**Prevención**: siempre poné el filtro de cuatrimestre en "Todos" antes
-de guardar.
-
-### Asocié un código y el número quedó duplicado
-
-Si asociaste un código del Excel a una materia que ya tenía datos para
-esos (año, cuatri), los valores se sumaron. No hay undo automático:
-
-1. Editá manualmente las filas duplicadas en la sección "Materias con
-   datos" de la materia destino.
-2. Restá los valores del código asociado.
-3. Guardá (con el filtro de cuatrimestre en "Todos").
-
-### La sección "Sin matchear" aparece vacía
-
-Puede ser porque:
-
-- **Todos los códigos del Excel matchearon**: caso ideal.
-- **El Excel `final_df.xlsx` no existe** en `data/input/inscriptos/`: la
-  sección queda vacía silenciosamente. Verificá que el archivo esté en
-  la ruta correcta.
+**Solución**: usá el bloque **🔗 Asociar códigos sin match** de la
+misma vista previa para vincular el código a la materia correcta. La
+asociación queda recordada y la vista previa se regenera sola.
 
 ### El gráfico dice "Sin datos para graficar"
 
@@ -350,7 +348,7 @@ la reconozca). Chequeá:
 ### El asignador dice esperados raros aunque cambié los datos acá
 
 Muy probablemente hay un **override manual** activo en el plan.
-Verificá en **📊 Planes → Detalle → [materia] → Total esperado
+Verificá en **📊 Cursada → Detalle → [materia] → Total esperado
 (manual)**. Si hay un número puesto ahí, el asignador lo usa y los
 cambios en la serie histórica no le llegan. Sacá el override o
 actualizá el valor manual.
@@ -366,7 +364,8 @@ Puede ser por varias razones:
 - La materia es **nueva** en el plan de estudios y no tenía dictados en
   años previos.
 - La materia **cambió de código** entre años y el matcheo automático no
-  detectó la equivalencia. Revisá la sección "Sin matchear".
+  detectó la equivalencia. Importá el archivo por la UI y asociá el
+  código desde la vista previa.
 - El script de carga inicial nunca se corrió: hacelo con
   `python -m scripts.load_inscriptos`.
 - El Excel maestro `final_df.xlsx` no incluye esa materia.
@@ -383,13 +382,13 @@ Depende del comportamiento de la matrícula de la materia:
   rápido. Requiere al menos dos años.
 
 La elección efectiva del método que usa el asignador se hace desde
-**📊 Planes → Detalle** del plan del ciclo, no desde acá. Podés dejar
+**📊 Cursada → Detalle** del plan del ciclo, no desde acá. Podés dejar
 un default por plan y sobreescribirlo por materia si hay excepciones.
 
 ### ¿Cómo hago para pisar la estimación con un valor manual?
 
 No se hace desde esta página. El override manual (**"Total esperado
-(manual)"**) se setea desde **📊 Planes → Detalle** → seleccionar la
+(manual)"**) se setea desde **📊 Cursada → Detalle** → seleccionar la
 materia → cargar el valor. Ese número le gana a los tres métodos de
 estimación y le gana a lo que haya en la serie histórica.
 
@@ -398,7 +397,7 @@ estimación y le gana a lo que haya en la serie histórica.
 Casi seguro hay un **override manual** puesto en el plan. Cuando el
 plan tiene un "Total esperado (manual)" para una materia, la estimación
 calculada desde esta página se ignora completamente. Sacá el override
-desde **📊 Planes → Detalle** para que vuelva a mandar la serie
+desde **📊 Cursada → Detalle** para que vuelva a mandar la serie
 histórica.
 
 ### Los datos de esta página, ¿quedan en el historial?
@@ -418,10 +417,10 @@ en `Todos` y usá la búsqueda por nombre o filtrá por período =
 
 ### ¿Puedo cargar un Excel nuevo desde la UI?
 
-No. La carga bulk sigue siendo por línea de comandos con el script
-`load_inscriptos`. Si reemplazás el archivo `final_df.xlsx` y volvés a
-correr el script, la sección "Sin matchear" se actualiza automáticamente
-la próxima vez que abras la página.
+Sí. El bloque **📥 Cargar masivo desde plantilla Excel** de la misma
+página descarga la plantilla y sube el archivo completado, con vista
+previa antes de confirmar. El script `load_inscriptos` de línea de
+comandos queda para la carga inicial del sistema.
 
 ---
 
@@ -436,12 +435,13 @@ la próxima vez que abras la página.
 - **Override manual de esperados**: un valor fijo que se setea desde
   el detalle del plan y le gana a los tres métodos. Cuando está puesto,
   la serie histórica no se usa para esa materia.
-- **Sin matchear**: código del Excel de la facultad que el sistema no
-  pudo asociar automáticamente a ninguna materia. Requiere asociación
-  manual.
-- **Asociar**: acción de vincular un código sin matchear a una materia
-  del sistema. Suma los inscriptos existentes si la materia destino
-  ya tenía datos para ese (año, cuatri).
+- **Código sin match**: código de un archivo que el sistema no pudo
+  asociar automáticamente a ninguna materia. La vista previa de
+  importación lo rechaza y ofrece la asociación manual.
+- **Asociar**: acción de vincular un código externo a una materia del
+  sistema. La asociación queda recordada (alias) para futuras
+  importaciones; los valores del archivo pisan a los existentes para
+  el mismo (año, cuatri).
 - **Cuatrimestre "Anual"**: valor válido en la serie histórica para
   materias que se dictan durante todo el año. El filtro superior no
   lo incluye explícitamente; dejar el filtro en "Todos" para que

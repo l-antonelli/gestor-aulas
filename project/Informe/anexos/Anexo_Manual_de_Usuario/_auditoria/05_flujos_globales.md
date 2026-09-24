@@ -124,13 +124,13 @@ llega desde la facultad.
      dictado activo: usar los botones bulk `🟢 Activar` o
      `🌐 Activar y marcar virtual`.
 7. **Generar el plan de cursada**
-   (`📊 Planes → 📥 Generar Plan`, wizard de 2 pasos):
+   (`📊 Cursada → 📥 Generar Plan`, wizard de 2 pasos):
    - Paso 1: seleccionar ciclo, cronograma, nombre, descripción,
      método de forecast default.
    - Paso 2: preview del plan en edición previa; ajustar comisiones
      antes de salir del wizard. El plan se crea como borrador
      (`activo=False`).
-8. **Editar el plan en detalle** (`📊 Planes → 🔍 Detalle`):
+8. **Editar el plan en detalle** (`📊 Cursada → 🔍 Detalle`):
    - Metadata (nombre, descripción, forecast default).
    - Por materia: horarios, comisiones, pesos, inscriptos esperados
      manuales (override), 10 chequeos inline.
@@ -142,7 +142,7 @@ llega desde la facultad.
     conflictos no-ignorados. `activate_plan` desactiva los demás
     planes del ciclo (uno activo por ciclo), genera `ClaseDB` (cache
     técnico) por cada `HorarioDB` × fecha del ciclo.
-11. **Asignar aulas** (`📊 Planes → 🏛️ Aulas`):
+11. **Asignar aulas** (`📊 Cursada → 🏛️ Aulas`):
     - Configurar `LPConfig` (fecha_desde, λ_over, λ_under,
       tolerancias, timeout).
     - Correr el LP.
@@ -155,7 +155,7 @@ llega desde la facultad.
       cronograma por aula.
 
 **Verificación final**:
-- Plan `[ACTIVO]` en `📊 Planes`.
+- Plan `[ACTIVO]` en `📊 Cursada`.
 - Todos los `HorarioDB` no virtuales tienen `aula_id` asignada.
 - El `LPRunDB` más reciente está en `optimal` o `feasible`.
 - La tabla del panel de resultado no muestra rojos que preocupen
@@ -209,7 +209,7 @@ opcionalmente asignación de aulas ya corrida).
 
 **Verificación final**: aparece el ciclo nuevo en `📆 Ciclos` con la
 marca "[CASO EJEMPLO DE SATURACION — ...]" en la descripción. El plan
-correspondiente aparece en `📊 Planes` como borrador. Los heatmaps y
+correspondiente aparece en `📊 Cursada` como borrador. Los heatmaps y
 detalles del `LPRunDB` clonado son navegables sin re-correr el solver.
 
 **Rollback**: `_delete_ciclo_cascade(session, "2026-1C-demo-...")`
@@ -238,15 +238,15 @@ de comisión, se ajustaron sedes admisibles).
 **Pasos ordenados**:
 
 1. **Aplicar los cambios estructurales** al patrón:
-   - `📊 Planes → 🔍 Detalle` para editar horarios/comisiones de una
+   - `📊 Cursada → 🔍 Detalle` para editar horarios/comisiones de una
      materia.
-   - `📊 Planes → 📋 Grilla Horaria` para ediciones globales
+   - `📊 Cursada → 📋 Grilla Horaria` para ediciones globales
      tipo drag/resize.
    - `📆 Ciclos → 📚 Dictados` para toggle virtual, borrar/crear
      dictados.
    - `🏛️ Aulas y Sedes` o `🎓 Carreras` si cambió la disponibilidad
      de aulas o las sedes habilitadas por carrera.
-2. **Volver a `📊 Planes → 🏛️ Aulas`** y revisar la configuración
+2. **Volver a `📊 Cursada → 🏛️ Aulas`** y revisar la configuración
    del LP:
    - `fecha_desde` decide qué `ClaseDB` se pisan (las anteriores
      quedan intactas).
@@ -286,7 +286,7 @@ carrera_asignada / cupo / nombre.
 **Pasos ordenados**:
 
 1. **Alta** de comisión:
-   - `📊 Planes → 🔍 Detalle → 🎓 Comisiones` (o desde la tabla de
+   - `📊 Cursada → 🔍 Detalle → 🎓 Comisiones` (o desde la tabla de
      comisiones del plan) → crear.
    - Agregarle horarios (día, hora, tipo).
    - Al agregar `HorarioDB`, las clases todavía no existen para ese
@@ -333,7 +333,7 @@ asignada.
 
 **Pasos ordenados**:
 
-1. **Ir al panel de aulas** (`📊 Planes → 🏛️ Aulas`).
+1. **Ir al panel de aulas** (`📊 Cursada → 🏛️ Aulas`).
 2. **Filtrar** por materia/comisión/día en el panel de filtros
    (`aula_cronograma_view`).
 3. **Fila del horario** → botón "Editar" → dialog
@@ -374,12 +374,12 @@ cerrado el plan y comunicar la asignación oficial.
 
 **Checklist recomendado** (ver también sección 4 abajo):
 
-1. `📊 Planes → 🔍 Detalle → ✅ Validaciones`:
+1. `📊 Cursada → 🔍 Detalle → ✅ Validaciones`:
    - Cobertura contra dictados: 0 materias faltantes reales,
      0 no-esperadas sin decidir.
    - Partición teoría/lab factible por comisión.
    - Sin conflictos horarios no-ignorados por grupo curricular.
-2. `📊 Planes → 🏛️ Aulas`:
+2. `📊 Cursada → 🏛️ Aulas`:
    - `LPRunDB` en `optimal`.
    - Métricas de over/under bajas.
    - Diagnóstico estructural vacío (o entendido si tiene warnings).
@@ -387,7 +387,7 @@ cerrado el plan y comunicar la asignación oficial.
 3. `📆 Ciclos → 📚 Dictados`:
    - Panel de divergencias vacío (o con divergencias justificadas).
    - Toggles `Virtual` consistentes con la modalidad real.
-4. `📊 Planes → 📋 Grilla Horaria`:
+4. `📊 Cursada → 📋 Grilla Horaria`:
    - Barrido visual buscando huecos raros o solapamientos.
 5. `📜 Historial`: revisar el feed reciente para detectar cambios
    inesperados desde otras sesiones.

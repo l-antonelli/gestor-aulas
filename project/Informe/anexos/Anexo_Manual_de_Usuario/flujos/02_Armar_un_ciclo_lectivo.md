@@ -179,7 +179,7 @@ siguiente paso.
 
 ### Paso 7 — Generar el plan de cursada
 
-**Página**: 📊 Planes, solapa **📥 Generar Plan**.
+**Página**: 📊 Cursada, solapa **📥 Generar Plan**.
 
 Wizard de 2 pasos:
 
@@ -213,7 +213,7 @@ recién creado como borrador (⚪ inactivo).
 
 ### Paso 8 — Ajustar detalles del plan
 
-**Página**: 📊 Planes, solapa **🔍 Detalle del Plan**.
+**Página**: 📊 Cursada, solapa **🔍 Detalle del Plan**.
 
 Seleccioná el plan y revisá:
 
@@ -229,7 +229,7 @@ Seleccioná el plan y revisá:
 
 ### Paso 9 — Correr el asignador de aulas
 
-**Página**: 📊 Planes, solapa **🏛️ Aulas**.
+**Página**: 📊 Cursada, solapa **🏛️ Aulas**.
 
 1. Revisá que el precheck esté OK (el plan tiene al menos un
    horario).
@@ -276,7 +276,7 @@ un aula para 30 no).
 
 ### Paso 11 — Activar el plan
 
-En **📊 Planes**, tenés dos formas de "activar":
+En **📊 Cursada**, tenés dos formas de "activar":
 
 1. Desde el **panel de Validación** del tab Detalle → botón
    **Activar plan**: activa el plan **y genera las clases** (una
@@ -339,7 +339,7 @@ Antes de dar por cerrado el plan, mirá la
 
 En cualquier punto del flujo podés retroceder:
 
-- **Borrar el plan** (antes o después de activar): desde 📊 Planes →
+- **Borrar el plan** (antes o después de activar): desde 📊 Cursada →
   Vista General → botón Eliminar. Borra en cascada las comisiones y
   horarios del plan, pero **no** el cronograma origen.
 - **Borrar el cronograma**: desde 📅 Cronogramas → Lista → Eliminar.

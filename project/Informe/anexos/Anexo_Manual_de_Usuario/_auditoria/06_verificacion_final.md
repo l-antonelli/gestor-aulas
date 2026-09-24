@@ -91,7 +91,7 @@ Sólo se detectaron dos casos:
 
 **Íconos por módulo**: la revisión confirma consistencia en todos los
 casos verificados. `📚 Materias`, `🏛️ Aulas`, `🎓 Carreras`, `📆 Ciclos`,
-`📊 Planes`, `📅 Cronogramas`, `📈 Inscriptos`, `📜 Historial` se usan
+`📊 Cursada`, `📅 Cronogramas`, `📈 Inscriptos`, `📜 Historial` se usan
 uniformemente entre README, introducción, flujos y módulos. No hay
 ninguna aparición de `📗` u otros íconos alternativos.
 

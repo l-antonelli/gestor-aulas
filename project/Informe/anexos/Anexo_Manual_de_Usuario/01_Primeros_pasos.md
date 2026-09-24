@@ -73,7 +73,7 @@ sistema:
 - 🏛️ Aulas y Sedes
 - 🎓 Carreras
 - 📆 Ciclos
-- 📊 Planes
+- 📊 Cursada
 - 📅 Cronogramas
 - 📈 Inscriptos
 - 📜 Historial

@@ -76,17 +76,24 @@ comisiones se **clonan**: la comisión del cronograma queda como
 "modelo" y la del plan es la que efectivamente se asigna a aulas y
 alumnos.
 
-### La modalidad virtual se puede fijar por fila
+### La modalidad virtual es para excepciones
 
-Cada fila del cronograma puede tener su modalidad forzada
-(virtual o presencial), o dejarla en "Heredar" (que es el default y
-significa: usar lo que diga el dictado o la materia). Esto es útil
-cuando dentro de la misma comisión la teoría es virtual pero el
-laboratorio es presencial.
+Cada fila del cronograma tiene un casillero **Virtual**. Se tilda
+únicamente cuando esa clase puntual se dicta virtual aunque el
+dictado sea presencial (por ejemplo, la teoría virtual y la
+práctica presencial). Si la materia entera se dicta virtual, no se
+marca fila por fila: eso se configura una sola vez en el dictado,
+desde el módulo de Ciclos.
+
+Dos reglas que el sistema garantiza solo: una clase virtual es
+siempre **teórica** (si la marcás virtual sin tipo, el tipo se
+completa solo), y un **laboratorio nunca puede ser virtual**
+(necesita aula física; la aplicación rechaza la combinación en
+todos lados, incluso dentro del Excel de la plantilla).
 
 ## Recorrido rápido de la página
 
-La página se llama **📅 Cronogramas** y tiene cinco pestañas:
+La página se llama **📅 Cronogramas** y tiene cuatro pestañas:
 
 ### Pestaña "📋 Lista"
 
@@ -102,26 +109,24 @@ muestra como un expander con:
   - **🔴 con issues**: la última validación encontró problemas
     (materias faltantes, particiones infactibles).
   - **🟢 validado**: la última validación pasó limpia.
-- Adentro del expander podés **renombrar**, **duplicar** o
+- Adentro del expander podés **renombrar**, **exportar a Excel**
+  (una hoja por grupo de materias, ver más abajo), **duplicar** o
   **eliminar** el cronograma. También ves el resumen de la última
   validación.
 
 ### Pestaña "📤 Cargar"
 
-Se usa para **crear un cronograma nuevo**, ya sea vacío o
-importándolo desde un archivo Excel o CSV.
+Se usa para **crear un cronograma nuevo** (vacío o desde archivo),
+para **descargar la plantilla Excel** con listas predeterminadas, y
+para **importar un archivo dentro de un cronograma existente** con
+vista previa y decisión materia por materia.
 
-### Pestaña "👁 Visualizar"
+### Pestaña "👁 Ver / Editar"
 
-Vista de sólo lectura del cronograma en formato calendario. Podés
-filtrar **por grupo curricular** (carrera + año + cuatri) o **por
-materia** (una a la vez, con colores distintos por comisión).
-
-### Pestaña "✏️ Editar"
-
-La pestaña más pesada del módulo. El calendario acá es interactivo:
-podés mover filas, cambiar horarios, agregar nuevas y borrar. Se
-apoya en dos modos:
+El calendario del cronograma, con un toggle **"Solo lectura"** que
+alterna entre mirar y editar. En modo edición podés mover filas
+arrastrando, cambiar horarios, agregar nuevas y borrar. Se apoya en
+dos modos:
 
 - **Por grupo**: filtrás por carrera + año + cuatri y editás las
   materias de ese grupo curricular en pantalla.
@@ -148,7 +153,28 @@ dictados creados. Aunque el sistema te permite subir un cronograma
 sin asociarlo a ningún ciclo, la validación después necesita esa
 asociación.
 
-**Formato esperado del archivo**:
+**La plantilla descargable (recomendado)**:
+
+Antes de armar el archivo a mano, descargá la **plantilla Excel**
+desde la misma pestaña Cargar (elegí el ciclo y apretá el botón de
+plantilla). La plantilla trae todo resuelto para que las cátedras no
+puedan equivocarse:
+
+- La materia se ingresa **por código** con una lista desplegable; el
+  nombre aparece solo en la primera columna, como verificación de
+  sólo lectura.
+- Una hoja **Materias** de consulta con el contexto completo de cada
+  materia: código, nombre, código Guaraní, horas, en qué planes de
+  carrera aparece y cómo está configurado el dictado del ciclo.
+- Listas desplegables de días, horas (según la granularidad
+  configurada), tipo de clase y virtual. Las listas de tipo y
+  virtual son dependientes: con tipo laboratorio, virtual sólo
+  ofrece FALSO, y viceversa.
+- La hoja de horarios es una tabla de Excel protegida (sin
+  contraseña): las fórmulas y la columna del nombre no se pueden
+  pisar por accidente.
+
+**Formato esperado del archivo** (si lo armás a mano):
 
 El sistema acepta archivos `.csv`, `.xlsx` o `.xls`. Las columnas
 esperadas (con aliases aceptados) son:
@@ -156,23 +182,25 @@ esperadas (con aliases aceptados) son:
 | Columna del archivo | Aliases aceptados | Contenido |
 |---|---|---|
 | `codigo_materia` | `codigo_plan`, `materia`, `cod_materia` | Código de la materia |
+| `nombre_materia` | `materia_nombre` | Nombre de la materia (opcional; resuelve si el código viene vacío) |
+| `codigo_comision` | `cod_comision` | Código numérico de la comisión (entero desde 1) |
+| `nombre_comision` | `comision_nombre` | Nombre descriptivo de la comisión (opcional) |
+| `comision` | — | Texto libre histórico (compatibilidad) |
 | `dia` | `dia_semana` | Día de la semana |
 | `hora_inicio` | `hora_ingreso`, `inicio` | Hora de inicio |
 | `hora_fin` | `hora_egreso`, `fin` | Hora de fin |
-| `comision` | `codigo_comision`, `comision_nombre`, `cod_comision` | Número o nombre de comisión (opcional) |
+| `tipo_clase` | `tipo`, `modalidad_clase` | `teorica`, `laboratorio` o vacío (lo determina la asignación automática) |
+| `virtual` | `virtualidad`, `es_virtual` | VERDADERO/FALSO; vacío = presencial. Sólo para excepciones |
 
-> ⚠️ **Atención — la columna `comision` del archivo no se asocia
-> automáticamente**
->
-> El sistema **lee** la columna de comisión del archivo pero
-> **no la persiste** al momento de crear el cronograma: las filas
-> quedan sin comisión asignada. Vas a tener que asociar las
-> comisiones **manualmente** desde la pestaña Editar después de la
-> importación.
->
-> Si tenés un cronograma grande con comisiones ya definidas en el
-> Excel, este paso puede ser tedioso. Es una limitación conocida
-> del importador que se resuelve en el editor.
+Las comisiones del archivo **se crean y asocian automáticamente**:
+el código numérico identifica a la comisión dentro de la materia y
+el nombre es opcional. Si le ponés nombre, la correspondencia
+código-nombre tiene que ser uno a uno dentro de la materia.
+
+El importador valida cada fila: hora de inicio anterior a la de
+fin, laboratorio nunca virtual, código de comisión entero desde 1,
+y si la fila trae código y nombre de materia que no se
+corresponden, la rechaza.
 
 **Paso a paso**:
 
@@ -204,8 +232,62 @@ recién creado aparece con el badge **⚪ sin validar**.
 - Podés subir **varios cronogramas al mismo ciclo** (por ejemplo,
   un borrador y una versión final). Después elegís cuál usar para
   generar el plan.
-- La columna comisión se ignora al importar (ver advertencia
-  arriba).
+- Si el Excel tiene varias hojas, aparece un selector para elegir
+  cuál importar.
+
+### Importar un archivo dentro de un cronograma existente
+
+**Cuándo hacerlo**: cuando el cronograma ya existe y llega una
+versión nueva o parcial del Excel (por ejemplo, las correcciones de
+una cátedra).
+
+**Paso a paso**:
+
+1. Andá a la pestaña **📤 Cargar**, opción **Importar en cronograma
+   existente**.
+2. Elegí el cronograma destino, subí el archivo y, si tiene varias
+   hojas, elegí cuál.
+3. Apretá **🔍 Ver vista previa del archivo**. El sistema arma una
+   vista previa por materia: para cada una ves los calendarios
+   **Antes** (estado actual) y **Después** (cómo quedaría), los
+   chequeos estructurales, y una sección de **✏️ Ajustes manuales**
+   para corregir horarios ahí mismo antes de confirmar.
+4. Para cada materia con datos previos decidís: **reemplazar** (las
+   filas del archivo pisan las existentes), **agregar** (se suman
+   las comisiones nuevas) o **ignorar** (la materia queda como
+   está). Las materias nuevas también se pueden ignorar si el
+   archivo vino mal.
+5. Cuando la vista previa te cierra, apretá **Confirmar**. Nada se
+   guarda en el destino hasta ese momento; **Descartar** tira todo.
+
+### Exportar los horarios a Excel (una hoja por grupo)
+
+**Cuándo hacerlo**: cuando querés repartir los horarios ya cargados
+a las cátedras o departamentos para que los revisen y corrijan.
+
+**Paso a paso**:
+
+1. Andá a **📋 Lista** y abrí el expander del cronograma (tiene que
+   tener ciclo asociado).
+2. En el bloque **📤 Exportar horarios a Excel**, apretá **Generar
+   Excel por grupos** y descargá el archivo.
+3. El archivo es la misma plantilla del importador pero
+   **precargada**: una hoja por cada grupo de materias, con los
+   horarios de ese grupo, las mismas listas desplegables,
+   validaciones y protección.
+4. Le mandás a cada cátedra la hoja de su grupo; corrigen en Excel
+   y vos reimportás la hoja que corresponda con el flujo de
+   "Importar en cronograma existente".
+
+**Notas**:
+
+- Los nombres de hoja siguen los nombres de los grupos de materias
+  (con el límite de 31 caracteres de Excel). Si quedan truncados,
+  acortá los nombres de los grupos desde Materias → Grupos.
+- El casillero **"Ofrecer el catálogo completo de materias"** hace
+  que las listas incluyan todo el catálogo activo, no sólo los
+  dictados del ciclo. Útil si las cátedras van a sumar materias que
+  todavía no tienen dictado creado.
 
 ### Crear un cronograma vacío
 
@@ -271,7 +353,10 @@ cronograma. Es la pestaña donde más tiempo vas a pasar.
    - **Inicio** y **Fin**.
    - **Comisión** (con opción **➕ Crear nueva comisión…**).
    - **Tipo de clase**: `sin determinar`, `teorica`, `laboratorio`.
-   - **Virtual**: `Heredar`, `Sí`, `No`.
+     Dejalo en `sin determinar` salvo que haga falta fijarlo ya: lo
+     resuelve la asignación automática.
+   - **Virtual**: un casillero. Se tilda sólo para excepciones (una
+     clase puntual virtual dentro de un dictado presencial).
 3. Modificá lo que necesites.
 4. Apretá **Guardar**, **Eliminar** o **Cancelar**.
 
@@ -304,9 +389,11 @@ validado) porque los cambios invalidan la última validación.
 
 ### Asociar horarios a comisiones
 
-**Cuándo hacerlo**: después de importar un archivo (porque las
-comisiones del Excel no se persistieron), o cuando agregaste una
-comisión nueva y hay que reasignarle filas.
+**Cuándo hacerlo**: cuando el archivo importado venía sin columna
+de comisión (las filas quedan sin asignar), o cuando agregaste una
+comisión nueva y hay que reasignarle filas. Si usaste la plantilla
+con `codigo_comision`, las comisiones ya quedaron creadas y
+asociadas solas.
 
 **Modelo mental**:
 
@@ -587,18 +674,20 @@ del ciclo invalida el snapshot de la última validación.
 **Solución**: volvé a la pestaña Validar y apretá **Validar
 cronograma** para refrescar el snapshot.
 
-### Después de importar el archivo, las filas quedaron sin comisión
+### El importador rechazó una fila por la comisión
 
-**Síntoma**: subiste un Excel que en el original tenía columna de
-comisión, pero al abrir el cronograma en Editar todas las filas
-están sin comisión asignada.
+**Síntoma**: la vista previa muestra errores del estilo "el código
+de comisión 1 aparece con nombres distintos" o "el código de
+comisión debe ser un entero mayor o igual a 1".
 
-**Causa**: el importador **hoy ignora la columna comisión** del
-archivo (ver advertencia en la sección de carga desde archivo).
+**Causa**: dentro de una materia, la correspondencia entre código y
+nombre de comisión tiene que ser uno a uno (un código, un nombre),
+y el código tiene que ser un número entero desde 1.
 
-**Solución**: asociá las comisiones manualmente desde la pestaña
-Editar, ya sea en el modo Por materia (usando la columna
-Comisión de la tabla) o abriendo cada fila desde el calendario.
+**Solución**: revisá las filas de esa materia en el Excel. Si
+`mañana`, `tarde` y `noche` son tres comisiones distintas, dales
+códigos distintos (1, 2, 3); si es una sola comisión con varios
+horarios, usá el mismo nombre en todas las filas (o dejalo vacío).
 
 ## Preguntas frecuentes
 
@@ -611,9 +700,11 @@ cursada elegís cuál usar.
 ### ¿Qué formato de archivo acepta el importador?
 
 CSV (`.csv`), Excel moderno (`.xlsx`) y Excel viejo (`.xls`). Las
-columnas mínimas son `codigo_materia`, `dia`, `hora_inicio`,
-`hora_fin`. La columna `comision` se lee pero no se persiste — hay
-que asociarla después manualmente.
+columnas mínimas son `codigo_materia` (o `nombre_materia`), `dia`,
+`hora_inicio` y `hora_fin`. Con `codigo_comision` (y opcionalmente
+`nombre_comision`) las comisiones se crean y asocian solas. Lo más
+cómodo es usar la plantilla descargable, que trae las listas y
+validaciones armadas.
 
 ### ¿Puedo importar horarios sin especificar un ciclo?
 
@@ -641,7 +732,10 @@ que crear dos comisiones distintas.
 
 Sí. La regla general es que **el nivel más específico manda**:
 horario > dictado > materia. Si el horario dice "Presencial", eso
-gana aunque el dictado esté marcado como virtual.
+gana aunque el dictado esté marcado como virtual. Dos derivaciones
+automáticas: una clase marcada virtual queda siempre como teórica,
+y un laboratorio queda siempre presencial explícito (la herencia
+del dictado no puede volverlo virtual).
 
 ### ¿Cómo elimino una comisión que ya no uso?
 
@@ -665,16 +759,17 @@ alterar el cronograma histórico.
 
 ### ¿Se puede exportar el cronograma a Excel?
 
-Hoy la aplicación **no ofrece un botón directo de exportación** desde
-la pestaña Visualizar o Editar. Si necesitás sacar los datos del
-cronograma en formato de planilla, hablalo con el equipo técnico —
-se puede consultar la base de datos directamente. Una futura versión
-puede incorporar esta funcionalidad.
+Sí. En **📋 Lista**, el expander de cada cronograma con ciclo
+asociado tiene el bloque **📤 Exportar horarios a Excel**: genera la
+plantilla del importador precargada con los horarios, con una hoja
+por grupo de materias, lista para repartir, corregir y reimportar
+(ver la tarea "Exportar los horarios a Excel").
 
 ### ¿Cómo veo el cronograma agrupado por comisión?
 
-En la pestaña **👁 Visualizar → modo "Por materia"**, cada
-comisión aparece con un color distinto en el calendario.
+En la pestaña **👁 Ver / Editar → modo "Por materia"**, cada
+comisión aparece con un color distinto en el calendario, y el
+código de la comisión (`[C2]`) se ve en cada bloque.
 
 ## Términos importantes de este módulo
 

@@ -78,7 +78,7 @@ corregirlo (típicamente, volver a alguna página y usar el
 
 ## 3. Plan de cursada
 
-**Página**: 📊 Planes, solapa **📋 Vista General** y **🔍 Detalle**.
+**Página**: 📊 Cursada, solapa **📋 Vista General** y **🔍 Detalle**.
 
 - [ ] Hay **exactamente un plan activo** en el ciclo (badge 🟢
       ACTIVO).
@@ -106,7 +106,7 @@ corregirlo (típicamente, volver a alguna página y usar el
 
 ## 4. Asignación de aulas
 
-**Página**: 📊 Planes, solapa **🏛️ Aulas**.
+**Página**: 📊 Cursada, solapa **🏛️ Aulas**.
 
 - [ ] La corrida más reciente del asignador está en **✅ resuelta**.
 - [ ] La fecha de la corrida es **reciente** (no es una del mes
@@ -184,7 +184,7 @@ corregirlo (típicamente, volver a alguna página y usar el
       quedaron sin asociar no son relevantes.
 - [ ] Si alguna materia tiene **override manual** ("Total esperado
       manual"), ese valor es correcto para el cuatrimestre actual
-      (revisar desde 📊 Planes → 🔍 Detalle → editor por materia).
+      (revisar desde 📊 Cursada → 🔍 Detalle → editor por materia).
 
 > **Cuidado**: ediciones sobre esta página no dejan rastro en el
 > historial. Es importante que todos los cambios en Inscriptos estén

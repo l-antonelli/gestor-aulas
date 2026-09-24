@@ -1,4 +1,8 @@
-# Planes de cursada y asignación de aulas
+# Cursada: planes de cursada y asignación de aulas
+
+> La página se llama **📊 Cursada** en el menú lateral (hasta 2026-09
+> se llamaba "Planes"). El concepto sigue siendo el *plan de
+> cursada*: este capítulo usa ambos términos.
 
 ## ¿Para qué sirve?
 
@@ -154,7 +158,7 @@ como virtual **queda excluido del asignador**: no consume aula.
 
 ## Recorrido rápido de la página
 
-La página de Planes se organiza en 6 tabs:
+La página de Cursada se organiza en 6 tabs:
 
 1. **📥 Generar Plan**: wizard de 2 pasos para crear un plan nuevo a
    partir de un cronograma validado y vigente.

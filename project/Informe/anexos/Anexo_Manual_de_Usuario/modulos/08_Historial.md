@@ -51,7 +51,7 @@ La página **no afecta** al resto del sistema. Es puramente lectura.
 
 Pensalo así:
 
-- **📚 Materias / 🎓 Carreras / 📆 Ciclos / 📊 Planes / ✅ Validación**:
+- **📚 Materias / 🎓 Carreras / 📆 Ciclos / 📊 Cursada / ✅ Validación**:
   producen eventos.
 - **📜 Historial**: los consume y los muestra.
 

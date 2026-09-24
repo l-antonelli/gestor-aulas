@@ -28,7 +28,7 @@ sirve para:
 2. Editar / corregir / cargar a mano registros faltantes.
 3. Comparar los tres métodos de forecast (`media_movil`, `drift`, `ses`)
    como referencia. La elección del método aplicado a la asignación se
-   configura desde `📊 Planes → Detalle`, no acá (caption línea 271-276).
+   configura desde `📊 Cursada → Detalle`, no acá (caption línea 271-276).
 4. Asociar códigos del Excel de inscriptos que no matchearon
    automáticamente contra la DB.
 
@@ -188,7 +188,7 @@ es:
 **Consecuencia práctica**: cambios en la página de Inscriptos afectan
 al LP solo cuando (a) el plan usa forecast automático (sin
 `valor_override`) y (b) no se está pisando el método. Si el usuario
-seteó "Total esperado (manual)" desde `📊 Planes → Detalle`, los
+seteó "Total esperado (manual)" desde `📊 Cursada → Detalle`, los
 cambios acá **no se propagan**.
 
 ### 1.6 Gotchas
