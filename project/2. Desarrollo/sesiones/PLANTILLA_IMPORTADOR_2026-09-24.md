@@ -87,6 +87,32 @@ del usuario probándola en Excel:
    con dos nombres o un nombre con dos códigos rechaza las filas; al
    agrupar gana el nombre declarado sobre el default `C{n}`).
 
+## Lote 3 — Semántica de virtual e invariante en tres capas (`942af32` → `b146613`)
+
+- **`942af32`** — bugfix reportado por el usuario probando la
+  plantilla: una columna `virtual` con un solo booleano y el resto
+  vacío llega al parser como float (pandas convierte bool + NaN a
+  numérico; VERDADERO → `1.0`) y se rechazaba. El parser ahora
+  interpreta 0/1 numéricos.
+- **`8d58420`** — aclaración semántica en manuales, instructivo del
+  Excel y ayudas de los editores: `virtual` en el cronograma es un
+  override de **excepción** (una clase puntual virtual dentro de un
+  dictado presencial); una materia que se dicta virtual completa se
+  configura a nivel dictado/catálogo. Y `tipo_clase` se deja sin
+  determinar salvo que sea estrictamente necesario fijarlo.
+- **`b146613`** — invariante virtual/tipo pedida por el usuario
+  (revierte la decisión "sin constraint de DB" de la mañana): una
+  clase virtual es siempre **teórica** y un laboratorio es siempre
+  **presencial explícito** (virtual=False, no None — pisa la
+  herencia). Tres capas: `normalizar_tipo_virtual` en el service
+  layer (con ValueError en los flujos de edición), listeners ORM
+  `before_insert`/`before_update` que derivan los casos incompletos,
+  y `CHECK` de tabla (`ck_*_virtual_teorica`, `ck_*_lab_presencial`)
+  que rechazan hasta el SQL crudo — sólo en tablas creadas desde
+  2026-09-24. Además `build_schedule_grid` propaga `tipo_clase` y el
+  render simple muestra los íconos 💻/🧪/📖 en todas las vistas de
+  cronograma (antes faltaban en los calendarios de la vista previa).
+
 ## Decisiones técnicas que conviene recordar
 
 - **Referencia circular**: la autopopulación bidireccional
@@ -118,5 +144,5 @@ del usuario probándola en Excel:
 `build_schedule_grid`, `_validar_filas_editor`) y
 `tests/test_template_export_service.py` (estructura de la plantilla:
 orden de columnas, fórmulas, protección de ambas hojas, contexto de
-Materias, listas dependientes, tabla). Baseline al cierre: 1447
+Materias, listas dependientes, tabla). Baseline al cierre: 1459
 verdes, 18 salteados, 19 fallos históricos del LP.
