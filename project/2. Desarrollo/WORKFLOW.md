@@ -837,7 +837,14 @@ LP. Datos en `InscripcionHistoricaDB` (PK compuesta).
 
   1. **Paso 1**: descargar plantilla generada por
      `template_export_service.generar_plantilla_inscriptos_excel`.
-     Trae dropdowns de códigos activos del catálogo, cuatri
+     Desde 2026-09-24 es **espejo de la plantilla de cronograma**:
+     hoja visible `Materias` protegida con el contexto del catálogo
+     (incluido el **código Guaraní**, útil para que las cátedras
+     crucen con sus propias planillas, y los planes de carrera de
+     las versiones activas), `nombre_materia` como primera columna
+     (fórmula de sólo lectura al elegir el código), tabla de Excel
+     (`TablaInscriptos`), hoja principal protegida sin contraseña
+     con las columnas de carga desbloqueadas, y listas de cuatri
      (1C/2C/Anual), rango de año y validación de inscriptos >= 0.
   2. **Paso 2**: subir el archivo completado y ver el preview
      armado por `inscripcion_import_service.preview_import`. La UI
@@ -847,10 +854,31 @@ LP. Datos en `InscripcionHistoricaDB` (PK compuesta).
      efecto por fila (`valor previo` vs `valor nuevo`). Al
      confirmar se ejecuta `commit_import` con semántica overwrite
      (última fila del archivo gana).
+  3. **Códigos sin match** (2026-09-24): el importador fuerza que
+     todo código matchee o se revise en el momento. Las filas cuyos
+     códigos no resuelven (ni directo, ni Guaraní, ni alias) se
+     rechazan, y la vista previa expone
+     `preview.codigos_no_resueltos` con una herramienta de
+     **asociación inline**: se elige la materia destino, se
+     registra el alias persistido (`registrar_alias`) y la vista
+     previa se regenera con esas filas ya resueltas. La antigua
+     sección "Sin matchear" de la página — que re-parseaba en cada
+     render el Excel hardcodeado de la carga inicial
+     (`data/input/inscriptos/final_df.xlsx`) y mostraba 41 códigos
+     legacy — se eliminó: era un vestigio de la migración inicial,
+     no un dato de la base.
 
   El importer respeta el fix del bug histórico "cuatri Anual
   omitido del filtro de la UI" (Fase E1): el selectbox de
   cuatri ahora incluye "Anual".
+
+**Cobertura por período** (2026-09-24). Expander "🧩 Cobertura por
+período" arriba de las secciones: una tabla materias × períodos
+(año + cuatrimestre) con ✓/— por celda y una columna "Faltan" que
+cuenta los huecos, para responder de un vistazo *qué materias no
+tienen datos para qué períodos*. Respeta los filtros de búsqueda y
+carrera de la página, permite elegir qué períodos revisar y, por
+default, muestra sólo las materias con huecos.
 
 ### Auditoría mínima y alias persistentes (Fase E2)
 

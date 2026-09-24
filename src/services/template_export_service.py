@@ -421,6 +421,18 @@ MATERIAS_CONTEXT_COLUMNS: list[tuple[str, int]] = [
 ]
 
 
+# Variante para la plantilla de INSCRIPTOS (2026-09-24): mismo
+# contexto de catálogo pero sin las columnas de dictado — la serie
+# histórica de inscriptos no depende de un ciclo.
+MATERIAS_CATALOGO_COLUMNS: list[tuple[str, int]] = [
+    (titulo, ancho) for titulo, ancho in MATERIAS_CONTEXT_COLUMNS
+    if titulo not in (
+        "Dictado del ciclo", "Modalidad del dictado",
+        "Dictado de recursado",
+    )
+]
+
+
 def _si_no(valor: bool) -> str:
     return "sí" if valor else "no"
 
@@ -551,20 +563,99 @@ def obtener_contexto_materias_del_ciclo(
     return filas
 
 
-def _escribir_hoja_materias(wb: Workbook, contexto: list[dict]) -> None:
+def obtener_contexto_materias_catalogo(session: Session) -> list[dict]:
+    """Contexto de las materias ACTIVAS del catálogo, para la hoja
+    `Materias` de la plantilla de inscriptos (2026-09-24).
+
+    Igual que ``obtener_contexto_materias_del_ciclo`` pero sin las
+    columnas de dictado (la serie histórica de inscriptos no depende
+    de un ciclo): atributos del catálogo — incluido el código
+    Guaraní, que las cátedras suelen necesitar para cruzar sus
+    planillas — y en qué planes de carrera aparece cada materia
+    (versiones de plan **activas**).
+    """
+    from src.database.models import PlanCarreraVersionDB, PlanEstudioDB
+
+    materias = sorted(
+        session.exec(
+            select(MateriaDB).where(MateriaDB.active == True)  # noqa: E712
+        ).all(),
+        key=lambda m: m.codigo,
+    )
+    if not materias:
+        return []
+    codigos = [m.codigo for m in materias]
+    pv_activas = list(session.exec(
+        select(PlanCarreraVersionDB.id).where(
+            PlanCarreraVersionDB.active == True  # noqa: E712
+        )
+    ).all())
+    planes_por_materia: dict[str, list] = {}
+    if pv_activas:
+        for pe in session.exec(
+            select(PlanEstudioDB)
+            .where(PlanEstudioDB.materia_codigo.in_(codigos))  # type: ignore[attr-defined]
+            .where(PlanEstudioDB.plan_version_id.in_(pv_activas))  # type: ignore[attr-defined]
+        ).all():
+            planes_por_materia.setdefault(pe.materia_codigo, []).append(pe)
+
+    filas: list[dict] = []
+    for mat in materias:
+        _planes = sorted(
+            planes_por_materia.get(mat.codigo, []),
+            key=lambda e: (e.carrera_codigo, e.anio_plan or 0),
+        )
+        _planes_str = "; ".join(
+            f"{e.carrera_codigo} — "
+            f"{f'{e.anio_plan}° año' if e.anio_plan else 'año s/d'}, "
+            f"{e.cuatrimestre_plan or 's/cuatrimestre'}"
+            + (" (optativa)" if e.optativa else "")
+            for e in _planes
+        )
+        if mat.dicta_recursado is None:
+            _regla_rec = "según carrera"
+        else:
+            _regla_rec = _si_no(mat.dicta_recursado)
+        filas.append({
+            "Nombre": mat.nombre,
+            "Código": mat.codigo,
+            "Código Guaraní": mat.codigo_guarani or "",
+            "Período": mat.periodo,
+            "Hs/sem": mat.horas_semanales,
+            "Hs teoría": mat.horas_teoria,
+            "Hs laboratorio": mat.horas_laboratorio,
+            "Cupo": mat.cupo,
+            "Optativa": _si_no(mat.optativa),
+            "Virtual (catálogo)": _si_no(mat.virtual),
+            "Regla de recursado": _regla_rec,
+            "Planes de carrera (año y cuatrimestre)": _planes_str,
+        })
+    return filas
+
+
+def _escribir_hoja_materias(
+    wb: Workbook,
+    contexto: list[dict],
+    columnas: list[tuple[str, int]] | None = None,
+) -> None:
     """Hoja VISIBLE `Materias`: referencia nombre + código y el
     contexto completo de cada materia (2026-09-24).
 
     Alimenta la lista desplegable de códigos y la fórmula del nombre
-    de la hoja `Horarios` (por eso el orden de filas — por código —
+    de la hoja principal (por eso el orden de filas — por código —
     tiene que coincidir con el de los rangos referenciados). Queda
     **protegida sin contraseña**: es material de consulta, la cátedra
     no debe poder editar códigos ni nombres. No es una hoja de datos
     a importar: el selector de hoja de la app la excluye.
+
+    ``columnas`` permite variar el set de columnas (la plantilla de
+    inscriptos usa ``MATERIAS_CATALOGO_COLUMNS``, sin las de dictado).
     """
+    if columnas is None:
+        columnas = MATERIAS_CONTEXT_COLUMNS
     ws = wb.create_sheet(title="Materias")
     for col_idx, (titulo, ancho) in enumerate(
-        MATERIAS_CONTEXT_COLUMNS, start=1,
+        columnas, start=1,
     ):
         cell = ws.cell(row=1, column=col_idx, value=titulo)
         cell.font = HEADER_FONT
@@ -572,9 +663,7 @@ def _escribir_hoja_materias(wb: Workbook, contexto: list[dict]) -> None:
         cell.alignment = HEADER_ALIGN
         ws.column_dimensions[get_column_letter(col_idx)].width = ancho
     for i, fila in enumerate(contexto, start=2):
-        for col_idx, (titulo, _ancho) in enumerate(
-            MATERIAS_CONTEXT_COLUMNS, start=1,
-        ):
+        for col_idx, (titulo, _ancho) in enumerate(columnas, start=1):
             ws.cell(row=i, column=col_idx, value=fila.get(titulo))
     # Nombre y código siempre visibles al scrollear el contexto.
     ws.freeze_panes = "C2"
@@ -927,8 +1016,18 @@ CUATRIS_INSCRIPTOS = ["1C", "2C", "Anual"]
 
 INSCRIPTOS_COLUMNS: list[tuple[str, str, int]] = [
     (
+        "nombre_materia",
+        "NO se completa: aparece solo al elegir el código en la "
+        "columna de al lado, para que verifiques que es la materia "
+        "correcta. La columna está protegida.",
+        34,
+    ),
+    (
         "codigo_materia",
-        "Código de la materia. Debe estar en la lista de códigos válidos.",
+        "Código de la materia (lista de la hoja 'Materias'). Al "
+        "elegirlo, el nombre aparece solo en la primera columna. La "
+        "hoja 'Materias' trae el contexto completo, incluido el "
+        "código Guaraní.",
         16,
     ),
     (
@@ -966,24 +1065,30 @@ def _escribir_headers_inscriptos(ws) -> None:
 
 
 def _agregar_data_validations_inscriptos(
-    ws, wb: Workbook, materias_codigos: list[str],
+    ws, wb: Workbook, n_materias: int,
 ) -> None:
-    """DataValidation en las 4 columnas del template de inscriptos."""
+    """DataValidation de la plantilla de inscriptos (2026-09-24:
+    espejo del esquema de cronograma — nombre primero, de sólo
+    lectura por fórmula; el código, contra la hoja visible
+    ``Materias``, es la única entrada de materia).
+    """
     max_row = 5001  # inscriptos es serie histórica, rango generoso
 
-    # Materia — lista cerrada de códigos del catálogo.
-    ref_materias = _escribir_hoja_lista(wb, "_materias", materias_codigos)
-    if ref_materias:
+    # Materia — código contra la hoja VISIBLE `Materias` (nombres en
+    # $A, códigos en $B, igual que la plantilla de cronograma).
+    if n_materias:
         dv_mat = DataValidation(
-            type="list", formula1=ref_materias, allow_blank=False,
+            type="list",
+            formula1=f"=Materias!$B$2:$B${n_materias + 1}",
+            allow_blank=False,
             errorTitle="Código no válido",
             error=(
-                "Elegí un código de la lista. Sólo se aceptan materias "
-                "que están en el catálogo activo."
+                "Elegí un código de la lista (hoja 'Materias'). Sólo "
+                "se aceptan materias que están en el catálogo activo."
             ),
             showErrorMessage=True,
         )
-        dv_mat.add(f"A2:A{max_row}")
+        dv_mat.add(f"B2:B{max_row}")
         ws.add_data_validation(dv_mat)
 
     # Cuatrimestre — lista cerrada 1C / 2C / Anual.
@@ -994,7 +1099,7 @@ def _agregar_data_validations_inscriptos(
         error="Elegí 1C, 2C o Anual de la lista.",
         showErrorMessage=True,
     )
-    dv_cuatri.add(f"C2:C{max_row}")
+    dv_cuatri.add(f"D2:D{max_row}")
     ws.add_data_validation(dv_cuatri)
 
     # Año — entero en rango razonable.
@@ -1006,7 +1111,7 @@ def _agregar_data_validations_inscriptos(
         error="El año debe ser un entero entre 2000 y 2100.",
         showErrorMessage=True,
     )
-    dv_anio.add(f"B2:B{max_row}")
+    dv_anio.add(f"C2:C{max_row}")
     ws.add_data_validation(dv_anio)
 
     # Inscriptos — entero no negativo.
@@ -1018,8 +1123,23 @@ def _agregar_data_validations_inscriptos(
         error="La cantidad de inscriptos debe ser un entero >= 0.",
         showErrorMessage=True,
     )
-    dv_insc.add(f"D2:D{max_row}")
+    dv_insc.add(f"E2:E{max_row}")
     ws.add_data_validation(dv_insc)
+
+    # Fórmula del nombre (columna A, de sólo lectura vía protección)
+    # + desbloqueo de las columnas de carga (B..E).
+    from openpyxl.styles import Protection as _Protection
+    _desbloqueada = _Protection(locked=False)
+    _rango_nom = f"Materias!$A$2:$A${n_materias + 1}"
+    _rango_cod = f"Materias!$B$2:$B${n_materias + 1}"
+    for _r in range(2, max_row + 1):
+        if n_materias:
+            ws.cell(row=_r, column=1).value = (
+                f'=IFERROR(INDEX({_rango_nom},'
+                f'MATCH($B{_r},{_rango_cod},0)),"")'
+            )
+        for _c in range(2, len(INSCRIPTOS_COLUMNS) + 1):
+            ws.cell(row=_r, column=_c).protection = _desbloqueada
 
 
 def _escribir_hoja_instrucciones_inscriptos(
@@ -1043,13 +1163,20 @@ def _escribir_hoja_instrucciones_inscriptos(
     _t(row, "Cómo usar esta plantilla", INSTRUCCIONES_HEADER_FONT)
     row += 1
     _t(row,
-       "1) Abrir la hoja 'Inscriptos'. Borrar la fila de ejemplo "
-       "(fila 2, en amarillo) o pisarla con datos reales.")
+       "1) Abrir la hoja 'Inscriptos' e ir completando una fila por "
+       "combinación (materia, año, cuatrimestre). Cada fila "
+       "representa cuántos alumnos se inscribieron en una materia en "
+       "un cuatrimestre específico.")
     row += 1
     _t(row,
-       "2) Cargar una fila por combinación (materia, año, cuatri). "
-       "Cada fila representa cuántos alumnos se inscribieron en una "
-       "materia en un cuatrimestre específico.")
+       "2) La materia se ingresa por CÓDIGO (lista desplegable en la "
+       "columna 'codigo_materia'). Al elegirlo, el nombre aparece "
+       "solo en la primera columna, para que verifiques que es la "
+       "materia correcta — esa columna está protegida y no se "
+       "completa a mano. La hoja 'Materias' tiene la referencia "
+       "completa para buscar el código que necesitás: nombre, "
+       "código, CÓDIGO GUARANÍ (útil para cruzar con tus planillas), "
+       "atributos de la materia y en qué planes de carrera aparece.")
     row += 1
     _t(row,
        "3) Guardar el archivo y subirlo desde el módulo Inscriptos "
@@ -1063,12 +1190,13 @@ def _escribir_hoja_instrucciones_inscriptos(
         row += 1
     row += 1
 
-    _t(row, "Listas predeterminadas", INSTRUCCIONES_HEADER_FONT)
+    _t(row, "Listas desplegables", INSTRUCCIONES_HEADER_FONT)
     row += 1
     _t(row,
        f"• Códigos de materia: {n_materias} códigos válidos del "
-       "catálogo. Escribir en la columna 'codigo_materia' abre el "
-       "dropdown; sólo se aceptan valores de la lista.")
+       "catálogo activo, elegibles en la columna 'codigo_materia'. "
+       "Sólo se aceptan códigos de la lista; el nombre se completa "
+       "solo.")
     row += 1
     _t(row,
        "• Cuatrimestre: 1C, 2C o Anual. 'Anual' se usa cuando la "
@@ -1105,9 +1233,13 @@ def generar_plantilla_inscriptos_excel(session: Session) -> bytes:
     """Genera una plantilla Excel para carga masiva de inscriptos.
 
     A diferencia de la plantilla de cronograma, esta plantilla usa el
-    **catálogo completo** de materias activas (no un ciclo). El
-    dropdown de códigos incluye todas las materias del catálogo con
-    ``MateriaDB.active=True``.
+    **catálogo completo** de materias activas (no un ciclo). Desde
+    2026-09-24 es espejo del esquema de cronograma: hoja VISIBLE
+    ``Materias`` protegida con el contexto del catálogo (incluido el
+    código Guaraní), ``nombre_materia`` como primera columna (fórmula
+    de sólo lectura al elegir el código), tabla de Excel
+    (``TablaInscriptos``) y hoja principal protegida sin contraseña
+    con las columnas de carga desbloqueadas.
 
     Returns:
         Bytes del Excel listos para ``st.download_button``.
@@ -1115,16 +1247,17 @@ def generar_plantilla_inscriptos_excel(session: Session) -> bytes:
     Raises:
         ValueError si no hay materias activas en el catálogo.
     """
-    materias = list(session.exec(
-        select(MateriaDB).where(MateriaDB.active == True)  # noqa: E712
-    ).all())
-    if not materias:
+    # 2026-09-24: espejo de la plantilla de cronograma — hoja VISIBLE
+    # `Materias` protegida con el contexto del catálogo (incluido el
+    # código Guaraní), nombre autocompletado de sólo lectura, tabla
+    # de Excel y hoja principal protegida con las columnas de carga
+    # desbloqueadas.
+    _contexto = obtener_contexto_materias_catalogo(session)
+    if not _contexto:
         raise ValueError(
             "No hay materias activas en el catálogo. Cargar el "
             "catálogo antes de generar la plantilla de inscriptos."
         )
-
-    codigos_ordenados = sorted(m.codigo for m in materias)
 
     wb = Workbook()
     ws_main = wb.active
@@ -1132,12 +1265,40 @@ def generar_plantilla_inscriptos_excel(session: Session) -> bytes:
     ws_main.title = "Inscriptos"
 
     _escribir_headers_inscriptos(ws_main)
+    _escribir_hoja_materias(wb, _contexto, columnas=MATERIAS_CATALOGO_COLUMNS)
     # Bugfix (2026-09-22, task #341): mismo motivo que la plantilla de
     # cronograma — no se escribe fila de ejemplo porque el parser no la
     # distingue de dato real. El ejemplo queda en la hoja Instrucciones.
-    _agregar_data_validations_inscriptos(ws_main, wb, codigos_ordenados)
+    _agregar_data_validations_inscriptos(ws_main, wb, len(_contexto))
 
-    _escribir_hoja_instrucciones_inscriptos(wb, len(codigos_ordenados))
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    _tabla = Table(
+        displayName="TablaInscriptos",
+        ref=f"A1:{get_column_letter(len(INSCRIPTOS_COLUMNS))}5001",
+    )
+    _tabla.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showRowStripes=True,
+        showColumnStripes=False,
+        showFirstColumn=False,
+        showLastColumn=False,
+    )
+    ws_main.add_table(_tabla)
+
+    # Protección sin contraseña: la columna del nombre queda de sólo
+    # lectura; las de carga están desbloqueadas celda a celda en
+    # `_agregar_data_validations_inscriptos`.
+    ws_main.protection.sheet = True
+    ws_main.protection.selectLockedCells = False
+    ws_main.protection.selectUnlockedCells = False
+    ws_main.protection.sort = False
+    ws_main.protection.autoFilter = False
+    ws_main.protection.insertRows = False
+    ws_main.protection.deleteRows = False
+    ws_main.protection.formatColumns = False
+    ws_main.protection.formatRows = False
+
+    _escribir_hoja_instrucciones_inscriptos(wb, len(_contexto))
 
     wb.active = 0
 

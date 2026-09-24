@@ -25,6 +25,7 @@ from src.services.inscripcion_import_service import (
     InscripcionImportPreview,
     commit_import,
     preview_import,
+    registrar_alias,
 )
 from src.services.template_export_service import (
     generar_plantilla_inscriptos_excel,
@@ -340,18 +341,39 @@ class TestPlantillaInscriptos:
         wb = load_workbook(io.BytesIO(contenido))
         assert "Instrucciones" in wb.sheetnames
         assert "Inscriptos" in wb.sheetnames
-        assert "_materias" in wb.sheetnames
+        # 2026-09-24: hoja VISIBLE `Materias` con contexto (reemplaza
+        # a la oculta `_materias`), como en la plantilla de cronograma.
+        assert "Materias" in wb.sheetnames
+        assert "_materias" not in wb.sheetnames
         assert "_cuatris" in wb.sheetnames
 
-    def test_lista_materias_activas(self, session, catalogo_basico):
+    def test_hoja_materias_con_contexto_y_protegida(
+        self, session, catalogo_basico,
+    ):
+        """La hoja `Materias` es visible, protegida (sólo consulta) y
+        trae el contexto del catálogo — incluido el código Guaraní,
+        que las cátedras suelen necesitar para cruzar sus planillas.
+        Sólo materias activas (LEGACY no aparece).
+        """
         contenido = generar_plantilla_inscriptos_excel(session)
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["_materias"]
-        codigos = [
-            ws.cell(row=r, column=1).value
-            for r in range(1, ws.max_row + 1)
+        ws = wb["Materias"]
+        assert ws.protection.sheet is True
+        headers = [
+            ws.cell(row=1, column=c).value
+            for c in range(1, ws.max_column + 1)
         ]
-        # Sólo activas: MAT101, FIS101, QUI101 — no LEGACY
+        for esperado in (
+            "Nombre", "Código", "Código Guaraní", "Período",
+            "Optativa", "Virtual (catálogo)", "Planes de carrera",
+        ):
+            assert any(
+                str(h).startswith(esperado) for h in headers if h
+            ), f"Falta header {esperado!r}: {headers}"
+        codigos = [
+            ws.cell(row=r, column=2).value
+            for r in range(2, ws.max_row + 1)
+        ]
         assert sorted(codigos) == ["FIS101", "MAT101", "QUI101"]
 
     def test_lista_cuatris(self, session, catalogo_basico):
@@ -365,23 +387,64 @@ class TestPlantillaInscriptos:
         contenido = generar_plantilla_inscriptos_excel(session)
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Inscriptos"]
-        headers = [ws.cell(row=1, column=c).value for c in range(1, 5)]
+        headers = [ws.cell(row=1, column=c).value for c in range(1, 6)]
+        # 2026-09-24: espejo de la plantilla de cronograma — nombre
+        # primero (fórmula de sólo lectura) y código como única
+        # entrada de materia.
         assert headers == [
-            "codigo_materia", "anio", "cuatrimestre", "inscriptos",
+            "nombre_materia", "codigo_materia", "anio",
+            "cuatrimestre", "inscriptos",
         ]
 
+    def test_nombre_formula_y_hoja_protegida(self, session, catalogo_basico):
+        contenido = generar_plantilla_inscriptos_excel(session)
+        wb = load_workbook(io.BytesIO(contenido))
+        ws = wb["Inscriptos"]
+        _a2 = str(ws.cell(row=2, column=1).value or "")
+        assert _a2.startswith("=IFERROR")
+        assert "Materias!$A$" in _a2 and "$B2" in _a2
+        assert ws.protection.sheet is True
+        assert ws.cell(row=2, column=1).protection.locked is True
+        for col in range(2, 6):
+            assert ws.cell(row=2, column=col).protection.locked is False
+
+    def test_hoja_inscriptos_es_tabla(self, session, catalogo_basico):
+        contenido = generar_plantilla_inscriptos_excel(session)
+        wb = load_workbook(io.BytesIO(contenido))
+        ws = wb["Inscriptos"]
+        assert "TablaInscriptos" in ws.tables
+
+    def test_roundtrip_plantilla_sin_filas_fantasma(
+        self, session, catalogo_basico,
+    ):
+        """Subir la plantilla recién generada no debe producir filas
+        ni errores: las filas con sólo la fórmula del nombre se
+        saltean en silencio (mismo comportamiento que la plantilla
+        de cronograma).
+        """
+        contenido = generar_plantilla_inscriptos_excel(session)
+        upload = io.BytesIO(contenido)
+        upload.name = "plantilla_inscriptos.xlsx"
+        pv = preview_import(session, upload)
+        assert pv.parse_errors == []
+        assert pv.filas_error == []
+        assert pv.filas_ok == []
+
     def test_datavalidation_configurada(self, session, catalogo_basico):
-        """Debe haber al menos 4 DataValidation, una por columna crítica."""
+        """Columnas de carga con DataValidation: código (B), año (C),
+        cuatrimestre (D), inscriptos (E). El nombre (A) es fórmula y
+        no lleva validación.
+        """
         contenido = generar_plantilla_inscriptos_excel(session)
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Inscriptos"]
         cols_cubiertas: set[str] = set()
         for dv in ws.data_validations.dataValidation:
             for r in dv.sqref.ranges:
-                # str(r) es tipo 'A2:A5001'
                 col_letra = str(r).split(":")[0][0]
                 cols_cubiertas.add(col_letra)
-        assert {"A", "B", "C", "D"}.issubset(cols_cubiertas)
+        assert {"B", "C", "D", "E"}.issubset(cols_cubiertas)
+        assert "A" not in cols_cubiertas
 
     def test_sin_materias_activas_falla(self, session):
         with pytest.raises(ValueError, match="No hay materias"):
@@ -392,3 +455,39 @@ class TestPlantillaInscriptos:
         codigos = [c for c, _ in refs]
         assert "LEGACY" not in codigos
         assert "MAT101" in codigos
+
+
+class TestCodigosNoResueltos:
+    """2026-09-24: la vista previa expone los códigos sin match para
+    que la UI ofrezca la asociación (alias) sin salir del flujo — el
+    importador fuerza que todo código matchee o se revise ahí mismo.
+    """
+
+    def test_preview_lista_codigos_sin_match(self, session, catalogo_basico):
+        archivo = io.BytesIO(
+            b"codigo_materia,anio,cuatrimestre,inscriptos\n"
+            b"NOEXISTE,2024,1C,50\n"
+            b"NOEXISTE,2023,1C,40\n"
+            b"OTRORARO,2024,2C,10\n"
+            b"MAT101,2024,1C,80\n"
+        )
+        archivo.name = "insc.csv"
+        pv = preview_import(session, archivo)
+        assert pv.codigos_no_resueltos == ["NOEXISTE", "OTRORARO"]
+        assert len(pv.filas_error) == 3
+        assert len(pv.filas_ok) == 1
+
+    def test_alias_registrado_resuelve_en_siguiente_preview(
+        self, session, catalogo_basico,
+    ):
+        registrar_alias(session, "NOEXISTE", "MAT101", origen="manual")
+        archivo = io.BytesIO(
+            b"codigo_materia,anio,cuatrimestre,inscriptos\n"
+            b"NOEXISTE,2024,1C,50\n"
+        )
+        archivo.name = "insc.csv"
+        pv = preview_import(session, archivo)
+        assert pv.codigos_no_resueltos == []
+        assert pv.filas_error == []
+        assert len(pv.filas_ok) == 1
+        assert pv.filas_ok[0].materia_codigo == "MAT101"

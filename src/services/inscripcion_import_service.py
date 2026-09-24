@@ -88,11 +88,18 @@ class InscripcionImportPreview:
       archivo ilegible). Bloquean el commit.
     - ``warnings``: avisos no bloqueantes (por ejemplo, resolución
       via ``codigo_guarani``, o filas duplicadas donde gana la última).
+    - ``codigos_no_resueltos`` (2026-09-24): códigos externos del
+      archivo que no matchearon con ninguna materia (ni directo, ni
+      Guaraní, ni alias). La UI de la vista previa los usa para
+      ofrecer la asociación manual (``registrar_alias``) sin salir
+      del flujo: el importador fuerza que todo código matchee o se
+      revise ahí mismo.
     """
     filas_ok: list[InscripcionFilaPreview] = field(default_factory=list)
     filas_error: list[tuple[int, str]] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    codigos_no_resueltos: list[str] = field(default_factory=list)
 
     @property
     def tiene_errores_bloqueantes(self) -> bool:
@@ -302,6 +309,13 @@ def preview_import(
         fila_num = int(idx) + 2  # +2: 0-based idx + fila de header
 
         raw_cod = row.get("codigo_materia")
+        # Fila totalmente vacía (2026-09-24: típico de la plantilla
+        # nueva, cuyas filas traen sólo la fórmula del nombre) — se
+        # saltea en silencio, no es un error.
+        if pd.isna(raw_cod) and all(
+            pd.isna(row.get(c)) for c in ("anio", "cuatrimestre", "inscriptos")
+        ):
+            continue
         if pd.isna(raw_cod):
             preview.filas_error.append(
                 (fila_num, "codigo_materia vacío"),
@@ -345,9 +359,12 @@ def preview_import(
                     f"código '{codigo_original}' tiene un alias "
                     f"persistido que apunta a '{alias_huerfano_target}', "
                     "pero esa materia ya no está en el catálogo. "
-                    "Reasigná el código desde la sección 'Sin matchear' "
-                    "(el alias viejo se sobrescribe con el nuevo match).",
+                    "Asociá el código a otra materia desde esta misma "
+                    "vista previa (el alias viejo se sobrescribe con "
+                    "el nuevo match).",
                 ))
+                if codigo_original not in preview.codigos_no_resueltos:
+                    preview.codigos_no_resueltos.append(codigo_original)
                 continue
             else:
                 preview.filas_error.append((
@@ -356,6 +373,8 @@ def preview_import(
                     "en el catálogo (ni por codigo_plan ni por "
                     "codigo_guarani ni por alias)",
                 ))
+                if codigo_original not in preview.codigos_no_resueltos:
+                    preview.codigos_no_resueltos.append(codigo_original)
                 continue
 
         # Año.

@@ -8,7 +8,6 @@ desde Planes -> Detalle.
 
 import streamlit as st
 import pandas as pd
-from pathlib import Path
 from sqlmodel import select, col
 from src.database.connection import get_session, init_db
 from src.database.models import (
@@ -23,7 +22,6 @@ from src.services.inscripcion_service import (
     RegistroInscripcion,
     guardar_registros_materia,
 )
-from scripts.load_inscriptos import _normalize_code, _build_name_map
 
 init_db()
 
@@ -92,51 +90,6 @@ for _i in _all_inscripciones:
 
 _mat_codes_with_data = set(_insc_by_mat.keys())
 _mat_codes_without_data = sorted(_mat_codes - _mat_codes_with_data)
-
-# Compute unmatched codes from Excel
-_inscriptos_file = Path("data/input/inscriptos/final_df.xlsx")
-_unmatched_codes: list[str] = []
-_unmatched_agg: dict[str, pd.DataFrame] = {}
-_nombre_insc: dict[str, str] = {}
-
-if _inscriptos_file.exists():
-    _df_raw = pd.read_excel(_inscriptos_file)
-    _all_materias_tuples = [(m.codigo, m.nombre) for m in _all_materias_full]
-    _r_by_name = _build_name_map(_all_materias_tuples, ["R-"])
-    _ce_by_name = _build_name_map(_all_materias_tuples, ["CE"])
-    _nombre_insc_series = _df_raw.drop_duplicates("codigo").set_index("codigo")["actividad"]
-    _nombre_insc = _nombre_insc_series.to_dict()
-
-    _all_insc_codes = set(_df_raw["codigo"].unique())
-    _matched_insc: set[str] = set()
-    for _c in _all_insc_codes:
-        if _c in _mat_codes:
-            _matched_insc.add(_c)
-            continue
-        _norm = _normalize_code(_c)
-        if _norm and _norm in _mat_codes:
-            _matched_insc.add(_c)
-            continue
-        _nom = str(_nombre_insc.get(_c, "")).strip().lower()
-        if _c.startswith("T10") and _nom in _r_by_name:
-            _matched_insc.add(_c)
-        elif _c.startswith("CI24") and _nom in _ce_by_name:
-            _matched_insc.add(_c)
-
-    _unmatched_codes = sorted(_all_insc_codes - _matched_insc)
-
-    _unmatched_df = _df_raw[_df_raw["codigo"].isin(_unmatched_codes)]
-    for _uc in _unmatched_codes:
-        _uc_df = (
-            _unmatched_df[_unmatched_df["codigo"] == _uc]
-            .groupby(["year", "period"])["cant._inscriptos"]
-            .sum()
-            .reset_index()
-            .sort_values(["year", "period"])
-        )
-        _uc_df.columns = ["Año", "Cuatrimestre", "Inscriptos"]
-        _unmatched_agg[_uc] = _uc_df
-
 
 # =============================================================================
 # Shared render function
@@ -334,9 +287,10 @@ with st.expander(
             "🧮 Generar plantilla",
             key="insc_tpl_btn",
             help=(
-                "Arma un Excel con los códigos del catálogo como "
-                "lista desplegable y validaciones de cuatri, año e "
-                "inscriptos."
+                "Arma un Excel donde la materia se ingresa por código "
+                "(lista desplegable) y el nombre se autocompleta, con "
+                "una hoja de referencia del catálogo (incluye código "
+                "Guaraní) y validaciones de cuatri, año e inscriptos."
             ),
         ):
             try:
@@ -496,6 +450,79 @@ with st.expander(
                     for _fila_num, _msg in _pv.filas_error:
                         st.warning(f"Fila {_fila_num}: {_msg}")
 
+            # Asociación de códigos sin match (2026-09-24): el
+            # importador fuerza que todo código matchee o se revise
+            # ACÁ — se registra un alias persistido y se regenera la
+            # vista previa, con lo que esas filas pasan a resolverse.
+            if _pv.codigos_no_resueltos:
+                with st.container(border=True):
+                    st.markdown(
+                        "**🔗 Asociar códigos sin match** — el código "
+                        "externo queda recordado como alias: en esta "
+                        "y en futuras importaciones resuelve solo."
+                    )
+                    _ac1, _ac2, _ac3 = st.columns([2, 3, 1])
+                    with _ac1:
+                        _cod_ext = st.selectbox(
+                            "Código del archivo",
+                            options=_pv.codigos_no_resueltos,
+                            key="insc_alias_cod",
+                        )
+                    with _ac2:
+                        _dest_alias = st.selectbox(
+                            "Materia del sistema",
+                            options=_mat_options,
+                            index=None,
+                            placeholder="Elegí la materia destino…",
+                            key="insc_alias_dest",
+                        )
+                    with _ac3:
+                        st.write("")
+                        if st.button(
+                            "Asociar",
+                            type="primary",
+                            disabled=_dest_alias is None,
+                            key="insc_alias_btn",
+                        ):
+                            from datetime import datetime as _dt
+                            from src.services.inscripcion_import_service import (
+                                registrar_alias as _reg_alias,
+                            )
+                            _dest_cod = str(_dest_alias).split(" - ")[0]
+                            with next(get_session()) as _sess:
+                                _reg_alias(
+                                    _sess, str(_cod_ext), _dest_cod,
+                                    origen="manual",
+                                    nota=(
+                                        "Match manual desde la vista "
+                                        "previa de importación el "
+                                        f"{_dt.utcnow():%Y-%m-%d}"
+                                    ),
+                                )
+                            # Regenerar la vista previa: las filas del
+                            # código asociado ahora resuelven via alias.
+                            if _upl_file is not None:
+                                try:
+                                    _upl_file.seek(0)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                                with next(get_session()) as _sess:
+                                    st.session_state[_pv_key] = (
+                                        _insc_preview_import(
+                                            _sess, _upl_file,
+                                            sheet_name=_insc_sheet_choice,
+                                        )
+                                    )
+                            else:
+                                # El archivo ya no está en el uploader:
+                                # descartar la vista previa vieja.
+                                st.session_state.pop(_pv_key, None)
+                            st.toast(
+                                f"Alias guardado: {_cod_ext} → "
+                                f"{_dest_cod}."
+                            )
+                            st.rerun()
+
             # Tabla de filas OK para inspección.
             if _pv.filas_ok:
                 _df_pv = pd.DataFrame([
@@ -636,11 +663,9 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("**👁 Secciones a mostrar**")
     st.caption(
-        "Elegí qué grupos de materias querés ver debajo. Las "
-        "**sin matchear** son códigos del Excel de inscriptos "
-        "que no encontraron materia en la base."
+        "Elegí qué grupos de materias querés ver debajo."
     )
-    tc1, tc2, tc3 = st.columns(3)
+    tc1, tc2 = st.columns(2)
     with tc1:
         _show_with_data = st.checkbox(
             f"Con datos ({len(_mat_codes_with_data)})",
@@ -652,12 +677,6 @@ with st.container(border=True):
             f"Sin datos ({len(_mat_codes_without_data)})",
             value=False,
             key="insc_show_without",
-        )
-    with tc3:
-        _show_unmatched = st.checkbox(
-            f"Sin matchear ({len(_unmatched_codes)})",
-            value=False,
-            key="insc_show_unmatched",
         )
 
 
@@ -745,6 +764,99 @@ def _paginator(total: int, key_prefix: str) -> tuple[int, int]:
     start = (page - 1) * page_size
     end = start + page_size
     return start, end
+
+
+# =============================================================================
+# Cobertura por período (2026-09-24)
+# =============================================================================
+# Vista compacta para responder "¿qué materias no tienen datos para
+# qué períodos?" sin recorrer los expanders una por una. Respeta los
+# filtros de búsqueda/carrera/año de arriba.
+with st.expander("🧩 Cobertura por período", expanded=False):
+    st.caption(
+        "Qué materias tienen datos cargados para cada período "
+        "(año + cuatrimestre). ✓ = tiene datos; — = falta. La "
+        "columna 'Faltan' cuenta los períodos elegidos sin datos, "
+        "para ordenar por los huecos más grandes."
+    )
+    _periodos_conocidos = sorted({
+        (i.anio, i.cuatrimestre) for i in _all_inscripciones
+    })
+    if not _periodos_conocidos:
+        st.info("Todavía no hay datos de inscriptos cargados.")
+    else:
+        _per_labels = [f"{a} {c}" for a, c in _periodos_conocidos]
+        _cc1, _cc2 = st.columns([3, 1])
+        with _cc1:
+            _per_sel = st.multiselect(
+                "Períodos a revisar",
+                options=_per_labels,
+                default=_per_labels,
+                key="insc_cob_periodos",
+            )
+        with _cc2:
+            _solo_huecos = st.checkbox(
+                "Sólo materias con huecos",
+                value=True,
+                key="insc_cob_solo_huecos",
+                help=(
+                    "Ocultar las materias que tienen datos para "
+                    "todos los períodos elegidos."
+                ),
+            )
+
+        _cob_por_mat: dict[str, set[str]] = {}
+        for _i in _all_inscripciones:
+            _cob_por_mat.setdefault(_i.materia_codigo, set()).add(
+                f"{_i.anio} {_i.cuatrimestre}"
+            )
+
+        _cob_rows = []
+        for _code in sorted(_mat_codes):
+            if not _materia_pasa_filtros(_code):
+                continue
+            _tiene = _cob_por_mat.get(_code, set())
+            _faltan = [p for p in _per_sel if p not in _tiene]
+            if _solo_huecos and not _faltan:
+                continue
+            _fila = {
+                "Materia": f"{_code} — {_mat_nombres.get(_code, '?')}",
+                "Faltan": len(_faltan),
+            }
+            for _p in _per_sel:
+                _fila[_p] = "✓" if _p in _tiene else "—"
+            _cob_rows.append(_fila)
+
+        if not _cob_rows:
+            st.success(
+                "Todas las materias visibles tienen datos para los "
+                "períodos elegidos."
+            )
+        else:
+            _df_cob = pd.DataFrame(_cob_rows).sort_values(
+                ["Faltan", "Materia"], ascending=[False, True],
+            )
+            st.dataframe(
+                _df_cob,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Materia": st.column_config.TextColumn(
+                        "Materia", width="large",
+                    ),
+                    "Faltan": st.column_config.NumberColumn(
+                        "Faltan", width="small",
+                    ),
+                    **{
+                        _p: st.column_config.TextColumn(_p, width="small")
+                        for _p in _per_sel
+                    },
+                },
+            )
+            st.caption(
+                f"{len(_cob_rows)} materia(s) mostradas. Los filtros "
+                "de búsqueda y carrera de arriba también aplican acá."
+            )
 
 
 # =============================================================================
@@ -865,127 +977,5 @@ if _show_without_data:
                             st.rerun()
 
 
-# =============================================================================
-# Section 3: Sin matchear
-# =============================================================================
-if _show_unmatched:
-    st.divider()
-    st.markdown(f"### ⚠️ Sin matchear ({len(_unmatched_codes)})")
-    st.caption(
-        "Códigos que vienen en el Excel de inscriptos pero no "
-        "pudieron matchearse con ninguna materia del sistema. "
-        "Para asociarlos, elegí la materia destino y confirmá."
-    )
-
-    if not _unmatched_codes:
-        st.success("Todos los códigos del Excel tienen match en el sistema.")
-    else:
-        # Aca el filtro busca por codigo o nombre del codigo unmatch
-        _display_unmatched = [
-            c for c in _unmatched_codes
-            if not _search
-            or _search.lower() in c.lower()
-            or _search.lower() in str(_nombre_insc.get(c, "")).lower()
-        ]
-        _display_unmatched = sorted(
-            _display_unmatched,
-            key=lambda c: _unmatched_agg[c]["Inscriptos"].sum(),
-            reverse=True,
-        )
-
-        if not _display_unmatched:
-            st.caption("Sin coincidencias.")
-        else:
-            _start, _end = _paginator(len(_display_unmatched), "unm")
-            for _uc in _display_unmatched[_start:_end]:
-                _uc_nombre = str(_nombre_insc.get(_uc, "?"))
-                _uc_data = _unmatched_agg[_uc]
-                _uc_total = int(_uc_data["Inscriptos"].sum())
-
-                with st.expander(f"⚠️ {_uc} — {_uc_nombre} ({_uc_total} inscriptos totales)"):
-                    uc1, uc2 = st.columns([1, 2])
-                    with uc1:
-                        st.dataframe(_uc_data, hide_index=True, use_container_width=True)
-                    with uc2:
-                        if _cuatri_filter != "Todos":
-                            _filt = _uc_data[_uc_data["Cuatrimestre"] == _cuatri_filter]
-                            if not _filt.empty:
-                                st.line_chart(_filt.set_index("Año")[["Inscriptos"]])
-                        else:
-                            _piv = _uc_data.pivot_table(
-                                index="Año", columns="Cuatrimestre",
-                                values="Inscriptos", aggfunc="sum",
-                            )
-                            st.line_chart(_piv)
-
-                    st.markdown("---")
-                    st.markdown("**Asociar a materia existente:**")
-                    ac1, ac2 = st.columns([3, 1])
-                    with ac1:
-                        _dest = st.selectbox(
-                            "Materia destino",
-                            options=["(no asociar)"] + _mat_options,
-                            key=f"unm_dest_{_uc}",
-                        )
-                    with ac2:
-                        if _dest != "(no asociar)" and st.button(
-                            "Asociar", type="primary", key=f"unm_assign_{_uc}",
-                        ):
-                            _dest_code = _dest.split(" - ")[0]
-                            from datetime import datetime as _dt
-                            from src.services.inscripcion_import_service import (
-                                registrar_alias as _reg_alias,
-                            )
-                            _now = _dt.utcnow()
-                            with next(get_session()) as sess:
-                                # Bugfix (2026-09-22, task #343):
-                                # antes se hacía `existing.inscriptos
-                                # += _insc`, con lo cual un doble tap
-                                # en "Asociar" duplicaba el valor.
-                                # Ahora se sobrescribe (semántica
-                                # consistente con el importer y con
-                                # `guardar_registros_materia`).
-                                # Registrar el alias PRIMERO además
-                                # hace idempotente el segundo tap: al
-                                # rerun el código ya no aparece en
-                                # "Sin matchear".
-                                _reg_alias(
-                                    sess, _uc, _dest_code,
-                                    origen="manual",
-                                    nota=(
-                                        f"Match manual desde UI el "
-                                        f"{_now:%Y-%m-%d}"
-                                    ),
-                                )
-                                for _, r in _uc_data.iterrows():
-                                    _anio = int(r["Año"])
-                                    _cuatri = str(r["Cuatrimestre"])
-                                    _insc = int(r["Inscriptos"])
-                                    existing = sess.get(
-                                        InscripcionHistoricaDB,
-                                        (_dest_code, _anio, _cuatri),
-                                    )
-                                    if existing:
-                                        existing.inscriptos = _insc
-                                        existing.updated_at = _now
-                                        existing.origen = "override"
-                                        sess.add(existing)
-                                    else:
-                                        sess.add(InscripcionHistoricaDB(
-                                            materia_codigo=_dest_code,
-                                            anio=_anio,
-                                            cuatrimestre=_cuatri,
-                                            inscriptos=_insc,
-                                            updated_at=_now,
-                                            origen="override",
-                                        ))
-                                sess.commit()
-                            st.toast(
-                                f"Asociado: {_uc} → {_dest_code}. "
-                                "Alias guardado — no volverá a aparecer."
-                            )
-                            st.rerun()
-
-
-if not _show_with_data and not _show_without_data and not _show_unmatched:
+if not _show_with_data and not _show_without_data:
     st.info("Elegí al menos una sección para mostrar.")
