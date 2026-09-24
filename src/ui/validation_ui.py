@@ -905,8 +905,31 @@ def _render_resumen_carreras(grupos: dict[str, dict]) -> None:
         "Conflictos": _df["Conflictos"].sum(),
     }])
     st.markdown("**Resumen por carrera**")
+
+    # Formato condicional (2026-09-24, pedido del usuario): resaltar
+    # los contadores distintos de cero para que los problemas salten
+    # a la vista — ámbar para faltantes/no esperadas, rojo para
+    # conflictos; los ceros quedan atenuados. Colores elegidos para
+    # que funcionen tanto en tema oscuro como claro.
+    def _bg(color_fondo: str, color_texto: str = "#fafafa"):
+        def _f(v):
+            if isinstance(v, (int, float)) and v > 0:
+                return (
+                    f"background-color: {color_fondo}; "
+                    f"color: {color_texto}; font-weight: bold"
+                )
+            return "color: #9ca3af"
+        return _f
+
+    _styler = (
+        pd.concat([_df, _total], ignore_index=True)
+        .style
+        .map(_bg("#92400e"), subset=["Faltantes"])
+        .map(_bg("#854d0e"), subset=["No esperadas"])
+        .map(_bg("#991b1b"), subset=["Conflictos"])
+    )
     st.dataframe(
-        pd.concat([_df, _total], ignore_index=True),
+        _styler,
         use_container_width=True, hide_index=True,
     )
 

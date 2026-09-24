@@ -750,7 +750,9 @@ HOJAS_SISTEMA_PLANTILLA = {"Instrucciones", "Materias", "Horarios"}
 
 
 def exportar_cronograma_por_grupos_excel(
-    session: Session, schedule_id: str,
+    session: Session,
+    schedule_id: str,
+    catalogo_completo: bool = False,
 ) -> bytes:
     """Exporta un cronograma existente como plantilla PRECARGADA
     (2026-09-24): el mismo archivo que genera
@@ -763,6 +765,14 @@ def exportar_cronograma_por_grupos_excel(
     Uso previsto: repartir a cada cátedra/departamento la hoja de su
     grupo para que revise y corrija, y reimportar hoja por hoja con
     el selector de hoja del importador.
+
+    Args:
+        catalogo_completo: con ``True`` (2026-09-24) la hoja
+            ``Materias`` y las listas desplegables ofrecen TODO el
+            catálogo activo (columnas de contexto de catálogo, sin
+            las de dictado) en vez de sólo los dictados del ciclo —
+            útil para agregar al cronograma materias que todavía no
+            tienen dictado creado.
 
     Raises:
         ValueError: cronograma inexistente, sin ciclo asociado (las
@@ -788,12 +798,21 @@ def exportar_cronograma_por_grupos_excel(
     ciclo = session.get(CicloDB, sched.ciclo_id)
     assert ciclo is not None
 
-    _contexto = obtener_contexto_materias_del_ciclo(session, sched.ciclo_id)
-    if not _contexto:
-        raise ValueError(
-            f"El ciclo '{sched.ciclo_id}' no tiene dictados creados. "
-            "Ir a Ciclos → Dictados antes de exportar."
+    if catalogo_completo:
+        _contexto = obtener_contexto_materias_catalogo(session)
+        _columnas_materias = MATERIAS_CATALOGO_COLUMNS
+        if not _contexto:
+            raise ValueError("No hay materias activas en el catálogo.")
+    else:
+        _contexto = obtener_contexto_materias_del_ciclo(
+            session, sched.ciclo_id,
         )
+        _columnas_materias = MATERIAS_CONTEXT_COLUMNS
+        if not _contexto:
+            raise ValueError(
+                f"El ciclo '{sched.ciclo_id}' no tiene dictados creados. "
+                "Ir a Ciclos → Dictados antes de exportar."
+            )
 
     # Config horaria (misma fuente que el generador de plantillas).
     from src.database.models import ConfiguracionHoraria
@@ -864,7 +883,7 @@ def exportar_cronograma_por_grupos_excel(
         _hoja = _nombre_hoja_excel(_grupo, _usados)
         _hojas_grupo.append((_hoja, _grupo))
 
-    _escribir_hoja_materias(wb, _contexto)
+    _escribir_hoja_materias(wb, _contexto, columnas=_columnas_materias)
     _ref_dias, _ref_horas = _preparar_listas_horarios(
         wb, _dias_operativos, _slots,
     )

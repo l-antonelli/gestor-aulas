@@ -100,13 +100,35 @@ _DIA_ORD = {
 }
 _DIAS_LIST = list(_DIA_ORD.keys())
 
+# Fallback si la config horaria no está disponible (paso de 15').
 _BASE_TIME_OPTIONS = [
-    "08:00", "08:30", "09:00", "09:30", "10:00", "10:30",
-    "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
-    "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
-    "17:00", "17:30", "18:00", "18:30", "19:00", "19:30",
-    "20:00", "20:30", "21:00", "21:30", "22:00",
-]
+    f"{h:02d}:{m:02d}" for h in range(7, 23) for m in (0, 15, 30, 45)
+] + ["23:00"]
+
+
+def _opciones_horarias() -> list[str]:
+    """Opciones HH:MM para los selectores de Inicio/Fin de los data
+    editors, derivadas de ``ConfiguracionHoraria`` (granularidad +
+    rango operativo) — la misma fuente que las listas de la plantilla
+    Excel.
+
+    Fix 2026-09-24 (reporte del usuario): antes era una lista
+    hardcodeada con pasos de 30 minutos, así que las horas terminadas
+    en :15/:45 sólo aparecían si alguna fila existente ya las traía.
+    """
+    from src.services.template_export_service import (
+        _slots_horarios_validos,
+    )
+    try:
+        with next(get_session()) as _s:
+            _cfg = get_or_create_config(_s)
+        return _slots_horarios_validos(
+            _cfg.granularidad_minutos or 15,
+            _cfg.hora_inicio_operativo,
+            _cfg.hora_fin_operativo,
+        )
+    except Exception:  # noqa: BLE001
+        return list(_BASE_TIME_OPTIONS)
 
 
 def _fmt_hours(h: float) -> str:
@@ -688,7 +710,7 @@ def render_schedule_materia_detail(
     if not df.empty:
         for tc in ["Inicio", "Fin"]:
             existing_times.update(df[tc].dropna().astype(str).str[:5])
-    time_opts = sorted(set(_BASE_TIME_OPTIONS) | existing_times)
+    time_opts = sorted(set(_opciones_horarias()) | existing_times)
 
     edited = st.data_editor(
         df,

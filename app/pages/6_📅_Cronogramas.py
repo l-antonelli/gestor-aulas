@@ -549,6 +549,20 @@ with tab_lista:
                         )
                     else:
                         _exp_key = f"exp_bytes_{s.id}"
+                        _exp_catalogo = st.checkbox(
+                            "Ofrecer el catálogo completo de materias",
+                            value=False,
+                            key=f"exp_cat_{s.id}",
+                            help=(
+                                "Por defecto la hoja Materias y las "
+                                "listas ofrecen sólo las materias con "
+                                "dictado en el ciclo del cronograma. "
+                                "Tildá para incluir TODO el catálogo "
+                                "activo — útil si las cátedras van a "
+                                "sumar materias que todavía no tienen "
+                                "dictado creado."
+                            ),
+                        )
                         if st.button(
                             "Generar Excel por grupos",
                             key=f"exp_btn_{s.id}",
@@ -561,6 +575,7 @@ with tab_lista:
                                     st.session_state[_exp_key] = (
                                         exportar_cronograma_por_grupos_excel(
                                             _sess, s.id,
+                                            catalogo_completo=_exp_catalogo,
                                         )
                                     )
                             except ValueError as _exc:
@@ -1286,7 +1301,7 @@ with tab_cargar:
                         )
 
                         from src.ui.schedule_materia_editor import (
-                            _BASE_TIME_OPTIONS as _SME_BASE_TIME_OPTIONS,
+                            _opciones_horarias as _sme_opciones_horarias,
                             _DIAS_LIST as _SME_DIAS_LIST,
                             _persist_edits as _sme_persist_edits,
                             _time_str as _sme_time_str,
@@ -1472,7 +1487,7 @@ with tab_cargar:
                                         max(_ed_com_nums) + 1,
                                     ]
                                     _ed_times = sorted(
-                                        set(_SME_BASE_TIME_OPTIONS)
+                                        set(_sme_opciones_horarias())
                                         | {r["Inicio"] for r in _ed_rows}
                                         | {r["Fin"] for r in _ed_rows}
                                     )

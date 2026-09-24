@@ -687,6 +687,57 @@ class TestExportarCronogramaPorGrupos:
         _virts = {(e.tipo_clase, e.virtual) for e in entries}
         assert ("teorica", True) in _virts
 
+    def test_catalogo_completo_incluye_materias_sin_dictado(
+        self, session, cronograma_con_grupos,
+    ):
+        """Con ``catalogo_completo=True`` la hoja Materias ofrece TODO
+        el catálogo activo (no sólo los dictados del ciclo), para
+        poder agregar al cronograma materias que aún no tienen
+        dictado creado.
+        """
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+        )
+
+        # Materia activa SIN dictado en el ciclo.
+        session.add(MateriaDB(
+            codigo="QUI900", nombre="Química Extra",
+            periodo="cuatrimestral", active=True, horas_semanales=4,
+        ))
+        session.commit()
+
+        # Default: sólo dictados del ciclo.
+        wb = load_workbook(io.BytesIO(
+            exportar_cronograma_por_grupos_excel(session, "sched-exp")
+        ))
+        _cods = {
+            wb["Materias"].cell(row=r, column=2).value
+            for r in range(2, wb["Materias"].max_row + 1)
+        }
+        assert "QUI900" not in _cods
+
+        # Catálogo completo.
+        wb2 = load_workbook(io.BytesIO(
+            exportar_cronograma_por_grupos_excel(
+                session, "sched-exp", catalogo_completo=True,
+            )
+        ))
+        ws_mat = wb2["Materias"]
+        _cods2 = {
+            ws_mat.cell(row=r, column=2).value
+            for r in range(2, ws_mat.max_row + 1)
+        }
+        assert "QUI900" in _cods2
+        # Los rangos de la lista desplegable cubren todo el catálogo.
+        n_mat = len(_cods2)
+        ws_g = wb2["Básicas"]
+        _dv_cod = None
+        for dv in ws_g.data_validations.dataValidation:
+            if any(str(r).startswith("B2") for r in dv.sqref.ranges):
+                _dv_cod = dv
+        assert _dv_cod is not None
+        assert f"$B${n_mat + 1}" in (_dv_cod.formula1 or "")
+
     def test_sin_ciclo_falla(self, session, ciclo_con_2_materias):
         from src.database.models import ScheduleDB
         from src.services.template_export_service import (
