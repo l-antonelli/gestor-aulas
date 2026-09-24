@@ -49,8 +49,8 @@ def _time_str(val) -> str:
     return str(val)
 
 
-st.set_page_config(page_title="Planes de Cursada", page_icon="📊", layout="wide")
-st.title("📊 Planes de Cursada")
+st.set_page_config(page_title="Cursada", page_icon="📊", layout="wide")
+st.title("📊 Cursada")
 
 # =============================================================================
 # Selector global de ciclo + plan en sidebar. Ver `src/ui/planes_sidebar.py`.
