@@ -1462,9 +1462,11 @@ with tab_cargar:
                                                 ],
                                                 default="sin determinar",
                                                 help=(
-                                                    "Podés dejarlo en "
-                                                    "'sin determinar': "
-                                                    "lo resuelve la "
+                                                    "Dejalo en 'sin "
+                                                    "determinar' salvo "
+                                                    "que haga falta "
+                                                    "fijarlo ya: lo "
+                                                    "resuelve la "
                                                     "asignación "
                                                     "automática (LP)."
                                                 ),
@@ -1474,9 +1476,12 @@ with tab_cargar:
                                                 "Virtual",
                                                 default=False,
                                                 help=(
-                                                    "Tildado = clase "
-                                                    "virtual (sin aula). "
-                                                    "Un laboratorio no "
+                                                    "Sólo excepciones: "
+                                                    "tildá si ESTA clase "
+                                                    "es virtual aunque "
+                                                    "el dictado sea "
+                                                    "presencial. Un "
+                                                    "laboratorio no "
                                                     "puede ser virtual."
                                                 ),
                                                 width="small",
@@ -2386,8 +2391,9 @@ with tab_editar:
                                 options=["sin determinar", "teorica", "laboratorio"],
                                 default="sin determinar",
                                 help=(
-                                    "Tipo de clase. "
-                                    "**sin determinar**: lo decide la "
+                                    "Tipo de clase. Dejalo en **sin "
+                                    "determinar** salvo que haga "
+                                    "falta fijarlo ya: lo decide la "
                                     "asignación automática según las "
                                     "horas de la materia. "
                                     "**teoria** o **laboratorio**: "
@@ -2399,11 +2405,14 @@ with tab_editar:
                                 "Virtual",
                                 default=False,
                                 help=(
-                                    "Tildado = la clase se dicta "
-                                    "virtual (no requiere aula). "
-                                    "Destildado = presencial. Una "
-                                    "clase de laboratorio no puede "
-                                    "ser virtual."
+                                    "Sólo para excepciones: tildá "
+                                    "cuando ESTA clase se dicta "
+                                    "virtual aunque el dictado sea "
+                                    "presencial. Si toda la materia "
+                                    "es virtual, se configura en el "
+                                    "dictado. Destildado = "
+                                    "presencial. Un laboratorio no "
+                                    "puede ser virtual."
                                 ),
                                 width="small",
                             ),

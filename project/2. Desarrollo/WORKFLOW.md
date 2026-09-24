@@ -471,6 +471,26 @@ El archivo trae:
 - `fullCalcOnLoad` activado para que las fórmulas se recalculen al
   abrir el archivo (openpyxl no guarda valores cacheados).
 
+**Semántica de `virtual` y `tipo_clase` en la plantilla**
+(2026-09-24). Dos aclaraciones de uso que el instructivo del Excel y
+las ayudas de los editores repiten, porque definen QUÉ se espera que
+cargue la cátedra:
+
+- `virtual` es **sólo para excepciones**: se marca VERDADERO cuando
+  *esa clase puntual* se dicta virtual aunque el dictado sea
+  presencial (modalidad mixta: por ejemplo la teoría virtual y la
+  práctica presencial). Si la materia entera se dicta virtual, NO se
+  marca fila por fila en el Excel — eso se configura una sola vez en
+  el dictado (jerarquía `HorarioDB.virtual > DictadoDB.virtual >
+  MateriaDB.virtual`, ver § dictados virtuales y RF-DICT-04/09) y la
+  hoja `Materias` de la plantilla lo muestra en la columna
+  "Modalidad del dictado". El default es siempre presencial (vacío =
+  FALSO).
+- `tipo_clase` se deja **vacío salvo que sea estrictamente necesario
+  fijarlo ya**: el tipo lo determina la asignación automática (LP)
+  según las horas de teoría/laboratorio de la materia. Predeterminarlo
+  a mano es la excepción, no la regla.
+
 La plantilla no ejecuta reglas de negocio (unicidad de comisión, gap
 horario, etc.): esas se corren en el importer en Fase C2. Acá sólo
 se blindan errores tipográficos y datos fuera del catálogo.

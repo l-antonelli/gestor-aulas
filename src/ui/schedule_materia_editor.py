@@ -711,10 +711,11 @@ def render_schedule_materia_detail(
                 options=["sin determinar", "teorica", "laboratorio"],
                 default="sin determinar",
                 help=(
-                    "Podés dejarlo en 'sin determinar': el tipo lo "
+                    "Dejalo en 'sin determinar' salvo que sea "
+                    "estrictamente necesario fijarlo ya: el tipo lo "
                     "resuelve la asignación automática (LP). Elegí "
-                    "teórica o laboratorio sólo si la cátedra lo "
-                    "predetermina."
+                    "teórica o laboratorio sólo si hace falta "
+                    "predeterminarlo."
                 ),
                 width="small",
             ),
@@ -722,9 +723,11 @@ def render_schedule_materia_detail(
                 "Virtual",
                 default=False,
                 help=(
-                    "Tildado = la clase se dicta virtual (no requiere "
-                    "aula). Destildado = presencial. Una clase de "
-                    "laboratorio no puede ser virtual."
+                    "Sólo para excepciones: tildá cuando ESTA clase "
+                    "se dicta virtual aunque el dictado sea "
+                    "presencial. Si toda la materia es virtual, se "
+                    "configura en el dictado, no acá. Destildado = "
+                    "presencial. Un laboratorio no puede ser virtual."
                 ),
                 width="small",
             ),

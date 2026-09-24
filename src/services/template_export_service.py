@@ -114,15 +114,19 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     ),
     (
         "tipo_clase",
-        "Opcional: dejalo vacío y el tipo lo determina la asignación "
-        "automática (LP). 'teorica' o 'laboratorio' si la cátedra lo "
-        "predetermina.",
+        "Dejalo VACÍO salvo que sea estrictamente necesario fijarlo "
+        "ya: el tipo lo determina la asignación automática. 'teorica' "
+        "o 'laboratorio' sólo si hace falta predeterminarlo.",
         14,
     ),
     (
         "virtual",
-        "VERDADERO = clase virtual (sin aula). Vacío o FALSO = "
-        "presencial. Un laboratorio no puede ser virtual.",
+        "SÓLO para excepciones: VERDADERO = esta clase puntual se "
+        "dicta virtual aunque el dictado sea presencial. Si toda la "
+        "materia se dicta virtual, NO se marca acá (se configura en "
+        "el dictado — mirá 'Modalidad del dictado' en la hoja "
+        "Materias). Vacío o FALSO = presencial. Un laboratorio no "
+        "puede ser virtual.",
         11,
     ),
 ]
@@ -645,17 +649,25 @@ def _escribir_hoja_instrucciones_cronograma(
        "cual figuran (con mayúscula inicial).")
     row += 1
     _t(row,
-       "• Tipo de clase: opcional. Vacío significa que el tipo lo "
-       "determina la asignación automática; 'teorica' o "
-       "'laboratorio' sólo si la cátedra lo predetermina.")
+       "• Tipo de clase: dejalo VACÍO salvo que sea estrictamente "
+       "necesario fijarlo ya — el tipo lo determina la asignación "
+       "automática de la aplicación. Completá 'teorica' o "
+       "'laboratorio' sólo cuando la cátedra necesita "
+       "predeterminarlo (por ejemplo, un laboratorio que sí o sí es "
+       "laboratorio).")
     row += 1
     _t(row,
-       "• Virtual: VERDADERO = la clase se dicta virtual (no "
-       "requiere aula). Vacío o FALSO = presencial. Consejo: en "
-       "Excel moderno (365) podés seleccionar la columna 'virtual' e "
-       "insertar una 'Casilla de verificación' (pestaña Insertar) — "
-       "la columna queda con casillas para tildar, que son "
-       "exactamente estos mismos valores VERDADERO/FALSO.")
+       "• Virtual: es SÓLO para excepciones — clases puntuales que "
+       "se dictan virtuales aunque el dictado sea presencial (por "
+       "ejemplo, la teoría virtual y la práctica presencial). Si la "
+       "materia entera se dicta virtual, NO se marca acá: eso se "
+       "configura en el dictado dentro de la aplicación (fijate la "
+       "columna 'Modalidad del dictado' en la hoja Materias). Vacío "
+       "o FALSO = presencial. Consejo: en Excel moderno (365) podés "
+       "seleccionar la columna 'virtual' e insertar una 'Casilla de "
+       "verificación' (pestaña Insertar) — la columna queda con "
+       "casillas para tildar, que son exactamente estos mismos "
+       "valores VERDADERO/FALSO.")
     row += 2
 
     _t(row, "Reglas que valida la aplicación al importar",
