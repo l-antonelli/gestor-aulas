@@ -9,7 +9,7 @@ from datetime import time
 from typing import Optional
 
 from pydantic import BaseModel, Field as PydanticField, field_validator
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from src.database.models import MateriaDB
 from src.database.crud import materia_crud
@@ -26,11 +26,17 @@ class HorarioInput(BaseModel):
 
     - ``tipo_clase``: None = por determinar (default histórico);
       ``"teorica"`` / ``"laboratorio"`` cuando la cátedra lo declara.
-    - ``virtual``: None = heredar del dictado/materia (default);
-      ``True`` / ``False`` = override explícito.
+    - ``virtual``: booleano — desde 2026-09-23 un valor vacío en el
+      archivo se interpreta como ``False`` (presencial). ``None``
+      sólo sobrevive por compatibilidad con llamadores viejos.
+    - ``comision_codigo`` (2026-09-23): código numérico de la
+      comisión declarado por la cátedra en la plantilla nueva —
+      mapea a ``ComisionDB.numero``. ``None`` = esquema histórico
+      (texto libre en ``comision_nombre``, número autoderivado).
     """
     codigo_materia: str = PydanticField(min_length=1)
     comision_nombre: str = PydanticField(default="Comision Unica", min_length=1)
+    comision_codigo: Optional[int] = PydanticField(default=None, ge=1)
     dia: str
     hora_inicio: time
     hora_fin: time
@@ -105,6 +111,24 @@ def _resolve_materia_code(session: Session, codigo: str) -> CodeResolution:
             original_code=codigo,
             resolved_code=materia.codigo,
             resolution_type="guarani",
+            materia=materia,
+        )
+
+    # 2026-09-23: resolución por NOMBRE exacto (case-insensitive) —
+    # la plantilla nueva permite elegir la materia por nombre y dejar
+    # el código vacío; el parser propaga el nombre en `codigo` y acá
+    # se cruza contra el catálogo. Sólo matchea si el nombre es único.
+    matches_nombre = session.exec(
+        select(MateriaDB).where(
+            func.lower(MateriaDB.nombre) == codigo.strip().lower()
+        )
+    ).all()
+    if len(matches_nombre) == 1:
+        materia = matches_nombre[0]
+        return CodeResolution(
+            original_code=codigo,
+            resolved_code=materia.codigo,
+            resolution_type="nombre",
             materia=materia,
         )
 

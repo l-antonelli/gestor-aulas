@@ -131,8 +131,11 @@ class TestEstructuraDelArchivo:
         wb = load_workbook(io.BytesIO(contenido))
         assert "Instrucciones" in wb.sheetnames
         assert "Horarios" in wb.sheetnames
+        # Hoja VISIBLE de referencia (2026-09-23): reemplaza a la
+        # oculta `_materias` y expone codigo+nombre.
+        assert "Materias" in wb.sheetnames
+        assert "_materias" not in wb.sheetnames
         # Hojas ocultas de listas
-        assert "_materias" in wb.sheetnames
         assert "_dias" in wb.sheetnames
         assert "_tipos" in wb.sheetnames
         assert "_virtual" in wb.sheetnames
@@ -142,10 +145,12 @@ class TestEstructuraDelArchivo:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        for nombre in ("_materias", "_dias", "_tipos", "_virtual"):
+        for nombre in ("_dias", "_tipos", "_virtual"):
             assert wb[nombre].sheet_state == "hidden", (
                 f"Hoja {nombre} debería estar oculta"
             )
+        # La referencia de materias es VISIBLE (2026-09-23).
+        assert wb["Materias"].sheet_state == "visible"
 
     def test_instrucciones_es_la_primera_hoja(self, session, ciclo_con_2_materias):
         """`Instrucciones` es la pestaña activa al abrir el archivo."""
@@ -162,10 +167,14 @@ class TestEstructuraDelArchivo:
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        headers = [ws.cell(row=1, column=c).value for c in range(1, 8)]
+        headers = [ws.cell(row=1, column=c).value for c in range(1, 10)]
+        # Esquema 2026-09-23: comisión con código numérico obligatorio
+        # + nombre opcional, y materia elegible por nombre.
         assert headers == [
-            "codigo_materia", "comision", "dia", "hora_inicio",
-            "hora_fin", "tipo_clase", "virtual",
+            "codigo_materia", "nombre_materia",
+            "codigo_comision", "nombre_comision",
+            "dia", "hora_inicio", "hora_fin",
+            "tipo_clase", "virtual",
         ]
 
     def test_fila_2_esta_vacia_para_evitar_import_del_ejemplo(
@@ -182,11 +191,15 @@ class TestEstructuraDelArchivo:
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["Horarios"]
-        # Todas las celdas de la fila 2 deben estar vacías.
-        for col in range(1, len(
-            ["codigo_materia", "comision", "dia", "hora_inicio",
-             "hora_fin", "tipo_clase", "virtual"]
-        ) + 1):
+        # La columna A lleva la fórmula de auto-población del código
+        # (2026-09-23) — que evalúa a "" mientras no se elija nombre.
+        _a2 = ws.cell(row=2, column=1).value
+        assert _a2 is None or str(_a2).startswith("=IFERROR"), (
+            f"Fila 2 col A debería ser fórmula o vacía: {_a2!r}"
+        )
+        # Las demás celdas de la fila 2 deben estar vacías (sin datos
+        # de ejemplo).
+        for col in range(2, 10):
             assert ws.cell(row=2, column=col).value in (None, ""), (
                 f"Fila 2 columna {col} no está vacía: "
                 f"{ws.cell(row=2, column=col).value!r}"
@@ -217,19 +230,26 @@ class TestListasDeValores:
     def test_lista_de_materias_incluye_solo_dictados_activos(
         self, session, ciclo_con_2_materias,
     ):
-        """La hoja `_materias` tiene exactamente los códigos con
-        dictado activo en el ciclo. Ni más ni menos.
+        """La hoja `Materias` tiene exactamente los códigos con
+        dictado activo en el ciclo (con su nombre al lado). Ni más
+        ni menos.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["_materias"]
+        ws = wb["Materias"]
+        # Fila 1 = header ("codigo" / "nombre"); datos desde fila 2.
         codigos = [
             ws.cell(row=r, column=1).value
-            for r in range(1, ws.max_row + 1)
+            for r in range(2, ws.max_row + 1)
+        ]
+        nombres = [
+            ws.cell(row=r, column=2).value
+            for r in range(2, ws.max_row + 1)
         ]
         assert sorted(codigos) == ["FIS101", "MAT101"]
+        assert sorted(nombres) == ["Análisis I", "Física I"]
 
     def test_lista_dias_estandar(self, session, ciclo_con_2_materias):
         ciclo = ciclo_con_2_materias["ciclo"]
@@ -267,8 +287,10 @@ class TestDataValidations:
         self, session, ciclo_con_2_materias,
     ):
         """La hoja Horarios tiene DataValidation configurados para
-        codigo_materia (A), dia (C), hora_inicio (D), hora_fin (E),
-        tipo_clase (F) y virtual (G).
+        codigo_materia (A), nombre_materia (B), codigo_comision (C),
+        dia (E), hora_inicio (F), hora_fin (G), tipo_clase (H) y
+        virtual (I). La columna D (nombre_comision) es texto libre y
+        no lleva validación.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -282,7 +304,7 @@ class TestDataValidations:
                 ranges_cubiertos.append(str(r))
 
         # Cada columna crítica debe tener al menos un rango.
-        cols_letra = ["A", "C", "D", "E", "F", "G"]
+        cols_letra = ["A", "B", "C", "E", "F", "G", "H", "I"]
         for letra in cols_letra:
             assert any(
                 r.startswith(f"{letra}2") for r in ranges_cubiertos
@@ -291,11 +313,11 @@ class TestDataValidations:
                 f"Rangos vistos: {ranges_cubiertos}"
             )
 
-    def test_dropdown_materias_referencia_hoja_oculta(
+    def test_lista_materias_referencia_hoja_materias(
         self, session, ciclo_con_2_materias,
     ):
         """La validación de la columna A (codigo_materia) referencia la
-        hoja `_materias` para armar el dropdown.
+        hoja visible `Materias` para armar la lista desplegable.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -311,7 +333,7 @@ class TestDataValidations:
 
         assert dv_materias is not None
         assert dv_materias.type == "list"
-        assert "_materias" in (dv_materias.formula1 or "")
+        assert "Materias!" in (dv_materias.formula1 or "")
 
 
 class TestReferenciaMaterias:

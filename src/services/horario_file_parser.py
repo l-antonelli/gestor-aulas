@@ -8,9 +8,20 @@ import pandas as pd
 from src.services.horario_loading_service import HorarioInput
 
 # Column name aliases: canonical_name -> list of accepted alternatives
+#
+# 2026-09-23: las comisiones se identifican por CÓDIGO numérico
+# (`codigo_comision`, obligatorio en la plantilla nueva — mapea a
+# `ComisionDB.numero`) con un `nombre_comision` opcional. La columna
+# histórica `comision` (texto libre) se sigue aceptando por
+# compatibilidad: se interpreta como nombre y el código se autoderiva.
+# También se acepta `nombre_materia` para resolver la materia por
+# nombre cuando el código viene vacío.
 COLUMN_ALIASES = {
     "codigo_materia": ["codigo_plan", "materia", "cod_materia"],
-    "comision": ["codigo_comision", "comision_nombre", "cod_comision"],
+    "nombre_materia": ["materia_nombre"],
+    "codigo_comision": ["cod_comision"],
+    "nombre_comision": ["comision_nombre"],
+    "comision": [],
     "dia": ["dia_semana"],
     "hora_inicio": ["hora_ingreso", "inicio"],
     "hora_fin": ["hora_egreso", "fin"],
@@ -42,27 +53,32 @@ def _parse_tipo_clase(value) -> str | None:
     )
 
 
-def _parse_virtual(value) -> bool | None:
-    """Normaliza el override de virtual leído del archivo.
+def _parse_virtual(value) -> bool:
+    """Normaliza la columna virtual leída del archivo a un booleano.
 
-    Acepta 'SI'/'NO' de la plantilla (case-insensitive), plus
-    variantes booleanas (True/False, 1/0, si/no, sí/no). Vacío o
-    NaN se traduce a None (= heredar).
+    Acepta 'SI'/'NO' de la plantilla (case-insensitive), más variantes
+    booleanas (True/False, 1/0, si/no, sí/no).
+
+    2026-09-23: virtual es un **booleano** — un valor vacío (o NaN) se
+    interpreta como ``False`` (presencial). Antes vacío significaba
+    "heredar del dictado/materia" (tri-estado), lo que resultaba
+    opaco: el usuario no podía saber mirando el archivo si una clase
+    iba a quedar virtual o no.
     """
     if value is None:
-        return None
+        return False
     if isinstance(value, bool):
         return value
     s = str(value).strip().lower()
     if s == "" or s == "nan":
-        return None
-    if s in ("si", "sí", "s", "true", "1", "yes", "y"):
+        return False
+    if s in ("si", "sí", "s", "true", "verdadero", "1", "yes", "y"):
         return True
-    if s in ("no", "n", "false", "0"):
+    if s in ("no", "n", "false", "falso", "0"):
         return False
     raise ValueError(
         f"virtual '{value}' no reconocido "
-        "(esperado: SI, NO o vacio)"
+        "(esperado: SI, NO o vacío = NO)"
     )
 
 
@@ -83,6 +99,11 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+
+# Hojas del archivo que NUNCA son datos a importar: la guía, la
+# referencia visible de materias (2026-09-23) y las listas de sistema
+# con prefijo `_`.
+HOJAS_SISTEMA = {"Instrucciones", "Materias"}
 
 # Hoja que el parser prefiere cuando no se le indica una explícita.
 # La UI del selector de hoja usa esta misma constante para elegir el
@@ -152,7 +173,8 @@ def listar_hojas_visibles(file) -> list[str]:
             pass
     return [
         name for name in nombres
-        if not str(name).startswith("_") and str(name) != "Instrucciones"
+        if not str(name).startswith("_")
+        and str(name) not in HOJAS_SISTEMA
     ]
 
 
@@ -224,7 +246,7 @@ def parse_horarios_file(
                 # Primera hoja no oculta (nombre sin prefijo '_').
                 _visibles = [
                     n for n in _nombres
-                    if not n.startswith("_") and n != "Instrucciones"
+                    if not n.startswith("_") and n not in HOJAS_SISTEMA
                 ]
                 _elegida = _visibles[0] if _visibles else _nombres[0]
             df = _xls.parse(_elegida)
@@ -235,12 +257,28 @@ def parse_horarios_file(
 
     df = _normalize_columns(df)
 
-    required = {"codigo_materia", "dia", "hora_inicio", "hora_fin"}
+    # `codigo_materia` puede reemplazarse por `nombre_materia` (la
+    # plantilla nueva permite elegir la materia por nombre; el
+    # importador resuelve el nombre contra el catálogo).
+    required = {"dia", "hora_inicio", "hora_fin"}
     missing = required - set(df.columns)
+    if (
+        "codigo_materia" not in df.columns
+        and "nombre_materia" not in df.columns
+    ):
+        missing.add("codigo_materia")
     if missing:
         return [], [f"Columnas faltantes: {', '.join(sorted(missing))}"]
 
-    has_comision = "comision" in df.columns
+    def _celda(row, col) -> str:
+        if col not in df.columns:
+            return ""
+        _v = row.get(col)
+        if _v is None or (isinstance(_v, float) and pd.isna(_v)):
+            return ""
+        s = str(_v).strip()
+        return "" if s.lower() == "nan" else s
+
     has_tipo = "tipo_clase" in df.columns
     has_virtual = "virtual" in df.columns
 
@@ -248,32 +286,93 @@ def parse_horarios_file(
         row_num = idx + 2  # +2: 0-based idx + header row
 
         try:
-            codigo_raw = str(row["codigo_materia"]).strip()
-            if not codigo_raw or codigo_raw.lower() == "nan":
-                errors.append(f"Fila {row_num}: codigo_materia vacio")
+            codigo_raw = _celda(row, "codigo_materia")
+            nombre_mat = _celda(row, "nombre_materia")
+            dia_raw = _celda(row, "dia")
+            hi_raw = _celda(row, "hora_inicio")
+            hf_raw = _celda(row, "hora_fin")
+
+            # Fila totalmente vacía (típico: filas de la plantilla con
+            # la fórmula de auto-población del código y nada más) —
+            # se saltea en silencio, no es un error.
+            if not any((codigo_raw, nombre_mat, dia_raw, hi_raw, hf_raw)):
                 continue
+
+            if not codigo_raw:
+                if nombre_mat:
+                    # Resolución por nombre: el importador la cruza
+                    # contra el catálogo (código > guaraní > nombre).
+                    codigo_raw = nombre_mat
+                else:
+                    errors.append(f"Fila {row_num}: codigo_materia vacio")
+                    continue
 
             hora_inicio = _parse_time(row["hora_inicio"])
             hora_fin = _parse_time(row["hora_fin"])
+            # Validación (2026-09-23): el inicio debe ser anterior al
+            # fin — antes una fila invertida entraba y recién rompía
+            # en las validaciones del cronograma.
+            if hora_inicio >= hora_fin:
+                errors.append(
+                    f"Fila {row_num}: hora_inicio "
+                    f"({hora_inicio.strftime('%H:%M')}) debe ser "
+                    f"anterior a hora_fin "
+                    f"({hora_fin.strftime('%H:%M')})"
+                )
+                continue
 
-            comision_nombre = "Comision Unica"
-            if has_comision:
-                comision_raw = str(row["comision"]).strip()
-                if comision_raw and comision_raw.lower() != "nan":
-                    comision_nombre = comision_raw
+            # Comisión: esquema nuevo (código numérico + nombre
+            # opcional) con fallback al texto libre histórico.
+            comision_codigo: int | None = None
+            _cod_com_raw = _celda(row, "codigo_comision")
+            _nom_com_raw = _celda(row, "nombre_comision")
+            _legacy_com = _celda(row, "comision")
+            if _cod_com_raw:
+                try:
+                    comision_codigo = int(float(_cod_com_raw))
+                except (TypeError, ValueError):
+                    errors.append(
+                        f"Fila {row_num}: codigo_comision "
+                        f"'{_cod_com_raw}' no es un número entero"
+                    )
+                    continue
+                if comision_codigo < 1:
+                    errors.append(
+                        f"Fila {row_num}: codigo_comision debe ser "
+                        f"un entero >= 1 (vino {comision_codigo})"
+                    )
+                    continue
+                comision_nombre = _nom_com_raw or f"C{comision_codigo}"
+            elif _nom_com_raw:
+                comision_nombre = _nom_com_raw
+            elif _legacy_com:
+                comision_nombre = _legacy_com
+            else:
+                comision_nombre = "Comision Unica"
 
             tipo_clase = None
             if has_tipo:
                 tipo_clase = _parse_tipo_clase(row["tipo_clase"])
 
-            virtual = None
+            virtual = False
             if has_virtual:
                 virtual = _parse_virtual(row["virtual"])
+
+            # Validación (2026-09-23): una clase de laboratorio no
+            # puede ser virtual — el laboratorio requiere aula física.
+            if tipo_clase == "laboratorio" and virtual:
+                errors.append(
+                    f"Fila {row_num}: una clase de laboratorio no "
+                    "puede ser virtual — corregí el tipo o la "
+                    "columna virtual"
+                )
+                continue
 
             entry = HorarioInput(
                 codigo_materia=codigo_raw,
                 comision_nombre=comision_nombre,
-                dia=str(row["dia"]).strip(),
+                comision_codigo=comision_codigo,
+                dia=dia_raw,
                 hora_inicio=hora_inicio,
                 hora_fin=hora_fin,
                 tipo_clase=tipo_clase,

@@ -209,11 +209,12 @@ def create_schedule_standalone(
             result.errors.append(f"Ciclo '{ciclo_id}' no encontrado")
             return result
 
-    # Parse the file
+    # Chequeo previo barato: si el archivo no tiene nada usable, no
+    # crear el schedule. El pipeline del importador (abajo) hace la
+    # validación fina y vuelve a parsear.
     entries, parse_errors = parse_horarios_file(file, sheet_name=sheet_name)
-    result.errors.extend(parse_errors)
-
     if not entries:
+        result.errors.extend(parse_errors)
         if not parse_errors:
             result.errors.append("No se encontraron horarios validos en el archivo")
         return result
@@ -231,32 +232,37 @@ def create_schedule_standalone(
     session.add(schedule)
     session.flush()
 
-    for i, entry in enumerate(entries):
-        resolution = _resolve_materia_code(session, entry.codigo_materia)
-
-        if resolution.resolution_type == "unresolved":
-            result.errors.append(
-                f"Fila {i+1}: Materia '{entry.codigo_materia}' no existe"
-            )
-            continue
-
-        if resolution.resolution_type == "guarani":
-            result.warnings.append(
-                f"Fila {i+1}: Codigo '{resolution.original_code}' resuelto via "
-                f"codigo_guarani -> '{resolution.resolved_code}'"
-            )
-
-        entry_id = str(uuid.uuid4())
-        schedule_entry = ScheduleEntryDB(
-            id=entry_id,
-            schedule_id=schedule_id,
-            codigo_materia=resolution.resolved_code,
-            dia=entry.dia,
-            hora_inicio=entry.hora_inicio,
-            hora_fin=entry.hora_fin,
+    # 2026-09-23: se delega en el pipeline del importador
+    # (`preview_import` + `commit_import`) en vez de crear las entries
+    # a mano. Antes este flujo legacy descartaba la comisión, el tipo
+    # de clase y el flag virtual del archivo — un cronograma creado
+    # desde la plantilla nueva perdía la mitad de los datos. Como el
+    # cronograma recién nace, todas las materias caen en "sin datos
+    # previos" y se agregan tal cual.
+    from src.services.cronograma_import_service import (
+        commit_import as _commit_import,
+        preview_import as _preview_import,
+    )
+    try:
+        file.seek(0)
+    except Exception:  # noqa: BLE001
+        pass
+    preview = _preview_import(
+        session, schedule_id, file, sheet_name=sheet_name,
+    )
+    if preview.tiene_errores_bloqueantes:
+        session.delete(schedule)
+        session.commit()
+        result.errors.extend(preview.parse_errors)
+        return result
+    result.warnings.extend(preview.warnings)
+    for _cod, _fila in preview.materias_no_resueltas:
+        result.errors.append(
+            f"Fila ~{_fila}: Materia '{_cod}' no existe"
         )
-        session.add(schedule_entry)
-        result.entries_created += 1
+    _commit_res = _commit_import(session, preview, {})
+    result.errors.extend(_commit_res.errors)
+    result.entries_created = _commit_res.entries_creados
 
     session.commit()
     session.refresh(schedule)
@@ -688,6 +694,7 @@ def build_schedule_grid(
         select(MateriaDB).where(col(MateriaDB.codigo).in_(mat_codigos))
     ).all()
     mat_names = {m.codigo: m.nombre for m in materias}
+    mat_virtual = {m.codigo: bool(m.virtual) for m in materias}
 
     # Resolver comisiones referenciadas
     com_ids = {e.comision_id for e in entries if e.comision_id}
@@ -702,6 +709,16 @@ def build_schedule_grid(
     grid: dict[str, list[ScheduleBlock]] = {}
     for e in entries:
         com = comisiones_map.get(e.comision_id) if e.comision_id else None
+        # Bugfix (2026-09-23): `block.virtual` no se populaba nunca —
+        # quedaba en el default False y las entradas marcadas virtual
+        # no se veían en ninguna vista de cronograma. Resolución:
+        # el override de la entry manda; con None (heredar) cae al
+        # flag de catálogo de la materia.
+        _virt = (
+            e.virtual
+            if e.virtual is not None
+            else mat_virtual.get(e.codigo_materia, False)
+        )
         block = ScheduleBlock(
             entry_id=e.id,
             materia_codigo=e.codigo_materia,
@@ -711,6 +728,7 @@ def build_schedule_grid(
             comision_id=e.comision_id,
             comision_numero=com.numero if com else None,
             comision_nombre=com.nombre if com else None,
+            virtual=_virt,
         )
         grid.setdefault(e.dia, []).append(block)
 

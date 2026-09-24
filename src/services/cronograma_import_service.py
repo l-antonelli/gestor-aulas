@@ -72,12 +72,18 @@ MergePolicy = Literal["agregar", "reemplazar", "ignorar"]
 class ComisionEnPreview:
     """Comisión sintética derivada del archivo importado.
 
-    Agrupa los horarios que comparten (materia_codigo, nombre_comision)
-    en el archivo. Se usa para (a) decidir si el nombre choca con una
+    Agrupa los horarios que comparten (materia_codigo, comisión) en el
+    archivo. Se usa para (a) decidir si el nombre choca con una
     comisión ya existente y (b) volcar los entries al DB al commitear.
+
+    ``codigo`` (2026-09-23): código numérico declarado en la plantilla
+    nueva (columna ``codigo_comision``) — se persiste como
+    ``ComisionDB.numero``. ``None`` = esquema histórico (texto libre),
+    donde el número se autoderiva al crear.
     """
     materia_codigo: str
     nombre_comision: str
+    codigo: Optional[int] = None
     horarios: list[HorarioInput] = field(default_factory=list)
 
     @property
@@ -220,8 +226,14 @@ def preview_import(
     por_materia_original: dict[str, dict[str, list[tuple[int, HorarioInput]]]] = {}
     for idx, entry in enumerate(entries, start=1):
         por_materia = por_materia_original.setdefault(entry.codigo_materia, {})
-        # Deduplicación canónica de nombre de comisión.
-        clave = entry.comision_nombre.strip().lower()
+        # Clave de agrupación (2026-09-23): si la fila declara
+        # `codigo_comision`, agrupa por código (identificador estable
+        # que el usuario controla). Sin código, deduplicación canónica
+        # del nombre (esquema histórico de texto libre).
+        if entry.comision_codigo is not None:
+            clave = f"#{entry.comision_codigo}"
+        else:
+            clave = entry.comision_nombre.strip().lower()
         por_materia.setdefault(clave, []).append((idx, entry))
 
     # Resolver códigos y armar el preview.
@@ -257,6 +269,7 @@ def preview_import(
             com = ComisionEnPreview(
                 materia_codigo=codigo_resuelto,
                 nombre_comision=nombre_display,
+                codigo=horarios[0][1].comision_codigo,
                 horarios=[hor for _, hor in horarios],
             )
             comisiones_nuevas.append(com)
@@ -448,6 +461,13 @@ def _agregar_comisiones_nuevas(
         (c.nombre or "").strip().lower() for c in coms_actuales
     }
 
+    # Códigos (numeros) ya usados por las comisiones que sobreviven —
+    # para detectar colisiones de código cuando la plantilla nueva
+    # declara `codigo_comision` explícito (2026-09-23).
+    numeros_actuales: dict[int, str] = {
+        c.numero: (c.nombre or "") for c in coms_actuales
+    }
+
     for com_new in mp.comisiones_nuevas:
         canon = com_new.nombre_canonico
         if canon in nombres_actuales_canon:
@@ -458,12 +478,28 @@ def _agregar_comisiones_nuevas(
                 "a 'reemplazar' para esta materia."
             )
             continue
+        if (
+            com_new.codigo is not None
+            and com_new.codigo in numeros_actuales
+        ):
+            result.errors.append(
+                f"{mp.materia_codigo}: el código de comisión "
+                f"C{com_new.codigo} ya está usado por la comisión "
+                f"'{numeros_actuales[com_new.codigo]}'. Elegí otro "
+                "código o cambiá la decisión a 'reemplazar'."
+            )
+            continue
 
         _prev = attrs_previos.get(canon)
+        # Número: el código declarado en el archivo manda; sino el
+        # número previo restituido por "reemplazar"; sino autoderivar.
+        _numero = com_new.codigo
+        if _numero is None and _prev:
+            _numero = _prev["numero"]
         com_db = create_comision_for_schedule(
             session, schedule_id, mp.materia_codigo,
             nombre=com_new.nombre_comision,
-            numero=_prev["numero"] if _prev else None,
+            numero=_numero,
             cupo=_prev["cupo"] if _prev else None,
             carrera_asignada=_prev["carrera_asignada"] if _prev else None,
             descripcion=_prev["descripcion"] if _prev else "",
@@ -476,6 +512,7 @@ def _agregar_comisiones_nuevas(
             session.add(com_db)
         result.comisiones_creadas += 1
         nombres_actuales_canon.add(canon)
+        numeros_actuales[com_db.numero] = com_db.nombre or ""
 
         for hor in com_new.horarios:
             entry = ScheduleEntryDB(
@@ -881,7 +918,11 @@ def _fingerprint_entries(
             e.hora_inicio.isoformat() if e.hora_inicio else "",
             e.hora_fin.isoformat() if e.hora_fin else "",
             e.tipo_clase or "",
-            "1" if e.virtual is True else ("0" if e.virtual is False else "-"),
+            # 2026-09-23: virtual es booleano y un nulo equivale a
+            # False — el fingerprint colapsa ambos para que
+            # re-importar el mismo archivo sobre entries históricas
+            # (virtual=None) no reporte cambios fantasma.
+            "1" if e.virtual is True else "0",
         )] += 1
     return result
 

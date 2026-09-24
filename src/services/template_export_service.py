@@ -61,17 +61,38 @@ INSTRUCCIONES_HEADER_FONT = Font(bold=True, size=11)
 # Columnas del template de horarios (canónicas). Orden importa — así se
 # escriben en la hoja. Los alias reconocidos por el parser están en
 # `horario_file_parser.COLUMN_ALIASES`; acá se usan los canónicos.
+#
+# 2026-09-23: la comisión se declara con CÓDIGO numérico obligatorio
+# (`codigo_comision` → `ComisionDB.numero`, lo que se ve en los
+# cronogramas) + `nombre_comision` opcional. Además `nombre_materia`
+# permite elegir la materia por nombre: al elegirlo, la columna
+# `codigo_materia` se autocompleta con una fórmula que busca en la
+# hoja `Materias`.
 HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     # (nombre_columna, ayuda, ancho_columna)
     (
         "codigo_materia",
-        "Código de la materia. Debe estar en la lista de códigos válidos.",
+        "Código de la materia. Se autocompleta al elegir el nombre en "
+        "la columna de al lado, o elegilo directo de la lista.",
         16,
     ),
     (
-        "comision",
-        "Nombre o número de la comisión (texto libre; único por materia).",
+        "nombre_materia",
+        "Nombre de la materia (lista de la hoja 'Materias'). Al "
+        "elegirlo se autocompleta el código.",
+        34,
+    ),
+    (
+        "codigo_comision",
+        "Código numérico de la comisión (entero >= 1, obligatorio). "
+        "Es lo que se ve en los cronogramas (C1, C2, ...).",
         14,
+    ),
+    (
+        "nombre_comision",
+        "Nombre descriptivo de la comisión (opcional; ej: 'Mañana', "
+        "'A', 'Nocturno').",
+        16,
     ),
     (
         "dia",
@@ -80,7 +101,8 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     ),
     (
         "hora_inicio",
-        "Hora de inicio en formato HH:MM (ej: 08:00).",
+        "Hora de inicio en formato HH:MM (ej: 08:00). Debe ser "
+        "anterior a hora_fin.",
         11,
     ),
     (
@@ -90,12 +112,15 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     ),
     (
         "tipo_clase",
-        "Vacío = por determinar. 'teorica' o 'laboratorio' si aplica.",
+        "Opcional: dejalo vacío y el tipo lo determina la asignación "
+        "automática (LP). 'teorica' o 'laboratorio' si la cátedra lo "
+        "predetermina.",
         14,
     ),
     (
         "virtual",
-        "Vacío = heredar del dictado/materia. SI o NO para forzar.",
+        "SI = clase virtual (sin aula). Vacío o NO = presencial. Un "
+        "laboratorio no puede ser virtual.",
         11,
     ),
 ]
@@ -206,21 +231,55 @@ def _agregar_data_validations_horarios(
     plantilla.
     """
     max_row = 1001  # rango generoso para cargas típicas
+    n_mat = len(materias_codigos)
 
-    # Materia — lista cerrada de códigos con dictado activo.
-    ref_materias = _escribir_hoja_lista(wb, "_materias", materias_codigos)
-    if ref_materias:
+    # Materia por código — la lista referencia la hoja VISIBLE
+    # `Materias` (2026-09-23: antes había una hoja oculta `_materias`
+    # sólo con códigos; ahora el usuario tiene la referencia completa
+    # código+nombre a la vista).
+    if n_mat:
         dv_mat = DataValidation(
-            type="list", formula1=ref_materias, allow_blank=False,
+            type="list",
+            formula1=f"=Materias!$A$2:$A${n_mat + 1}",
+            allow_blank=True,
             errorTitle="Código no válido",
             error=(
-                "Elegí un código de la lista. Sólo se aceptan materias "
-                "con dictado activo en este ciclo."
+                "Elegí un código de la lista (hoja 'Materias'). Sólo "
+                "se aceptan materias con dictado activo en este ciclo."
             ),
             showErrorMessage=True,
         )
         dv_mat.add(f"A2:A{max_row}")
         ws.add_data_validation(dv_mat)
+
+        # Materia por nombre — al elegirlo, la fórmula precargada en
+        # la columna A autocompleta el código.
+        dv_mat_nom = DataValidation(
+            type="list",
+            formula1=f"=Materias!$B$2:$B${n_mat + 1}",
+            allow_blank=True,
+            errorTitle="Nombre no válido",
+            error="Elegí un nombre de la lista (hoja 'Materias').",
+            showErrorMessage=True,
+        )
+        dv_mat_nom.add(f"B2:B{max_row}")
+        ws.add_data_validation(dv_mat_nom)
+
+    # Código de comisión — entero >= 1, obligatorio.
+    dv_cod_com = DataValidation(
+        type="whole", operator="greaterThanOrEqual",
+        formula1=1,
+        allow_blank=False,
+        errorTitle="Código de comisión no válido",
+        error=(
+            "El código de comisión debe ser un número entero mayor o "
+            "igual a 1. Es obligatorio: identifica la comisión dentro "
+            "de la materia (C1, C2, ...)."
+        ),
+        showErrorMessage=True,
+    )
+    dv_cod_com.add(f"C2:C{max_row}")
+    ws.add_data_validation(dv_cod_com)
 
     # Día — lista cerrada según config.
     ref_dias = _escribir_hoja_lista(
@@ -235,16 +294,16 @@ def _agregar_data_validations_horarios(
         ),
         showErrorMessage=True,
     )
-    dv_dia.add(f"C2:C{max_row}")
+    dv_dia.add(f"E2:E{max_row}")
     ws.add_data_validation(dv_dia)
 
-    # Hora inicio / hora fin — dropdown de horas discretas según
-    # granularidad + rango operativo. Antes era `type="time"` libre.
+    # Hora inicio / hora fin — lista desplegable de horas discretas
+    # según granularidad + rango operativo.
     ref_horas = _escribir_hoja_lista(wb, "_horas", slots_horarios)
     if ref_horas:
         for col_letra, err_msg in (
-            ("D", "Elegí la hora de inicio del dropdown. Sólo se aceptan valores múltiplos de la granularidad configurada."),  # noqa: E501
-            ("E", "Elegí la hora de fin del dropdown. Sólo se aceptan valores múltiplos de la granularidad configurada."),  # noqa: E501
+            ("F", "Elegí la hora de inicio de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser anterior a hora_fin."),  # noqa: E501
+            ("G", "Elegí la hora de fin de la lista. Sólo se aceptan valores múltiplos de la granularidad configurada. Debe ser posterior a hora_inicio."),  # noqa: E501
         ):
             dv_hora = DataValidation(
                 type="list", formula1=ref_horas, allow_blank=False,
@@ -255,27 +314,72 @@ def _agregar_data_validations_horarios(
             dv_hora.add(f"{col_letra}2:{col_letra}{max_row}")
             ws.add_data_validation(dv_hora)
 
-    # Tipo de clase — lista cerrada, permite blanco (= por determinar).
+    # Tipo de clase — lista cerrada, permite blanco (= lo determina
+    # la asignación automática).
     ref_tipos = _escribir_hoja_lista(wb, "_tipos", TIPOS_CLASE)
     dv_tipo = DataValidation(
         type="list", formula1=ref_tipos, allow_blank=True,
         errorTitle="Tipo de clase no válido",
-        error="Dejalo vacío o elegí 'teorica' / 'laboratorio'.",
+        error=(
+            "Dejalo vacío (lo determina la asignación automática) o "
+            "elegí 'teorica' / 'laboratorio'."
+        ),
         showErrorMessage=True,
     )
-    dv_tipo.add(f"F2:F{max_row}")
+    dv_tipo.add(f"H2:H{max_row}")
     ws.add_data_validation(dv_tipo)
 
-    # Virtual — lista cerrada SI/NO, permite blanco (= heredar).
+    # Virtual — lista cerrada SI/NO; vacío = NO (presencial).
     ref_virt = _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
     dv_virt = DataValidation(
         type="list", formula1=ref_virt, allow_blank=True,
         errorTitle="Valor no válido",
-        error="Dejalo vacío para heredar, o elegí SI / NO.",
+        error=(
+            "Elegí SI o NO (vacío equivale a NO). Recordá: un "
+            "laboratorio no puede ser virtual."
+        ),
         showErrorMessage=True,
     )
-    dv_virt.add(f"G2:G{max_row}")
+    dv_virt.add(f"I2:I{max_row}")
     ws.add_data_validation(dv_virt)
+
+    # Fórmula de auto-población del código de materia a partir del
+    # nombre (2026-09-23): al elegir un nombre en B, la celda A de la
+    # misma fila muestra el código. Si el usuario escribe el código a
+    # mano, pisa la fórmula — comportamiento esperado. Las fórmulas se
+    # guardan en notación canónica inglesa (Excel las localiza solo).
+    if n_mat:
+        for _r in range(2, max_row + 1):
+            ws.cell(row=_r, column=1).value = (
+                f'=IFERROR(INDEX(Materias!$A$2:$A${n_mat + 1},'
+                f'MATCH($B{_r},Materias!$B$2:$B${n_mat + 1},0)),"")'
+            )
+
+
+def _escribir_hoja_materias(
+    wb: Workbook, materias: list[tuple[str, str]],
+) -> None:
+    """Hoja VISIBLE `Materias` con la referencia código + nombre.
+
+    2026-09-23: el usuario pidió tener los datos de las materias a la
+    vista dentro del archivo, y poder elegir por nombre. Esta hoja
+    alimenta las dos listas desplegables de la hoja `Horarios` y la
+    fórmula que autocompleta el código. No es una hoja de datos a
+    importar: el selector de hoja de la app la excluye.
+    """
+    ws = wb.create_sheet(title="Materias")
+    for col_idx, (titulo, ancho) in enumerate(
+        (("codigo", 16), ("nombre", 50)), start=1,
+    ):
+        cell = ws.cell(row=1, column=col_idx, value=titulo)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
+        ws.column_dimensions[get_column_letter(col_idx)].width = ancho
+    for i, (cod, nom) in enumerate(materias, start=2):
+        ws.cell(row=i, column=1, value=cod)
+        ws.cell(row=i, column=2, value=nom)
+    ws.freeze_panes = "A2"
 
 
 def _escribir_hoja_instrucciones_cronograma(
@@ -298,17 +402,19 @@ def _escribir_hoja_instrucciones_cronograma(
     _t(row, "Cómo usar esta plantilla", INSTRUCCIONES_HEADER_FONT)
     row += 1
     _t(row,
-       "1) Abrir la hoja 'Horarios'. Borrar la fila de ejemplo "
-       "(fila 2, en amarillo) o pisarla con datos reales.")
+       "1) Abrir la hoja 'Horarios' e ir completando una fila por "
+       "horario. Cada horario es una aparición semanal de una "
+       "comisión (ej: 'MAT101, comisión C1, lunes 8 a 11').")
     row += 1
     _t(row,
-       "2) Ir completando una fila por horario. Cada horario es una "
-       "aparición semanal de una comisión (ej: 'MAT101 comisión 1, "
-       "lunes 8 a 11').")
+       "2) Para elegir la materia podés escribir el código o, más "
+       "cómodo, elegir el nombre en la columna 'nombre_materia': el "
+       "código se completa solo. La hoja 'Materias' tiene la "
+       "referencia completa de códigos y nombres.")
     row += 1
     _t(row,
-       "3) Guardar el archivo y subirlo desde la app en la pestaña "
-       "'Cargar' del módulo Cronogramas.")
+       "3) Guardar el archivo y subirlo desde la aplicación en la "
+       "pestaña 'Cargar' del módulo Cronogramas.")
     row += 2
 
     _t(row, "Columnas de la hoja Horarios", INSTRUCCIONES_HEADER_FONT)
@@ -318,48 +424,65 @@ def _escribir_hoja_instrucciones_cronograma(
         row += 1
     row += 1
 
-    _t(row, "Listas predeterminadas (dropdowns)",
+    _t(row, "Listas desplegables", INSTRUCCIONES_HEADER_FONT)
+    row += 1
+    _t(row,
+       f"• Materias: {n_materias} materias con dictado activo en el "
+       "ciclo, elegibles por código (columna 'codigo_materia') o por "
+       "nombre (columna 'nombre_materia'). Sólo se aceptan valores de "
+       "la lista.")
+    row += 1
+    _t(row,
+       "• Días: los días operativos configurados en el sistema, tal "
+       "cual figuran (con mayúscula inicial).")
+    row += 1
+    _t(row,
+       "• Tipo de clase: opcional. Vacío significa que el tipo lo "
+       "determina la asignación automática; 'teorica' o "
+       "'laboratorio' sólo si la cátedra lo predetermina.")
+    row += 1
+    _t(row,
+       "• Virtual: SI = la clase se dicta virtual (no requiere aula). "
+       "Vacío o NO = presencial.")
+    row += 2
+
+    _t(row, "Reglas que valida la aplicación al importar",
        INSTRUCCIONES_HEADER_FONT)
     row += 1
     _t(row,
-       f"• Códigos de materia: {n_materias} códigos válidos, todos con "
-       "dictado activo en el ciclo. Al escribir en la columna "
-       "'codigo_materia' aparece la flecha del dropdown; sólo se "
-       "aceptan valores de la lista.")
+       "• La hora de inicio debe ser anterior a la hora de fin.")
     row += 1
     _t(row,
-       "• Días: Lunes a Domingo. Se validan tal cual, con mayúscula "
-       "inicial y sin acentos raros.")
+       "• Una clase de laboratorio no puede ser virtual (el "
+       "laboratorio requiere un aula física).")
     row += 1
     _t(row,
-       "• Tipo de clase: 'teorica' o 'laboratorio'. Vacío significa "
-       "'por determinar' — el asignador lo resuelve.")
-    row += 1
-    _t(row,
-       "• Virtual: SI o NO para forzar la modalidad; vacío hereda la "
-       "modalidad del dictado o de la materia.")
+       "• El código de comisión es obligatorio y debe ser un entero "
+       "mayor o igual a 1. Dos comisiones distintas de la misma "
+       "materia no pueden compartir código ni nombre.")
     row += 2
 
     _t(row, "Consejos", INSTRUCCIONES_HEADER_FONT)
     row += 1
     _t(row,
-       "• Cada comisión debe tener un nombre único dentro de la "
-       "misma materia. Puede ser un número (1, 2, 3) o un nombre "
-       "descriptivo ('A', 'Mañana', 'Nocturno').")
+       "• El código de comisión (C1, C2, ...) es lo que se ve en los "
+       "cronogramas de la aplicación; el nombre es un texto "
+       "descriptivo opcional ('Mañana', 'A', 'Nocturno').")
     row += 1
     _t(row,
        "• Si una comisión tiene varios horarios (ej: lunes 8-11 + "
        "miércoles 8-11), poner una fila por cada horario con el "
-       "mismo nombre de comisión.")
+       "mismo código de comisión.")
     row += 1
     _t(row,
-       "• Antes de importar, la app corre validaciones y muestra un "
-       "preview: podés cancelar y corregir el Excel si algo no cierra.")
+       "• Antes de importar, la aplicación muestra una vista previa "
+       "con validaciones por materia: podés cancelar y corregir el "
+       "Excel si algo no cierra, o ajustar los horarios ahí mismo.")
     row += 1
     _t(row,
        "• Al importar, si una materia ya tiene horarios cargados, "
-       "elegís caso por caso si agregás nuevas comisiones o si "
-       "reemplazás las existentes.")
+       "elegís caso por caso si reemplazás lo existente, agregás las "
+       "comisiones nuevas, o ignorás la materia en esa importación.")
 
 
 def generar_plantilla_cronograma_excel(
@@ -369,12 +492,17 @@ def generar_plantilla_cronograma_excel(
 
     La plantilla incluye:
     - Hoja "Instrucciones" con guía en castellano rioplatense.
-    - Hoja "Horarios" con headers, ancho de columnas, freeze y fila
-      de ejemplo estilizada.
-    - Hojas ocultas ``_materias`` (códigos con dictado activo en el
-      ciclo), ``_dias``, ``_tipos``, ``_virtual`` que alimentan los
-      ``DataValidation`` con dropdowns.
-    - Validaciones tipográficas en columnas de hora (formato HH:MM).
+    - Hoja "Horarios" con headers, ancho de columnas y freeze (sin
+      fila de ejemplo — task #341).
+    - Hoja VISIBLE "Materias" con la referencia código+nombre de las
+      materias con dictado activo (2026-09-23): alimenta las listas
+      desplegables por código y por nombre, y la fórmula que
+      autocompleta el código al elegir un nombre.
+    - Hojas ocultas ``_dias``, ``_horas``, ``_tipos``, ``_virtual``
+      que alimentan el resto de las listas desplegables.
+    - Validaciones: código de comisión entero >= 1 (obligatorio),
+      horas discretas según granularidad, tipo de clase opcional,
+      virtual SI/NO (vacío = NO).
 
     Args:
         session: sesión activa.
@@ -433,11 +561,22 @@ def generar_plantilla_cronograma_excel(
     ws_main.title = "Horarios"
 
     _escribir_headers_horarios(ws_main)
+    # Hoja VISIBLE `Materias` (2026-09-23): referencia código+nombre
+    # de todas las materias con dictado activo. Alimenta los dos
+    # desplegables (por código y por nombre) y la fórmula que
+    # autocompleta el código. Se crea ANTES de las validaciones porque
+    # las fórmulas la referencian.
+    _pares_materias = obtener_referencia_materias_del_ciclo(
+        session, ciclo_id,
+    )
+    _escribir_hoja_materias(wb, _pares_materias)
     # Bugfix (2026-09-22, task #341): no se escribe fila de ejemplo en
     # la hoja Horarios porque el parser no distingue ejemplo de dato
     # real; el ejemplo textual queda en la hoja Instrucciones.
+    # Los rangos de las listas referencian la hoja Materias, así que
+    # la cantidad tiene que salir de los mismos pares.
     _agregar_data_validations_horarios(
-        ws_main, wb, codigos_ordenados,
+        ws_main, wb, [c for c, _ in _pares_materias],
         dias_operativos=_dias_operativos,
         slots_horarios=_slots,
     )
