@@ -261,6 +261,34 @@ def preview_import(
         materia = resolution.materia
         materia_nombre = materia.nombre if materia else codigo_resuelto
 
+        # Guardia código ↔ nombre (2026-09-23): la plantilla no puede
+        # impedir del todo que el usuario escriba un código y elija
+        # el nombre de OTRA materia (tipear el código pisa la fórmula
+        # de autopoblación). Si la fila declara ambos y no se
+        # corresponden, se rechaza como error bloqueante — importar
+        # en silencio por el código traicionaría al usuario que
+        # eligió por nombre.
+        _mismatch = False
+        if materia is not None:
+            _nom_catalogo = materia.nombre.strip().lower()
+            for horarios in por_comision.values():
+                for fila, entry in horarios:
+                    _nom_decl = (entry.nombre_materia or "").strip()
+                    if _nom_decl and _nom_decl.lower() != _nom_catalogo:
+                        preview.parse_errors.append(
+                            f"Fila {fila}: codigo_materia "
+                            f"'{codigo_original}' y nombre_materia "
+                            f"'{_nom_decl}' no se corresponden — el "
+                            f"código {codigo_resuelto} es "
+                            f"'{materia.nombre}'. Corregí una de las "
+                            "dos columnas (lo más simple: dejá que "
+                            "el código se complete solo al elegir el "
+                            "nombre)."
+                        )
+                        _mismatch = True
+        if _mismatch:
+            continue
+
         # Comisiones nuevas del archivo.
         comisiones_nuevas: list[ComisionEnPreview] = []
         for _, horarios in por_comision.items():

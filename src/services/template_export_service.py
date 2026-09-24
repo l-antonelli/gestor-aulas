@@ -72,8 +72,10 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     # (nombre_columna, ayuda, ancho_columna)
     (
         "codigo_materia",
-        "Código de la materia. Se autocompleta al elegir el nombre en "
-        "la columna de al lado, o elegilo directo de la lista.",
+        "Código de la materia. Se autocompleta solo al elegir el "
+        "nombre en la columna de al lado — no hace falta tocarlo. Si "
+        "preferís cargar por código, escribilo a mano y dejá el "
+        "nombre vacío.",
         16,
     ),
     (
@@ -119,8 +121,8 @@ HORARIO_COLUMNS: list[tuple[str, str, int]] = [
     ),
     (
         "virtual",
-        "SI = clase virtual (sin aula). Vacío o NO = presencial. Un "
-        "laboratorio no puede ser virtual.",
+        "VERDADERO = clase virtual (sin aula). Vacío o FALSO = "
+        "presencial. Un laboratorio no puede ser virtual.",
         11,
     ),
 ]
@@ -131,7 +133,12 @@ DIAS_SEMANA = [
 
 TIPOS_CLASE = ["teorica", "laboratorio"]
 
-VIRTUAL_OPCIONES = ["SI", "NO"]
+# 2026-09-23: virtual es un booleano — la lista ofrece los booleanos
+# REALES de Excel (se muestran VERDADERO/FALSO en castellano). Elegir
+# del desplegable deja un bool en la celda; con textos ("SI"/"NO" o
+# "TRUE"/"FALSE") Excel coerciona lo tipeado a booleano y la
+# validación de lista rechazaría el valor por diferencia de tipo.
+VIRTUAL_OPCIONES = [True, False]
 
 
 def _slots_horarios_validos(
@@ -169,7 +176,7 @@ def _slots_horarios_validos(
 
 
 def _escribir_hoja_lista(
-    wb: Workbook, nombre_hoja: str, valores: Iterable[str],
+    wb: Workbook, nombre_hoja: str, valores: Iterable[str | bool],
 ) -> str:
     """Crea una hoja oculta con la lista de valores y devuelve la
     fórmula que un ``DataValidation`` puede usar como ``formula1``.
@@ -233,27 +240,15 @@ def _agregar_data_validations_horarios(
     max_row = 1001  # rango generoso para cargas típicas
     n_mat = len(materias_codigos)
 
-    # Materia por código — la lista referencia la hoja VISIBLE
-    # `Materias` (2026-09-23: antes había una hoja oculta `_materias`
-    # sólo con códigos; ahora el usuario tiene la referencia completa
-    # código+nombre a la vista).
+    # Materia: se elige por NOMBRE (columna B, lista de la hoja
+    # VISIBLE `Materias`) y el código (columna A) se autopopula con
+    # la fórmula precargada. La columna A NO lleva desplegable propio
+    # (2026-09-23): tener dos selectores independientes invitaba a
+    # elegir un código y un nombre que no se corresponden, y elegir
+    # de la lista de A pisaba la fórmula de autopoblación. Quien
+    # prefiera cargar por código puede tipearlo (el importador además
+    # rechaza filas donde código y nombre no se correspondan).
     if n_mat:
-        dv_mat = DataValidation(
-            type="list",
-            formula1=f"=Materias!$A$2:$A${n_mat + 1}",
-            allow_blank=True,
-            errorTitle="Código no válido",
-            error=(
-                "Elegí un código de la lista (hoja 'Materias'). Sólo "
-                "se aceptan materias con dictado activo en este ciclo."
-            ),
-            showErrorMessage=True,
-        )
-        dv_mat.add(f"A2:A{max_row}")
-        ws.add_data_validation(dv_mat)
-
-        # Materia por nombre — al elegirlo, la fórmula precargada en
-        # la columna A autocompleta el código.
         dv_mat_nom = DataValidation(
             type="list",
             formula1=f"=Materias!$B$2:$B${n_mat + 1}",
@@ -329,14 +324,15 @@ def _agregar_data_validations_horarios(
     dv_tipo.add(f"H2:H{max_row}")
     ws.add_data_validation(dv_tipo)
 
-    # Virtual — lista cerrada SI/NO; vacío = NO (presencial).
+    # Virtual — booleano: lista de VERDADERO/FALSO reales; vacío =
+    # FALSO (presencial).
     ref_virt = _escribir_hoja_lista(wb, "_virtual", VIRTUAL_OPCIONES)
     dv_virt = DataValidation(
         type="list", formula1=ref_virt, allow_blank=True,
         errorTitle="Valor no válido",
         error=(
-            "Elegí SI o NO (vacío equivale a NO). Recordá: un "
-            "laboratorio no puede ser virtual."
+            "Elegí VERDADERO o FALSO (vacío equivale a FALSO). "
+            "Recordá: un laboratorio no puede ser virtual."
         ),
         showErrorMessage=True,
     )
@@ -407,10 +403,14 @@ def _escribir_hoja_instrucciones_cronograma(
        "comisión (ej: 'MAT101, comisión C1, lunes 8 a 11').")
     row += 1
     _t(row,
-       "2) Para elegir la materia podés escribir el código o, más "
-       "cómodo, elegir el nombre en la columna 'nombre_materia': el "
-       "código se completa solo. La hoja 'Materias' tiene la "
-       "referencia completa de códigos y nombres.")
+       "2) La materia se elige por NOMBRE en la columna "
+       "'nombre_materia' (lista desplegable): el código se completa "
+       "solo en la columna de al lado. Si preferís cargar por "
+       "código, escribilo a mano en 'codigo_materia' y dejá el "
+       "nombre vacío — pero no mezcles: si el código y el nombre no "
+       "se corresponden, la aplicación rechaza la fila. La hoja "
+       "'Materias' tiene la referencia completa de códigos y "
+       "nombres.")
     row += 1
     _t(row,
        "3) Guardar el archivo y subirlo desde la aplicación en la "
@@ -428,9 +428,9 @@ def _escribir_hoja_instrucciones_cronograma(
     row += 1
     _t(row,
        f"• Materias: {n_materias} materias con dictado activo en el "
-       "ciclo, elegibles por código (columna 'codigo_materia') o por "
-       "nombre (columna 'nombre_materia'). Sólo se aceptan valores de "
-       "la lista.")
+       "ciclo, elegibles por nombre en la columna 'nombre_materia'. "
+       "Sólo se aceptan nombres de la lista; el código se "
+       "autocompleta.")
     row += 1
     _t(row,
        "• Días: los días operativos configurados en el sistema, tal "
@@ -442,8 +442,8 @@ def _escribir_hoja_instrucciones_cronograma(
        "'laboratorio' sólo si la cátedra lo predetermina.")
     row += 1
     _t(row,
-       "• Virtual: SI = la clase se dicta virtual (no requiere aula). "
-       "Vacío o NO = presencial.")
+       "• Virtual: VERDADERO = la clase se dicta virtual (no "
+       "requiere aula). Vacío o FALSO = presencial.")
     row += 2
 
     _t(row, "Reglas que valida la aplicación al importar",
@@ -455,6 +455,11 @@ def _escribir_hoja_instrucciones_cronograma(
     _t(row,
        "• Una clase de laboratorio no puede ser virtual (el "
        "laboratorio requiere un aula física).")
+    row += 1
+    _t(row,
+       "• Si completás código Y nombre de materia, tienen que "
+       "corresponderse (lo más simple: no toques el código y dejá "
+       "que se complete solo).")
     row += 1
     _t(row,
        "• El código de comisión es obligatorio y debe ser un entero "
@@ -495,14 +500,16 @@ def generar_plantilla_cronograma_excel(
     - Hoja "Horarios" con headers, ancho de columnas y freeze (sin
       fila de ejemplo — task #341).
     - Hoja VISIBLE "Materias" con la referencia código+nombre de las
-      materias con dictado activo (2026-09-23): alimenta las listas
-      desplegables por código y por nombre, y la fórmula que
-      autocompleta el código al elegir un nombre.
+      materias con dictado activo (2026-09-23): alimenta la lista
+      desplegable de nombres y la fórmula que autocompleta el código
+      al elegir un nombre. La columna del código NO tiene desplegable
+      propio: dos selectores independientes permitían elegir un
+      código y un nombre que no se corresponden.
     - Hojas ocultas ``_dias``, ``_horas``, ``_tipos``, ``_virtual``
       que alimentan el resto de las listas desplegables.
     - Validaciones: código de comisión entero >= 1 (obligatorio),
       horas discretas según granularidad, tipo de clase opcional,
-      virtual SI/NO (vacío = NO).
+      virtual booleano VERDADERO/FALSO (vacío = FALSO).
 
     Args:
         session: sesión activa.

@@ -33,8 +33,15 @@ class HorarioInput(BaseModel):
       comisión declarado por la cátedra en la plantilla nueva —
       mapea a ``ComisionDB.numero``. ``None`` = esquema histórico
       (texto libre en ``comision_nombre``, número autoderivado).
+    - ``nombre_materia`` (2026-09-23): nombre declarado en el
+      archivo cuando la fila trae **código y nombre a la vez**. El
+      importador lo cruza contra el catálogo y rechaza la fila si no
+      se corresponde con el código (en el Excel no se puede impedir
+      del todo la mezcla). ``None`` = la fila trae sólo uno de los
+      dos identificadores.
     """
     codigo_materia: str = PydanticField(min_length=1)
+    nombre_materia: Optional[str] = PydanticField(default=None)
     comision_nombre: str = PydanticField(default="Comision Unica", min_length=1)
     comision_codigo: Optional[int] = PydanticField(default=None, ge=1)
     dia: str

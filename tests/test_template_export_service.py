@@ -272,14 +272,21 @@ class TestListasDeValores:
         tipos = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
         assert tipos == ["teorica", "laboratorio"]
 
-    def test_lista_virtual_si_no(self, session, ciclo_con_2_materias):
+    def test_lista_virtual_booleana(self, session, ciclo_con_2_materias):
+        """La columna virtual es un booleano (2026-09-23): la lista
+        ofrece VERDADERO/FALSO como **booleanos reales** de Excel, no
+        los textos SI/NO. Elegir del desplegable deja un bool en la
+        celda, que pandas lee como ``bool`` y el parser interpreta
+        directo (vacío = FALSO).
+        """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
         ws = wb["_virtual"]
         opts = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
-        assert opts == ["SI", "NO"]
+        assert opts == [True, False]
+        assert all(isinstance(o, bool) for o in opts)
 
 
 class TestDataValidations:
@@ -287,10 +294,15 @@ class TestDataValidations:
         self, session, ciclo_con_2_materias,
     ):
         """La hoja Horarios tiene DataValidation configurados para
-        codigo_materia (A), nombre_materia (B), codigo_comision (C),
-        dia (E), hora_inicio (F), hora_fin (G), tipo_clase (H) y
-        virtual (I). La columna D (nombre_comision) es texto libre y
-        no lleva validación.
+        nombre_materia (B), codigo_comision (C), dia (E),
+        hora_inicio (F), hora_fin (G), tipo_clase (H) y virtual (I).
+
+        La columna A (codigo_materia) NO lleva lista desplegable
+        (2026-09-23): la materia se elige por NOMBRE y el código se
+        autopopula con la fórmula — un desplegable propio en A
+        invitaba a elegir un código que no se corresponde con el
+        nombre elegido y pisaba la fórmula. La columna D
+        (nombre_comision) es texto libre y tampoco lleva validación.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -304,7 +316,7 @@ class TestDataValidations:
                 ranges_cubiertos.append(str(r))
 
         # Cada columna crítica debe tener al menos un rango.
-        cols_letra = ["A", "B", "C", "E", "F", "G", "H", "I"]
+        cols_letra = ["B", "C", "E", "F", "G", "H", "I"]
         for letra in cols_letra:
             assert any(
                 r.startswith(f"{letra}2") for r in ranges_cubiertos
@@ -312,12 +324,19 @@ class TestDataValidations:
                 f"Falta DataValidation para columna {letra}. "
                 f"Rangos vistos: {ranges_cubiertos}"
             )
+        # La columna A no debe tener desplegable propio.
+        assert not any(r.startswith("A2") for r in ranges_cubiertos), (
+            "codigo_materia (A) no debería tener DataValidation: la "
+            "materia se elige por nombre y el código se autopopula. "
+            f"Rangos vistos: {ranges_cubiertos}"
+        )
 
     def test_lista_materias_referencia_hoja_materias(
         self, session, ciclo_con_2_materias,
     ):
-        """La validación de la columna A (codigo_materia) referencia la
-        hoja visible `Materias` para armar la lista desplegable.
+        """La validación de la columna B (nombre_materia) referencia
+        la columna de nombres de la hoja visible `Materias` para
+        armar la lista desplegable.
         """
         ciclo = ciclo_con_2_materias["ciclo"]
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
@@ -327,13 +346,27 @@ class TestDataValidations:
 
         dv_materias = None
         for dv in ws.data_validations.dataValidation:
-            if any(str(r).startswith("A2") for r in dv.sqref.ranges):
+            if any(str(r).startswith("B2") for r in dv.sqref.ranges):
                 dv_materias = dv
                 break
 
         assert dv_materias is not None
         assert dv_materias.type == "list"
-        assert "Materias!" in (dv_materias.formula1 or "")
+        assert "Materias!$B$" in (dv_materias.formula1 or "")
+
+    def test_recalculo_al_abrir_activado(
+        self, session, ciclo_con_2_materias,
+    ):
+        """`fullCalcOnLoad` queda activado (2026-09-23): openpyxl no
+        guarda valores cacheados de las fórmulas, así que sin este
+        flag algunos programas muestran la columna del código sin
+        recalcular hasta que el usuario fuerza un recálculo.
+        """
+        ciclo = ciclo_con_2_materias["ciclo"]
+        contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
+
+        wb = load_workbook(io.BytesIO(contenido))
+        assert wb.calculation.fullCalcOnLoad is True
 
 
 class TestReferenciaMaterias:

@@ -56,8 +56,10 @@ def _parse_tipo_clase(value) -> str | None:
 def _parse_virtual(value) -> bool:
     """Normaliza la columna virtual leída del archivo a un booleano.
 
-    Acepta 'SI'/'NO' de la plantilla (case-insensitive), más variantes
-    booleanas (True/False, 1/0, si/no, sí/no).
+    La plantilla nueva (2026-09-23) usa booleanos reales de Excel
+    (VERDADERO/FALSO), que pandas entrega como ``bool``. Por
+    compatibilidad se aceptan además variantes textuales:
+    SI/NO, sí/no, true/false, verdadero/falso, 1/0.
 
     2026-09-23: virtual es un **booleano** — un valor vacío (o NaN) se
     interpreta como ``False`` (presencial). Antes vacío significaba
@@ -78,7 +80,7 @@ def _parse_virtual(value) -> bool:
         return False
     raise ValueError(
         f"virtual '{value}' no reconocido "
-        "(esperado: SI, NO o vacío = NO)"
+        "(esperado: VERDADERO/FALSO, SI/NO o vacío = FALSO)"
     )
 
 
@@ -298,6 +300,11 @@ def parse_horarios_file(
             if not any((codigo_raw, nombre_mat, dia_raw, hi_raw, hf_raw)):
                 continue
 
+            # Nombre declarado JUNTO al código: se propaga aparte
+            # para que el importador verifique que se corresponden
+            # (2026-09-23). Si el código viene vacío, el nombre pasa
+            # a ser la clave de resolución y no hay nada que cruzar.
+            nombre_declarado: str | None = None
             if not codigo_raw:
                 if nombre_mat:
                     # Resolución por nombre: el importador la cruza
@@ -306,6 +313,8 @@ def parse_horarios_file(
                 else:
                     errors.append(f"Fila {row_num}: codigo_materia vacio")
                     continue
+            elif nombre_mat:
+                nombre_declarado = nombre_mat
 
             hora_inicio = _parse_time(row["hora_inicio"])
             hora_fin = _parse_time(row["hora_fin"])
@@ -370,6 +379,7 @@ def parse_horarios_file(
 
             entry = HorarioInput(
                 codigo_materia=codigo_raw,
+                nombre_materia=nombre_declarado,
                 comision_nombre=comision_nombre,
                 comision_codigo=comision_codigo,
                 dia=dia_raw,

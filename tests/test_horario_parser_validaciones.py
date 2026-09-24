@@ -260,6 +260,77 @@ class TestResolucionPorNombre:
         assert entries[0].codigo_materia == "Análisis I"
 
 
+class TestCodigoNombreNoCorresponden:
+    """Guardia del importador (2026-09-23): en el Excel no se puede
+    impedir del todo que el usuario escriba un código y elija un
+    nombre de materias distintas — la vista previa rechaza la fila.
+    """
+
+    def _setup(self, session) -> ScheduleDB:
+        session.add(MateriaDB(
+            codigo="MAT101", nombre="Análisis I",
+            periodo="cuatrimestral", active=True, horas_semanales=6,
+        ))
+        session.add(MateriaDB(
+            codigo="FIS201", nombre="Física II",
+            periodo="cuatrimestral", active=True, horas_semanales=4,
+        ))
+        sched = ScheduleDB(
+            id="sched1", nombre="test", fecha_upload=date(2026, 3, 1),
+        )
+        session.add(sched)
+        session.commit()
+        return sched
+
+    def test_mismatch_es_error_bloqueante(self, session):
+        from src.services.cronograma_import_service import preview_import
+
+        sched = self._setup(session)
+        archivo = _csv(
+            "codigo_materia,nombre_materia,dia,hora_inicio,hora_fin\n"
+            "MAT101,Física II,Lunes,08:00,10:00\n"
+        )
+        pv = preview_import(session, sched.id, archivo)
+        assert pv.tiene_errores_bloqueantes
+        assert any("no se corresponden" in e for e in pv.parse_errors)
+
+    def test_codigo_y_nombre_consistentes_ok(self, session):
+        from src.services.cronograma_import_service import preview_import
+
+        sched = self._setup(session)
+        archivo = _csv(
+            "codigo_materia,nombre_materia,dia,hora_inicio,hora_fin\n"
+            "MAT101,Análisis I,Lunes,08:00,10:00\n"
+        )
+        pv = preview_import(session, sched.id, archivo)
+        assert pv.parse_errors == []
+        assert {m.materia_codigo for m in pv.materias} == {"MAT101"}
+
+    def test_nombre_con_mayusculas_distintas_no_es_mismatch(self, session):
+        from src.services.cronograma_import_service import preview_import
+
+        sched = self._setup(session)
+        archivo = _csv(
+            "codigo_materia,nombre_materia,dia,hora_inicio,hora_fin\n"
+            "MAT101,  análisis i ,Lunes,08:00,10:00\n"
+        )
+        pv = preview_import(session, sched.id, archivo)
+        assert pv.parse_errors == []
+
+    def test_solo_codigo_o_solo_nombre_no_chequea(self, session):
+        from src.services.cronograma_import_service import preview_import
+
+        sched = self._setup(session)
+        archivo = _csv(
+            "codigo_materia,nombre_materia,dia,hora_inicio,hora_fin\n"
+            "MAT101,,Lunes,08:00,10:00\n"
+            ",Física II,Martes,08:00,10:00\n"
+        )
+        pv = preview_import(session, sched.id, archivo)
+        assert pv.parse_errors == []
+        assert {m.materia_codigo for m in pv.materias} == {"MAT101", "FIS201"}
+
+
 class TestImportConCodigoComision:
     """El código declarado en la plantilla se persiste como
     ``ComisionDB.numero`` y agrupa los horarios de la comisión.
