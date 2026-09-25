@@ -82,34 +82,26 @@ comunes, errores frecuentes y preguntas frecuentes específicas:
 El sistema tiene un flujo natural de dependencias. Este diagrama muestra
 qué necesita estar en su lugar antes de que otra cosa funcione:
 
-```
-┌────────────────────────────────────────────────────────────┐
-│  Catálogo maestro                                          │
-│  ┌────────────┐  ┌────────────────┐  ┌──────────────────┐  │
-│  │  Materias  │  │  Aulas y Sedes │  │    Carreras      │  │
-│  └─────┬──────┘  └────────┬───────┘  └────────┬─────────┘  │
-│        │                  │                   │            │
-└────────┼──────────────────┼───────────────────┼────────────┘
-         │                  │                   │
-         └──────────┬───────┴───────────────────┘
-                    ▼
-         ┌────────────────────┐   ← acá arranca cada cuatrimestre
-         │       Ciclos       │
-         └──────┬─────────────┘
-                │
-                ▼
-         ┌────────────────────┐
-         │    Cronogramas     │
-         └──────┬─────────────┘
-                │
-                ▼
-         ┌────────────────────────────────────────┐
-         │  Planes de cursada y asignación de     │
-         │  aulas (con inscriptos como insumo)    │
-         └────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph CAT["Catálogo maestro"]
+        direction LR
+        MAT[Materias]
+        AUL[Aulas y Sedes]
+        CAR[Carreras]
+    end
 
-Historial: registra cambios de todo el proceso.
+    CIC["<b>Ciclos</b><br/><i>(acá arranca cada cuatrimestre)</i>"]
+    CRO["<b>Cronogramas</b>"]
+    PLA["<b>Planes de cursada y asignación de aulas</b><br/>(con inscriptos como insumo)"]
+
+    MAT --> CIC
+    AUL --> CIC
+    CAR --> CIC
+    CIC --> CRO --> PLA
 ```
+
+**Historial** registra cambios de todo el proceso.
 
 En rasgos generales:
 

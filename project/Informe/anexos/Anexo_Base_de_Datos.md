@@ -60,25 +60,15 @@ Este anexo no cubre:
 
 El proyecto adopta una separacion estricta entre el **modelo de dominio** (`src/domain/`) y el **modelo de persistencia** (`src/database/models.py`).
 
-```
-┌────────────────────────────────────────────┐
-│  Capa de UI (Streamlit)                    │
-│  src/ui/  + app/pages/                     │
-├────────────────────────────────────────────┤
-│  Capa de servicios (logica de negocio)     │
-│  src/services/*                            │
-├────────────────────────────────────────────┤
-│  Capa de dominio (entidades puras)         │
-│  src/domain/*   (Pydantic frozen)          │
-├────────────────────────────────────────────┤
-│  Capa de persistencia (SQLModel)           │
-│  src/database/models.py                    │
-│  src/database/crud.py                      │
-│  src/database/converters.py                │
-├────────────────────────────────────────────┤
-│  Motor SQLite                              │
-│  data/database.db                          │
-└────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    UI["<b>Capa de UI (Streamlit)</b><br/><code>src/ui/ + app/pages/</code>"]
+    SVC["<b>Capa de servicios (lógica de negocio)</b><br/><code>src/services/*</code>"]
+    DOM["<b>Capa de dominio (entidades puras)</b><br/><code>src/domain/*</code> (Pydantic frozen)"]
+    PER["<b>Capa de persistencia (SQLModel)</b><br/><code>src/database/models.py<br/>src/database/crud.py<br/>src/database/converters.py</code>"]
+    SQL["<b>Motor SQLite</b><br/><code>data/database.db</code>"]
+
+    UI --> SVC --> DOM --> PER --> SQL
 ```
 
 **Conversion entre capas**: los servicios operan sobre modelos de dominio (livianos, inmutables, aptos para experimentacion y test) y traducen a modelos de persistencia solo en el limite con la base. Las funciones `to_db()` y `to_domain()` en `src/database/converters.py` implementan ese mapping.

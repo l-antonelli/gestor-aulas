@@ -40,11 +40,9 @@ módulo es la puerta de entrada de cada cuatrimestre.
 
 El orden lógico de trabajo es:
 
-```
-Catálogo (Materias, Carreras, Aulas, Planes de Estudio)
-        │
-        ▼
-    Ciclos  ──►  Cronogramas  ──►  Planes de Cursada  ──►  Asignación de Aulas
+```mermaid
+flowchart LR
+    CAT["Catálogo<br/>(Materias, Carreras, Aulas,<br/>Planes de Estudio)"] --> CIC["<b>Ciclos</b>"] --> CRO[Cronogramas] --> PLA[Planes de Cursada] --> ASI[Asignación de Aulas]
 ```
 
 - **Antes de Ciclos** tenés que tener el catálogo cargado: materias,

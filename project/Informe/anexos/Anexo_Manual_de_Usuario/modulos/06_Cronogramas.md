@@ -28,11 +28,9 @@ que se termina asignando a aulas.
 
 El orden lógico de trabajo es:
 
-```
-Ciclos (con dictados creados)
-        │
-        ▼
-   Cronogramas  ──►  Planes de Cursada  ──►  Asignación de Aulas
+```mermaid
+flowchart LR
+    CIC["Ciclos<br/>(con dictados creados)"] --> CRO["<b>Cronogramas</b>"] --> PLA[Planes de Cursada] --> ASI[Asignación de Aulas]
 ```
 
 - **Antes de Cronogramas**: el ciclo tiene que existir y tener sus

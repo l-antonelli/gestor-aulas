@@ -43,17 +43,14 @@ Por eso conviven en la misma página.
 
 Este módulo es el **último eslabón del flujo**:
 
-```
-Catálogo (Materias, Carreras, Aulas, Planes de Estudio)
-        │
-        ▼
-    Ciclos (con dictados creados)
-        │
-        ▼
-    Cronogramas (validado y vigente)
-        │
-        ▼
-    Planes de Cursada + Asignación de Aulas   ← este módulo
+```mermaid
+flowchart TD
+    CAT["Catálogo (Materias, Carreras, Aulas, Planes de Estudio)"]
+    CIC["Ciclos (con dictados creados)"]
+    CRO["Cronogramas (validado y vigente)"]
+    PLA["<b>Planes de Cursada + Asignación de Aulas</b><br/><i>(este módulo)</i>"]
+
+    CAT --> CIC --> CRO --> PLA
 ```
 
 - **Depende de**: Ciclos (con sus dictados) + Cronogramas (con al

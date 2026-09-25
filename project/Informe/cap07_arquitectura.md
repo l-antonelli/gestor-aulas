@@ -186,29 +186,16 @@ responsabilidades bien delimitadas. La regla de dependencia va
 siempre de arriba hacia abajo: cada capa conoce a las que están
 debajo, no al revés.
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│  Interfaz (páginas y componentes Streamlit)                   │
-│  app/pages/*.py, src/ui/*.py                                  │
-└─────────────────────────────┬─────────────────────────────────┘
-                              │ invoca
-                              ▼
-┌───────────────────────────────────────────────────────────────┐
-│  Servicios (lógica de dominio agrupada por área)              │
-│  src/services/*.py                                            │
-└─────────────────────────────┬─────────────────────────────────┘
-                              │ usa
-                              ▼
-┌───────────────────────────────────────────────────────────────┐
-│  Persistencia (repositorios y CRUD sobre SQLModel)            │
-│  src/database/*.py                                            │
-└─────────────────────────────┬─────────────────────────────────┘
-                              │ mapea
-                              ▼
-┌───────────────────────────────────────────────────────────────┐
-│  Modelo (entidades del ORM)                                   │
-│  src/database/models.py                                       │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    UI["<b>Interfaz</b> (páginas y componentes Streamlit)<br/><code>app/pages/*.py, src/ui/*.py</code>"]
+    SVC["<b>Servicios</b> (lógica de dominio agrupada por área)<br/><code>src/services/*.py</code>"]
+    PER["<b>Persistencia</b> (repositorios y CRUD sobre SQLModel)<br/><code>src/database/*.py</code>"]
+    MOD["<b>Modelo</b> (entidades del ORM)<br/><code>src/database/models.py</code>"]
+
+    UI -->|invoca| SVC
+    SVC -->|usa| PER
+    PER -->|mapea| MOD
 ```
 
 ### 7.2.1 Capa de modelo
@@ -303,65 +290,19 @@ iniciales hasta la asignación final de aulas. El flujo es lineal
 y refleja el orden natural en que el usuario opera el sistema
 cuatrimestre a cuatrimestre.
 
-```
-┌────────────────────┐
-│ 0. Carga inicial   │  Script CLI que carga materias, carreras,
-│    (script CLI)    │  planes, laboratorios y aulas desde Excel.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 1. Ciclo + planes  │  Alta del ciclo lectivo (año + 1C/2C) y
-│                    │  asociación de las versiones de plan que
-│                    │  aplican a ese ciclo.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 2. Dictados        │  Generación automática de dictados a partir
-│                    │  de las materias del plan, aplicando la
-│                    │  regla de recursado jerárquica.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 3. Cronograma      │  Carga de un archivo Excel con los horarios
-│                    │  del cuatrimestre. Prevalidación contra los
-│                    │  dictados activos del ciclo.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 4. Plan de cursada │  Generación del plan a partir del cronograma:
-│                    │  clonado de comisiones y horarios.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 5. Refinado del    │  Edición manual de horarios, tipo de clase,
-│    plan            │  comisiones, override de inscriptos esperados.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 6. Validación      │  Chequeo integral: cobertura, conflictos,
-│                    │  partición teoría-laboratorio, excepciones
-│                    │  ignoradas. Snapshot persistido.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 7. Asignador       │  Corrida del programa lineal: chequeo
-│    de aulas        │  estructural pre-solve, resolución con CBC,
-│                    │  aplicación al patrón, snapshot persistido.
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ 8. Análisis        │  Inspección del resultado, resolución de
-│                    │  colisiones al editar manualmente, ajuste
-│                    │  de configuración y re-corrida.
-└────────────────────┘
+```mermaid
+flowchart TD
+    E0["<b>0. Carga inicial (script CLI)</b><br/>Script CLI que carga materias, carreras, planes,<br/>laboratorios y aulas desde Excel."]
+    E1["<b>1. Ciclo + planes</b><br/>Alta del ciclo lectivo (año + 1C/2C) y asociación de las<br/>versiones de plan que aplican a ese ciclo."]
+    E2["<b>2. Dictados</b><br/>Generación automática de dictados a partir de las materias<br/>del plan, aplicando la regla de recursado jerárquica."]
+    E3["<b>3. Cronograma</b><br/>Carga de un archivo Excel con los horarios del cuatrimestre.<br/>Prevalidación contra los dictados activos del ciclo."]
+    E4["<b>4. Plan de cursada</b><br/>Generación del plan a partir del cronograma:<br/>clonado de comisiones y horarios."]
+    E5["<b>5. Refinado del plan</b><br/>Edición manual de horarios, tipo de clase, comisiones,<br/>override de inscriptos esperados."]
+    E6["<b>6. Validación</b><br/>Chequeo integral: cobertura, conflictos, partición<br/>teoría-laboratorio, excepciones ignoradas. Snapshot persistido."]
+    E7["<b>7. Asignador de aulas</b><br/>Corrida del programa lineal: chequeo estructural pre-solve,<br/>resolución con CBC, aplicación al patrón, snapshot persistido."]
+    E8["<b>8. Análisis</b><br/>Inspección del resultado, resolución de colisiones al editar<br/>manualmente, ajuste de configuración y re-corrida."]
+
+    E0 --> E1 --> E2 --> E3 --> E4 --> E5 --> E6 --> E7 --> E8
 ```
 
 ### 7.3.1 Detalle de cada etapa
@@ -436,50 +377,19 @@ Para ilustrar cómo se articulan las capas, tomamos un caso
 concreto: el operador hace clic en el botón "Correr asignador de
 aulas" desde el panel del plan.
 
-```
-Usuario                                     Interfaz
-   │                                           │
-   │  Click "Correr asignador"                 │
-   │──────────────────────────────────────────▶│
-   │                                           │
-   │                                           │ Recoge la
-   │                                           │ configuración
-   │                                           │ del formulario
-   │                                           │ (pesos, modos,
-   │                                           │ toggles).
-   │                                           │
-   │                                           │
-   │                          asignacion_aulas_service.run_lp(session, plan_id, config)
-   │                                           │──────────────────▶ Servicio
-   │                                           │                       │
-   │                                           │                       │ 1. Chequeo
-   │                                           │                       │    estructural
-   │                                           │                       │    pre-solve.
-   │                                           │                       │
-   │                                           │                       │ 2. Construir
-   │                                           │                       │    programa
-   │                                           │                       │    lineal.
-   │                                           │                       │
-   │                                           │                       │ 3. Resolver
-   │                                           │                       │    con CBC.
-   │                                           │                       │
-   │                                           │                       │ 4. Aplicar
-   │                                           │                       │    solución al
-   │                                           │                       │    patrón.
-   │                                           │                       │
-   │                                           │                       │ 5. Persistir
-   │                                           │                       │    snapshot.
-   │                                           │                       │
-   │                                           │◀────────────────── LPRunDB
-   │                                           │
-   │                                           │ Renderiza el
-   │                                           │ veredicto, la
-   │                                           │ tabla de horarios
-   │                                           │ y el mapa de
-   │                                           │ saturación.
-   │                                           │
-   │  Ve resultado                             │
-   │◀──────────────────────────────────────────│
+```mermaid
+sequenceDiagram
+    actor U as Usuario
+    participant I as Interfaz
+    participant S as Servicio
+
+    U->>I: Click "Correr asignador"
+    Note over I: Recoge la configuración del formulario<br/>(pesos, modos, toggles).
+    I->>S: asignacion_aulas_service.run_lp(session, plan_id, config)
+    Note over S: 1. Chequeo estructural pre-solve.<br/>2. Construir programa lineal.<br/>3. Resolver con CBC.<br/>4. Aplicar solución al patrón.<br/>5. Persistir snapshot.
+    S-->>I: LPRunDB
+    Note over I: Renderiza el veredicto, la tabla de<br/>horarios y el mapa de saturación.
+    I-->>U: Ve resultado
 ```
 
 Cada paso del servicio invoca a la capa de persistencia cuando
