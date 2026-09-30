@@ -555,11 +555,12 @@ los 6 valores.
 >   "Ver / Editar" (§ 4.3 de `WORKFLOW.md`) y las tarjetas
 >   per-materia del preview del importer masivo. Devuelve, además de
 >   los chequeos, un `worst` y un `estado` corto (`OK` / `Revisión` /
->   `Sin horarios` / `Sin datos`) que es un **subconjunto** de los
->   seis estados de § 3.2: los que dependen del cruce con el ciclo
->   (`Conflictiva`, `No esperada`, `Faltante`) no se pueden computar
->   sin el summary de `validar_cronograma` y por lo tanto viven sólo
->   en el panel Validar. `Sin horarios` significa "sin entries en
+>   `Conflictiva` / `Sin horarios` / `Sin datos`) que es un
+>   **subconjunto** de los seis estados de § 3.2. `Conflictiva` se
+>   obtiene pasándole los conflictos de la materia en el parámetro
+>   `conflictos` (ver § 4.14); `No esperada` y `Faltante` dependen del
+>   cruce contra los dictados del ciclo y viven sólo en el panel
+>   Validar. `Sin horarios` significa "sin entries en
 >   este cronograma", sin verificar dictado en el ciclo. Cuando hay
 >   horarios sin comisión asignada agrega el chequeo extra
 >   `entries_sin_comision` (warn) en vez de atribuirlos a la
@@ -723,6 +724,34 @@ se reportan con este chequeo (**WARN**) en vez de atribuirse en
 silencio a la comisión 1, que era lo que hacía la versión anterior y
 contradecía la fila "Sin asignar" del resumen por comisión de la
 misma pantalla.
+
+### 4.14. `conflicto_horario` — Conflicto de horario con otra materia
+
+Lo emite `compute_materia_checks_from_db` cuando recibe conflictos en
+el parámetro `conflictos` (2026-09-29). Un check **ERROR** por cada
+conflicto de la materia: con qué materia se superpone, qué día y
+horario y en qué grupo curricular `(carrera, año, cuatrimestre)`. El
+estado de la tarjeta pasa a `Conflictiva`, con la misma prioridad que
+en `_estado_de_materia` (antes que `Sin datos`).
+
+Los consumidores le pasan conflictos calculados sobre el estado
+actual:
+
+- **Ver / Editar** llama a
+  `cronograma_validation_service.conflictos_por_materia_cronograma`
+  una vez por render. Esa función corre el mismo cálculo que
+  `validar_cronograma` (`validar_conflictos_horarios_cronograma`
+  contra el ciclo del cronograma) y agrupa el resultado por materia.
+  Tarda del orden de 0,2 s en un cronograma de 250 materias. Sin
+  ciclo asignado devuelve `{}`.
+- **Tarjetas del preview del importer**: reusan
+  `conflictos_horarios` del summary de validación del shadow.
+
+Motivo (bug 2026-09-29): antes Ver / Editar sólo corría los chequeos
+estructurales por materia. Una materia superpuesta con otra de su
+grupo aparecía ✅ OK después de editar, incluso tras reiniciar la
+app, y el conflicto sólo aparecía al apretar "Validar cronograma" en
+la pestaña Validar.
 
 ### 4.13. `lab_virtual` — Laboratorio marcado virtual
 

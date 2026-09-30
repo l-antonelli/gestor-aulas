@@ -1176,6 +1176,7 @@ def _persist_edits(
 
 def compute_materia_checks_from_db(
     schedule_id: str, materia_codigo: str,
+    *, conflictos: Optional[list[dict]] = None,
 ) -> dict:
     """Computa los chequeos estructurales de una materia leyendo el
     estado persistido en DB (sin depender de un data_editor en vivo).
@@ -1183,6 +1184,14 @@ def compute_materia_checks_from_db(
     Consumido por `Ver / Editar` en `6_📅_Cronogramas.py` y por las
     tarjetas per-materia del preview del importer, para renderar
     validaciones inline sin duplicar la lógica del editor por-materia.
+
+    ``conflictos``: conflictos de horario de la materia contra otras de
+    su grupo curricular, en la forma de
+    ``conflictos_por_materia_cronograma`` (bug 2026-09-29: sin esto
+    Ver / Editar mostraba OK materias en conflicto). Si hay alguno, se
+    agrega el check ``conflicto_horario`` y el estado es
+    ``"Conflictiva"``, con la misma prioridad que en
+    ``_estado_de_materia`` (antes que ``"Sin datos"``).
 
     Returns:
         dict con:
@@ -1371,6 +1380,25 @@ def compute_materia_checks_from_db(
             ),
         })
 
+    for c in conflictos or []:
+        _otra = c["materia_b"] if c["materia_a"] == materia_codigo else c["materia_a"]
+        _hi, _hf = (
+            (c["hora_inicio_a"], c["hora_fin_a"])
+            if c["materia_a"] == materia_codigo
+            else (c["hora_inicio_b"], c["hora_fin_b"])
+        )
+        checks.append({
+            "id": "conflicto_horario",
+            "label": "Conflicto de horario",
+            "status": "error",
+            "detail": (
+                f"Se superpone con **{_otra}** el {c['dia']} "
+                f"({_hi}-{_hf}) en {c['carrera_codigo']} "
+                f"{c['anio_plan']}° año {c['cuatrimestre_plan']}, sin "
+                "ninguna combinación de comisiones compatible."
+            ),
+        })
+
     # Worst status con la misma prioridad que el editor.
     worst = "ok"
     for ck in checks:
@@ -1389,7 +1417,9 @@ def compute_materia_checks_from_db(
     # `h_sem is None` (que el editor deja como info/warn en algunos
     # checks pero necesita representarse como estado propio en el badge
     # tal como en `_estado_de_materia`).
-    if mat_db.horas_semanales is None:
+    if conflictos:
+        estado = "Conflictiva"
+    elif mat_db.horas_semanales is None:
         estado = "Sin datos"
     elif worst == "faltante":
         estado = "Sin horarios"
@@ -1415,6 +1445,7 @@ CHECK_ICON_MAP = {
 ESTADO_ICON_MAP = {
     "OK": "✅",
     "Revisión": "🔎",
+    "Conflictiva": "⚠️",
     # "Sin horarios" = sin entries en ESTE cronograma (sin cruce con el
     # ciclo). 📭 Faltante queda reservado al panel Validar, que sí
     # verifica dictado en el ciclo (auditoría 2026-09-23).

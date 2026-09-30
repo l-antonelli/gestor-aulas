@@ -763,3 +763,66 @@ class TestHorariosVsConfig:
         assert not any(
             "fuera de la config" in p for p in status.problemas
         )
+
+
+class TestConflictosEnVivoPorMateria:
+    """Bug 2026-09-29: la pestaña Ver / Editar no mostraba los
+    conflictos de horario entre materias del mismo grupo curricular
+    (sólo los calculaba `validar_cronograma` en la pestaña Validar), así
+    que una materia en conflicto figuraba ✅ OK después de editar.
+    `conflictos_por_materia_cronograma` los calcula en vivo desde la DB
+    para que Ver / Editar los muestre sin depender de una validación
+    persistida.
+    """
+
+    def test_detecta_conflicto_de_ambas_materias(self, session, setup_basic):
+        from src.services.cronograma_validation_service import (
+            conflictos_por_materia_cronograma,
+        )
+
+        sched = _make_schedule_with_entries(
+            session, setup_basic["ciclo"].id, ["MAT101", "FIS101"],
+        )
+        por_materia = conflictos_por_materia_cronograma(session, sched.id)
+
+        assert set(por_materia) == {"MAT101", "FIS101"}
+        (c,) = por_materia["MAT101"]
+        assert {c["materia_a"], c["materia_b"]} == {"MAT101", "FIS101"}
+        assert c["dia"] == "Lunes"
+
+    def test_refleja_la_edicion_sin_revalidar(self, session, setup_basic):
+        """Mover una materia a otro día elimina el conflicto en el
+        próximo cálculo, sin tocar la validación persistida."""
+        from src.services.cronograma_validation_service import (
+            conflictos_por_materia_cronograma,
+        )
+
+        sched = _make_schedule_with_entries(
+            session, setup_basic["ciclo"].id, ["MAT101", "FIS101"],
+        )
+        assert conflictos_por_materia_cronograma(session, sched.id)
+
+        entry = session.exec(
+            select(ScheduleEntryDB)
+            .where(ScheduleEntryDB.schedule_id == sched.id)
+            .where(ScheduleEntryDB.codigo_materia == "FIS101")
+        ).one()
+        entry.dia = "Martes"
+        session.add(entry)
+        session.commit()
+
+        assert conflictos_por_materia_cronograma(session, sched.id) == {}
+
+    def test_cronograma_sin_ciclo_no_tiene_conflictos(self, session):
+        from src.services.cronograma_validation_service import (
+            conflictos_por_materia_cronograma,
+        )
+
+        sched = ScheduleDB(
+            id=str(uuid.uuid4()), ciclo_id=None,
+            nombre="Sin ciclo", fecha_upload=date(2025, 3, 1),
+        )
+        session.add(sched)
+        session.commit()
+
+        assert conflictos_por_materia_cronograma(session, sched.id) == {}

@@ -751,10 +751,13 @@ Editor full-featured (drag/click/select) sobre `ScheduleEntryDB`:
   tienen ninguna entrada no generan tarjeta acá (su condición de
   faltante se reporta en el panel Validar, que es el que cruza
   contra los dictados del ciclo). Los estados de la tarjeta (`OK` /
-  `Revisión` / `Sin horarios` / `Sin datos`) son un subconjunto de
-  los del panel Validar — acá no se cruzan con el summary del ciclo,
-  así que los estados que dependen del ciclo (`Conflictiva`,
-  `No esperada`, `Faltante`) siguen viviendo sólo en Validar.
+  `Revisión` / `Conflictiva` / `Sin horarios` / `Sin datos`) son un
+  subconjunto de los del panel Validar. **Conflictiva** se calcula en
+  vivo en cada render con `conflictos_por_materia_cronograma` (mismo
+  cálculo que Validar, contra el ciclo del cronograma), así que una
+  edición que genera o resuelve una superposición se ve al instante,
+  sin revalidar (bug 2026-09-29, `VALIDACIONES.md § 4.14`). `No
+  esperada` y `Faltante` siguen viviendo sólo en Validar.
   Helper `compute_materia_checks_from_db` en
   `src/ui/schedule_materia_editor.py`.
 

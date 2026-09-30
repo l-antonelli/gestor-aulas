@@ -581,21 +581,7 @@ def validar_cronograma(
         session, schedule_id, ciclo_id,
     )
     summary.n_conflictos_horarios = len(conflictos)
-    summary.conflictos_horarios = [
-        {
-            "carrera_codigo": c.carrera_codigo,
-            "anio_plan": c.anio_plan,
-            "cuatrimestre_plan": c.cuatrimestre_plan,
-            "materia_a": c.materia_a,
-            "materia_b": c.materia_b,
-            "dia": c.dia,
-            "hora_inicio_a": c.hora_inicio_a,
-            "hora_fin_a": c.hora_fin_a,
-            "hora_inicio_b": c.hora_inicio_b,
-            "hora_fin_b": c.hora_fin_b,
-        }
-        for c in conflictos
-    ]
+    summary.conflictos_horarios = [_conflicto_a_dict(c) for c in conflictos]
 
     # Camino de cursada (Fase B). Detecta grupos (carrera, año, cuatri)
     # donde ninguna combinación de comisiones evita solapamientos entre
@@ -645,6 +631,51 @@ def validar_cronograma(
     )
 
     return summary
+
+
+def _conflicto_a_dict(c: ConflictoHorario) -> dict:
+    """Forma serializable de un conflicto (la que persiste el summary)."""
+    return {
+        "carrera_codigo": c.carrera_codigo,
+        "anio_plan": c.anio_plan,
+        "cuatrimestre_plan": c.cuatrimestre_plan,
+        "materia_a": c.materia_a,
+        "materia_b": c.materia_b,
+        "dia": c.dia,
+        "hora_inicio_a": c.hora_inicio_a,
+        "hora_fin_a": c.hora_fin_a,
+        "hora_inicio_b": c.hora_inicio_b,
+        "hora_fin_b": c.hora_fin_b,
+    }
+
+
+def conflictos_por_materia_cronograma(
+    session: Session, schedule_id: str,
+) -> dict[str, list[dict]]:
+    """Conflictos de horario del cronograma, calculados en vivo desde la
+    DB y agrupados por materia (cada conflicto figura en sus dos
+    materias).
+
+    Lo consume la pestaña Ver / Editar para que el estado de cada
+    materia refleje las ediciones al instante, sin depender de la última
+    validación persistida (bug 2026-09-29: antes Ver / Editar no
+    calculaba conflictos y mostraba OK materias en conflicto). Usa el
+    mismo cálculo que `validar_cronograma` contra el ciclo del
+    cronograma; sin ciclo no hay grupos curriculares y devuelve ``{}``.
+    """
+    from src.database.models import ScheduleDB
+
+    sched = session.get(ScheduleDB, schedule_id)
+    if sched is None or not sched.ciclo_id:
+        return {}
+    por_materia: dict[str, list[dict]] = {}
+    for c in validar_conflictos_horarios_cronograma(
+        session, schedule_id, sched.ciclo_id,
+    ):
+        d = _conflicto_a_dict(c)
+        por_materia.setdefault(c.materia_a, []).append(d)
+        por_materia.setdefault(c.materia_b, []).append(d)
+    return por_materia
 
 
 # =============================================================================

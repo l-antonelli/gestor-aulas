@@ -331,3 +331,39 @@ class TestComputeMateriaChecksFromDb:
         )
         assert result["estado"] == "Sin datos"
         assert result["n_entries"] == 1
+
+
+class TestConflictosEnChequeos:
+    """Bug 2026-09-29: Ver / Editar mostraba ✅ OK para materias en
+    conflicto de horario con otra del mismo grupo. El helper recibe
+    los conflictos en vivo y los reporta con estado "Conflictiva",
+    el mismo vocabulario que el panel Validar (`_estado_de_materia`).
+    """
+
+    _CONFLICTO = {
+        "carrera_codigo": "ING", "anio_plan": 1, "cuatrimestre_plan": "1C",
+        "materia_a": "FIS101", "materia_b": "MAT101", "dia": "Lunes",
+        "hora_inicio_a": "08:00", "hora_fin_a": "11:00",
+        "hora_inicio_b": "08:00", "hora_fin_b": "11:00",
+    }
+
+    def test_materia_en_conflicto_es_conflictiva(self, catalog):
+        from src.ui.schedule_materia_editor import compute_materia_checks_from_db
+
+        result = compute_materia_checks_from_db(
+            catalog["schedule_id"], "MAT101", conflictos=[self._CONFLICTO],
+        )
+        assert result["estado"] == "Conflictiva"
+        assert result["worst"] == "error"
+        (ck,) = [c for c in result["checks"] if c["id"] == "conflicto_horario"]
+        assert ck["status"] == "error"
+        assert "FIS101" in ck["detail"]
+        assert "Lunes" in ck["detail"]
+
+    def test_sin_conflictos_sigue_ok(self, catalog):
+        from src.ui.schedule_materia_editor import compute_materia_checks_from_db
+
+        result = compute_materia_checks_from_db(
+            catalog["schedule_id"], "MAT101", conflictos=[],
+        )
+        assert result["estado"] == "OK"

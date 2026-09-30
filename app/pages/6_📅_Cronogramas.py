@@ -1359,6 +1359,16 @@ with tab_cargar:
                                     _out[_dia] = _bs
                             return _out
 
+                        # Conflictos del shadow agrupados por materia,
+                        # para que la tarjeta muestre "Conflictiva"
+                        # igual que el panel Validar (bug 2026-09-29).
+                        _conf_shadow: dict[str, list[dict]] = {}
+                        for _c in (
+                            _val_sum.conflictos_horarios if _val_sum else []
+                        ):
+                            for _m in (_c["materia_a"], _c["materia_b"]):
+                                _conf_shadow.setdefault(_m, []).append(_c)
+
                         for _mc in _materias_del_archivo:
                             _mat_nombre = materias_map.get(_mc, _mc)
                             _decision_actual = _decisiones_map.get(
@@ -1367,6 +1377,7 @@ with tab_cargar:
                             )
                             _check_res = compute_materia_checks_from_db(
                                 _shadow_id, _mc,
+                                conflictos=_conf_shadow.get(_mc, []),
                             )
                             _estado_badge_icon = ESTADO_ICON_MAP.get(
                                 _check_res["estado"], "•",
@@ -2113,6 +2124,19 @@ with tab_editar:
         )
 
         if sel_edit_id:
+            # Conflictos de horario en vivo (bug 2026-09-29): antes
+            # Ver / Editar sólo corría los chequeos estructurales por
+            # materia y mostraba OK materias superpuestas con otra de su
+            # grupo, que sólo aparecían al validar. Se calculan una vez
+            # por render (~0,2 s en un cronograma de 250 materias).
+            from src.services.cronograma_validation_service import (
+                conflictos_por_materia_cronograma,
+            )
+            with next(get_session()) as session:
+                _edit_conflictos = conflictos_por_materia_cronograma(
+                    session, sel_edit_id,
+                )
+
             edit_modo = st.radio(
                 "Modo de edición",
                 options=["Por grupo", "Por materia"],
@@ -2741,6 +2765,7 @@ with tab_editar:
                     st.markdown("### 🔎 Chequeos estructurales")
                     _sm_check_result = compute_materia_checks_from_db(
                         sel_edit_id, _sm_sel,
+                        conflictos=_edit_conflictos.get(_sm_sel, []),
                     )
                     render_materia_checks_inline(
                         _sm_check_result,
@@ -2933,6 +2958,7 @@ with tab_editar:
                         for _mc in _mats_para_chequear:
                             _res = compute_materia_checks_from_db(
                                 sel_edit_id, _mc,
+                                conflictos=_edit_conflictos.get(_mc, []),
                             )
                             render_materia_checks_inline(
                                 _res,
