@@ -49,6 +49,11 @@ class HorarioInput(BaseModel):
     hora_fin: time
     tipo_clase: Optional[str] = PydanticField(default=None)
     virtual: Optional[bool] = PydanticField(default=None)
+    # Ubicación en el archivo (2026-09-30), para que los mensajes de la
+    # plantilla multihoja digan hoja y fila reales. `fila` la completa
+    # el parser; `hoja`, `parse_plantilla_cronograma`.
+    fila: Optional[int] = PydanticField(default=None)
+    hoja: Optional[str] = PydanticField(default=None)
 
     @field_validator("dia")
     @classmethod

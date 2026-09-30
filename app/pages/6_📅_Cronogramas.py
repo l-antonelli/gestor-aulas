@@ -20,7 +20,6 @@ from src.database.models import (
 from src.database.crud import ciclo_crud, get_or_create_config
 from src.services.schedule_service import (
     clonar_plan_a_cronograma,
-    create_schedule_standalone,
     create_empty_schedule,
     get_all_schedules,
     duplicate_schedule,
@@ -538,15 +537,18 @@ with tab_lista:
                 # Exportar como plantilla precargada, una hoja por
                 # grupo de materias (2026-09-24): para repartir a
                 # cada cátedra/departamento la hoja de su grupo,
-                # corregir en Excel y reimportar hoja por hoja.
+                # corregir en Excel o Google Sheets y volver a subir el
+                # archivo completo (2026-09-30).
                 with st.container(border=True):
                     st.markdown("**📤 Exportar horarios a Excel**")
                     st.caption(
                         "Genera la misma plantilla del importador "
                         "pero precargada con los horarios de este "
                         "cronograma, con una hoja por grupo de "
-                        "materias. Ideal para repartir, corregir y "
-                        "reimportar hoja por hoja."
+                        "materias. Ideal para repartir entre las "
+                        "cátedras, corregir y volver a subir el archivo "
+                        "completo desde Cargar → Importar en cronograma "
+                        "existente."
                     )
                     if not s.ciclo_id:
                         st.caption(
@@ -670,12 +672,15 @@ with tab_cargar:
             help=(
                 "**Crear vacío**: arranca sin entradas, las cargás a "
                 "mano desde la pestaña Editar.\n\n"
-                "**Crear desde archivo**: crea un cronograma nuevo y "
-                "carga las entradas del archivo de una.\n\n"
-                "**Importar en cronograma existente**: toma un "
-                "cronograma que ya está en la lista y le suma / "
-                "reemplaza horarios desde un archivo. Con vista previa "
-                "y decisión de combinación por materia.\n\n"
+                "**Crear desde archivo**: crea un cronograma nuevo a "
+                "partir de la plantilla completa del ciclo (una hoja "
+                "por grupo de materias). Antes de crearlo se revisa "
+                "hoja por hoja.\n\n"
+                "**Importar en cronograma existente**: actualiza un "
+                "cronograma de la lista con la plantilla completa "
+                "(por ejemplo, la que exportaste desde la Lista y "
+                "corrigieron las cátedras). También se revisa hoja por "
+                "hoja, con decisión de combinación por materia.\n\n"
                 "**Copiar desde plan**: crea un cronograma nuevo con "
                 "el estado consolidado de un plan de cursada — útil "
                 "para archivar la versión que quedó firme tras las "
@@ -720,27 +725,33 @@ with tab_cargar:
 
     if modo_carga in ("Crear desde archivo", "Importar en cronograma existente"):
         with st.container(border=True):
-            st.markdown("**📤 Archivo de importación**")
+            st.markdown("**📤 Plantilla de horarios**")
             st.caption(
-                "El archivo debe tener las columnas mínimas: materia, "
-                "día, hora inicio, hora fin. Comisión, tipo_clase y "
-                "virtual son opcionales."
+                "Se carga sólo la plantilla que genera la aplicación, "
+                "completa y tal como sale: una hoja de horarios por "
+                "grupo de materias. El flujo es descargarla, repartir "
+                "cada hoja a su cátedra (por ejemplo compartiéndola en "
+                "Google Sheets), y cuando esté completa descargarla "
+                "como .xlsx y subirla acá. Si hay que corregir algo, se "
+                "corrige en la planilla y se vuelve a subir."
             )
 
             # Descarga de plantilla Excel con dropdowns de códigos válidos
             # (Fase C1 del rediseño 2026-09-15).
             with st.expander(
-                "📥 Descargar plantilla Excel con listas predeterminadas",
+                "📥 Descargar plantilla vacía del ciclo",
                 expanded=False,
             ):
                 st.caption(
-                    "Genera un Excel con la hoja Horarios como tabla, "
-                    "donde la materia se ingresa por código (lista "
-                    "desplegable) y el nombre se autocompleta como "
-                    "verificación de sólo lectura, más listas de días, "
-                    "tipos y VERDADERO/FALSO para virtual. Ideal para "
-                    "pasarle a las cátedras: no pueden escribir "
-                    "códigos inválidos."
+                    "Genera un Excel con una hoja de horarios por grupo "
+                    "de materias del ciclo. En cada hoja la materia se "
+                    "ingresa por código (lista desplegable) y el nombre "
+                    "se autocompleta como verificación, con listas de "
+                    "días, horas, tipos y VERDADERO/FALSO para virtual: "
+                    "las cátedras no pueden escribir códigos inválidos. "
+                    "Para partir de un cronograma que ya existe, usá "
+                    "**Exportar** en la pestaña Lista: genera la misma "
+                    "plantilla con los horarios precargados."
                 )
                 if ciclo_id_val is None:
                     st.info(
@@ -799,88 +810,22 @@ with tab_cargar:
                         )
 
             uploaded = st.file_uploader(
-                "Archivo CSV o Excel con horarios",
-                type=["csv", "xlsx", "xls"],
+                "Plantilla completa (.xlsx)",
+                type=["xlsx"],
                 key="crono_upload",
             )
+            # 2026-09-30: siempre se importa la plantilla completa (todas
+            # las hojas de grupo), validada contra el ciclo. Reemplaza al
+            # selector de una sola hoja.
+            from src.services.horario_file_parser import HOJAS_TODAS
+            _sheet_choice: str | None = HOJAS_TODAS
 
-            # Selector de hoja cuando el Excel trae más de una hoja
-            # visible (típico: un archivo de cátedra con 1C/2C/Verano
-            # como hojas separadas). El fallback automático (elige
-            # "Horarios" si existe, sino la primera visible) no le
-            # sirve al usuario en ese caso.
-            _sheet_choice: str | None = None
-            if uploaded is not None:
-                from src.services.horario_file_parser import (
-                    hoja_default,
-                    list_horarios_sheets,
-                )
-                # Cache por archivo (fix auditoría H2-perf, 2026-09-23):
-                # listar las hojas corre en cada rerun del script — sin
-                # cache se re-leía el workbook con cada interacción de
-                # la página, incluso desde otros tabs.
-                _upl_fid = getattr(uploaded, "file_id", None) or uploaded.name
-                _sheets_cache = st.session_state.get("_crono_sheets_cache")
-                if not _sheets_cache or _sheets_cache[0] != _upl_fid:
-                    _sheets_cache = (_upl_fid, list_horarios_sheets(uploaded))
-                    st.session_state["_crono_sheets_cache"] = _sheets_cache
-                _sheets_visible = _sheets_cache[1]
-                if len(_sheets_visible) > 1:
-                    _sheet_choice = st.selectbox(
-                        "Hoja del Excel a importar",
-                        options=_sheets_visible,
-                        # Fix auditoría H2 (2026-09-23): arrancar en la
-                        # hoja que el parser prefiere ("Horarios"), no
-                        # en la primera del workbook — sin esto, una
-                        # hoja "Resumen" agregada antes de "Horarios"
-                        # rompía un archivo que el fallback importaba
-                        # bien.
-                        index=hoja_default(_sheets_visible),
-                        key="crono_upload_sheet",
-                        help=(
-                            "El archivo tiene varias hojas. Elegí "
-                            "cuál querés previsualizar e importar."
-                        ),
-                    )
-                elif len(_sheets_visible) == 1:
-                    # Una sola hoja visible — igual la fijamos para
-                    # que el parser use exactamente ésa (por si el
-                    # archivo tiene además hojas ocultas).
-                    _sheet_choice = _sheets_visible[0]
-
-    if modo_carga == "Crear desde archivo":
-        # Flujo legacy: crea el cronograma y carga en un solo paso.
-        # Sin preview — para cronogramas nuevos alcanza con crear +
-        # dejar que la validación posterior detecte cualquier
-        # inconsistencia.
-        if st.button(
-            "Crear cronograma",
-            disabled=not nombre or not uploaded,
-            type="primary",
-            width="stretch",
-        ):
-            with next(get_session()) as session:
-                result = create_schedule_standalone(
-                    session, nombre, uploaded,
-                    ciclo_id=ciclo_id_val,
-                    sheet_name=_sheet_choice,
-                )
-            if result.errors:
-                for e in result.errors:
-                    st.error(e)
-            if result.warnings:
-                for w in result.warnings:
-                    st.warning(w)
-            if result.schedule:
-                st.success(
-                    f"Cronograma '{result.schedule.nombre}' creado con "
-                    f"{result.entries_created} entradas."
-                )
-                st.rerun()
-
-    elif modo_carga == "Importar en cronograma existente":
+    if modo_carga in ("Crear desde archivo", "Importar en cronograma existente"):
         # Flujo Fase G del rediseño 2026-09-15: preview via shadow
-        # schedule + tarjetas per-materia (rediseño 2026-09-23).
+        # schedule + tarjetas per-materia (rediseño 2026-09-23). Desde
+        # 2026-09-30 también lo usa "Crear desde archivo" (shadow sin
+        # destino: el cronograma se crea recién al confirmar) y el
+        # preview se recorre hoja por hoja de la plantilla.
         from src.services.cronograma_import_service import (
             crear_shadow_import,
             descartar_shadow_import,
@@ -907,6 +852,7 @@ with tab_cargar:
             st.session_state.pop(
                 f"crono_import_shadow_val_{sched_id}", None,
             )
+            st.session_state.pop(f"crono_import_errs_{sched_id}", None)
             if shadow_id:
                 for _pref in (
                     "crono_import_decisiones",
@@ -914,6 +860,8 @@ with tab_cargar:
                     "crono_import_file_meta",
                     "cimp_pending_reval",
                     "cimp_regen_errs",
+                    "cimp_paso",
+                    "cimp_revisadas",
                 ):
                     st.session_state.pop(f"{_pref}_{shadow_id}", None)
 
@@ -948,9 +896,13 @@ with tab_cargar:
                 for _sh in _huerfanos:
                     _c1, _c2 = st.columns([3, 1])
                     _c1.caption(
-                        f"**{_sh.nombre}** · destino "
-                        f"`{_sh.shadow_target_schedule_id or '?'}` · "
-                        f"{_sh.fecha_upload}"
+                        f"**{_sh.nombre}** · "
+                        + (
+                            f"destino `{_sh.shadow_target_schedule_id}`"
+                            if _sh.shadow_target_schedule_id
+                            else "cronograma nuevo (sin crear)"
+                        )
+                        + f" · {_sh.fecha_upload}"
                     )
                     if _c2.button(
                         "Descartar", key=f"discard_shadow_{_sh.id}",
@@ -962,37 +914,60 @@ with tab_cargar:
                         _limpiar_preview_state("", _sh.id)
                         st.rerun()
 
-        if not all_schedules:
+        _es_crear = modo_carga == "Crear desde archivo"
+        if not _es_crear and not all_schedules:
             st.info(
                 "No hay cronogramas cargados. Creá primero uno vacío o "
                 "desde archivo antes de importar."
             )
         else:
-            _sched_options = {
-                s.id: f"{s.nombre} ({s.fecha_upload})"
-                for s in all_schedules
-            }
-            _sel_sched_id = st.selectbox(
-                "Cronograma destino",
-                options=list(_sched_options.keys()),
-                format_func=lambda sid: _sched_options[sid],
-                key="crono_import_sched",
-                help=(
-                    "El archivo se va a importar dentro de este "
-                    "cronograma. Se muestra una vista previa con "
-                    "calendario editable antes de confirmar."
-                ),
-            )
+            _faltan_datos_crear = False
+            if _es_crear:
+                # Sin destino: el cronograma se crea al confirmar con el
+                # nombre y el ciclo de arriba (el ciclo es obligatorio:
+                # la plantilla es de un ciclo).
+                _sel_sched_id = None
+                _dest_ns = "nuevo"
+                _ciclo_plantilla = ciclo_id_val
+                if not ciclo_id_val or not (nombre or "").strip():
+                    _faltan_datos_crear = True
+                    st.info(
+                        "Para crear el cronograma desde la plantilla, "
+                        "elegí el **ciclo** y poné un **nombre** arriba."
+                    )
+            else:
+                _sched_options = {
+                    s.id: f"{s.nombre} ({s.fecha_upload})"
+                    for s in all_schedules
+                }
+                _sel_sched_id = st.selectbox(
+                    "Cronograma destino",
+                    options=list(_sched_options.keys()),
+                    format_func=lambda sid: _sched_options[sid],
+                    key="crono_import_sched",
+                    help=(
+                        "La plantilla se va a importar dentro de este "
+                        "cronograma. Antes de confirmar se revisa hoja "
+                        "por hoja."
+                    ),
+                )
+                _dest_ns = _sel_sched_id
+                _ciclo_plantilla = next(
+                    (s.ciclo_id for s in all_schedules if s.id == _sel_sched_id),
+                    None,
+                )
 
-            # session_state keys namespaced por destino.
-            _shadow_key = f"crono_import_shadow_{_sel_sched_id}"
-            _validation_key = f"crono_import_shadow_val_{_sel_sched_id}"
+            # session_state keys namespaced por destino ("nuevo" en
+            # modo crear).
+            _shadow_key = f"crono_import_shadow_{_dest_ns}"
+            _validation_key = f"crono_import_shadow_val_{_dest_ns}"
+            _plantilla_errs_key = f"crono_import_errs_{_dest_ns}"
 
             col_pv, col_reset = st.columns([3, 1])
             with col_pv:
                 if st.button(
-                    "🔍 Ver vista previa del archivo",
-                    disabled=not uploaded,
+                    "🔍 Revisar plantilla",
+                    disabled=not uploaded or _faltan_datos_crear,
                     type="primary",
                     width="stretch",
                     key="crono_import_preview_btn",
@@ -1012,15 +987,81 @@ with tab_cargar:
                                         _sess, _old_shadow,
                                     )
                             _limpiar_preview_state(
-                                _sel_sched_id, _old_shadow,
+                                _dest_ns, _old_shadow,
+                            )
+                        # 2026-09-30: validar la estructura de la
+                        # plantilla ANTES de armar el shadow, para
+                        # mostrar los errores agrupados por hoja.
+                        from src.services.horario_file_parser import (
+                            parse_plantilla_cronograma,
+                        )
+                        _res_pl = parse_plantilla_cronograma(
+                            uploaded, ciclo_id_esperado=_ciclo_plantilla,
+                        )
+                        uploaded.seek(0)
+                        st.session_state.pop(_plantilla_errs_key, None)
+                        if _res_pl.errores:
+                            st.session_state[_plantilla_errs_key] = {
+                                "globales": [
+                                    e for e in _res_pl.errores
+                                    if not e.startswith("Hoja '")
+                                ],
+                                "por_hoja": {
+                                    h.nombre: h.errores
+                                    for h in _res_pl.hojas if h.errores
+                                },
+                            }
+                            raise ValueError(
+                                "La plantilla tiene errores: corregilos "
+                                "en la planilla y volvé a subirla."
                             )
                         with next(get_session()) as _sess:
                             _shadow, _preview = crear_shadow_import(
                                 _sess, _sel_sched_id, uploaded,
                                 sheet_name=_sheet_choice,
+                                ciclo_id=_ciclo_plantilla,
+                                nombre_nuevo=nombre if _es_crear else None,
                             )
+                        # Materias del destino que ya no vienen en la
+                        # plantilla (se eliminan por defecto): se ubican
+                        # en la hoja de su grupo (fix revisión 2026-09-30).
+                        _hoja_por_grupo = {
+                            h.grupo: h.nombre for h in _res_pl.hojas
+                        }
+                        _ausentes_por_hoja: dict[str, list[str]] = {}
+                        if _preview.materias_ausentes:
+                            from src.database.models import GrupoMateriaDB
+                            with next(get_session()) as _sess:
+                                _gr_nom = {
+                                    g.id: g.nombre for g in _sess.exec(
+                                        select(GrupoMateriaDB)
+                                    ).all()
+                                }
+                                for _mc_aus in _preview.materias_ausentes:
+                                    _m_aus = _sess.get(MateriaDB, _mc_aus)
+                                    _g_aus = (
+                                        _gr_nom.get(_m_aus.grupo_id, "Sin grupo")
+                                        if _m_aus is not None and _m_aus.grupo_id
+                                        else "Sin grupo"
+                                    )
+                                    _ausentes_por_hoja.setdefault(
+                                        _hoja_por_grupo.get(_g_aus, ""), [],
+                                    ).append(_mc_aus)
                         st.session_state[_shadow_key] = {
                             "shadow_id": _shadow.id,
+                            # "" = sin hoja (se muestran en el resumen).
+                            "ausentes_por_hoja": _ausentes_por_hoja,
+                            # Hojas de la plantilla para el recorrido
+                            # hoja por hoja (2026-09-30).
+                            "hojas": [
+                                {
+                                    "nombre": h.nombre,
+                                    "grupo": h.grupo,
+                                    "codigos": h.codigos,
+                                    "n_horarios": h.n_horarios,
+                                }
+                                for h in _res_pl.hojas
+                            ],
                             "preview_summary": {
                                 "total_horarios": _preview.total_horarios,
                                 "materias": len(_preview.materias),
@@ -1034,6 +1075,15 @@ with tab_cargar:
                                     m.materia_codigo
                                     for m in _preview.materias
                                 }),
+                                # Código tal como vino en la hoja (puede
+                                # diferir si se resolvió por Guaraní),
+                                # para ubicar cada materia en su hoja.
+                                "codigo_en_archivo": {
+                                    m.materia_codigo: (
+                                        m.codigo_en_archivo or m.materia_codigo
+                                    )
+                                    for m in _preview.materias
+                                },
                                 "materias_no_resueltas": (
                                     _preview.materias_no_resueltas
                                 ),
@@ -1060,8 +1110,33 @@ with tab_cargar:
                         )
                         with next(get_session()) as _sess:
                             descartar_shadow_import(_sess, _shadow_id)
-                        _limpiar_preview_state(_sel_sched_id, _shadow_id)
+                        _limpiar_preview_state(_dest_ns, _shadow_id)
                         st.rerun()
+
+            # Errores de estructura / de filas de la plantilla, agrupados
+            # por hoja (2026-09-30). No se arma vista previa hasta que el
+            # archivo venga limpio.
+            _pl_errs = st.session_state.get(_plantilla_errs_key)
+            if _pl_errs and _shadow_key not in st.session_state:
+                with st.container(border=True):
+                    st.markdown("**🚫 La plantilla no se puede importar todavía**")
+                    for _e in _pl_errs["globales"]:
+                        st.error(_e)
+                    for _hoja, _errs in _pl_errs["por_hoja"].items():
+                        with st.expander(
+                            f"Hoja '{_hoja}' · {len(_errs)} error(es)",
+                            expanded=True,
+                        ):
+                            for _e in _errs:
+                                st.markdown(
+                                    f"- {_e.split(' · ', 1)[-1]}"
+                                )
+                    st.caption(
+                        "Corregí la planilla (en Excel o en Google "
+                        "Sheets), descargala como .xlsx y volvé a "
+                        "subirla. La carga se puede intentar las veces "
+                        "que haga falta."
+                    )
 
             # ------------------------------------------------------------
             # Render del preview (shadow schedule + calendario)
@@ -1077,16 +1152,22 @@ with tab_cargar:
                 if _shadow_db is None:
                     st.warning(
                         "La vista previa se perdió (la copia temporal "
-                        "se borró). Volvé a apretar 'Ver vista previa'."
+                        "se borró). Volvé a apretar 'Revisar plantilla'."
                     )
-                    _limpiar_preview_state(_sel_sched_id, _shadow_id)
+                    _limpiar_preview_state(_dest_ns, _shadow_id)
                 else:
                     st.info(
-                        "👀 Esta es una **vista previa**: los cambios "
-                        "todavía **no se guardaron** en el cronograma "
-                        "destino. Revisá las tarjetas por materia de "
-                        "abajo y apretá **Confirmar importación** "
-                        "para persistir."
+                        (
+                            "👀 Esta es una **vista previa**: el "
+                            "cronograma **todavía no existe**. Se crea "
+                            "recién al confirmar, después de revisar "
+                            "todas las hojas."
+                        ) if _es_crear else (
+                            "👀 Esta es una **vista previa**: los "
+                            "cambios todavía **no se guardaron** en el "
+                            "cronograma destino. Revisá hoja por hoja y "
+                            "confirmá al final."
+                        )
                     )
 
                     # Métricas.
@@ -1139,8 +1220,12 @@ with tab_cargar:
                             expanded=True,
                         ):
                             for _cod, _fila in _summary["materias_no_resueltas"]:
+                                _donde = (
+                                    _fila if isinstance(_fila, str)
+                                    else f"Fila ~{_fila}"
+                                )
                                 st.warning(
-                                    f"Fila ~{_fila}: `{_cod}` no "
+                                    f"{_donde}: `{_cod}` no "
                                     "está en el catálogo — se ignoró."
                                 )
 
@@ -1179,7 +1264,7 @@ with tab_cargar:
                                     == _sel_sched_id
                                 )
                                 .distinct()
-                            ).all())
+                            ).all()) if _sel_sched_id else set()
                         _materias_del_archivo = sorted(
                             _mats_con_prev
                             | (_all_mat_shadow - _all_mat_dest)
@@ -1281,16 +1366,198 @@ with tab_cargar:
                                 )
                         _val_sum = st.session_state[_validation_key]
 
+                    # ============ Recorrido hoja por hoja (2026-09-30) ============
+                    # Cada hoja de la plantilla es un paso: se revisan
+                    # sus materias (decisiones, ajustes, chequeos) y se
+                    # marca como revisada. El último paso resume todo
+                    # y habilita Confirmar cuando no queda hoja sin
+                    # revisar. Las hojas vacías arrancan revisadas.
+                    _hojas_pv = _pv_data.get("hojas") or []
+                    _cod_archivo = _summary.get("codigo_en_archivo") or {}
+                    _hoja_de_codigo = {
+                        c: h["nombre"] for h in _hojas_pv for c in h["codigos"]
+                    }
+
+                    def _hoja_de(mc: str) -> str | None:
+                        return _hoja_de_codigo.get(_cod_archivo.get(mc, mc))
+
+                    _PASO_FINAL = "🏁 Resumen y confirmación"
+                    _pasos = [h["nombre"] for h in _hojas_pv] + [_PASO_FINAL]
+                    _paso_key = f"cimp_paso_{_shadow_id}"
+                    _rev_key = f"cimp_revisadas_{_shadow_id}"
+                    _ausentes_por_hoja = _pv_data.get("ausentes_por_hoja") or {}
+                    _revisadas: set = st.session_state.setdefault(
+                        _rev_key,
+                        {
+                            h["nombre"] for h in _hojas_pv
+                            if not h["codigos"]
+                            and not _ausentes_por_hoja.get(h["nombre"])
+                        },
+                    )
+                    if st.session_state.get(_paso_key) not in _pasos:
+                        st.session_state[_paso_key] = _pasos[0]
+                    _info_hoja = {h["nombre"]: h for h in _hojas_pv}
+
+                    def _fmt_paso(nombre_paso: str) -> str:
+                        if nombre_paso == _PASO_FINAL:
+                            return nombre_paso
+                        _h = _info_hoja[nombre_paso]
+                        _marca = "✅" if nombre_paso in _revisadas else "⬜"
+                        _n = len(_h["codigos"])
+                        _det = f"{_n} materia(s)" if _n else "vacía"
+                        _n_aus = len(_ausentes_por_hoja.get(nombre_paso, []))
+                        if _n_aus:
+                            _det += f" · {_n_aus} a eliminar"
+                        return f"{_marca} {nombre_paso} · {_det}"
+
+                    def _ir_a(delta: int) -> None:
+                        _i = _pasos.index(st.session_state[_paso_key])
+                        st.session_state[_paso_key] = _pasos[
+                            max(0, min(len(_pasos) - 1, _i + delta))
+                        ]
+
+                    def _marcar_revisada(nombre_hoja: str) -> None:
+                        _revisadas.add(nombre_hoja)
+                        # Saltar a la próxima hoja sin revisar (o al
+                        # resumen si no queda ninguna).
+                        _pend = [
+                            h for h in _pasos[:-1] if h not in _revisadas
+                        ]
+                        st.session_state[_paso_key] = (
+                            _pend[0] if _pend else _PASO_FINAL
+                        )
+
+                    def _render_ausentes(codigos: list[str]) -> None:
+                        """Materias con horarios en el destino que ya no
+                        vienen en la plantilla: se eliminan por defecto,
+                        o se conservan como están (fix revisión
+                        2026-09-30)."""
+                        if not codigos:
+                            return
+                        from src.services.cronograma_import_service import (
+                            regenerar_materia_en_shadow as _regen,
+                        )
+                        _errs_aus = st.session_state.setdefault(
+                            f"cimp_regen_errs_{_shadow_id}", {},
+                        )
+                        st.markdown(
+                            f"#### 🗑 Ya no están en el archivo ({len(codigos)})"
+                        )
+                        st.caption(
+                            "Estas materias tienen horarios en el "
+                            "cronograma pero no vienen en la plantilla. "
+                            "Como la plantilla es la foto completa del "
+                            "cronograma, por defecto se **eliminan**. Si "
+                            "fue un olvido, elegí **conservar** y quedan "
+                            "como están."
+                        )
+                        _opts = ["eliminar", "conservar"]
+                        for _mc_a in codigos:
+                            _actual = _decisiones_map.get(_mc_a, "eliminar")
+                            with st.container(border=True):
+                                _nuevo = st.radio(
+                                    f"**{_mc_a}** · {materias_map.get(_mc_a, _mc_a)}",
+                                    options=_opts,
+                                    index=_opts.index(_actual),
+                                    format_func=lambda k: {
+                                        "eliminar": "Eliminar del cronograma",
+                                        "conservar": "Conservar los horarios actuales",
+                                    }[k],
+                                    horizontal=True,
+                                    key=f"cimp_aus_{_shadow_id}_{_mc_a}",
+                                )
+                                for _em in _errs_aus.get(_mc_a, []):
+                                    st.error(_em)
+                            if _nuevo != _actual:
+                                _arch, _hoja_arch = _archivo_para_regenerar()
+                                try:
+                                    if _arch is None:
+                                        raise ValueError(
+                                            "Se perdió la copia del archivo "
+                                            "en esta sesión: descartá la "
+                                            "vista previa y volvé a subirlo."
+                                        )
+                                    with next(get_session()) as _sess:
+                                        _regen(
+                                            _sess, _shadow_id, _mc_a,
+                                            decision=(
+                                                "eliminar" if _nuevo == "eliminar"
+                                                else "ignorar"
+                                            ),
+                                            file=_arch, sheet_name=_hoja_arch,
+                                        )
+                                    _decisiones_map[_mc_a] = _nuevo
+                                    _errs_aus.pop(_mc_a, None)
+                                    st.session_state[_pending_reval_key] = True
+                                except ValueError as _exc:
+                                    _errs_aus[_mc_a] = [str(_exc)]
+                                st.rerun()
+
+                    _n_hojas = len(_hojas_pv)
+                    _n_rev = len(_revisadas & set(_info_hoja))
+                    with st.container(border=True):
+                        st.markdown("**🗂 Revisión hoja por hoja**")
+                        if _n_hojas:
+                            st.progress(
+                                _n_rev / _n_hojas,
+                                text=f"{_n_rev} de {_n_hojas} hojas revisadas",
+                            )
+                        _nav1, _nav2, _nav3 = st.columns([1, 4, 1])
+                        _nav1.button(
+                            "◀ Anterior", key=f"cimp_prev_{_shadow_id}",
+                            on_click=_ir_a, args=(-1,),
+                            disabled=st.session_state[_paso_key] == _pasos[0],
+                            width="stretch",
+                        )
+                        _paso_actual = _nav2.selectbox(
+                            "Paso", options=_pasos, key=_paso_key,
+                            format_func=_fmt_paso,
+                            label_visibility="collapsed",
+                        )
+                        _nav3.button(
+                            "Siguiente ▶", key=f"cimp_next_{_shadow_id}",
+                            on_click=_ir_a, args=(1,),
+                            disabled=_paso_actual == _PASO_FINAL,
+                            width="stretch",
+                        )
+
+                    # En el resumen se muestran las materias que no se
+                    # pudieron ubicar en ninguna hoja (defensivo: así
+                    # ninguna queda fuera de la revisión).
+                    _hoja_buscada = (
+                        None if _paso_actual == _PASO_FINAL else _paso_actual
+                    )
+                    _materias_a_mostrar = [
+                        m for m in _materias_del_archivo
+                        if _hoja_de(m) == _hoja_buscada
+                    ]
+
                     # ============ Loop de expanders por materia ============
-                    if not _materias_del_archivo:
+                    if _paso_actual == _PASO_FINAL and not _materias_a_mostrar:
+                        pass
+                    elif not _materias_a_mostrar:
+                        _gr = _info_hoja[_paso_actual]["grupo"]
                         st.info(
-                            "El archivo no aportó materias "
-                            "reconocibles a la vista previa."
+                            f"La hoja **{_paso_actual}** (grupo {_gr}) "
+                            "vino vacía. Si confirmás así, las materias "
+                            "de este grupo no suman horarios desde el "
+                            "archivo (el panel Validar va a marcar como "
+                            "faltantes las que tengan dictado)."
+                            + (
+                                " Las que hoy tienen horarios en el "
+                                "cronograma aparecen abajo para decidir "
+                                "si se eliminan o se conservan."
+                                if _ausentes_por_hoja.get(_paso_actual)
+                                else ""
+                            )
                         )
                     else:
                         st.markdown(
-                            f"### 📚 Materias del archivo "
-                            f"({len(_materias_del_archivo)})"
+                            f"### 📄 Hoja «{_paso_actual}» · "
+                            f"{len(_materias_a_mostrar)} materia(s)"
+                            if _hoja_buscada is not None else
+                            f"### 📄 Materias sin hoja · "
+                            f"{len(_materias_a_mostrar)}"
                         )
                         st.caption(
                             "Para cada materia elegí si querés "
@@ -1341,8 +1608,9 @@ with tab_cargar:
                         # con 248 materias eran 496 llamadas ≈ 8 s por
                         # rerun; ahora son 2 (~90 ms).
                         with next(get_session()) as _sess:
-                            _grid_dest_full = build_schedule_grid(
-                                _sess, _sel_sched_id,
+                            _grid_dest_full = (
+                                build_schedule_grid(_sess, _sel_sched_id)
+                                if _sel_sched_id else {}
                             )
                             _grid_shadow_full = build_schedule_grid(
                                 _sess, _shadow_id,
@@ -1369,7 +1637,7 @@ with tab_cargar:
                             for _m in (_c["materia_a"], _c["materia_b"]):
                                 _conf_shadow.setdefault(_m, []).append(_c)
 
-                        for _mc in _materias_del_archivo:
+                        for _mc in _materias_a_mostrar:
                             _mat_nombre = materias_map.get(_mc, _mc)
                             _decision_actual = _decisiones_map.get(
                                 _mc, "reemplazar" if _mc in _mats_con_prev
@@ -1745,23 +2013,30 @@ with tab_cargar:
                                 # Columnas Antes / Después (grillas
                                 # pre-construidas fuera del loop — fix
                                 # auditoría H4).
-                                _col_ab, _col_ds = st.columns(2)
-                                with _col_ab:
-                                    st.markdown("**⏮ Antes** (destino actual)")
-                                    _grid_before = _grid_de_materia(
-                                        _grid_dest_full, _mc,
-                                    )
-                                    if _grid_before:
-                                        render_schedule_calendar(
-                                            _grid_before, config,
-                                            key=f"cimp_before_{_shadow_id}_{_mc}",
-                                            color_by_comision=True,
+                                # En modo crear no hay destino: sólo
+                                # "Después" (2026-09-30).
+                                if _sel_sched_id is None:
+                                    _col_ds = st.container()
+                                    _col_ab = None
+                                else:
+                                    _col_ab, _col_ds = st.columns(2)
+                                if _col_ab is not None:
+                                    with _col_ab:
+                                        st.markdown("**⏮ Antes** (destino actual)")
+                                        _grid_before = _grid_de_materia(
+                                            _grid_dest_full, _mc,
                                         )
-                                    else:
-                                        st.caption(
-                                            "Sin horarios previos en "
-                                            "el destino."
-                                        )
+                                        if _grid_before:
+                                            render_schedule_calendar(
+                                                _grid_before, config,
+                                                key=f"cimp_before_{_shadow_id}_{_mc}",
+                                                color_by_comision=True,
+                                            )
+                                        else:
+                                            st.caption(
+                                                "Sin horarios previos en "
+                                                "el destino."
+                                            )
                                 with _col_ds:
                                     st.markdown(
                                         "**⏭ Después** (estado hipotético)"
@@ -1796,119 +2071,196 @@ with tab_cargar:
                                 )
 
                     # ============ Bloque final: métricas + confirmar ============
-                    st.divider()
-                    with st.container(border=True):
-                        if _val_sum is not None:
-                            st.markdown(
-                                "**📊 Estado global del cronograma "
-                                "hipotético (vs ciclo)**"
-                            )
-                            st.caption(
-                                "Métricas que cubren todo el "
-                                "cronograma después de confirmar el "
-                                "import (no sólo las materias del "
-                                "archivo)."
-                            )
-                            _vc1, _vc2, _vc3, _vc4, _vc5 = st.columns(5)
-                            _vc1.metric("Faltantes", _val_sum.n_faltantes)
-                            _vc2.metric(
-                                "Conflictos horarios",
-                                _val_sum.n_conflictos_horarios,
-                            )
-                            _vc3.metric(
-                                "Bloqueos camino",
-                                _val_sum.n_camino_bloqueos,
-                            )
-                            _vc4.metric(
-                                "Partición",
-                                "OK" if _val_sum.particion_valid
-                                else f"{_val_sum.particion_n_infactibles} !",
-                            )
-                            _vc5.metric(
-                                "Fuera de config",
-                                _val_sum.n_horarios_fuera_config,
-                            )
-                        else:
-                            st.caption(
-                                "El cronograma destino no tiene ciclo "
-                                "asociado — no se puede computar el "
-                                "estado global."
-                            )
-
+                    if _paso_actual != _PASO_FINAL:
+                        _render_ausentes(_ausentes_por_hoja.get(_paso_actual, []))
                         st.divider()
-                        st.warning(
-                            "⚠️ Los cambios todavía no se guardaron. "
-                            "Apretá **Confirmar** para persistir el "
-                            "estado de la vista previa en el cronograma "
-                            "destino, o **Descartar** para tirarlo."
+                        _ya_rev = _paso_actual in _revisadas
+                        st.button(
+                            (
+                                "✅ Hoja revisada · ir a la siguiente"
+                                if _ya_rev else
+                                "✅ Marcar hoja como revisada y seguir"
+                            ),
+                            key=f"cimp_rev_btn_{_shadow_id}_{_paso_actual}",
+                            type="secondary" if _ya_rev else "primary",
+                            on_click=_marcar_revisada, args=(_paso_actual,),
+                            width="stretch",
                         )
-                        _bc1, _bc2 = st.columns(2)
-                        with _bc1:
-                            if st.button(
-                                "✅ Confirmar importación",
-                                type="primary",
-                                width="stretch",
-                                key="crono_import_confirm_btn",
-                            ):
-                                try:
+                    else:
+                        # Tabla de hojas: revisión + conflictos que
+                        # tocan materias de cada hoja.
+                        _conf_por_hoja: dict[str, int] = {}
+                        for _c in (
+                            _val_sum.conflictos_horarios if _val_sum else []
+                        ):
+                            for _h in {
+                                _hoja_de(_c["materia_a"]),
+                                _hoja_de(_c["materia_b"]),
+                            } - {None}:
+                                _conf_por_hoja[_h] = _conf_por_hoja.get(_h, 0) + 1
+                        _render_ausentes(_ausentes_por_hoja.get("", []))
+                        st.markdown("### 🗂 Hojas de la plantilla")
+                        st.dataframe(
+                            pd.DataFrame([
+                                {
+                                    "Hoja": h["nombre"],
+                                    "Grupo": h["grupo"],
+                                    "Materias": len(h["codigos"]),
+                                    "Horarios": h["n_horarios"],
+                                    "Conflictos": _conf_por_hoja.get(h["nombre"], 0),
+                                    "A eliminar": sum(
+                                        1 for _c in _ausentes_por_hoja.get(h["nombre"], [])
+                                        if _decisiones_map.get(_c, "eliminar") == "eliminar"
+                                    ),
+                                    "Revisada": (
+                                        "✅" if h["nombre"] in _revisadas
+                                        else "⬜ pendiente"
+                                    ),
+                                }
+                                for h in _hojas_pv
+                            ]),
+                            hide_index=True, width="stretch",
+                        )
+                        _pendientes = [
+                            h["nombre"] for h in _hojas_pv
+                            if h["nombre"] not in _revisadas
+                        ]
+                        st.divider()
+                        with st.container(border=True):
+                            if _val_sum is not None:
+                                st.markdown(
+                                    "**📊 Estado global del cronograma "
+                                    "hipotético (vs ciclo)**"
+                                )
+                                st.caption(
+                                    "Métricas que cubren todo el "
+                                    "cronograma después de confirmar el "
+                                    "import (no sólo las materias del "
+                                    "archivo)."
+                                )
+                                _vc1, _vc2, _vc3, _vc4, _vc5 = st.columns(5)
+                                _vc1.metric("Faltantes", _val_sum.n_faltantes)
+                                _vc2.metric(
+                                    "Conflictos horarios",
+                                    _val_sum.n_conflictos_horarios,
+                                )
+                                _vc3.metric(
+                                    "Bloqueos camino",
+                                    _val_sum.n_camino_bloqueos,
+                                )
+                                _vc4.metric(
+                                    "Partición",
+                                    "OK" if _val_sum.particion_valid
+                                    else f"{_val_sum.particion_n_infactibles} !",
+                                )
+                                _vc5.metric(
+                                    "Fuera de config",
+                                    _val_sum.n_horarios_fuera_config,
+                                )
+                            else:
+                                st.caption(
+                                    "El cronograma destino no tiene ciclo "
+                                    "asociado — no se puede computar el "
+                                    "estado global."
+                                )
+
+                            st.divider()
+                            if _pendientes:
+                                st.warning(
+                                    f"Faltan revisar {len(_pendientes)} "
+                                    "hoja(s): "
+                                    + ", ".join(f"«{h}»" for h in _pendientes)
+                                    + ". Confirmar se habilita cuando "
+                                    "estén todas revisadas."
+                                )
+                            else:
+                                st.warning(
+                                    "Los cambios todavía no se "
+                                    "guardaron. Apretá **Confirmar** para "
+                                    + (
+                                        "crear el cronograma"
+                                        if _es_crear else
+                                        "aplicar la vista previa al "
+                                        "cronograma destino"
+                                    )
+                                    + ", o **Descartar** para tirarla.",
+                                    icon="⚠️",
+                                )
+                            _bc1, _bc2 = st.columns(2)
+                            with _bc1:
+                                if st.button(
+                                    "✅ Crear cronograma" if _es_crear
+                                    else "✅ Confirmar importación",
+                                    type="primary",
+                                    width="stretch",
+                                    key="crono_import_confirm_btn",
+                                    disabled=bool(_pendientes),
+                                ):
+                                    try:
+                                        with next(get_session()) as _sess:
+                                            _fin_res = finalizar_shadow_import(
+                                                _sess, _shadow_id,
+                                            )
+                                        # Toast con métricas honestas
+                                        # (task #358, 2026-09-23): agregadas,
+                                        # eliminadas y sin_cambio son
+                                        # disjuntas y suman `finales` +
+                                        # `eliminadas`. Antes se reportaban
+                                        # "pisadas" que en realidad no
+                                        # cambiaban nada al re-importar.
+                                        _partes = []
+                                        if _fin_res.entries_agregadas:
+                                            _partes.append(
+                                                f"{_fin_res.entries_agregadas} "
+                                                "agregada(s)"
+                                            )
+                                        if _fin_res.entries_eliminadas:
+                                            _partes.append(
+                                                f"{_fin_res.entries_eliminadas} "
+                                                "eliminada(s)"
+                                            )
+                                        if _fin_res.entries_sin_cambio:
+                                            _partes.append(
+                                                f"{_fin_res.entries_sin_cambio} "
+                                                "sin cambio"
+                                            )
+                                        _resumen = (
+                                            " · ".join(_partes)
+                                            if _partes else "sin diferencias"
+                                        )
+                                        st.session_state[
+                                            "_crono_import_toast"
+                                        ] = (
+                                            f"✅ Cronograma "
+                                            f"«{_fin_res.destino_nombre}» "
+                                            "creado con "
+                                            f"{_fin_res.entries_finales} "
+                                            "entrada(s)."
+                                        ) if _es_crear else (
+                                            f"✅ Import aplicado en "
+                                            f"«{_fin_res.destino_nombre}»: "
+                                            f"{_resumen}. Total ahora: "
+                                            f"{_fin_res.entries_finales} "
+                                            "entrada(s)."
+                                        )
+                                        _limpiar_preview_state(
+                                            _dest_ns, _shadow_id,
+                                        )
+                                        st.rerun()
+                                    except ValueError as _exc:
+                                        st.error(str(_exc))
+                            with _bc2:
+                                if st.button(
+                                    "🗑 Descartar vista previa",
+                                    width="stretch",
+                                    key="crono_import_discard_bottom_btn",
+                                ):
                                     with next(get_session()) as _sess:
-                                        _fin_res = finalizar_shadow_import(
-                                            _sess, _shadow_id,
-                                        )
-                                    # Toast con métricas honestas
-                                    # (task #358, 2026-09-23): agregadas,
-                                    # eliminadas y sin_cambio son
-                                    # disjuntas y suman `finales` +
-                                    # `eliminadas`. Antes se reportaban
-                                    # "pisadas" que en realidad no
-                                    # cambiaban nada al re-importar.
-                                    _partes = []
-                                    if _fin_res.entries_agregadas:
-                                        _partes.append(
-                                            f"{_fin_res.entries_agregadas} "
-                                            "agregada(s)"
-                                        )
-                                    if _fin_res.entries_eliminadas:
-                                        _partes.append(
-                                            f"{_fin_res.entries_eliminadas} "
-                                            "eliminada(s)"
-                                        )
-                                    if _fin_res.entries_sin_cambio:
-                                        _partes.append(
-                                            f"{_fin_res.entries_sin_cambio} "
-                                            "sin cambio"
-                                        )
-                                    _resumen = (
-                                        " · ".join(_partes)
-                                        if _partes else "sin diferencias"
-                                    )
-                                    st.session_state[
-                                        "_crono_import_toast"
-                                    ] = (
-                                        f"✅ Import aplicado en "
-                                        f"«{_fin_res.destino_nombre}»: "
-                                        f"{_resumen}. Total ahora: "
-                                        f"{_fin_res.entries_finales} "
-                                        "entrada(s)."
-                                    )
+                                        descartar_shadow_import(_sess, _shadow_id)
                                     _limpiar_preview_state(
-                                        _sel_sched_id, _shadow_id,
+                                        _dest_ns, _shadow_id,
                                     )
                                     st.rerun()
-                                except ValueError as _exc:
-                                    st.error(str(_exc))
-                        with _bc2:
-                            if st.button(
-                                "🗑 Descartar vista previa",
-                                width="stretch",
-                                key="crono_import_discard_bottom_btn",
-                            ):
-                                with next(get_session()) as _sess:
-                                    descartar_shadow_import(_sess, _shadow_id)
-                                _limpiar_preview_state(
-                                    _sel_sched_id, _shadow_id,
-                                )
-                                st.rerun()
 
     elif modo_carga == "Copiar desde plan":
         # Fase F del rediseño 2026-09-15: clona el estado consolidado

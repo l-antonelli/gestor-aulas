@@ -1256,6 +1256,15 @@ def check_camino_cursada_cronograma(
     if not grupos_enriquecidos:
         return []
 
+    # Pares ignorados del cronograma (2026-09-30): igual que en el plan
+    # (`check_camino_cursada`), un solapamiento entre materias de un par
+    # ignorado no bloquea el camino. Sin esto, ignorar un conflicto en
+    # Validar no desbloqueaba la generación del plan.
+    from src.services.cronograma_validation_service import (
+        get_ignored_pairs_cronograma,
+    )
+    _ignorados = get_ignored_pairs_cronograma(session, schedule_id)
+
     def _solapa(h1: tuple, h2: tuple) -> bool:
         if h1[0] != h2[0]:
             return False
@@ -1307,6 +1316,9 @@ def check_camino_cursada_cronograma(
         ) -> tuple[bool, Optional[tuple[tuple, tuple]]]:
             key = (ka, kb) if ka < kb else (kb, ka)
             if key in pair_compat:
+                return pair_compat[key]
+            if tuple(sorted((ka[0], kb[0]))) in _ignorados:
+                pair_compat[key] = (True, None)
                 return pair_compat[key]
             r = _par_es_compatible(hs_a, hs_b)
             pair_compat[key] = r

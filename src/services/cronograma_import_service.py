@@ -49,12 +49,17 @@ from src.database.models import (
     ComisionDB,
     ScheduleDB,
     ScheduleEntryDB,
+    ScheduleIgnoredConflictDB,
 )
 from src.services.comision_service import (
     create_comision_for_schedule,
     list_comisiones_for_schedule_materia,
 )
-from src.services.horario_file_parser import parse_horarios_file
+from src.services.horario_file_parser import (
+    HOJAS_TODAS,
+    parse_horarios_file,
+    parse_plantilla_cronograma,
+)
 from src.services.horario_loading_service import (
     HorarioInput,
     _resolve_materia_code,
@@ -109,6 +114,9 @@ class MateriaEnPreview:
     materia_nombre: str
     resolution_type: str  # "direct" | "guarani" | "unresolved"
     original_code: Optional[str] = None  # sólo si resolution_type == "guarani"
+    # Código tal como vino en el archivo, sin importar cómo se resolvió
+    # (2026-09-30): la UI ubica con él cada materia en su hoja.
+    codigo_en_archivo: Optional[str] = None
     comisiones_nuevas: list[ComisionEnPreview] = field(default_factory=list)
     comisiones_existentes: list[str] = field(default_factory=list)  # nombres
     n_entries_existentes: int = 0
@@ -142,6 +150,10 @@ class ImportPreview:
     materias_no_resueltas: list[tuple[str, int]] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Materias con horarios en el destino que no vienen en la plantilla
+    # completa (`HOJAS_TODAS`): el shadow las elimina por defecto
+    # (fix revisión 2026-09-30). Vacío en los demás modos.
+    materias_ausentes: list[str] = field(default_factory=list)
 
     @property
     def tiene_errores_bloqueantes(self) -> bool:
@@ -205,14 +217,24 @@ def preview_import(
     preview = ImportPreview(schedule_id=schedule_id)
 
     # Validar que el cronograma existe.
-    if session.get(ScheduleDB, schedule_id) is None:
+    _sched = session.get(ScheduleDB, schedule_id)
+    if _sched is None:
         preview.parse_errors.append(
             f"Cronograma '{schedule_id}' no existe."
         )
         return preview
 
-    # Parsear el archivo.
-    entries, parse_errors = parse_horarios_file(file, sheet_name=sheet_name)
+    # Parsear el archivo. Con `HOJAS_TODAS` (2026-09-30) se importa la
+    # plantilla multihoja completa, validada contra el ciclo del
+    # cronograma: cualquier archivo que no sea la plantilla de la app
+    # se rechaza entero.
+    if sheet_name == HOJAS_TODAS:
+        _res = parse_plantilla_cronograma(
+            file, ciclo_id_esperado=_sched.ciclo_id,
+        )
+        entries, parse_errors = _res.entries, _res.errores
+    else:
+        entries, parse_errors = parse_horarios_file(file, sheet_name=sheet_name)
     preview.parse_errors.extend(parse_errors)
     if not entries:
         if not parse_errors:
@@ -220,6 +242,13 @@ def preview_import(
                 "El archivo no tiene horarios válidos."
             )
         return preview
+
+    def _ubicacion(idx: int, entry: HorarioInput):
+        """Dónde está la fila en el archivo: con la plantilla multihoja,
+        hoja y fila reales (fix revisión 2026-09-30); si no, el índice."""
+        if entry.hoja and entry.fila:
+            return f"Hoja '{entry.hoja}', fila {entry.fila}"
+        return idx
 
     # Agrupar por materia (código original antes de resolver) y por comisión.
     # Se preserva la fila para reportar errores útiles si algo no resuelve.
@@ -242,11 +271,12 @@ def preview_import(
 
         if resolution.resolution_type == "unresolved":
             # Reportar la primera fila donde apareció el código.
-            primera_fila = min(
-                idx for horarios in por_comision.values() for idx, _ in horarios
+            _idx0, _entry0 = min(
+                (h for horarios in por_comision.values() for h in horarios),
+                key=lambda h: h[0],
             )
             preview.materias_no_resueltas.append(
-                (codigo_original, primera_fila)
+                (codigo_original, _ubicacion(_idx0, _entry0))
             )
             continue
 
@@ -275,8 +305,10 @@ def preview_import(
                 for fila, entry in horarios:
                     _nom_decl = (entry.nombre_materia or "").strip()
                     if _nom_decl and _nom_decl.lower() != _nom_catalogo:
+                        _u = _ubicacion(fila, entry)
                         preview.parse_errors.append(
-                            f"Fila {fila}: codigo_materia "
+                            (f"{_u}: " if isinstance(_u, str) else f"Fila {fila}: ")
+                            + "codigo_materia "
                             f"'{codigo_original}' y nombre_materia "
                             f"'{_nom_decl}' no se corresponden — el "
                             f"código {codigo_resuelto} es "
@@ -332,6 +364,7 @@ def preview_import(
                 resolution.original_code
                 if resolution.resolution_type == "guarani" else None
             ),
+            codigo_en_archivo=codigo_original,
             comisiones_nuevas=comisiones_nuevas,
             comisiones_existentes=nombres_existentes,
             n_entries_existentes=len(n_entries_prev),
@@ -659,9 +692,12 @@ def _copiar_entries_y_comisiones(
 
 def crear_shadow_import(
     session: Session,
-    destino_id: str,
+    destino_id: Optional[str],
     file,
     sheet_name: str | None = None,
+    *,
+    ciclo_id: Optional[str] = None,
+    nombre_nuevo: Optional[str] = None,
 ) -> tuple[ScheduleDB, ImportPreview]:
     """Crea un shadow ScheduleDB con los datos del destino + import.
 
@@ -686,7 +722,20 @@ def crear_shadow_import(
     errores no bloqueantes del commit inicial sobre el shadow (por
     ejemplo colisiones de nombre de comisión) se anexan a
     `preview.warnings`.
+
+    **Modo crear** (2026-09-30): con ``destino_id=None`` el shadow no
+    tiene destino y arranca vacío; ``ciclo_id`` y ``nombre_nuevo`` son
+    los del cronograma que se va a crear. El cronograma real recién se
+    crea en ``finalizar_shadow_import``, así que descartar la vista
+    previa no deja nada en la base.
     """
+    from datetime import date as _date
+
+    if destino_id is None:
+        return _crear_shadow_sin_destino(
+            session, file, sheet_name, ciclo_id, nombre_nuevo,
+        )
+
     destino = session.get(ScheduleDB, destino_id)
     if destino is None:
         raise ValueError(f"Cronograma destino '{destino_id}' no existe.")
@@ -703,7 +752,6 @@ def crear_shadow_import(
         )
 
     # 1) Crear el shadow y copiar todo el estado actual del destino.
-    from datetime import date as _date
     shadow = ScheduleDB(
         id=str(uuid.uuid4()),
         ciclo_id=destino.ciclo_id,
@@ -779,10 +827,77 @@ def crear_shadow_import(
     for _err in _commit_res.errors:
         preview.warnings.append(f"Al aplicar sobre el preview: {_err}")
 
+    # Plantilla completa (fix revisión 2026-09-30): el archivo es la
+    # foto entera del cronograma, así que una materia del destino que
+    # ya no viene en él se elimina del shadow. La UI permite
+    # conservarla (`regenerar_materia_en_shadow(..., "ignorar")`).
+    if sheet_name == HOJAS_TODAS:
+        _en_archivo = {m.materia_codigo for m in preview_shadow.materias}
+        _en_destino = set(session.exec(
+            select(ScheduleEntryDB.codigo_materia)
+            .where(ScheduleEntryDB.schedule_id == destino_id)
+        ).all()) | set(session.exec(
+            select(ComisionDB.materia_codigo)
+            .where(ComisionDB.schedule_id == destino_id)
+        ).all())
+        preview.materias_ausentes = sorted(_en_destino - _en_archivo)
+        for _mc in preview.materias_ausentes:
+            _borrar_materia_en_shadow(session, shadow.id, _mc)
+
     session.commit()
     session.refresh(shadow)
     # El preview que devolvemos es el "vs destino" (para que la UI
     # muestre las decisiones que se aplicaron al shadow).
+    return shadow, preview
+
+
+_PREFIJO_SHADOW = "[SHADOW] "
+
+
+def _crear_shadow_sin_destino(
+    session: Session,
+    file,
+    sheet_name: str | None,
+    ciclo_id: Optional[str],
+    nombre_nuevo: Optional[str],
+) -> tuple[ScheduleDB, ImportPreview]:
+    """Modo crear de ``crear_shadow_import``: shadow vacío, sin destino,
+    con el archivo aplicado como materias nuevas ("agregar")."""
+    from datetime import date as _date
+
+    if not ciclo_id:
+        raise ValueError(
+            "Para crear un cronograma desde la plantilla hace falta "
+            "elegir el ciclo."
+        )
+    if not (nombre_nuevo or "").strip():
+        raise ValueError("Poné un nombre para el cronograma nuevo.")
+
+    shadow = ScheduleDB(
+        id=str(uuid.uuid4()),
+        ciclo_id=ciclo_id,
+        nombre=f"{_PREFIJO_SHADOW}{nombre_nuevo.strip()}",
+        fecha_upload=_date.today(),
+        source_filename="shadow:nuevo",
+        es_shadow_import=True,
+        shadow_target_schedule_id=None,
+    )
+    session.add(shadow)
+    session.flush()
+
+    preview = preview_import(session, shadow.id, file, sheet_name=sheet_name)
+    if preview.tiene_errores_bloqueantes:
+        session.delete(shadow)
+        session.commit()
+        raise ValueError(
+            "El archivo tiene errores y no se puede armar la vista "
+            "previa: " + "; ".join(preview.parse_errors)
+        )
+    _commit_res = commit_import(session, preview, {})
+    for _err in _commit_res.errors:
+        preview.warnings.append(f"Al aplicar sobre el preview: {_err}")
+    session.commit()
+    session.refresh(shadow)
     return shadow, preview
 
 
@@ -848,9 +963,31 @@ def finalizar_shadow_import(
         )
     destino_id = shadow.shadow_target_schedule_id
     if destino_id is None:
-        raise ValueError(
-            f"Shadow '{shadow_id}' no tiene destino asociado."
+        # Modo crear (2026-09-30): el cronograma nace recién ahora.
+        from datetime import date as _date
+
+        destino = ScheduleDB(
+            id=str(uuid.uuid4()),
+            ciclo_id=shadow.ciclo_id,
+            nombre=shadow.nombre.removeprefix(_PREFIJO_SHADOW),
+            fecha_upload=_date.today(),
+            source_filename="plantilla",
         )
+        session.add(destino)
+        session.flush()
+        destino_id = destino.id
+        # Los ignorados marcados en la vista previa viven en el shadow
+        # (no había destino): pasan al cronograma nuevo.
+        for f in session.exec(
+            select(ScheduleIgnoredConflictDB)
+            .where(ScheduleIgnoredConflictDB.schedule_id == shadow_id)
+        ).all():
+            session.add(ScheduleIgnoredConflictDB(
+                schedule_id=destino_id, materia_a=f.materia_a,
+                materia_b=f.materia_b, razon=f.razon,
+            ))
+            session.delete(f)
+        session.flush()
     destino = session.get(ScheduleDB, destino_id)
     if destino is None:
         raise ValueError(
@@ -970,7 +1107,7 @@ def regenerar_materia_en_shadow(
     session: Session,
     shadow_id: str,
     materia_codigo: str,
-    decision: MergePolicy,
+    decision: MergePolicy | Literal["eliminar"],
     file,
     sheet_name: str | None = None,
 ) -> ImportResult:
@@ -988,7 +1125,9 @@ def regenerar_materia_en_shadow(
         session: sesión activa.
         shadow_id: shadow del importer (debe existir).
         materia_codigo: materia a regenerar.
-        decision: ``"reemplazar"`` (borra todo lo previo del destino
+        decision: ``"eliminar"`` (2026-09-30, materias ausentes de la
+            plantilla completa: la materia queda sin horarios en el
+            shadow); ``"reemplazar"`` (borra todo lo previo del destino
             en esta materia y aplica solo lo del archivo);
             ``"agregar"`` (mantiene lo previo del destino y suma las
             comisiones nuevas del archivo, exigiendo que no colisionen
@@ -1021,18 +1160,19 @@ def regenerar_materia_en_shadow(
             f"El schedule '{shadow_id}' no es un shadow del importer."
         )
     destino_id = shadow.shadow_target_schedule_id
-    if destino_id is None:
-        raise ValueError(
-            f"Shadow '{shadow_id}' no tiene destino asociado."
-        )
 
     # 1) Vaciar el estado actual de la materia en el shadow.
     _borrar_materia_en_shadow(session, shadow_id, materia_codigo)
+    if decision == "eliminar":
+        session.commit()
+        return ImportResult()
 
     # 2) Copiar la materia desde el destino al shadow (baseline previo).
-    _copiar_entries_y_comisiones(
-        session, destino_id, shadow_id, materia_codigo=materia_codigo,
-    )
+    # En modo crear (sin destino, 2026-09-30) no hay baseline.
+    if destino_id is not None:
+        _copiar_entries_y_comisiones(
+            session, destino_id, shadow_id, materia_codigo=materia_codigo,
+        )
 
     # 3) Re-parsear el archivo y aplicar la decisión sólo a esta
     # materia. `commit_import` acepta un preview del shadow completo,
@@ -1130,6 +1270,13 @@ def _borrar_shadow_datos(session: Session, shadow_id: str) -> None:
     ).all())
     for c in coms:
         session.delete(c)
+    # Sólo los shadows sin destino guardan ignorados propios (los demás
+    # usan los del destino).
+    for f in session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == shadow_id)
+    ).all():
+        session.delete(f)
     session.flush()
 
 

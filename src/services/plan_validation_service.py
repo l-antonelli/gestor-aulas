@@ -616,9 +616,11 @@ def get_ignored_pairs(
 def grupos_curriculares_activos(
     session: Session, ciclo_id: str,
 ) -> Optional[list[set[str]]]:
-    """Materias obligatorias de cada grupo curricular
-    ``(carrera, año, cuatri)`` del ciclo, con las anuales del mismo
-    ``(carrera, año)`` sumadas. Devuelve ``None`` si el ciclo no tiene
+    """Materias de cada grupo curricular ``(carrera, año, cuatri)`` del
+    ciclo, con las anuales del mismo ``(carrera, año)`` sumadas.
+    Incluye las optativas (fix revisión 2026-09-30): la detección de
+    conflictos también las incluye, así que un par ignorado con una
+    optativa es válido y no se tiene que limpiar como obsoleto. Devuelve ``None`` si el ciclo no tiene
     planes de estudio asignados (no se puede determinar coexistencia).
 
     Base de la limpieza de excepciones stale, compartida por el plan
@@ -644,8 +646,6 @@ def grupos_curriculares_activos(
     grupos: dict[tuple[str, int, str], set[str]] = {}
     for pe in pe_rows:
         if pe.anio_plan is None or pe.cuatrimestre_plan is None:
-            continue
-        if pe.optativa:
             continue
         key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
         grupos.setdefault(key, set()).add(pe.materia_codigo)

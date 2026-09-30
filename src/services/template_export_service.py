@@ -27,7 +27,8 @@ Convenciones:
 from __future__ import annotations
 
 import io
-from typing import Iterable
+from dataclasses import dataclass, field
+from typing import Iterable, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -749,6 +750,208 @@ def _nombre_hoja_excel(nombre: str, usados: set[str]) -> str:
 HOJAS_SISTEMA_PLANTILLA = {"Instrucciones", "Materias", "Horarios"}
 
 
+# Hoja oculta que identifica un archivo generado por la app
+# (2026-09-30). El importador sólo acepta archivos que la tengan, para
+# forzar el uso de la plantilla tal como sale de la aplicación.
+HOJA_META = "_meta"
+TIPO_PLANTILLA = "plantilla_cronograma_por_grupos"
+VERSION_PLANTILLA = 2
+
+
+@dataclass
+class MetaPlantilla:
+    """Contenido de la hoja ``_meta`` de una plantilla de cronograma."""
+
+    version: int
+    ciclo_id: str
+    generado_en: str
+    cronograma_origen_id: Optional[str] = None
+    # nombre de hoja (saneado) -> nombre del grupo de materias
+    hojas: dict[str, str] = field(default_factory=dict)
+
+
+def _escribir_hoja_meta(
+    wb: Workbook, meta: MetaPlantilla,
+) -> None:
+    ws = wb.create_sheet(title=HOJA_META)
+    ws.sheet_state = "hidden"
+    filas = [
+        ("tipo", TIPO_PLANTILLA),
+        ("version", meta.version),
+        ("ciclo_id", meta.ciclo_id),
+        ("generado_en", meta.generado_en),
+        ("cronograma_origen_id", meta.cronograma_origen_id or ""),
+    ] + [(f"hoja:{h}", g) for h, g in meta.hojas.items()]
+    for r, (clave, valor) in enumerate(filas, start=1):
+        ws.cell(row=r, column=1, value=clave)
+        ws.cell(row=r, column=2, value=valor)
+
+
+def leer_meta_plantilla(file) -> Optional[MetaPlantilla]:
+    """Lee la hoja ``_meta`` de un archivo subido. Devuelve ``None`` si
+    el archivo no es un Excel, no tiene la hoja o no es una plantilla
+    de cronograma de la app (el caller decide el mensaje de rechazo).
+    """
+    from openpyxl import load_workbook
+
+    try:
+        if hasattr(file, "seek"):
+            file.seek(0)
+        wb = load_workbook(file, read_only=True, data_only=True)
+    except Exception:
+        return None
+    finally:
+        if hasattr(file, "seek"):
+            file.seek(0)
+    try:
+        if HOJA_META not in wb.sheetnames:
+            return None
+        datos: dict[str, object] = {}
+        hojas: dict[str, str] = {}
+        for row in wb[HOJA_META].iter_rows(values_only=True):
+            if not row or row[0] is None:
+                continue
+            clave = str(row[0])
+            valor = row[1] if len(row) > 1 else None
+            if clave.startswith("hoja:"):
+                hojas[clave[len("hoja:"):]] = "" if valor is None else str(valor)
+            else:
+                datos[clave] = valor
+        if datos.get("tipo") != TIPO_PLANTILLA or not datos.get("ciclo_id"):
+            return None
+        try:
+            version = int(datos.get("version") or 0)
+        except (TypeError, ValueError):
+            return None
+        return MetaPlantilla(
+            version=version,
+            ciclo_id=str(datos["ciclo_id"]),
+            generado_en=str(datos.get("generado_en") or ""),
+            cronograma_origen_id=(
+                str(datos["cronograma_origen_id"])
+                if datos.get("cronograma_origen_id") else None
+            ),
+            hojas=hojas,
+        )
+    finally:
+        wb.close()
+
+
+def _nombre_grupo(mat: Optional[MateriaDB], grupos: dict) -> str:
+    """Grupo de materias con el que se arma la hoja de la materia."""
+    if mat is not None and mat.grupo_id:
+        return grupos.get(mat.grupo_id, "Sin grupo")
+    return "Sin grupo"
+
+
+def _sembrar_grupos(
+    session: Session, codigos: Iterable[str],
+    filas_por_grupo: dict[str, list[tuple]],
+) -> None:
+    """Asegura una hoja (aunque sea vacía) por cada grupo de las
+    materias dadas, para que la plantilla ofrezca todos los grupos."""
+    from src.database.models import GrupoMateriaDB
+
+    codigos = list(codigos)
+    grupos = {
+        g.id: g.nombre for g in session.exec(select(GrupoMateriaDB)).all()
+    }
+    materias = {
+        m.codigo: m for m in session.exec(
+            select(MateriaDB).where(
+                MateriaDB.codigo.in_(codigos)  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+    for cod in codigos:
+        filas_por_grupo.setdefault(_nombre_grupo(materias.get(cod), grupos), [])
+
+
+def _construir_plantilla_por_grupos(
+    *,
+    ciclo: CicloDB,
+    contexto: list[dict],
+    columnas_materias,
+    dias_operativos: list[str],
+    slots,
+    filas_por_grupo: dict[str, list[tuple]],
+    nombre_cronograma: Optional[str],
+    cronograma_origen_id: Optional[str],
+) -> bytes:
+    """Arma el workbook de horarios con una hoja por grupo de materias.
+
+    Lo comparten la plantilla vacía del ciclo
+    (``generar_plantilla_cronograma_excel``, grupos con listas de filas
+    vacías) y el export precargado de un cronograma
+    (``exportar_cronograma_por_grupos_excel``): el mismo formato para
+    cargar desde cero y para corregir y volver a subir. Incluye la hoja
+    oculta ``_meta`` que el importador exige.
+    """
+    from datetime import datetime
+
+    wb = Workbook()
+    _default = wb.active
+    assert _default is not None
+    wb.remove(_default)
+
+    # Hojas de grupo (orden alfabético, nombres saneados).
+    _usados: set[str] = set()
+    _hojas_grupo: list[tuple[str, str]] = []  # (nombre_hoja, grupo)
+    for _grupo in sorted(filas_por_grupo):
+        _hoja = _nombre_hoja_excel(_grupo, _usados)
+        _hojas_grupo.append((_hoja, _grupo))
+
+    _escribir_hoja_materias(wb, contexto, columnas=columnas_materias)
+    _ref_dias, _ref_horas = _preparar_listas_horarios(
+        wb, dias_operativos, slots,
+    )
+
+    _orden_dia = {d: i for i, d in enumerate(DIAS_SEMANA)}
+    for _idx, (_hoja, _grupo) in enumerate(_hojas_grupo, start=1):
+        filas = sorted(
+            filas_por_grupo[_grupo],
+            key=lambda f: (
+                f[0], f[1] if f[1] is not None else 10**6,
+                _orden_dia.get(f[3], 99), f[4],
+            ),
+        )
+        if len(filas) > 1000:
+            raise ValueError(
+                f"El grupo '{_grupo}' tiene {len(filas)} horarios — "
+                "supera las 1000 filas de la plantilla."
+            )
+        ws = wb.create_sheet(title=_hoja, index=_idx - 1)
+        _escribir_headers_horarios(ws)
+        _agregar_data_validations_horarios(
+            ws, len(contexto), _ref_dias, _ref_horas,
+        )
+        # Precarga (después de las validaciones: las celdas de carga
+        # ya están desbloqueadas y la fórmula del nombre escrita).
+        for _r, fila in enumerate(filas, start=2):
+            for _c, valor in enumerate(fila, start=2):
+                if valor is not None and valor != "":
+                    ws.cell(row=_r, column=_c, value=valor)
+        _tabular_y_proteger_hoja_horarios(ws, f"TablaHorarios{_idx}")
+
+    _escribir_hoja_instrucciones_cronograma(
+        wb, ciclo, len(contexto),
+        hojas_grupo=[h for h, _ in _hojas_grupo],
+        nombre_cronograma=nombre_cronograma,
+    )
+    _escribir_hoja_meta(wb, MetaPlantilla(
+        version=VERSION_PLANTILLA,
+        ciclo_id=ciclo.id,
+        generado_en=datetime.now().isoformat(timespec="seconds"),
+        cronograma_origen_id=cronograma_origen_id,
+        hojas=dict(_hojas_grupo),
+    ))
+    wb.active = 0
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def exportar_cronograma_por_grupos_excel(
     session: Session,
     schedule_id: str,
@@ -850,15 +1053,9 @@ def exportar_cronograma_por_grupos_excel(
         g.id: g.nombre for g in session.exec(select(GrupoMateriaDB)).all()
     }
 
-    _orden_dia = {d: i for i, d in enumerate(DIAS_SEMANA)}
     filas_por_grupo: dict[str, list[tuple]] = {}
     for e in entries:
-        mat = materias.get(e.codigo_materia)
-        _grupo = (
-            grupos.get(mat.grupo_id, "Sin grupo")
-            if mat is not None and mat.grupo_id
-            else "Sin grupo"
-        )
+        _grupo = _nombre_grupo(materias.get(e.codigo_materia), grupos)
         com = comisiones.get(e.comision_id) if e.comision_id else None
         filas_por_grupo.setdefault(_grupo, []).append((
             e.codigo_materia,
@@ -871,59 +1068,22 @@ def exportar_cronograma_por_grupos_excel(
             True if e.virtual is True else None,
         ))
 
-    wb = Workbook()
-    _default = wb.active
-    assert _default is not None
-    wb.remove(_default)
-
-    # Hojas de grupo (orden alfabético, nombres saneados).
-    _usados: set[str] = set()
-    _hojas_grupo: list[tuple[str, str]] = []  # (nombre_hoja, grupo)
-    for _grupo in sorted(filas_por_grupo):
-        _hoja = _nombre_hoja_excel(_grupo, _usados)
-        _hojas_grupo.append((_hoja, _grupo))
-
-    _escribir_hoja_materias(wb, _contexto, columnas=_columnas_materias)
-    _ref_dias, _ref_horas = _preparar_listas_horarios(
-        wb, _dias_operativos, _slots,
+    # Hojas vacías para los grupos sin horarios (2026-09-30): el export
+    # es la plantilla precargada y tiene que ofrecer todos los grupos.
+    _sembrar_grupos(
+        session, [c["Código"] for c in _contexto], filas_por_grupo,
     )
 
-    for _idx, (_hoja, _grupo) in enumerate(_hojas_grupo, start=1):
-        filas = sorted(
-            filas_por_grupo[_grupo],
-            key=lambda f: (
-                f[0], f[1] if f[1] is not None else 10**6,
-                _orden_dia.get(f[3], 99), f[4],
-            ),
-        )
-        if len(filas) > 1000:
-            raise ValueError(
-                f"El grupo '{_grupo}' tiene {len(filas)} horarios — "
-                "supera las 1000 filas de la plantilla."
-            )
-        ws = wb.create_sheet(title=_hoja, index=_idx - 1)
-        _escribir_headers_horarios(ws)
-        _agregar_data_validations_horarios(
-            ws, len(_contexto), _ref_dias, _ref_horas,
-        )
-        # Precarga (después de las validaciones: las celdas de carga
-        # ya están desbloqueadas y la fórmula del nombre escrita).
-        for _r, fila in enumerate(filas, start=2):
-            for _c, valor in enumerate(fila, start=2):
-                if valor is not None and valor != "":
-                    ws.cell(row=_r, column=_c, value=valor)
-        _tabular_y_proteger_hoja_horarios(ws, f"TablaHorarios{_idx}")
-
-    _escribir_hoja_instrucciones_cronograma(
-        wb, ciclo, len(_contexto),
-        hojas_grupo=[h for h, _ in _hojas_grupo],
+    return _construir_plantilla_por_grupos(
+        ciclo=ciclo,
+        contexto=_contexto,
+        columnas_materias=_columnas_materias,
+        dias_operativos=_dias_operativos,
+        slots=_slots,
+        filas_por_grupo=filas_por_grupo,
         nombre_cronograma=sched.nombre,
+        cronograma_origen_id=sched.id,
     )
-    wb.active = 0
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
 
 
 def _escribir_hoja_instrucciones_cronograma(
@@ -949,7 +1109,8 @@ def _escribir_hoja_instrucciones_cronograma(
         cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     row = 1
-    if hojas_grupo is not None:
+    _lista_hojas = ", ".join(f"'{h}'" for h in (hojas_grupo or []))
+    if hojas_grupo is not None and nombre_cronograma is not None:
         _t(row,
            f"Horarios del cronograma \"{nombre_cronograma}\" — "
            f"Ciclo {ciclo.id}",
@@ -960,13 +1121,25 @@ def _escribir_hoja_instrucciones_cronograma(
         _t(row,
            "Este archivo viene PRECARGADO con los horarios ya "
            "cargados en el sistema, repartidos en una hoja por "
-           "grupo de materias: "
-           + ", ".join(f"'{h}'" for h in hojas_grupo)
-           + ". Cada hoja funciona igual que la plantilla vacía: "
-           "podés corregir, agregar o borrar filas y volver a "
-           "importar la hoja que corresponda (el importador te deja "
-           "elegir la hoja y decidir por materia si reemplazás o "
-           "agregás).")
+           f"grupo de materias: {_lista_hojas}. Podés corregir, "
+           "agregar o borrar filas en cualquier hoja y volver a subir "
+           "el archivo completo: la aplicación te muestra hoja por "
+           "hoja qué cambia antes de confirmar.")
+        row += 2
+    elif hojas_grupo is not None:
+        _t(row, f"Plantilla de horarios — Ciclo {ciclo.id}",
+           INSTRUCCIONES_TITLE_FONT)
+        row += 2
+        _t(row, "Qué es este archivo", INSTRUCCIONES_HEADER_FONT)
+        row += 1
+        _t(row,
+           "Este archivo tiene una hoja de horarios por grupo de "
+           f"materias: {_lista_hojas}. La idea es repartir cada hoja "
+           "a la cátedra o departamento que corresponda para que la "
+           "complete, y cuando estén todas listas subir el archivo "
+           "completo a la aplicación. La aplicación te muestra hoja "
+           "por hoja lo que encontró (errores, conflictos, cosas a "
+           "decidir) antes de crear el cronograma.")
         row += 2
     else:
         _t(row, f"Plantilla de horarios — Ciclo {ciclo.id}",
@@ -995,8 +1168,30 @@ def _escribir_hoja_instrucciones_cronograma(
        "dictado para este ciclo (modalidad, recursado).")
     row += 1
     _t(row,
-       "3) Guardar el archivo y subirlo desde la aplicación en la "
+       "3) Guardar el archivo y subirlo completo desde la aplicación en la "
        "pestaña 'Cargar' del módulo Cronogramas.")
+    row += 2
+
+    _t(row, "Para que la aplicación reconozca el archivo",
+       INSTRUCCIONES_HEADER_FONT)
+    row += 1
+    _t(row,
+       "• La aplicación sólo acepta esta plantilla tal como la "
+       "genera. No cambies el nombre de las hojas, no agregues ni "
+       "borres hojas y no borres las hojas ocultas: la aplicación "
+       "identifica el archivo y el ciclo a partir de ellas.")
+    row += 1
+    _t(row,
+       "• Si lo mantienen en Google Sheets, subí el archivo a Drive y "
+       "abrilo con Google Sheets (las hojas ocultas y las listas "
+       "desplegables se conservan). Para volver a cargarlo, "
+       "descargalo con Archivo → Descargar → Microsoft Excel (.xlsx) "
+       "y subí ese archivo.")
+    row += 1
+    _t(row,
+       "• Si hay que corregir algo, se corrige en la planilla y se "
+       "vuelve a subir el archivo completo: la carga se puede "
+       "intentar las veces que haga falta.")
     row += 2
 
     _t(row, "Columnas de la hoja Horarios", INSTRUCCIONES_HEADER_FONT)
@@ -1180,44 +1375,25 @@ def generar_plantilla_cronograma_excel(
         from datetime import time as _time
         _slots = _slots_horarios_validos(15, _time(7, 0), _time(23, 0))
 
-    wb = Workbook()
-    # openpyxl siempre crea una hoja "Sheet" al inicio — la usamos
-    # como la hoja principal renombrada.
-    ws_main = wb.active
-    assert ws_main is not None
-    ws_main.title = "Horarios"
-
-    _escribir_headers_horarios(ws_main)
-    # Hoja VISIBLE `Materias` (2026-09-24): referencia nombre+código
-    # más el contexto completo de cada materia (catálogo, planes,
-    # dictado del ciclo), protegida contra edición. Alimenta el
-    # desplegable de códigos y la fórmula del nombre. Se crea ANTES
-    # de las validaciones porque las fórmulas la referencian, y el
-    # orden de filas (por código) tiene que coincidir con el de los
-    # rangos.
+    # 2026-09-30: una hoja VACÍA por grupo de materias del ciclo, con
+    # el mismo formato que el export precargado. Así la plantilla se
+    # reparte entre cátedras y vuelve entera al importador.
     _contexto_materias = obtener_contexto_materias_del_ciclo(
         session, ciclo_id,
     )
-    _escribir_hoja_materias(wb, _contexto_materias)
-    # Bugfix (2026-09-22, task #341): no se escribe fila de ejemplo en
-    # la hoja Horarios porque el parser no distingue ejemplo de dato
-    # real; el ejemplo textual queda en la hoja Instrucciones.
-    _ref_dias, _ref_horas = _preparar_listas_horarios(
-        wb, _dias_operativos, _slots,
+    filas_por_grupo: dict[str, list[tuple]] = {}
+    _sembrar_grupos(session, codigos_ordenados, filas_por_grupo)
+
+    return _construir_plantilla_por_grupos(
+        ciclo=ciclo,
+        contexto=_contexto_materias,
+        columnas_materias=MATERIAS_CONTEXT_COLUMNS,
+        dias_operativos=_dias_operativos,
+        slots=_slots,
+        filas_por_grupo=filas_por_grupo,
+        nombre_cronograma=None,
+        cronograma_origen_id=None,
     )
-    _agregar_data_validations_horarios(
-        ws_main, len(_contexto_materias), _ref_dias, _ref_horas,
-    )
-    _tabular_y_proteger_hoja_horarios(ws_main, "TablaHorarios")
-
-    _escribir_hoja_instrucciones_cronograma(wb, ciclo, len(codigos_ordenados))
-
-    # Activar Instrucciones como primera pestaña visible al abrir.
-    wb.active = 0
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
 
 
 # =============================================================================

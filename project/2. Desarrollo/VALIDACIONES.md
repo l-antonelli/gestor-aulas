@@ -343,10 +343,12 @@ mismo alcance (sólo el solapamiento horario, nunca intersede).
   `list_ignored_conflicts_cronograma` (filas con razón).
 - **Efecto en `validar_cronograma`**: los conflictos de pares
   ignorados salen de `conflictos_horarios` y de
-  `n_conflictos_horarios` (así dejan de bloquear
-  `listo_para_plan`) y se listan en `conflictos_ignorados`
+  `n_conflictos_horarios` y se listan en `conflictos_ignorados`
   (persistido en `details_json`). `n_conflictos_ignorados` cuenta
-  pares.
+  pares. El chequeo de **camino de cursada**
+  (`check_camino_cursada_cronograma`) también trata un par ignorado
+  como compatible, igual que el del plan. Así el conflicto deja de
+  bloquear `listo_para_plan` por las dos vías.
 - **Ver / Editar** (`conflictos_por_materia_cronograma`) también los
   omite: una materia cuyo único conflicto está ignorado no figura
   `Conflictiva`.
@@ -356,8 +358,14 @@ mismo alcance (sólo el solapamiento horario, nunca intersede).
 - **Auto-limpieza**: `cleanup_stale_ignored_pairs_cronograma`, con la
   misma regla que el plan (helper compartido
   `plan_validation_service.grupos_curriculares_activos`). Corre en
-  cada `validar_cronograma`; los pares removidos se reportan en
-  `summary.excepciones_stale_removidas` y el panel los muestra.
+  cada `validar_cronograma` de un cronograma real (nunca sobre un
+  shadow, para que la vista previa del importer no toque datos del
+  destino); los pares removidos se reportan en
+  `summary.excepciones_stale_removidas` y el panel los muestra. Los
+  grupos **incluyen las optativas**, igual que la detección de
+  conflictos: antes el helper las salteaba y un par ignorado con una
+  optativa se borraba en la validación siguiente (vale también para
+  el plan).
 - **Shadow del importer**: la vista previa valida un shadow que se
   descarta al confirmar, así que lee y escribe los ignorados del
   cronograma destino (`shadow_target_schedule_id`).

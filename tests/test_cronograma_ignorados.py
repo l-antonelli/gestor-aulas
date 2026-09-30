@@ -289,3 +289,94 @@ class TestCicloDeVida:
         add_ignored_pair_cronograma(session, sched.id, "FIS101", "MAT101")
         delete_schedule(session, sched.id)
         assert session.exec(select(ScheduleIgnoredConflictDB)).all() == []
+
+
+class TestHallazgosRevision:
+    """Hallazgos de la revisión de código 2026-09-30."""
+
+    def test_ignorar_desbloquea_tambien_el_camino_de_cursada(
+        self, session, setup_basic,
+    ):
+        """El chequeo de camino de cursada del cronograma tiene que
+        saltear los pares ignorados, igual que el del plan: si no, el
+        plan sigue bloqueado por 'bloqueos de camino de cursada'."""
+        sched = _crono_en_conflicto(session, setup_basic)
+        ciclo_id = setup_basic["ciclo"].id
+        assert validar_cronograma(session, sched.id, ciclo_id).n_camino_bloqueos >= 1
+
+        add_ignored_pair_cronograma(session, sched.id, "FIS101", "MAT101")
+        summary = validar_cronograma(session, sched.id, ciclo_id)
+
+        assert summary.n_camino_bloqueos == 0
+        persist_validation(session, summary)
+        status = compute_validation_status(session, sched.id, ciclo_id)
+        assert not any("camino" in p for p in status.problemas)
+
+    def test_ignorado_con_optativa_no_se_limpia_como_obsoleto(
+        self, session, setup_basic,
+    ):
+        """La detección de conflictos incluye optativas; la limpieza de
+        ignorados obsoletos tiene que usar los mismos grupos."""
+        pe = session.exec(
+            select(PlanEstudioDB).where(PlanEstudioDB.materia_codigo == "FIS101")
+        ).one()
+        pe.optativa = True
+        session.add(pe)
+        session.commit()
+        sched = _crono_en_conflicto(session, setup_basic)
+        add_ignored_pair_cronograma(session, sched.id, "FIS101", "MAT101")
+
+        summary = validar_cronograma(session, sched.id, setup_basic["ciclo"].id)
+
+        assert summary.excepciones_stale_removidas == []
+        assert get_ignored_pairs_cronograma(session, sched.id) == {
+            ("FIS101", "MAT101"),
+        }
+
+    def test_validar_un_shadow_no_modifica_los_ignorados_del_destino(
+        self, session, setup_basic,
+    ):
+        """La vista previa del importer no puede tocar datos reales:
+        validar el shadow no ejecuta la limpieza sobre el destino."""
+        destino = _crono_en_conflicto(session, setup_basic)
+        add_ignored_pair_cronograma(session, destino.id, "FIS101", "MAT101")
+        pe = session.exec(
+            select(PlanEstudioDB).where(PlanEstudioDB.materia_codigo == "FIS101")
+        ).one()
+        pe.anio_plan = 2  # el par deja de convivir: quedaría obsoleto
+        session.add(pe)
+        session.commit()
+        shadow = _crono_en_conflicto(session, setup_basic)
+        shadow.es_shadow_import = True
+        shadow.shadow_target_schedule_id = destino.id
+        session.add(shadow)
+        session.commit()
+
+        validar_cronograma(session, shadow.id, setup_basic["ciclo"].id)
+
+        assert session.get(
+            ScheduleIgnoredConflictDB, (destino.id, "FIS101", "MAT101"),
+        ) is not None
+
+
+def test_plan_ignorado_con_optativa_no_se_limpia(session, setup_basic):
+    """Mismo defecto en el plan (helper compartido
+    `grupos_curriculares_activos`)."""
+    from src.services.plan_validation_service import (
+        add_ignored_pair,
+        cleanup_stale_ignored_pairs,
+        get_ignored_pairs,
+    )
+
+    sched = _crono_en_conflicto(session, setup_basic)
+    plan = TestCicloDeVida()._plan_desde(session, sched, setup_basic["ciclo"].id)
+    pe = session.exec(
+        select(PlanEstudioDB).where(PlanEstudioDB.materia_codigo == "FIS101")
+    ).one()
+    pe.optativa = True
+    session.add(pe)
+    session.commit()
+    add_ignored_pair(session, plan.id, "FIS101", "MAT101")
+
+    assert cleanup_stale_ignored_pairs(session, plan.id) == []
+    assert get_ignored_pairs(session, plan.id) == {("FIS101", "MAT101")}

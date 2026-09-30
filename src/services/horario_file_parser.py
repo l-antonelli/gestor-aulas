@@ -1,11 +1,15 @@
 """Parser for horario data from CSV/Excel files."""
 
+from dataclasses import dataclass, field
 from datetime import time
-from typing import List
+from typing import TYPE_CHECKING, List, Optional
 
 import pandas as pd
 
 from src.services.horario_loading_service import HorarioInput
+
+if TYPE_CHECKING:
+    from src.services.template_export_service import MetaPlantilla
 
 # Column name aliases: canonical_name -> list of accepted alternatives
 #
@@ -234,9 +238,6 @@ def parse_horarios_file(
     Returns:
         Tuple of (list of HorarioInput, list of parse errors)
     """
-    errors: list[str] = []
-    inputs: list[HorarioInput] = []
-
     _low = str(file.name).lower()
     try:
         if _low.endswith(".csv"):
@@ -271,6 +272,19 @@ def parse_horarios_file(
             return [], [f"Formato no soportado: {file.name}. Use CSV o Excel (.xlsx)"]
     except Exception as e:
         return [], [f"Error leyendo archivo: {e}"]
+
+    return _parse_horarios_df(df)
+
+
+def _parse_horarios_df(df: pd.DataFrame) -> tuple[List[HorarioInput], list[str]]:
+    """Valida y convierte las filas de una hoja ya leída.
+
+    Separado de ``parse_horarios_file`` (2026-09-30) para que
+    ``parse_plantilla_cronograma`` abra el Excel una sola vez y parsee
+    todas las hojas de grupo sin releer el archivo en cada una.
+    """
+    errors: list[str] = []
+    inputs: list[HorarioInput] = []
 
     df = _normalize_columns(df)
 
@@ -427,6 +441,7 @@ def parse_horarios_file(
                 hora_fin=hora_fin,
                 tipo_clase=tipo_clase,
                 virtual=virtual,
+                fila=row_num,
             )
             inputs.append(entry)
         except Exception as e:
@@ -463,3 +478,142 @@ def _parse_time(value) -> time:
     if len(parts) >= 2:
         return time(int(parts[0]), int(parts[1]))
     raise ValueError(f"No se pudo interpretar '{value}' como hora (formato esperado: HH:MM)")
+
+
+# =============================================================================
+# Plantilla multihoja del ciclo (2026-09-30)
+# =============================================================================
+
+# Valor especial de ``sheet_name`` en el importador: en vez de una hoja,
+# importa la plantilla completa (todas las hojas de grupo) validada con
+# ``parse_plantilla_cronograma``.
+HOJAS_TODAS = "__todas_las_hojas__"
+
+_MSG_NO_ES_PLANTILLA = (
+    "El archivo no es una plantilla de cronograma generada por la "
+    "aplicación. Descargá la plantilla desde Cronogramas → Cargar (o "
+    "exportá el cronograma desde la Lista), cargá los horarios en esa "
+    "planilla sin cambiarle la estructura y volvé a subirla."
+)
+
+
+@dataclass
+class HojaPlantilla:
+    """Resultado de una hoja de grupo de la plantilla."""
+
+    nombre: str
+    grupo: str
+    codigos: list[str] = field(default_factory=list)
+    n_horarios: int = 0
+    errores: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ResultadoPlantilla:
+    """Plantilla multihoja parseada y validada.
+
+    ``errores`` junta los errores globales (estructura del archivo) y
+    los de cada hoja (prefijados con el nombre de la hoja). Si la
+    estructura no es válida, ``entries`` queda vacío: el archivo se
+    rechaza entero.
+    """
+
+    meta: Optional["MetaPlantilla"] = None
+    entries: list[HorarioInput] = field(default_factory=list)
+    errores: list[str] = field(default_factory=list)
+    hojas: list[HojaPlantilla] = field(default_factory=list)
+    materia_a_hoja: dict[str, str] = field(default_factory=dict)
+
+
+def parse_plantilla_cronograma(
+    file, ciclo_id_esperado: Optional[str] = None,
+) -> ResultadoPlantilla:
+    """Lee la plantilla multihoja completa de un cronograma.
+
+    Sólo acepta el archivo tal como lo genera la app
+    (``template_export_service``): hoja oculta ``_meta`` del tipo y la
+    versión vigentes, del ciclo esperado (si se indica), con
+    exactamente las hojas de grupo que declara. Una materia no puede
+    aparecer en más de una hoja. Las hojas vacías son válidas (grupos
+    que todavía no se completaron).
+    """
+    from src.services.template_export_service import (
+        HOJA_META,
+        VERSION_PLANTILLA,
+        leer_meta_plantilla,
+    )
+
+    res = ResultadoPlantilla()
+    if not str(getattr(file, "name", "")).lower().endswith((".xlsx", ".xlsm")):
+        res.errores.append(_MSG_NO_ES_PLANTILLA)
+        return res
+    meta = leer_meta_plantilla(file)
+    if meta is None:
+        res.errores.append(_MSG_NO_ES_PLANTILLA)
+        return res
+    res.meta = meta
+    if meta.version != VERSION_PLANTILLA:
+        res.errores.append(
+            f"La plantilla es de una versión anterior de la aplicación "
+            f"(versión {meta.version}; la actual es la "
+            f"{VERSION_PLANTILLA}). Descargá una plantilla nueva y "
+            "pasá los horarios a esa."
+        )
+        return res
+    if ciclo_id_esperado and meta.ciclo_id != ciclo_id_esperado:
+        res.errores.append(
+            f"La plantilla es del ciclo {meta.ciclo_id}, pero el "
+            f"cronograma es del ciclo {ciclo_id_esperado}. Descargá la "
+            "plantilla del ciclo correcto."
+        )
+        return res
+
+    try:
+        _xls = pd.ExcelFile(file)
+        _visibles = [
+            n for n in listar_hojas_visibles(file)
+            if n not in HOJAS_SISTEMA and n != HOJA_META
+        ]
+    except Exception as e:
+        res.errores.append(f"Error leyendo archivo: {e}")
+        return res
+
+    _faltan = [h for h in meta.hojas if h not in _visibles]
+    _sobran = [h for h in _visibles if h not in meta.hojas]
+    for h in _faltan:
+        res.errores.append(
+            f"Falta la hoja '{h}' (grupo {meta.hojas[h]}). No borres, "
+            "ocultes ni renombres las hojas de la plantilla."
+        )
+    for h in _sobran:
+        res.errores.append(
+            f"La hoja '{h}' no es parte de la plantilla. Cargá los "
+            "horarios en las hojas de grupo que trae el archivo."
+        )
+    if _faltan or _sobran:
+        return res
+
+    _hojas_por_materia: dict[str, list[str]] = {}
+    for nombre, grupo in meta.hojas.items():
+        hoja = HojaPlantilla(nombre=nombre, grupo=grupo)
+        inputs, errores = _parse_horarios_df(_xls.parse(nombre))
+        for i in inputs:
+            i.hoja = nombre
+        hoja.errores = [f"Hoja '{nombre}' · {e}" for e in errores]
+        hoja.n_horarios = len(inputs)
+        hoja.codigos = sorted({i.codigo_materia for i in inputs})
+        for cod in hoja.codigos:
+            _hojas_por_materia.setdefault(cod, []).append(nombre)
+        res.hojas.append(hoja)
+        res.entries.extend(inputs)
+        res.errores.extend(hoja.errores)
+
+    for cod, hojas in sorted(_hojas_por_materia.items()):
+        if len(hojas) > 1:
+            res.errores.append(
+                f"La materia {cod} aparece en las hojas "
+                + " y ".join(f"'{h}'" for h in hojas)
+                + ". Cada materia se carga en una sola hoja."
+            )
+        res.materia_a_hoja[cod] = hojas[0]
+    return res

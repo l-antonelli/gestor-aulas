@@ -96,6 +96,11 @@ def ciclo_con_2_materias(session):
     return {"ciclo": ciclo, "pv": pv}
 
 
+# Las materias del fixture no tienen grupo: la plantilla multihoja
+# (2026-09-30) las pone en esta hoja.
+HOJA_SIN_GRUPO = "Sin grupo"
+
+
 # =============================================================================
 # Tests
 # =============================================================================
@@ -130,7 +135,9 @@ class TestEstructuraDelArchivo:
 
         wb = load_workbook(io.BytesIO(contenido))
         assert "Instrucciones" in wb.sheetnames
-        assert "Horarios" in wb.sheetnames
+        assert HOJA_SIN_GRUPO in wb.sheetnames
+        assert "Horarios" not in wb.sheetnames  # 2026-09-30: una hoja por grupo
+        assert wb["_meta"].sheet_state == "hidden"
         # Hoja VISIBLE de referencia (2026-09-23): reemplaza a la
         # oculta `_materias` y expone codigo+nombre.
         assert "Materias" in wb.sheetnames
@@ -166,7 +173,7 @@ class TestEstructuraDelArchivo:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
         headers = [ws.cell(row=1, column=c).value for c in range(1, 10)]
         # Esquema 2026-09-24: el NOMBRE va primero (pedido del
         # usuario) pero es de sólo lectura — se autocompleta por
@@ -193,7 +200,7 @@ class TestEstructuraDelArchivo:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
         # La columna A (nombre) lleva la fórmula de autocompletado,
         # que evalúa a "" mientras no se elija código. La B (código)
         # es entrada pura del usuario, sin fórmula.
@@ -361,7 +368,7 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
         # openpyxl expone las DataValidation en ws.data_validations
         ranges_cubiertos: list[str] = []
         for dv in ws.data_validations.dataValidation:
@@ -399,7 +406,7 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
 
         dv_materias = None
         for dv in ws.data_validations.dataValidation:
@@ -422,7 +429,7 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
         for fila in (2, 500, 1001):
             _a = str(ws.cell(row=fila, column=1).value or "")
             assert _a.startswith("=IFERROR"), f"Fila {fila}: {_a!r}"
@@ -441,7 +448,7 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
         assert ws.protection.sheet is True
         # A (nombre_materia) bloqueada; el resto editable.
         assert ws.cell(row=2, column=1).protection.locked is True
@@ -464,7 +471,7 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
+        ws = wb[HOJA_SIN_GRUPO]
 
         dv_tipo = dv_virt = None
         for dv in ws.data_validations.dataValidation:
@@ -499,9 +506,9 @@ class TestDataValidations:
         contenido = generar_plantilla_cronograma_excel(session, ciclo.id)
 
         wb = load_workbook(io.BytesIO(contenido))
-        ws = wb["Horarios"]
-        assert "TablaHorarios" in ws.tables
-        assert ws.tables["TablaHorarios"].ref == "A1:I1001"
+        ws = wb[HOJA_SIN_GRUPO]
+        assert "TablaHorarios1" in ws.tables
+        assert ws.tables["TablaHorarios1"].ref == "A1:I1001"
 
     def test_recalculo_al_abrir_activado(
         self, session, ciclo_con_2_materias,
@@ -759,3 +766,175 @@ class TestExportarCronogramaPorGrupos:
 
         with pytest.raises(ValueError, match="no existe"):
             exportar_cronograma_por_grupos_excel(session, "nope")
+
+
+# =============================================================================
+# Plantilla multihoja del ciclo + hoja _meta (2026-09-30)
+# =============================================================================
+
+@pytest.fixture
+def ciclo_con_grupos(session, ciclo_con_2_materias):
+    """MAT101 en el grupo "Básicas" y FIS101 en un grupo con nombre que
+    hay que sanear para usarlo como hoja de Excel."""
+    from src.database.models import GrupoMateriaDB
+
+    g1 = GrupoMateriaDB(nombre="Básicas")
+    g2 = GrupoMateriaDB(nombre="Física/Especiales: rara*?")
+    session.add(g1)
+    session.add(g2)
+    session.flush()
+    for cod, g in (("MAT101", g1), ("FIS101", g2)):
+        m = session.get(MateriaDB, cod)
+        m.grupo_id = g.id
+        session.add(m)
+    session.commit()
+    return ciclo_con_2_materias
+
+
+class TestPlantillaMultihoja:
+    """La plantilla del ciclo pasa a tener una hoja de horarios por
+    grupo de materias (el mismo formato que el export de un cronograma
+    existente), para repartirla entre cátedras y reimportarla entera."""
+
+    def test_una_hoja_vacia_por_grupo(self, session, ciclo_con_grupos):
+        contenido = generar_plantilla_cronograma_excel(
+            session, ciclo_con_grupos["ciclo"].id,
+        )
+        wb = load_workbook(io.BytesIO(contenido))
+        hojas = [
+            n for n in wb.sheetnames
+            if n not in ("Instrucciones", "Materias")
+            and wb[n].sheet_state == "visible"
+        ]
+        assert hojas == ["Básicas", "FísicaEspeciales rara"]
+        assert "Horarios" not in wb.sheetnames
+        for h in hojas:
+            ws = wb[h]
+            # Sólo headers + fórmula del nombre: ninguna celda de carga.
+            assert all(
+                ws.cell(row=r, column=c).value in (None, "")
+                for r in range(2, 6) for c in range(2, 10)
+            )
+
+    def test_materias_sin_grupo_van_a_sin_grupo(
+        self, session, ciclo_con_2_materias,
+    ):
+        contenido = generar_plantilla_cronograma_excel(
+            session, ciclo_con_2_materias["ciclo"].id,
+        )
+        wb = load_workbook(io.BytesIO(contenido))
+        assert "Sin grupo" in wb.sheetnames
+
+    def test_meta_oculta_y_legible(self, session, ciclo_con_grupos):
+        from src.services.template_export_service import (
+            VERSION_PLANTILLA,
+            leer_meta_plantilla,
+        )
+
+        contenido = generar_plantilla_cronograma_excel(
+            session, ciclo_con_grupos["ciclo"].id,
+        )
+        wb = load_workbook(io.BytesIO(contenido))
+        assert wb["_meta"].sheet_state == "hidden"
+
+        meta = leer_meta_plantilla(io.BytesIO(contenido))
+        assert meta is not None
+        assert meta.version == VERSION_PLANTILLA
+        assert meta.ciclo_id == "2025-1C"
+        assert meta.cronograma_origen_id is None
+        assert meta.hojas == {
+            "Básicas": "Básicas",
+            "FísicaEspeciales rara": "Física/Especiales: rara*?",
+        }
+
+    def test_export_de_cronograma_tambien_tiene_meta(
+        self, session, ciclo_con_grupos,
+    ):
+        """El export precargado es la otra puerta de entrada oficial:
+        se descarga, se corrige afuera y se vuelve a subir."""
+        from src.database.models import ScheduleDB
+        from src.services.template_export_service import (
+            exportar_cronograma_por_grupos_excel,
+            leer_meta_plantilla,
+        )
+
+        session.add(ScheduleDB(
+            id="s1", ciclo_id="2025-1C", nombre="C",
+            fecha_upload=date(2026, 3, 1),
+        ))
+        session.commit()
+        contenido = exportar_cronograma_por_grupos_excel(session, "s1")
+
+        meta = leer_meta_plantilla(io.BytesIO(contenido))
+        assert meta is not None
+        assert meta.ciclo_id == "2025-1C"
+        assert meta.cronograma_origen_id == "s1"
+
+    def test_archivo_sin_meta_devuelve_none(self):
+        from openpyxl import Workbook
+
+        from src.services.template_export_service import leer_meta_plantilla
+
+        wb = Workbook()
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        assert leer_meta_plantilla(buf) is None
+
+    def test_csv_o_basura_devuelve_none(self):
+        from src.services.template_export_service import leer_meta_plantilla
+
+        assert leer_meta_plantilla(io.BytesIO(b"codigo,dia\nA,Lunes\n")) is None
+
+
+class TestInstruccionesMultihoja:
+    def _texto(self, contenido: bytes) -> str:
+        wb = load_workbook(io.BytesIO(contenido))
+        return "\n".join(
+            str(c.value) for row in wb["Instrucciones"].iter_rows()
+            for c in row if c.value
+        )
+
+    def test_plantilla_vacia_explica_el_flujo_de_archivo_completo(
+        self, session, ciclo_con_grupos,
+    ):
+        texto = self._texto(generar_plantilla_cronograma_excel(
+            session, ciclo_con_grupos["ciclo"].id,
+        ))
+        assert "None" not in texto
+        assert "PRECARGADO" not in texto
+        assert "'Básicas'" in texto
+        assert "archivo completo" in texto
+        assert "Google Sheets" in texto
+        assert "_meta" not in texto  # no se nombra la hoja técnica
+        assert "no cambies el nombre de las hojas" in texto.lower()
+
+
+def test_export_incluye_hoja_vacia_para_grupos_sin_horarios(
+    session, ciclo_con_grupos,
+):
+    """El export es la plantilla precargada: tiene que traer TODAS las
+    hojas de grupo del ciclo, aunque algún grupo todavía no tenga
+    horarios, para que la cátedra pueda cargarlos ahí."""
+    from datetime import time as _time
+
+    from src.database.models import ScheduleDB, ScheduleEntryDB
+    from src.services.template_export_service import (
+        exportar_cronograma_por_grupos_excel,
+    )
+
+    session.add(ScheduleDB(
+        id="s2", ciclo_id="2025-1C", nombre="Parcial",
+        fecha_upload=date(2026, 3, 1),
+    ))
+    session.add(ScheduleEntryDB(
+        id="e-mat", schedule_id="s2", codigo_materia="MAT101",
+        dia="Lunes", hora_inicio=_time(8, 0), hora_fin=_time(10, 0),
+    ))
+    session.commit()
+
+    wb = load_workbook(io.BytesIO(
+        exportar_cronograma_por_grupos_excel(session, "s2"),
+    ))
+    assert "Básicas" in wb.sheetnames
+    assert "FísicaEspeciales rara" in wb.sheetnames

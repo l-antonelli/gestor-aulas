@@ -378,17 +378,22 @@ copias para experimentar).
 
 ### 4.1 📤 Cargar
 
-Sube un Excel `.xlsx` con columnas: `materia | día | inicio | fin |
-comisión (opcional)`. Se valida la estructura y se persiste como un
-`ScheduleDB` con `ScheduleEntryDB` por fila.
+Los horarios se cargan con la **plantilla multihoja** que genera la
+aplicación (una hoja por grupo de materias), completa y tal como sale.
+Se valida la estructura y, después de revisarla hoja por hoja, se
+persiste como un `ScheduleDB` con `ScheduleEntryDB` por fila.
 
 **Modos disponibles** (radio del tope de la tab):
 
 - **Crear vacío** — cronograma sin entradas.
-- **Crear desde archivo** — cronograma nuevo poblado con un CSV/Excel.
-- **Importar en cronograma existente** — flujo Fase C2, agrega/
-  reemplaza horarios sobre un cronograma existente con preview y
-  decisión de merge por materia.
+- **Crear desde archivo** — cronograma nuevo a partir de la plantilla
+  completa del ciclo, con revisión hoja por hoja antes de crearlo
+  (2026-09-30; antes creaba el cronograma de una con una sola hoja y
+  sin vista previa).
+- **Importar en cronograma existente** — actualiza un cronograma con
+  la plantilla completa (típicamente el export de la Lista corregido
+  por las cátedras), con la misma revisión hoja por hoja y decisión
+  de merge por materia.
 - **Copiar desde plan** (Fase F del rediseño 2026-09-15) — crea un
   cronograma nuevo con el estado consolidado de un plan de cursada.
   Uso típico: después de varias iteraciones de validación y edición
@@ -403,6 +408,63 @@ comisión (opcional)`. Se valida la estructura y se persiste como un
   aula asignada; el LP la resuelve al armar el plan siguiente) ni
   `dictado_id` (se re-resuelve contra el ciclo destino).
 
+**Flujo con plantilla multihoja** (2026-09-30). Se fuerza a que el
+usuario trabaje con la plantilla tal como sale de la aplicación, para
+que las cátedras la mantengan (por ejemplo en Google Sheets) y el
+cronograma se cree o actualice de una sola vez:
+
+1. **Generar la plantilla.** Vacía, desde el expander de Cargar
+   (`generar_plantilla_cronograma_excel`), o precargada con un
+   cronograma existente, desde la Lista
+   (`exportar_cronograma_por_grupos_excel`). Las dos comparten el
+   constructor `_construir_plantilla_por_grupos`: una hoja de
+   horarios por grupo de materias del ciclo (todas, aunque estén
+   vacías), hoja `Materias`, `Instrucciones` y la hoja oculta
+   `_meta` (`tipo`, `version` = `VERSION_PLANTILLA`, `ciclo_id`,
+   `generado_en`, `cronograma_origen_id` y el mapa hoja → grupo).
+2. **Repartir y completar afuera.** Cada cátedra completa la hoja de
+   su grupo. Google Sheets conserva las hojas ocultas y las listas
+   desplegables; se vuelve a descargar como `.xlsx`.
+3. **Subir el archivo completo.** El uploader sólo acepta `.xlsx` y
+   no hay selector de hoja. "🔍 Revisar plantilla" corre primero
+   `horario_file_parser.parse_plantilla_cronograma`, que rechaza el
+   archivo entero si falta `_meta`, si es de otra versión o de otro
+   ciclo, si faltan o sobran hojas respecto de las declaradas, o si
+   una materia aparece en dos hojas. También junta los errores de
+   fila de cada hoja (prefijados con el nombre de la hoja). Los
+   errores se muestran agrupados por hoja y no se arma vista previa
+   hasta que el archivo venga limpio: se corrige la planilla y se
+   vuelve a subir.
+4. **Revisar hoja por hoja.** Con el archivo limpio se arma el shadow
+   (`crear_shadow_import` con `sheet_name=HOJAS_TODAS`; en "Crear
+   desde archivo" sin destino, con `ciclo_id` y `nombre_nuevo`). Un
+   selector de pasos con progreso recorre las hojas. Cada paso
+   muestra las tarjetas por materia de esa hoja (decisión, ajustes
+   manuales, calendarios, chequeos y conflictos) y el botón "Marcar
+   hoja como revisada y seguir", que salta a la próxima pendiente.
+   Las hojas vacías arrancan revisadas, pero se avisa que su grupo
+   queda sin horarios.
+   **Materias ausentes** (importar en existente): el archivo completo
+   es la foto entera del cronograma, así que una materia con horarios
+   en el destino que ya no viene en la plantilla se **elimina** del
+   shadow por defecto (`ImportPreview.materias_ausentes`). En la hoja
+   de su grupo aparece como "Ya no está en el archivo", con la opción
+   de conservarla (`regenerar_materia_en_shadow` con `"ignorar"` o
+   `"eliminar"`). Una hoja con ausentes no arranca revisada. Con una
+   sola hoja explícita (`sheet_name` de hoja) se mantiene la
+   semántica vieja: lo que no viene no se toca.
+   Los mensajes de la vista previa indican hoja y fila reales
+   (`HorarioInput.hoja` / `.fila`), y cada materia se ubica en su hoja
+   por el código tal como vino en el archivo
+   (`MateriaEnPreview.codigo_en_archivo`).
+5. **Resumen y confirmación.** El último paso muestra una tabla de
+   hojas (materias, horarios, conflictos, revisada) y el estado global
+   del cronograma hipotético. Confirmar se habilita recién con todas
+   las hojas revisadas. En modo crear, `finalizar_shadow_import` crea
+   el `ScheduleDB` en ese momento (descartar no deja nada en la base)
+   y le pasa los conflictos ignorados que se hayan marcado en la
+   vista previa.
+
 **Plantilla descargable con listas desplegables** (Fase C1 del
 rediseño 2026-09-15; rediseñada 2026-09-23). Antes de subir, el
 usuario puede descargar una plantilla Excel armada dinámicamente por
@@ -411,7 +473,9 @@ El archivo trae:
 
 - Hoja `Instrucciones` con guía en castellano sobre cómo completar
   cada columna y las reglas que valida la aplicación al importar.
-- Hoja `Horarios` con 9 columnas (`nombre_materia` primero — pedido
+- Una hoja de horarios **por grupo de materias** (antes, una única
+  hoja `Horarios`; ver "Flujo con plantilla multihoja"), cada una
+  con 9 columnas (`nombre_materia` primero — pedido
   2026-09-24 —, `codigo_materia`, `codigo_comision`,
   `nombre_comision`, `dia`, `hora_inicio`, `hora_fin`, `tipo_clase`,
   `virtual`), headers estilizados, freeze pane y **sin fila de
@@ -526,8 +590,10 @@ del cronograma, repartidas en **una hoja por `GrupoMateriaDB`**
 (nombres saneados para Excel: sin `[]:*?/\`, sin prefijo `_`,
 máximo 31 caracteres, desambiguados con sufijos). Uso previsto:
 repartir a cada cátedra/departamento la hoja de su grupo, corregir
-en Excel y reimportar hoja por hoja con el selector de hoja del
-importador. La virtualidad se exporta sólo cuando es un override
+en Excel o Google Sheets y volver a subir el archivo completo
+("Importar en cronograma existente"). Desde 2026-09-30 el export
+trae también las hojas de los grupos sin horarios y la hoja `_meta`,
+así que es una plantilla oficial más. La virtualidad se exporta sólo cuando es un override
 explícito en VERDADERO (vacío = presencial) y las horas van como
 texto `HH:MM` (el formato de las listas de la plantilla).
 
@@ -563,6 +629,10 @@ saltean en silencio; y si `codigo_materia` viene vacío pero hay
 resolución: código de plan > código Guaraní > nombre).
 
 **Selector de hoja del Excel** (Fase I.4 del rediseño, 2026-09-23).
+*En Cronogramas lo reemplazó el flujo con plantilla multihoja
+(2026-09-30): ahí siempre se importa el archivo completo. La
+descripción sigue valiendo para la página Inscriptos y para los
+llamados de servicio con `sheet_name` explícito.*
 Los archivos que llegan de las cátedras suelen traer una hoja por
 cuatrimestre (`1C`, `2C`, `Verano`) dentro del mismo libro, y el
 fallback automático del parser — preferir la hoja `Horarios`, y si no
@@ -587,9 +657,10 @@ hoja por año lectivo.
 2026-09-15). La tab Cargar tiene tres modos:
 
 - **Crear vacío**: como antes, arranca sin entradas.
-- **Crear desde archivo**: flujo legacy, crea cronograma + carga en
-  un solo paso (sin preview). Sirve para migración rápida cuando el
-  cronograma es nuevo y no hay riesgo de merge.
+- **Crear desde archivo**: desde 2026-09-30 usa el mismo pipeline de
+  preview con un shadow **sin destino** (ver "Flujo con plantilla
+  multihoja"). El flujo legacy de un solo paso
+  (`create_schedule_standalone`) queda sólo como servicio.
 - **Importar en cronograma existente** (nuevo): pipeline de dos pasos
   a través de `src/services/cronograma_import_service.py`:
 

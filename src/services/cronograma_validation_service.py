@@ -598,9 +598,14 @@ def validar_cronograma(
     # Los pares ignorados se separan (2026-09-30): no cuentan ni
     # bloquean, pero se listan para poder dejar de ignorarlos. Antes se
     # limpian los que ya no conviven en ningún grupo del ciclo.
-    summary.excepciones_stale_removidas = (
-        cleanup_stale_ignored_pairs_cronograma(session, schedule_id)
-    )
+    # La vista previa del importer no toca datos reales (fix revisión
+    # 2026-09-30): sobre un shadow no se limpia, porque los ignorados que
+    # usa son los del cronograma destino.
+    _sched_val = session.get(ScheduleDB, schedule_id)
+    if _sched_val is not None and not _sched_val.es_shadow_import:
+        summary.excepciones_stale_removidas = (
+            cleanup_stale_ignored_pairs_cronograma(session, schedule_id)
+        )
     _ignorados = get_ignored_pairs_cronograma(session, schedule_id)
     conflictos = validar_conflictos_horarios_cronograma(
         session, schedule_id, ciclo_id,

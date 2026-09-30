@@ -62,18 +62,13 @@ def _delete_ciclo_cascade(session: Session, ciclo_id: str) -> None:
     shadows_del_ciclo = [s for s in schedules_todos if s.es_shadow_import]
     schedules_reales = [s for s in schedules_todos if not s.es_shadow_import]
 
-    # 2.a) Shadows: entries + comisiones + schedule.
+    # 2.a) Shadows: entries + comisiones + ignorados propios (los shadows
+    # de "Crear desde archivo" no tienen destino y guardan los suyos) +
+    # schedule. Se reusa el helper del servicio para no duplicar qué es
+    # "borrar un shadow" (fix revisión 2026-09-30).
+    from src.services.cronograma_import_service import _borrar_shadow_datos
     for sh in shadows_del_ciclo:
-        entries_sh = session.exec(
-            select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sh.id)
-        ).all()
-        for e in entries_sh:
-            session.delete(e)
-        coms_sh = session.exec(
-            select(ComisionDB).where(ComisionDB.schedule_id == sh.id)
-        ).all()
-        for c in coms_sh:
-            session.delete(c)
+        _borrar_shadow_datos(session, sh.id)
         session.delete(sh)
     session.flush()
 
@@ -88,16 +83,7 @@ def _delete_ciclo_cascade(session: Session, ciclo_id: str) -> None:
             )
         ).all()
         for sh in shadows_huerfanos:
-            entries_sh = session.exec(
-                select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sh.id)
-            ).all()
-            for e in entries_sh:
-                session.delete(e)
-            coms_sh = session.exec(
-                select(ComisionDB).where(ComisionDB.schedule_id == sh.id)
-            ).all()
-            for c in coms_sh:
-                session.delete(c)
+            _borrar_shadow_datos(session, sh.id)
             session.delete(sh)
         session.flush()
 
