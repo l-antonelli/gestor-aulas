@@ -1,4 +1,4 @@
-# Introducción
+# Capítulo 1. Introducción
 
 ## La facultad como organización
 
@@ -54,11 +54,3 @@ El informe se organiza en seis partes que despliegan, en orden, el recorrido des
 A modo de anticipo, y para que el lector tenga desde el inicio una idea del andamiaje tecnológico sobre el que se apoya la solución, el sistema se implementó en Python, con una interfaz gráfica construida sobre Streamlit, persistencia en SQLite gestionada mediante el ORM SQLModel y resolución del problema de optimización a través de la biblioteca PuLP contra el resolutor CBC. La justificación de cada una de estas elecciones y su articulación se desarrollan en el capítulo dedicado a la arquitectura de la solución.
 
 El detalle capítulo por capítulo, con las fuentes internas que alimentan cada uno, se encuentra en `estructura.md` (documento vivo dentro de esta misma carpeta).
-
-## Referencias
-
-- Chiavenato, I. (2006). *Introducción a la Teoría General de la Administración* (7ma ed.). McGraw-Hill.
-- Evans, E. (2003). *Domain-Driven Design: Tackling Complexity in the Heart of Software*. Addison-Wesley.
-- Mintzberg, H. (1979). *The Structuring of Organizations*. Prentice-Hall. [Edición en español: *La estructuración de las organizaciones* (2012), Ariel.]
-- Mintzberg, H. (2000). *Diseño de organizaciones eficientes*. El Ateneo.
-- Miró, J. (2011). *Cómo escribir un texto académico*. Universidad de las Islas Baleares.

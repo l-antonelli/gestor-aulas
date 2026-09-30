@@ -95,6 +95,7 @@ inventar métodos desde cero.
 
 Con el marco fijado, la ubicación es directa:
 
+<!-- tabla: Ubicación del problema dentro de la familia de problemas de asignación -->
 | Elemento del marco | Instancia en nuestro problema |
 | --- | --- |
 | Entidades demandantes | **Horarios semanales de clase**: cada franja recurrente de dictado (materia, comisión, día de la semana, hora de inicio, hora de fin) es una entidad que necesita un aula. |

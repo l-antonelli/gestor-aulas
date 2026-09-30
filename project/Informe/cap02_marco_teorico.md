@@ -17,6 +17,7 @@ resuelve un problema que los otros no atacan directamente y produce
 un artefacto que los otros necesitan como insumo. La secuencia se
 puede resumir en la siguiente cadena:
 
+<!-- figura: Cadena de disciplinas que articula el proyecto -->
 ```mermaid
 flowchart LR
     C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>estudio del trabajo, BPMN"]
@@ -683,6 +684,7 @@ y sí lo hace la condición de Hall. Supongamos tres clases `h₁, h₂,
 h₃` que deben dictarse a la misma hora en un mismo día, y tres aulas
 disponibles `a, b, c`, con las siguientes compatibilidades:
 
+<!-- tabla: Ejemplo de compatibilidades entre clases y aulas -->
 | clase | aulas compatibles |
 | --- | --- |
 | `h₁` | `{a}` |

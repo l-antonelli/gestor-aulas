@@ -44,6 +44,7 @@ relacional. Vamos a usar el sufijo `DB` para el nombre de la
 clase (por ejemplo `MateriaDB`) y a minúsculas con guiones para
 la tabla (por ejemplo `materias`).
 
+<!-- tabla: Correspondencia entre entidades conceptuales, clases del ORM y tablas -->
 | Entidad conceptual (cap. 5) | Clase del ORM | Tabla física |
 | --- | --- | --- |
 | Carrera | `CarreraDB` | `carreras` |
@@ -121,6 +122,7 @@ espeja el diagrama UML del capítulo 5, agregando las tablas
 técnicas de soporte y las decisiones que no viven en el dominio
 puro.
 
+<!-- figura: Diagrama entidad-relación del modelo implementado -->
 ```mermaid
 erDiagram
     CARRERAS ||--o{ PLAN_CARRERA_VERSION : "tiene versiones de plan"

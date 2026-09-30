@@ -33,6 +33,7 @@ entidades quedaron dentro y otras afuera.
 Aplicamos el enfoque de modelado en **tres capas**, tomado del propio
 proceso de diseño de este proyecto:
 
+<!-- figura: Enfoque de modelado en tres capas -->
 ```mermaid
 flowchart LR
     C1["<b>Dominio del problema<br/>(completo)</b><br/><br/>Todas las entidades reales<br/>que existen en la FCEIA"]
@@ -484,6 +485,7 @@ En el dominio de la asignación aparecen varias relaciones
 muchos-a-muchos que exigen introducir entidades intermedias del
 dominio de la solución para su representación:
 
+<!-- tabla: Relaciones muchos a muchos y sus entidades intermedias -->
 | Relación conceptual | Entidad intermedia | Atributos que aporta la intermedia |
 | --- | --- | --- |
 | Materia con Carrera | Entrada de plan de estudios | Año, cuatrimestre, correlativas, versión de plan |
@@ -726,6 +728,7 @@ los atributos auxiliares (identificadores técnicos, fechas de
 auditoría, marcas de estado) para no recargar la vista; el
 tratamiento completo aparece en el capítulo 6 y en el anexo A.
 
+<!-- figura: Diagrama de clases del dominio delimitado -->
 ```mermaid
 classDiagram
     direction TB

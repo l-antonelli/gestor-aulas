@@ -27,6 +27,7 @@ El sistema se implementa como una **aplicación web de una sola
 página** con backend en Python y persistencia local. El stack
 completo se resume en la siguiente pila:
 
+<!-- tabla: Pila tecnológica de la solución -->
 | Capa | Tecnología | Rol |
 | --- | --- | --- |
 | Interfaz de usuario | Streamlit | Renderiza la aplicación web, maneja el estado de sesión y expone formularios, tablas y visualizaciones. |
@@ -186,6 +187,7 @@ responsabilidades bien delimitadas. La regla de dependencia va
 siempre de arriba hacia abajo: cada capa conoce a las que están
 debajo, no al revés.
 
+<!-- figura: Arquitectura en capas del sistema -->
 ```mermaid
 flowchart TD
     UI["<b>Interfaz</b> (páginas y componentes Streamlit)<br/><code>app/pages/*.py, src/ui/*.py</code>"]
@@ -290,6 +292,7 @@ iniciales hasta la asignación final de aulas. El flujo es lineal
 y refleja el orden natural en que el usuario opera el sistema
 cuatrimestre a cuatrimestre.
 
+<!-- figura: Flujo canónico de uso del sistema -->
 ```mermaid
 flowchart TD
     E0["<b>0. Carga inicial (script CLI)</b><br/>Script CLI que carga materias, carreras, planes,<br/>laboratorios y aulas desde Excel."]
@@ -377,6 +380,7 @@ Para ilustrar cómo se articulan las capas, tomamos un caso
 concreto: el operador hace clic en el botón "Correr asignador de
 aulas" desde el panel del plan.
 
+<!-- figura: Secuencia de una corrida del asignador de aulas -->
 ```mermaid
 sequenceDiagram
     actor U as Usuario

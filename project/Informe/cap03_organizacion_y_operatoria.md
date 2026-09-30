@@ -237,7 +237,10 @@ El proceso tiene dos momentos operativos distintos:
   Escuelas, las cátedras y las autoridades académicas.
 - **Ajustes dinámicos.** Iniciadas las clases, el esquema inicial
   suele requerir ajustes: por incorporación tardía de inscriptos,
-  por materias que resultaron más numerosas de lo esperado, por
+  por materias electivas que recién definen y comunican sus
+  horarios una vez iniciado el período lectivo, lo que desarticula
+  la planificación previa, por materias que resultaron más
+  numerosas de lo esperado, por
   cambios de última hora en la disponibilidad de docentes o aulas,
   por conflictos que se descubren en la práctica, o por
   requerimientos particulares del calendario de exámenes. Los
@@ -264,6 +267,7 @@ elaborada para servir de referencia en las secciones que siguen; su
 fidelidad al detalle administrativo concreto no es total pero sí
 suficiente para el análisis.
 
+<!-- figura: Proceso actual de planificación de horarios y asignación de aulas -->
 ```mermaid
 flowchart TB
     A0[Direcciones de Escuelas<br/>diseñan grilla horaria<br/>del Ciclo Superior] --> B

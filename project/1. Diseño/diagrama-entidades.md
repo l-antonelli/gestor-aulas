@@ -360,7 +360,7 @@ classDiagram
     %% Dictados
     MateriaDB "1" --o "0..*" DictadoDB
     CicloDB "0..*" --o "0..*" DictadoDB
-    DictadoDB "1" --o "0..*" DictadoCicloDB : bridge M:N
+    DictadoDB "1" --o "0..*" DictadoCicloDB : puente muchos a muchos
 
     %% Cronogramas
     CicloDB "1" --o "0..*" ScheduleDB : cascade
