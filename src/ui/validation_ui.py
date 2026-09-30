@@ -50,10 +50,12 @@ from src.database.models import (
 )
 from src.services.cronograma_validation_service import (
     CronogramaValidationSummary,
+    add_ignored_pair_cronograma,
     get_latest_validation as _crono_get_latest,
     is_validation_stale as _crono_validation_stale,
     parse_details_json as _crono_parse_details,
     persist_validation as _crono_persist_validation,
+    remove_ignored_pair_cronograma,
     validar_cronograma,
 )
 from src.services.dictado_service import aceptar_materias_en_ciclo
@@ -402,7 +404,7 @@ def _render_excepciones_stale_removidas(summary) -> None:
         f"🧹 Se limpiaron **{len(stale)}** excepción(es) obsoleta(s) "
         "de conflicto de horarios. Los pares ya no aplicaban porque "
         "las materias dejaron de coexistir en algún grupo curricular "
-        "de este plan (por ejemplo, se sacó del plan de estudio o "
+        "del ciclo (por ejemplo, se sacó del plan de estudio o "
         "cambió de año/cuatri)."
     )
     with st.expander(
@@ -1085,6 +1087,7 @@ def _render_carrera_subexpander(
     pending_revalidate_key: str,
     source: Literal["plan", "schedule"] = "plan",
     plan_id: Optional[str] = None,
+    schedule_id: Optional[str] = None,
 ) -> None:
     """Sub-expander por carrera con discrepancias + conflictos.
 
@@ -1229,6 +1232,7 @@ def _render_carrera_subexpander(
                     invalidate_cache_keys=invalidate_cache_keys,
                     pending_revalidate_key=pending_revalidate_key,
                     source=source,
+                    schedule_id=schedule_id,
                 )
 
 
@@ -1537,13 +1541,22 @@ def _render_conflictos_carrera(
     invalidate_cache_keys: list[str],
     pending_revalidate_key: str,
     source: Literal["plan", "schedule"] = "plan",
+    schedule_id: Optional[str] = None,
 ) -> None:
     """Conflictos activos + ignorados de una carrera.
 
-    Para `source='schedule'`: omite el bloque "Resolver conflicto"
-    (shortcut al editor inline) y "Ignorar conflicto" (no aplica:
-    los conflictos del cronograma se resuelven editando los entries).
+    Para `source='schedule'` omite el bloque "Resolver conflicto"
+    (shortcut al editor inline del plan). Ignorar y dejar de ignorar
+    funcionan igual que en el plan, sobre ``ScheduleIgnoredConflictDB``
+    (2026-09-30; antes el cronograma no tenía dónde guardarlos).
     """
+    if source == "plan":
+        _owner_id = plan_id
+        _ignorar, _dejar_de_ignorar = add_ignored_pair, remove_ignored_pair
+    else:
+        _owner_id = schedule_id
+        _ignorar = add_ignored_pair_cronograma
+        _dejar_de_ignorar = remove_ignored_pair_cronograma
     if activos:
         if source == "plan":
             st.caption(
@@ -1555,8 +1568,11 @@ def _render_conflictos_carrera(
         else:
             st.caption(
                 "Conflictos detectados con las **comisiones auto-derivadas** "
-                "del cronograma. Para resolverlos, editar los horarios "
-                "afectados desde el tab **Editar** de Cronogramas."
+                "del cronograma. Para resolverlos, editá los horarios "
+                "afectados desde la pestaña **Ver / Editar**. Si sabés que "
+                "un par no es un conflicto real (por ejemplo, materias que "
+                "cursan alumnos distintos), podés marcarlo como ignorado: "
+                "deja de bloquear el plan y se hereda al plan que generes."
             )
 
         # Resumen por (anio, cuatri)
@@ -1592,13 +1608,12 @@ def _render_conflictos_carrera(
             use_container_width=True, hide_index=True,
         )
 
-        # Resolver conflicto + Ignorar: solo aplica para plan.
-        if source != "plan" or not plan_id:
-            return  # schedule no soporta resolver ni ignorar
-        _render_resolve_conflicto(
-            activos=activos, carrera_codigo=carrera_codigo,
-            plan_id=plan_id, key_ns=key_ns, mat_map=mat_map,
-        )
+        # Resolver conflicto: sólo aplica para plan (editor inline).
+        if source == "plan" and plan_id:
+            _render_resolve_conflicto(
+                activos=activos, carrera_codigo=carrera_codigo,
+                plan_id=plan_id, key_ns=key_ns, mat_map=mat_map,
+            )
 
         st.markdown("**Ignorar conflicto**")
         _pair_options = {
@@ -1625,10 +1640,11 @@ def _render_conflictos_carrera(
         if st.button(
             "Marcar como ignorado",
             key=f"{key_ns}_ign_btn_{carrera_codigo}",
+            disabled=not _owner_id,
         ):
             _mat_a, _mat_b = _pair_options[_selected_lbl]
             with next(get_session()) as _is:
-                add_ignored_pair(_is, plan_id, _mat_a, _mat_b, razon=_razon)
+                _ignorar(_is, _owner_id, _mat_a, _mat_b, razon=_razon)
             for _k in invalidate_cache_keys:
                 st.session_state.pop(_k, None)
             st.session_state[pending_revalidate_key] = True
@@ -1637,15 +1653,19 @@ def _render_conflictos_carrera(
             )
             st.rerun()
 
-    # Bloque de IGNORADOS — solo para plan (schedule no tiene ignorados)
-    if ignorados and source == "plan" and plan_id:
+    # Bloque de IGNORADOS (plan o cronograma)
+    if ignorados and _owner_id:
         if activos:
             st.divider()
         st.markdown(f"**🙈 Conflictos ignorados ({len(ignorados)})**")
         st.caption(
             "Estos conflictos fueron marcados como ignorados. No bloquean "
-            "la activación del plan, pero acá podés ver el detalle y "
-            "quitarlos de la lista si querés que vuelvan a contarse."
+            + (
+                "la activación del plan"
+                if source == "plan" else "la generación del plan"
+            )
+            + ", pero acá podés ver el detalle y quitarlos de la lista "
+            "si querés que vuelvan a contarse."
         )
 
         # Tabla detalle
@@ -1691,7 +1711,7 @@ def _render_conflictos_carrera(
         ):
             _mat_a, _mat_b = _unign_options[_unign_lbl]
             with next(get_session()) as _us:
-                remove_ignored_pair(_us, plan_id, _mat_a, _mat_b)
+                _dejar_de_ignorar(_us, _owner_id, _mat_a, _mat_b)
             for _k in invalidate_cache_keys:
                 st.session_state.pop(_k, None)
             st.session_state[pending_revalidate_key] = True
@@ -2937,6 +2957,13 @@ def _render_schedule(
                     conflictos_horarios=_details.get(
                         "conflictos_horarios", []
                     ),
+                    conflictos_ignorados=_details.get(
+                        "conflictos_ignorados", []
+                    ),
+                    n_conflictos_ignorados=len({
+                        tuple(sorted((c["materia_a"], c["materia_b"])))
+                        for c in _details.get("conflictos_ignorados", [])
+                    }),
                     camino_bloqueos=_details.get("camino_bloqueos", []),
                     horarios_fuera_config=_details.get(
                         "horarios_fuera_config", []
@@ -3042,6 +3069,7 @@ def _render_schedule(
     # =========================================================================
     # Detalle por carrera
     # =========================================================================
+    _render_excepciones_stale_removidas(summary)
     _grupos = _build_grupos_por_carrera(summary, ciclo_id)
     _full_mat_map = _build_full_mat_map(summary, _grupos)
     _has_issues = any(
@@ -3064,6 +3092,7 @@ def _render_schedule(
                     len(_g["faltantes"]) == 0
                     and len(_g["extras"]) == 0
                     and len(_g["conflictos"]) == 0
+                    and len(_g.get("conflictos_ignorados", [])) == 0
                 ):
                     continue
                 _render_carrera_subexpander(
@@ -3074,6 +3103,7 @@ def _render_schedule(
                     ],
                     pending_revalidate_key=_pending_revalidate_key,
                     source="schedule",
+                    schedule_id=schedule_id,
                 )
 
     # =========================================================================

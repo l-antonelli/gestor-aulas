@@ -331,6 +331,44 @@ materia_b` lexicográficamente.
   ningún `(carrera, año, cuatri)` del plan. Devuelve la lista de
   pares removidos para el summary.
 
+#### 2.3.1. Tabla `ScheduleIgnoredConflictDB` (cronograma, 2026-09-30)
+
+Espejo de `IgnoredConflictDB` a nivel cronograma: PK compuesta
+`(schedule_id, materia_a, materia_b)`, misma granularidad por par y
+mismo alcance (sólo el solapamiento horario, nunca intersede).
+
+- **CRUD** en `cronograma_validation_service.py`:
+  `add_ignored_pair_cronograma`, `remove_ignored_pair_cronograma`,
+  `get_ignored_pairs_cronograma` (set de pares) y
+  `list_ignored_conflicts_cronograma` (filas con razón).
+- **Efecto en `validar_cronograma`**: los conflictos de pares
+  ignorados salen de `conflictos_horarios` y de
+  `n_conflictos_horarios` (así dejan de bloquear
+  `listo_para_plan`) y se listan en `conflictos_ignorados`
+  (persistido en `details_json`). `n_conflictos_ignorados` cuenta
+  pares.
+- **Ver / Editar** (`conflictos_por_materia_cronograma`) también los
+  omite: una materia cuyo único conflicto está ignorado no figura
+  `Conflictiva`.
+- **Staleness**: los pares ignorados entran al `content_hash` (sólo
+  si hay alguno, para no invalidar snapshots anteriores). Ignorar o
+  dejar de ignorar marca desactualizada la última validación.
+- **Auto-limpieza**: `cleanup_stale_ignored_pairs_cronograma`, con la
+  misma regla que el plan (helper compartido
+  `plan_validation_service.grupos_curriculares_activos`). Corre en
+  cada `validar_cronograma`; los pares removidos se reportan en
+  `summary.excepciones_stale_removidas` y el panel los muestra.
+- **Shadow del importer**: la vista previa valida un shadow que se
+  descarta al confirmar, así que lee y escribe los ignorados del
+  cronograma destino (`shadow_target_schedule_id`).
+- **Ciclo de vida**: al generar un plan desde el cronograma
+  (`generate_plan_from_preview` / `generate_plan_from_schedule`) los
+  pares se **copian** a `IgnoredConflictDB` del plan nuevo con su
+  razón, y desde ahí cada uno se gestiona por su cuenta.
+  `duplicate_schedule` los copia a la copia;
+  `clonar_plan_a_cronograma` copia los del plan al cronograma nuevo;
+  `delete_schedule` y el borrado en cascada de un ciclo los eliminan.
+
 ### 2.4. Chequeo estructural pre-solve del LP (`factibilidad_service.py`)
 
 Además de las validaciones "clásicas" del cronograma y del plan,
@@ -471,8 +509,11 @@ agregador llamar y qué bloques mostrar. La estructura común es:
    - Conflictos de horarios con tabla resumen, detalle, botón "Resolver
      conflicto" (solo plan: muestra calendario read-only del par y
      shortcut "Editar A" / "Editar B" al editor inline) y "Ignorar
-     conflicto" (solo plan: agrega a `IgnoredConflictDB`).
-   - Conflictos ignorados (solo plan): tabla + botón "Dejar de ignorar".
+     conflicto" (con razón opcional; en el plan agrega a
+     `IgnoredConflictDB`, en el cronograma a
+     `ScheduleIgnoredConflictDB`, § 2.3.1).
+   - Conflictos ignorados (plan y cronograma): tabla + botón "Dejar de
+     ignorar".
 6. **Detalle por materia** (expander principal con loop paginado de
    expanders, uno por materia):
    - **Filtros**: búsqueda, Carrera (multiselect, soporta materias
@@ -935,11 +976,17 @@ que ningún path de inserción permita estados inválidos:
   cada validación queda en DB para auditoría y para reconstruir la UI
   sin recomputar. La UI compara contra el snapshot vivo para detectar
   staleness.
-- **Conflictos del plan: ignorables vía `IgnoredConflictDB`**. Los del
-  cronograma no son ignorables (las comisiones del cronograma son
-  auto-derivadas; si hay conflicto, se edita el cronograma). Esto
-  refleja un principio: **el cronograma es el source of truth de los
-  horarios; el plan es el contrato editable**.
+- **Conflictos ignorables en el plan y en el cronograma**. El plan los
+  guarda en `IgnoredConflictDB` y el cronograma en
+  `ScheduleIgnoredConflictDB` (§ 2.3.1). Hasta 2026-09-30 los del
+  cronograma no eran ignorables, bajo el principio de que el
+  cronograma es la fuente de verdad de los horarios y un conflicto se
+  resuelve editándolo. En la práctica hay conflictos conocidos y
+  aceptados (por ejemplo, materias que cursan alumnos distintos) que
+  no se resuelven moviendo horarios, y sin poder ignorarlos bloqueaban
+  la generación del plan sin remedio. El principio se mantiene para
+  los horarios: ignorar no cambia ningún horario, sólo registra la
+  decisión, que el plan hereda al generarse.
 - **Auto-revalidar**: toggle propio en cada panel, default ON. Cualquier
   acción del panel marca un flag pendiente; si está ON, la siguiente
   rerun re-corre la validación y muestra un toast con el delta.

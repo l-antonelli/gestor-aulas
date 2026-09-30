@@ -32,7 +32,9 @@ from src.database.models import (
     MateriaLaboratorioDB,
     PlanCarreraVersionDB,
     PlanEstudioDB,
+    ScheduleDB,
     ScheduleEntryDB,
+    ScheduleIgnoredConflictDB,
     ScheduleValidationDB,
 )
 from src.database.crud import ciclo_crud
@@ -97,8 +99,11 @@ class CronogramaValidationSummary:
     particion_n_infactibles: int = 0
     particion_message: str = ""
 
-    # Conflictos de horarios (con comisiones auto-derivadas)
+    # Conflictos de horarios (con comisiones auto-derivadas). Sólo los
+    # activos: los pares ignorados (`ScheduleIgnoredConflictDB`) no
+    # cuentan ni bloquean el plan; se listan en `conflictos_ignorados`.
     n_conflictos_horarios: int = 0
+    n_conflictos_ignorados: int = 0
 
     # Bloqueos de camino de cursada (Fase B). Cuenta grupos
     # (carrera, año, cuatri) donde no hay combinación libre de
@@ -129,6 +134,10 @@ class CronogramaValidationSummary:
     extras: list[dict] = field(default_factory=list)
     particion_details: list[str] = field(default_factory=list)
     conflictos_horarios: list[dict] = field(default_factory=list)
+    conflictos_ignorados: list[dict] = field(default_factory=list)
+    # Excepciones borradas por `cleanup_stale_ignored_pairs_cronograma`
+    # en esta validación (para avisarle al usuario; no se persisten).
+    excepciones_stale_removidas: list[dict] = field(default_factory=list)
     camino_bloqueos: list[dict] = field(default_factory=list)
     horarios_fuera_config: list[dict] = field(default_factory=list)
     esperadas: dict[str, str] = field(default_factory=dict)
@@ -141,6 +150,7 @@ class CronogramaValidationSummary:
             "extras": self.extras,
             "particion_details": self.particion_details,
             "conflictos_horarios": self.conflictos_horarios,
+            "conflictos_ignorados": self.conflictos_ignorados,
             "camino_bloqueos": self.camino_bloqueos,
             "horarios_fuera_config": self.horarios_fuera_config,
             "esperadas": self.esperadas,
@@ -390,6 +400,14 @@ def _compute_content_hash(
             ";".join(t) for t in lab_tuples
         ))
 
+    # 5) Conflictos ignorados (2026-09-30). Ignorar o dejar de ignorar
+    # un par cambia el resultado, así que tiene que volver stale la
+    # validación. Sólo se suma si hay alguno, para no invalidar los
+    # snapshots persistidos antes de que existiera la tabla.
+    _ignorados = sorted(get_ignored_pairs_cronograma(session, schedule_id))
+    if _ignorados:
+        parts.append("ignorados:" + "|".join(f"{a};{b}" for a, b in _ignorados))
+
     payload = "\n".join(parts).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -577,11 +595,24 @@ def validar_cronograma(
     )
 
     # Conflictos de horarios (con comisiones auto-derivadas del cronograma)
+    # Los pares ignorados se separan (2026-09-30): no cuentan ni
+    # bloquean, pero se listan para poder dejar de ignorarlos. Antes se
+    # limpian los que ya no conviven en ningún grupo del ciclo.
+    summary.excepciones_stale_removidas = (
+        cleanup_stale_ignored_pairs_cronograma(session, schedule_id)
+    )
+    _ignorados = get_ignored_pairs_cronograma(session, schedule_id)
     conflictos = validar_conflictos_horarios_cronograma(
         session, schedule_id, ciclo_id,
     )
-    summary.n_conflictos_horarios = len(conflictos)
-    summary.conflictos_horarios = [_conflicto_a_dict(c) for c in conflictos]
+    _activos = [c for c in conflictos if not _es_ignorado(c, _ignorados)]
+    _ign = [c for c in conflictos if _es_ignorado(c, _ignorados)]
+    summary.n_conflictos_horarios = len(_activos)
+    summary.conflictos_horarios = [_conflicto_a_dict(c) for c in _activos]
+    summary.conflictos_ignorados = [_conflicto_a_dict(c) for c in _ign]
+    summary.n_conflictos_ignorados = len(
+        {tuple(sorted((c.materia_a, c.materia_b))) for c in _ign}
+    )
 
     # Camino de cursada (Fase B). Detecta grupos (carrera, año, cuatri)
     # donde ninguna combinación de comisiones evita solapamientos entre
@@ -662,20 +693,139 @@ def conflictos_por_materia_cronograma(
     calculaba conflictos y mostraba OK materias en conflicto). Usa el
     mismo cálculo que `validar_cronograma` contra el ciclo del
     cronograma; sin ciclo no hay grupos curriculares y devuelve ``{}``.
+    Los pares ignorados (``ScheduleIgnoredConflictDB``) se omiten.
     """
-    from src.database.models import ScheduleDB
 
     sched = session.get(ScheduleDB, schedule_id)
     if sched is None or not sched.ciclo_id:
         return {}
+    _ignorados = get_ignored_pairs_cronograma(session, schedule_id)
     por_materia: dict[str, list[dict]] = {}
     for c in validar_conflictos_horarios_cronograma(
         session, schedule_id, sched.ciclo_id,
     ):
+        if _es_ignorado(c, _ignorados):
+            continue
         d = _conflicto_a_dict(c)
         por_materia.setdefault(c.materia_a, []).append(d)
         por_materia.setdefault(c.materia_b, []).append(d)
     return por_materia
+
+
+# =============================================================================
+# Conflictos ignorados (2026-09-30)
+# =============================================================================
+
+def _par(mat_a: str, mat_b: str) -> tuple[str, str]:
+    return (mat_a, mat_b) if mat_a < mat_b else (mat_b, mat_a)
+
+
+def _es_ignorado(c: ConflictoHorario, ignorados: set[tuple[str, str]]) -> bool:
+    return _par(c.materia_a, c.materia_b) in ignorados
+
+
+def _dueno_de_ignorados(session: Session, schedule_id: str) -> str:
+    """Cronograma cuyos ignorados aplican a ``schedule_id``.
+
+    Un shadow del importer usa los del cronograma destino: el shadow se
+    descarta al confirmar y los ignorados tienen que sobrevivirlo, así
+    que nunca se guardan en el shadow.
+    """
+    sched = session.get(ScheduleDB, schedule_id)
+    if sched is not None and sched.es_shadow_import and sched.shadow_target_schedule_id:
+        return sched.shadow_target_schedule_id
+    return schedule_id
+
+
+def get_ignored_pairs_cronograma(
+    session: Session, schedule_id: str,
+) -> set[tuple[str, str]]:
+    """Pares ``(materia_a, materia_b)`` ignorados, ordenados
+    lexicográficamente. Espejo de ``plan_validation_service.get_ignored_pairs``."""
+    owner = _dueno_de_ignorados(session, schedule_id)
+    rows = session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == owner)
+    ).all()
+    return {(r.materia_a, r.materia_b) for r in rows}
+
+
+def list_ignored_conflicts_cronograma(
+    session: Session, schedule_id: str,
+) -> list[ScheduleIgnoredConflictDB]:
+    """Filas de ignorados (con razón y fecha) para listarlas en la UI."""
+    owner = _dueno_de_ignorados(session, schedule_id)
+    return list(session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == owner)
+        .order_by(ScheduleIgnoredConflictDB.materia_a, ScheduleIgnoredConflictDB.materia_b)  # type: ignore[arg-type]
+    ).all())
+
+
+def add_ignored_pair_cronograma(
+    session: Session, schedule_id: str, mat_a: str, mat_b: str,
+    razon: str = "",
+) -> ScheduleIgnoredConflictDB:
+    """Marca un par como ignorado (idempotente; actualiza la razón)."""
+    owner = _dueno_de_ignorados(session, schedule_id)
+    a, b = _par(mat_a, mat_b)
+    rec = session.get(ScheduleIgnoredConflictDB, (owner, a, b))
+    if rec is None:
+        rec = ScheduleIgnoredConflictDB(
+            schedule_id=owner, materia_a=a, materia_b=b, razon=razon,
+        )
+    elif razon:
+        rec.razon = razon
+    session.add(rec)
+    session.commit()
+    session.refresh(rec)
+    return rec
+
+
+def remove_ignored_pair_cronograma(
+    session: Session, schedule_id: str, mat_a: str, mat_b: str,
+) -> bool:
+    """Deja de ignorar un par. ``True`` si existía."""
+    owner = _dueno_de_ignorados(session, schedule_id)
+    rec = session.get(ScheduleIgnoredConflictDB, (owner, *_par(mat_a, mat_b)))
+    if rec is None:
+        return False
+    session.delete(rec)
+    session.commit()
+    return True
+
+
+def cleanup_stale_ignored_pairs_cronograma(
+    session: Session, schedule_id: str,
+) -> list[dict]:
+    """Borra los ignorados cuyas materias ya no conviven en ningún grupo
+    curricular del ciclo del cronograma (misma regla que RF-PLAN-09
+    para el plan). Devuelve ``{materia_a, materia_b, razon}`` de cada
+    uno para avisarle al usuario."""
+    from src.services.plan_validation_service import grupos_curriculares_activos
+
+    sched = session.get(ScheduleDB, schedule_id)
+    if sched is None or not sched.ciclo_id:
+        return []
+    grupos = grupos_curriculares_activos(session, sched.ciclo_id)
+    if grupos is None:
+        return []
+    owner = _dueno_de_ignorados(session, schedule_id)
+    eliminadas: list[dict] = []
+    for f in session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == owner)
+    ).all():
+        if not any(f.materia_a in g and f.materia_b in g for g in grupos):
+            eliminadas.append({
+                "materia_a": f.materia_a,
+                "materia_b": f.materia_b,
+                "razon": f.razon,
+            })
+            session.delete(f)
+    if eliminadas:
+        session.commit()
+    return eliminadas
 
 
 # =============================================================================

@@ -748,6 +748,25 @@ class IgnoredConflictDB(SQLModel, table=True):
     fecha_creacion: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ScheduleIgnoredConflictDB(SQLModel, table=True):
+    """Par de materias cuyo conflicto de horarios se ignora en un
+    cronograma (2026-09-30).
+
+    Espejo de ``IgnoredConflictDB`` a nivel cronograma, con la misma
+    semántica (granularidad por par, ``materia_a < materia_b``). Al
+    generar un plan de cursada desde el cronograma, los pares se copian
+    a ``IgnoredConflictDB`` del plan nuevo; desde ahí cada uno los
+    gestiona por su cuenta.
+    """
+    __tablename__ = "schedule_ignored_conflicts"
+
+    schedule_id: str = Field(foreign_key="schedules.id", primary_key=True)
+    materia_a: str = Field(primary_key=True)  # ordenado lexicograficamente
+    materia_b: str = Field(primary_key=True)  # > materia_a
+    razon: str = Field(default="")
+    fecha_creacion: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PlanificacionCursadaDB(SQLModel, table=True):
     """A coursework plan: generated from a schedule, contains comisiones and horarios."""
     __tablename__ = "planificaciones_cursada"

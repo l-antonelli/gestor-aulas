@@ -613,6 +613,57 @@ def get_ignored_pairs(
     return {(r.materia_a, r.materia_b) for r in rows}
 
 
+def grupos_curriculares_activos(
+    session: Session, ciclo_id: str,
+) -> Optional[list[set[str]]]:
+    """Materias obligatorias de cada grupo curricular
+    ``(carrera, año, cuatri)`` del ciclo, con las anuales del mismo
+    ``(carrera, año)`` sumadas. Devuelve ``None`` si el ciclo no tiene
+    planes de estudio asignados (no se puede determinar coexistencia).
+
+    Base de la limpieza de excepciones stale, compartida por el plan
+    (``cleanup_stale_ignored_pairs``) y el cronograma
+    (``cronograma_validation_service.cleanup_stale_ignored_pairs_cronograma``).
+    """
+    # Set de pares vivos: aquellos (a, b) donde A y B están juntas en
+    # algún grupo curricular del ciclo.
+    cpv_rows = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all())
+    if not cpv_rows:
+        # Sin planes de estudio en el ciclo → no podemos determinar
+        # coexistencia.
+        return None
+    pe_rows = list(session.exec(
+        select(PlanEstudioDB)
+        .where(PlanEstudioDB.plan_version_id.in_(cpv_rows))  # type: ignore[attr-defined]
+    ).all())
+
+    # Grupos curriculares → materias obligatorias.
+    grupos: dict[tuple[str, int, str], set[str]] = {}
+    for pe in pe_rows:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
+            continue
+        if pe.optativa:
+            continue
+        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        grupos.setdefault(key, set()).add(pe.materia_codigo)
+    # Enriquecer con anuales del mismo (carrera, año).
+    ciclo = session.get(CicloDB, ciclo_id)
+    cuatri_ciclo = f"{ciclo.numero}C" if ciclo else None
+    grupos_activos: list[set[str]] = []
+    for (car, an, cu), mats in grupos.items():
+        if cuatri_ciclo and cu != cuatri_ciclo:
+            continue
+        enriched = set(mats)
+        anual_key = (car, an, "Anual")
+        if anual_key in grupos:
+            enriched |= grupos[anual_key]
+        grupos_activos.append(enriched)
+    return grupos_activos
+
+
 def cleanup_stale_ignored_pairs(
     session: Session, plan_id: str,
 ) -> list[dict]:
@@ -641,42 +692,9 @@ def cleanup_stale_ignored_pairs(
     if plan is None or plan.ciclo_id is None:
         return []
 
-    # Set de pares vivos: aquellos (a, b) donde A y B están juntas en
-    # algún grupo curricular del ciclo.
-    cpv_rows = list(session.exec(
-        select(CicloPlanVersionDB.plan_version_id)
-        .where(CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
-    ).all())
-    if not cpv_rows:
-        # Sin planes de estudio en el ciclo → no podemos determinar
-        # coexistencia; no borramos nada.
+    grupos_activos = grupos_curriculares_activos(session, plan.ciclo_id)
+    if grupos_activos is None:
         return []
-    pe_rows = list(session.exec(
-        select(PlanEstudioDB)
-        .where(PlanEstudioDB.plan_version_id.in_(cpv_rows))  # type: ignore[attr-defined]
-    ).all())
-
-    # Grupos curriculares → materias obligatorias.
-    grupos: dict[tuple[str, int, str], set[str]] = {}
-    for pe in pe_rows:
-        if pe.anio_plan is None or pe.cuatrimestre_plan is None:
-            continue
-        if pe.optativa:
-            continue
-        key = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
-        grupos.setdefault(key, set()).add(pe.materia_codigo)
-    # Enriquecer con anuales del mismo (carrera, año).
-    ciclo = session.get(CicloDB, plan.ciclo_id)
-    cuatri_ciclo = f"{ciclo.numero}C" if ciclo else None
-    grupos_activos: list[set[str]] = []
-    for (car, an, cu), mats in grupos.items():
-        if cuatri_ciclo and cu != cuatri_ciclo:
-            continue
-        enriched = set(mats)
-        anual_key = (car, an, "Anual")
-        if anual_key in grupos:
-            enriched |= grupos[anual_key]
-        grupos_activos.append(enriched)
 
     def _par_vivo(a: str, b: str) -> bool:
         return any(a in g and b in g for g in grupos_activos)

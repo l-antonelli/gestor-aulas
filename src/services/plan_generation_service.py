@@ -13,7 +13,7 @@ from sqlmodel import col
 from src.database.models import (
     ClaseDB, ScheduleEntryDB, PlanificacionCursadaDB, ComisionDB, HorarioDB,
     MateriaDB, ScheduleDB, ConfiguracionHoraria,
-    PlanEstudioDB, CicloPlanVersionDB, DictadoDB,
+    PlanEstudioDB, CicloPlanVersionDB, DictadoDB, IgnoredConflictDB,
 )
 from src.database.crud import schedule_crud, planificacion_crud, materia_crud
 from src.services.horario_loading_service import (
@@ -387,6 +387,26 @@ def preview_plan_from_schedule(
     return result
 
 
+def _heredar_ignorados_del_cronograma(
+    session: Session, schedule_id: str, plan_id: str,
+) -> None:
+    """Copia los conflictos ignorados del cronograma
+    (``ScheduleIgnoredConflictDB``) al plan nuevo (``IgnoredConflictDB``),
+    con la misma razón. Decisión 2026-09-29: el plan hereda lo que se
+    decidió al validar el cronograma y desde ahí lo gestiona por su
+    cuenta. No commitea: lo hace el caller junto con el resto del plan.
+    """
+    from src.services.cronograma_validation_service import (
+        list_ignored_conflicts_cronograma,
+    )
+
+    for f in list_ignored_conflicts_cronograma(session, schedule_id):
+        session.add(IgnoredConflictDB(
+            plan_cursada_id=plan_id,
+            materia_a=f.materia_a, materia_b=f.materia_b, razon=f.razon,
+        ))
+
+
 def generate_plan_from_preview(
     session: Session,
     schedule_id: str,
@@ -494,6 +514,7 @@ def generate_plan_from_preview(
         if mp.flag in ("uncertain", "no_data"):
             result.comision_flags.append(f"{mp.materia_codigo}: {mp.flag_detail}")
 
+    _heredar_ignorados_del_cronograma(session, schedule_id, plan_id)
     session.commit()
     session.refresh(plan)
     result.plan = plan
@@ -647,6 +668,7 @@ def generate_plan_from_schedule(
                 session.add(horario)
                 result.horarios_created += 1
 
+    _heredar_ignorados_del_cronograma(session, schedule_id, plan_id)
     session.commit()
     session.refresh(plan)
     result.plan = plan

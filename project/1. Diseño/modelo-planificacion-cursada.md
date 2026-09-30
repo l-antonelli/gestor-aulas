@@ -515,6 +515,33 @@ cada `validate_plan` y elimina pares cuyas materias ya no
 coexisten en ningún grupo curricular `(carrera, año, cuatri)` del
 plan. Reporta la limpieza en `summary.excepciones_stale_removidas`.
 
+#### `ScheduleIgnoredConflictDB`
+
+Equivalente de `IgnoredConflictDB` a nivel cronograma (2026-09-30).
+Permite ignorar desde la pestaña Validar del módulo Cronogramas un
+conflicto conocido y aceptado, que de otro modo bloquearía la
+generación del plan.
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `schedule_id` | PK, FK | Se borra con el cronograma. |
+| `materia_a` | PK | Menor lexicográficamente. |
+| `materia_b` | PK | Mayor lexicográficamente. |
+| `razon` | `str` | Justificación textual del usuario. |
+| `fecha_creacion` | `datetime` | |
+
+**Herencia**: al generar un plan desde el cronograma, cada par se
+copia a `IgnoredConflictDB` del plan nuevo con la misma razón. A
+partir de ahí son independientes: ignorar o dejar de ignorar en el
+plan no toca el cronograma, y viceversa.
+
+**Shadow del importer**: la vista previa usa los pares del
+cronograma destino, porque el shadow se descarta al confirmar.
+
+**Auto-limpieza**: misma regla que el plan
+(`cleanup_stale_ignored_pairs_cronograma`, en cada
+`validar_cronograma`).
+
 #### `PlanValidationDB`
 
 Snapshot histórico de una validación de un plan.
@@ -601,6 +628,7 @@ CicloDB ──cascade──> PlanificacionCursadaDB ──cascade──> Comisio
                                               ──cascade──> ClaseDB (caché)
                                               ──cascade──> IgnoredConflictDB
 CicloDB ──cascade──> ScheduleDB ──cascade──> ScheduleEntryDB
+                                ──cascade──> ScheduleIgnoredConflictDB
 CicloDB ──cascade──> DictadoCicloDB
 GrupoMateriaDB ──cascade──> GrupoMateriaSedeDB
 GrupoMateriaDB ──cascade──> GrupoMateriaCarreraDB
@@ -753,11 +781,14 @@ Qué se clona:
   `virtual`. **No** se copia `aula_id`: las entries del cronograma
   no llevan aula (esa se resuelve por el LP cuando se arme el plan
   nuevo).
+- Cada `IgnoredConflictDB` del plan genera un
+  `ScheduleIgnoredConflictDB` del cronograma con la misma razón
+  (2026-09-30; antes no se clonaban porque el cronograma no tenía
+  dónde guardarlos).
 
 Qué **no** se clona porque no pertenece al cronograma:
 
 - Snapshots de validación (`PlanValidationDB`).
-- Excepciones de conflicto ignoradas (`IgnoredConflictDB`).
 - Config del asignador de aulas, corridas del LP (`LPRunDB`).
 - Overrides de forecast (`MateriaForecastConfigDB`).
 

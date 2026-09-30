@@ -10,8 +10,10 @@ from sqlmodel import Session, select, col
 from src.database.models import (
     ComisionDB,
     MateriaDB,
+    IgnoredConflictDB,
     ScheduleDB,
     ScheduleEntryDB,
+    ScheduleIgnoredConflictDB,
 )
 from src.database.crud import ciclo_crud
 from src.services.horario_loading_service import _resolve_materia_code
@@ -299,9 +301,12 @@ def clonar_plan_a_cronograma(
       "sin aula asignada"; el aula la resuelve el LP al armar el
       plan nuevo.
 
+    - ``IgnoredConflictDB`` del plan → ``ScheduleIgnoredConflictDB``
+      del schedule, con la misma razón (2026-09-30; antes no se
+      clonaban porque el cronograma no tenía dónde guardarlos).
+
     Qué NO se clona (fuera de scope del cronograma):
     - Snapshots de validación (``PlanValidationDB``).
-    - Excepciones de conflicto ignoradas (``IgnoredConflictDB``).
     - Config del asignador, corridas del LP, etc.
 
     Args:
@@ -392,6 +397,14 @@ def clonar_plan_a_cronograma(
                 # concepto de aula asignada; el LP resuelve eso al
                 # generar el plan siguiente.
             ))
+
+    for f in session.exec(
+        select(IgnoredConflictDB).where(IgnoredConflictDB.plan_cursada_id == plan_id)
+    ).all():
+        session.add(ScheduleIgnoredConflictDB(
+            schedule_id=schedule.id,
+            materia_a=f.materia_a, materia_b=f.materia_b, razon=f.razon,
+        ))
 
     session.commit()
     session.refresh(schedule)
@@ -499,16 +512,32 @@ def duplicate_schedule(
         )
         session.add(new_entry)
 
+    # Conflictos ignorados (2026-09-30): la copia arranca con las mismas
+    # decisiones que el original.
+    for f in session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == schedule_id)
+    ).all():
+        session.add(ScheduleIgnoredConflictDB(
+            schedule_id=new_id,
+            materia_a=f.materia_a, materia_b=f.materia_b, razon=f.razon,
+        ))
+
     session.commit()
     session.refresh(clone)
     return clone
 
 
 def delete_schedule(session: Session, schedule_id: str) -> None:
-    """Borrar un schedule y todas sus entries."""
+    """Borrar un schedule, sus entries y sus conflictos ignorados."""
     entries = get_schedule_entries(session, schedule_id)
     for e in entries:
         session.delete(e)
+    for f in session.exec(
+        select(ScheduleIgnoredConflictDB)
+        .where(ScheduleIgnoredConflictDB.schedule_id == schedule_id)
+    ).all():
+        session.delete(f)
 
     schedule = session.get(ScheduleDB, schedule_id)
     if schedule:

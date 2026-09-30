@@ -256,6 +256,14 @@ classDiagram
         +datetime fecha_creacion
     }
 
+    class ScheduleIgnoredConflictDB {
+        +str schedule_id PK FK
+        +str materia_a PK
+        +str materia_b PK
+        +str razon
+        +datetime fecha_creacion
+    }
+
     class PlanValidationDB {
         +str id PK
         +str plan_cursada_id FK
@@ -377,6 +385,7 @@ classDiagram
 
     %% Excepciones y snapshots
     PlanificacionCursadaDB "1" *-- "0..*" IgnoredConflictDB : cascade
+    ScheduleDB "1" *-- "0..*" ScheduleIgnoredConflictDB : cascade
     PlanificacionCursadaDB "1" --o "0..*" PlanValidationDB : snapshot
     PlanificacionCursadaDB "1" --o "0..*" LPRunDB : snapshot
 
@@ -465,6 +474,7 @@ PlanificacionCursadaDB ──cascade──> ComisionDB ──cascade──> Hora
 PlanificacionCursadaDB ──cascade──> ClaseDB (cache técnico)
 PlanificacionCursadaDB ──cascade──> IgnoredConflictDB
 PlanificacionCursadaDB ──snapshot──> PlanValidationDB, LPRunDB
+ScheduleDB ──cascade──> ScheduleIgnoredConflictDB
 ```
 
 - Borrar un plan cascadea: comisiones (y sus horarios), clases
@@ -482,6 +492,12 @@ del plan corre `cleanup_stale_ignored_pairs` para limpiar
 excepciones que quedaron huérfanas cuando cambia la coexistencia
 curricular de las materias involucradas. El evento de limpieza se
 reporta al usuario en el summary de `validate_plan`.
+
+`ScheduleIgnoredConflictDB` (2026-09-30) es el equivalente a nivel
+cronograma: se cascadea con el cronograma, se limpia con la misma
+regla en cada `validar_cronograma` y se **copia** a
+`IgnoredConflictDB` al generar un plan desde el cronograma (el plan
+hereda las decisiones y después las gestiona por su cuenta).
 
 ---
 

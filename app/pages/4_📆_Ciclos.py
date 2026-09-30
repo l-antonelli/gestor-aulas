@@ -8,7 +8,7 @@ from sqlmodel import Session
 from src.database.models import (
     CicloDB, CicloPlanVersionDB, PlanCarreraVersionDB,
     PlanEstudioDB, CarreraDB, DictadoDB, DictadoCicloDB,
-    ScheduleDB, ScheduleEntryDB, PlanificacionCursadaDB,
+    ScheduleDB, ScheduleEntryDB, ScheduleIgnoredConflictDB, PlanificacionCursadaDB,
     ComisionDB, HorarioDB, ClaseDB, MateriaDB,
 )
 from src.database.crud import ciclo_crud
@@ -101,13 +101,18 @@ def _delete_ciclo_cascade(session: Session, ciclo_id: str) -> None:
             session.delete(sh)
         session.flush()
 
-    # 2.c) Schedules reales: entries -> schedule.
+    # 2.c) Schedules reales: entries + conflictos ignorados -> schedule.
     for sched in schedules_reales:
         entries = session.exec(
             select(ScheduleEntryDB).where(ScheduleEntryDB.schedule_id == sched.id)
         ).all()
         for e in entries:
             session.delete(e)
+        for f in session.exec(
+            select(ScheduleIgnoredConflictDB)
+            .where(ScheduleIgnoredConflictDB.schedule_id == sched.id)
+        ).all():
+            session.delete(f)
         session.delete(sched)
 
     # 3. Dictado-ciclo links (no borra los dictados, solo el link)

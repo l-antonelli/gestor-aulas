@@ -55,7 +55,8 @@
 >    `IgnoredConflictDB` marca pares de materias que la validación de
 >    solapamiento debe saltar. La auto-limpieza en `validate_plan`
 >    quita excepciones que ya no aplican. No afectan al chequeo de
->    intersede.
+>    intersede. Desde 2026-09-30 el cronograma tiene su equivalente
+>    (`ScheduleIgnoredConflictDB`), que el plan hereda al generarse.
 > 8. **Colisiones de aula al editar horario** (2026-09). La edición
 >    manual de aula detecta colisiones con otros horarios y ofrece
 >    liberar el ocupante desde la UI compartida
@@ -781,10 +782,18 @@ sirve al panel del plan.
 5. **Partición teoría/lab**: success/error global.
 6. **Detalle por carrera** (expander):
    - Tabla resumen con totales (Faltantes / No esperadas /
-     Conflictos / Ignorados — este último solo plan).
+     Conflictos / Ignorados).
    - Sub-expanders por carrera con discrepancias de dictado y
      conflictos de horarios; bulk-action de activar/desactivar
      dictados desde aquí mismo.
+   - **Ignorar conflictos** (2026-09-30): dentro de los conflictos de
+     cada carrera, "Marcar como ignorado" (con razón opcional) guarda
+     el par en `ScheduleIgnoredConflictDB`. El conflicto deja de
+     contar, de bloquear la generación del plan y de marcar la
+     materia como Conflictiva en Ver / Editar. Los ignorados se
+     listan aparte con "Dejar de ignorar". Al generar un plan desde
+     el cronograma, el plan hereda los pares con su razón. Detalle en
+     `VALIDACIONES.md § 2.3.1`.
 7. **Detalle por materia** (expander):
    - Filtros: búsqueda, Carrera (multiselect, soporta materias
      comunes), Año, Cuatri, Estado (OK/Faltante/No esperada/
