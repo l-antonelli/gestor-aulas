@@ -30,6 +30,7 @@ Importante:
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import pandas as pd
@@ -1851,6 +1852,66 @@ def _contar_totales_unicos(filtered: list[dict]) -> dict[str, int]:
     }
 
 
+@dataclass
+class AgregadosCronograma:
+    """Conteos por materia de un cronograma para el badge de Validar."""
+
+    entry_count: dict[str, int] = field(default_factory=dict)
+    com_count: dict[str, int] = field(default_factory=dict)
+    horas_por_mat: dict[str, float] = field(default_factory=dict)
+    horas_por_mat_com: dict[str, dict[str, float]] = field(
+        default_factory=dict,
+    )
+
+
+def _agregados_cronograma_por_materia(
+    session, schedule_id: str,
+) -> AgregadosCronograma:
+    """Entradas, comisiones y horas por materia (y por comisión) de un
+    cronograma, con el mismo criterio que
+    ``schedule_materia_editor.compute_materia_checks_from_db``.
+
+    - ``com_count`` cuenta las ``ComisionDB`` reales del cronograma,
+      **incluidas las vacías** (2026-09-30: antes se contaban sólo las
+      referenciadas por algún horario, así que una comisión creada y
+      sin horarios desaparecía del badge mientras Ver / Editar la
+      mostraba; una comisión que existe tiene que verse para poder
+      borrarla si corresponde).
+    - ``horas_por_mat_com`` arranca cada comisión en 0 h, para que el
+      chequeo de comisiones equilibradas la vea.
+    - Las horas de horarios sin comisión (o con una comisión de otro
+      cronograma) suman al total de la materia pero no a ninguna
+      comisión, igual que en Ver / Editar.
+    """
+    from src.database.models import ScheduleEntryDB as _SE
+
+    agg = AgregadosCronograma()
+    _coms = list(session.exec(
+        select(ComisionDB).where(ComisionDB.schedule_id == schedule_id)
+    ).all())
+    _com_mat = {c.id: c.materia_codigo for c in _coms}
+    for c in _coms:
+        agg.com_count[c.materia_codigo] = (
+            agg.com_count.get(c.materia_codigo, 0) + 1
+        )
+        agg.horas_por_mat_com.setdefault(c.materia_codigo, {})[c.id] = 0.0
+
+    for e in session.exec(
+        select(_SE).where(_SE.schedule_id == schedule_id)
+    ).all():
+        mc = e.codigo_materia
+        agg.entry_count[mc] = agg.entry_count.get(mc, 0) + 1
+        _mins = (
+            e.hora_fin.hour * 60 + e.hora_fin.minute
+            - e.hora_inicio.hour * 60 - e.hora_inicio.minute
+        )
+        _hrs = max(0, _mins) / 60
+        agg.horas_por_mat[mc] = agg.horas_por_mat.get(mc, 0.0) + _hrs
+        if e.comision_id and _com_mat.get(e.comision_id) == mc:
+            agg.horas_por_mat_com[mc][e.comision_id] += _hrs
+    return agg
+
+
 def _render_detalle_por_materia(
     summary, key_ns: str,
     *,
@@ -2037,45 +2098,11 @@ def _render_detalle_por_materia(
                             ) + _hrs
                         )
         elif source == "schedule" and schedule_id:
-            from src.database.models import ScheduleEntryDB as _SE
-            _entries = list(session.exec(
-                select(_SE).where(_SE.schedule_id == schedule_id)
-            ).all())
-            for e in _entries:
-                _entry_count_sched[e.codigo_materia] = (
-                    _entry_count_sched.get(e.codigo_materia, 0) + 1
-                )
-            # Distinct comisiones por materia. La comisión ahora es una
-            # entidad real (ComisionDB) referenciada via
-            # ScheduleEntryDB.comision_id.
-            _by_mat: dict[str, set[str]] = {}
-            for e in _entries:
-                if e.comision_id is not None:
-                    _by_mat.setdefault(e.codigo_materia, set()).add(e.comision_id)
-            _com_count_sched = {mc: len(s) for mc, s in _by_mat.items()}
-
-            # Fase I.1 del rediseño 2026-09-21: sumar horas por
-            # materia y por comisión para gatillar los 3 checks
-            # numéricos (h/sem × comisiones, divisibles,
-            # equilibradas) desde el badge del expander.
-            for e in _entries:
-                _mins = (
-                    e.hora_fin.hour * 60 + e.hora_fin.minute
-                    - e.hora_inicio.hour * 60 - e.hora_inicio.minute
-                )
-                _hrs = max(0, _mins) / 60
-                _horas_por_mat_sched[e.codigo_materia] = (
-                    _horas_por_mat_sched.get(e.codigo_materia, 0.0) + _hrs
-                )
-                if e.comision_id is not None:
-                    _horas_por_mat_com_sched.setdefault(
-                        e.codigo_materia, {},
-                    )
-                    _horas_por_mat_com_sched[e.codigo_materia][e.comision_id] = (  # noqa: E501
-                        _horas_por_mat_com_sched[e.codigo_materia].get(
-                            e.comision_id, 0.0,
-                        ) + _hrs
-                    )
+            _agg = _agregados_cronograma_por_materia(session, schedule_id)
+            _entry_count_sched = _agg.entry_count
+            _com_count_sched = _agg.com_count
+            _horas_por_mat_sched = _agg.horas_por_mat
+            _horas_por_mat_com_sched = _agg.horas_por_mat_com
 
     # Construir filas: UNA POR (materia, carrera, año, cuatri).
     #

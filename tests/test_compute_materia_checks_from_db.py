@@ -367,3 +367,71 @@ class TestConflictosEnChequeos:
             catalog["schedule_id"], "MAT101", conflictos=[],
         )
         assert result["estado"] == "OK"
+
+
+class TestComisionesVaciasAlineadas:
+    """2026-09-30: una comisión creada pero sin horarios tiene que
+    contarse igual en los tres consumidores (Ver / Editar, badge del
+    panel Validar y editor por materia de Validar), para que quede a la
+    vista y se pueda borrar si corresponde. Antes Validar sólo contaba
+    las comisiones referenciadas por algún horario y la vacía
+    desaparecía de su badge y de su resumen por comisión.
+    """
+
+    @pytest.fixture
+    def con_comision_vacia(self, catalog):
+        with _sesion() as s:
+            s.add(ComisionDB(
+                id=str(uuid.uuid4()), materia_codigo="MAT101",
+                nombre="2", numero=2, cupo=40,
+                schedule_id=catalog["schedule_id"], plan_cursada_id=None,
+            ))
+            s.commit()
+        return catalog
+
+    def test_ver_editar_cuenta_la_vacia(self, con_comision_vacia):
+        from src.ui.schedule_materia_editor import compute_materia_checks_from_db
+
+        result = compute_materia_checks_from_db(
+            con_comision_vacia["schedule_id"], "MAT101",
+        )
+        assert result["n_comisiones"] == 2
+        assert any(
+            c["id"] == "empty_com" and c["status"] == "warn"
+            for c in result["checks"]
+        )
+        assert result["estado"] == "Revisión"
+
+    def test_badge_validar_cuenta_la_vacia(self, con_comision_vacia):
+        from src.ui.validation_ui import _agregados_cronograma_por_materia
+
+        with _sesion() as s:
+            agg = _agregados_cronograma_por_materia(
+                s, con_comision_vacia["schedule_id"],
+            )
+        assert agg.com_count["MAT101"] == 2
+        assert agg.entry_count["MAT101"] == 2
+        assert agg.horas_por_mat["MAT101"] == 6.0
+        assert sorted(agg.horas_por_mat_com["MAT101"].values()) == [0.0, 6.0]
+
+    def test_editor_validar_muestra_la_vacia(self, con_comision_vacia):
+        from src.database.connection import get_session
+        from src.ui.schedule_materia_editor import _derive_n_comisiones
+
+        with next(get_session()) as s:
+            entries = list(s.exec(
+                select(ScheduleEntryDB)
+                .where(ScheduleEntryDB.schedule_id == con_comision_vacia["schedule_id"])
+            ).all())
+        assert _derive_n_comisiones(
+            entries,
+            schedule_id=con_comision_vacia["schedule_id"],
+            materia_codigo="MAT101",
+        ) == 2
+
+
+def _sesion():
+    """Sesión sobre el engine parcheado por `patched_session`."""
+    from src.database.connection import get_session
+
+    return next(get_session())

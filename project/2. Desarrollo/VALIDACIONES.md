@@ -532,7 +532,9 @@ Fase F del rediseño 2026-09-21: se agrega el estado `Revisión` para
 diferenciar "hay warnings que ameritan revisar" del genérico `OK`. Los
 warnings se computan reutilizando la misma máquina de chequeos que el
 editor por materia (sección 4), con la mezcla de flags
-`mismatch_hsem_com`, `no_divisible`, `desequilibrado`.
+`mismatch_hsem_com`, `no_divisible`, `desequilibrado`. Las comisiones
+vacías entran en el conteo y en el chequeo de equilibrio con 0 h
+(ver § 4.5).
 
 El filtro "Estado" del panel acepta multi-selección de cualquiera de
 los 6 valores.
@@ -639,6 +641,18 @@ Para cada materia activa del cronograma, el editor renderiza:
 
 - **OK**: todas las comisiones tienen al menos una clase asignada.
 - **WARN**: hay comisiones sin clases. Detalle lista los números.
+
+Las comisiones se cuentan igual en los tres consumidores: todas las
+`ComisionDB` del `(cronograma, materia)`, **incluidas las que no
+tienen horarios** (2026-09-30). Una comisión creada tiene que verse,
+aunque esté vacía, para poder borrarla si corresponde. Antes el badge
+del panel Validar y el editor por materia sólo contaban las comisiones
+referenciadas por algún horario: la vacía desaparecía de su resumen y
+de este chequeo, mientras Ver / Editar sí la mostraba. Los helpers
+alineados son `validation_ui._agregados_cronograma_por_materia`
+(badge del detalle por materia) y
+`schedule_materia_editor._derive_n_comisiones` (cantidad de comisiones
+por defecto del editor por materia).
 
 ### 4.6. `hsem_set` — Horas semanales definidas
 

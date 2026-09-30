@@ -952,7 +952,22 @@ def _derive_n_comisiones(
     cronograma — dato corrupto tipo import cross-schedule, como el
     caso FB15 documentado en el commit 6b21c1f — contribuía su
     ``numero`` al máximo e inflaba el resultado).
+
+    Con ``schedule_id`` y ``materia_codigo`` también cuentan las
+    comisiones creadas que todavía no tienen horarios (2026-09-30):
+    así aparecen en el resumen por comisión y en el chequeo de
+    comisiones vacías, igual que en Ver / Editar, y se pueden borrar si
+    corresponde.
     """
+    if schedule_id is not None and materia_codigo is not None:
+        with next(get_session()) as _s:
+            _nums = [
+                c.numero for c in list_comisiones_for_schedule_materia(
+                    _s, schedule_id, materia_codigo,
+                )
+            ]
+        if _nums:
+            return max(max(_nums), _max_paralelas_in_entries(entries), 1)
     if not entries:
         return 1
     # Resolver los numeros de las comisiones referenciadas.
