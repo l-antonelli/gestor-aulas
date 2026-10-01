@@ -4,7 +4,7 @@ En los capítulos 3 y 4 la operatoria y el problema quedaron descritos
 al nivel de "qué se hace y qué hay que decidir". Este capítulo da el
 paso siguiente: identificar las entidades del dominio, sus relaciones
 y las reglas de negocio que las gobiernan. Es el primer eslabón de la
-cadena introducida en §2.5.1, el **modelo conceptual del dominio**; su
+cadena introducida en §2.5, el **modelo conceptual del dominio**; su
 traducción a un esquema de datos queda para el capítulo 6, y su uso
 como piezas del programa lineal, para el capítulo 8.
 
@@ -17,12 +17,11 @@ de las personas.
 
 ## 5.1 Enfoque metodológico: modelado en capas
 
-Una facultad tiene muchas entidades (alumnos, profesores,
-inscripciones, exámenes, aulas, materias, comisiones), pero no todas
-son relevantes para asignar aulas. Modelizar sin filtrar produce
-diagramas grandes y poco informativos; filtrar sin justificar impide
-reconstruir por qué ciertas entidades quedaron dentro y otras afuera.
-Por eso organizamos el modelo en **tres capas** (Figura @fig:capas).
+No todas las entidades de la facultad son relevantes para asignar
+aulas. Por eso organizamos el modelo en **tres capas** (Figura @fig:capas):
+el dominio completo, el delimitado con las entidades directamente
+relevantes para la asignación, y el dominio de la solución que agrega
+entidades intermedias para resolver relaciones muchos-a-muchos.
 
 <!-- figura: Enfoque de modelado en tres capas {#fig:capas} -->
 ```mermaid
@@ -37,14 +36,6 @@ flowchart LR
     classDef body fill:#fffbe6,stroke:#c9a227,color:#000
     class C1,C2,C3 body
 ```
-
-La primera capa reúne todo lo que existe en la vida de la facultad.
-La segunda es el subconjunto mínimo con el que se puede describir el
-problema sin recortarlo. La tercera agrega entidades que no existen
-en la FCEIA como objetos independientes, pero que introducimos porque
-simplifican la solución; típicamente, convierten una relación
-muchos-a-muchos entre dos entidades del dominio en dos relaciones
-uno-a-muchos a través de una entidad intermedia.
 
 ## 5.2 Entidades del dominio del problema
 
@@ -280,8 +271,9 @@ resulta infactible.
 
 ### 5.5.7 Reglas de política institucional
 
-La operatoria de la FCEIA impone además políticas ligadas a la
-logística de alumnos y docentes. Las enunciamos acá como reglas del
+La operatoria de la FCEIA impone además políticas ligadas al
+traslado de los alumnos entre sedes y, en un caso, al de los
+docentes. Las enunciamos acá como reglas del
 dominio e indicamos dónde se las trata:
 
 - **Cursada sin superposiciones.** Para cada carrera, año y
@@ -289,17 +281,17 @@ dominio e indicamos dónde se las trata:
   una por materia obligatoria, que un alumno pueda cursar sin
   conflictos horarios ni traslados imposibles entre sedes. Se
   verifica antes de resolver el programa lineal (capítulos 8 y 9).
-- **Continuidad de sede para el docente.** Dos horarios de la misma
-  comisión en el mismo día, separados por menos de un margen
-  configurable (30 minutos por defecto), deben dictarse en la misma
-  sede (restricción R11 del capítulo 8).
-- **Continuidad de sede para el alumno.** La misma condición se
-  aplica a horarios consecutivos de materias distintas de una misma
-  carrera, año y cuatrimestre, para que el alumno tipo pueda pasar de
-  una clase a la siguiente (restricción R11).
-- **Misma sede por comisión.** Opcionalmente, todos los horarios de
-  una comisión deben caer en la misma sede, porque ciertos docentes
-  no se trasladan entre sedes durante la semana (restricción R12).
+- **Continuidad de sede para el alumno.** Dos horarios consecutivos
+  de materias distintas de una misma carrera, año y cuatrimestre,
+  separados por menos de un margen configurable (30 minutos por
+  defecto), deben dictarse en la misma sede, para que el alumno
+  pueda pasar de una clase a la siguiente (restricción R11 del
+  capítulo 8).
+- **Misma sede por comisión.** Es la única regla pensada desde el
+  punto de vista del docente: opcionalmente, todos los horarios de
+  una comisión deben caer en la misma sede, para que quien la dicta
+  no tenga que trasladarse entre sedes durante la semana
+  (restricción R12).
 - **Flexibilidad por calendario de exámenes.** En los períodos de
   exámenes debe poder generarse una variante transitoria de la
   asignación sin perder la de base. Queda fuera del programa lineal y
@@ -307,15 +299,14 @@ dominio e indicamos dónde se las trata:
 
 ## 5.6 Diagrama UML del dominio
 
-Las Figuras 4 y 5 resumen las entidades y sus relaciones en un
-diagrama de clases UML, partido en dos para que se lea con comodidad
-y sin atributos. Cada línea es una asociación y los números indican
-cuántas instancias participan de cada lado (`*` significa "muchas").
-La Figura @fig:clases-oferta muestra la oferta académica y los recursos físicos; la
-Figura @fig:clases-plan, la planificación del cuatrimestre. Ambas se conectan a
-través de la materia y el aula.
+La Figura @fig:clases-plan resume las entidades y sus relaciones en un
+diagrama de clases UML sin atributos. Cada línea es una asociación y
+los números indican cuántas instancias participan de cada lado (`*`
+significa "muchas"). Las relaciones rotuladas *sedes admisibles* y
+*laboratorios compatibles* se materializan con las entidades
+intermedias de la Tabla @tab:relaciones.
 
-<!-- figura: Diagrama de clases del dominio: oferta académica y recursos {#fig:clases-oferta} -->
+<!-- figura: Diagrama de clases del dominio {#fig:clases-plan} -->
 ```mermaid
 ---
 config:
@@ -331,6 +322,12 @@ classDiagram
     class GrupoDeMaterias["Grupo de materias"]
     class Sede
     class Aula
+    class Dictado
+    class CicloLectivo["Ciclo lectivo"]
+    class Cronograma
+    class PlanDeCursada["Plan de cursada"]
+    class Comision["Comisión"]
+    class HorarioSemanal["Horario semanal"]
 
     Carrera "1" -- "*" PlanDeEstudios
     PlanDeEstudios "1" -- "*" EntradaDePlan
@@ -339,26 +336,6 @@ classDiagram
     GrupoDeMaterias "*" -- "*" Sede : sedes admisibles
     Sede "1" -- "*" Aula
     Materia "*" -- "*" Aula : laboratorios compatibles
-```
-
-<!-- figura: Diagrama de clases del dominio: planificación del cuatrimestre {#fig:clases-plan} -->
-```mermaid
----
-config:
-  class:
-    hideEmptyMembersBox: true
----
-classDiagram
-    direction TB
-    class Materia
-    class Dictado
-    class CicloLectivo["Ciclo lectivo"]
-    class Cronograma
-    class PlanDeCursada["Plan de cursada"]
-    class Comision["Comisión"]
-    class HorarioSemanal["Horario semanal"]
-    class Aula
-
     Materia "1" -- "*" Dictado
     Dictado "*" -- "1..2" CicloLectivo
     CicloLectivo "1" -- "*" Cronograma
@@ -370,27 +347,8 @@ classDiagram
     HorarioSemanal "*" -- "0..1" Aula : se asigna
 ```
 
-Las relaciones rotuladas *sedes admisibles* y *laboratorios
-compatibles* se materializan con las entidades intermedias de la
-Tabla @tab:relaciones. Para no recargar las figuras omitimos las correlativas y las
-clases, que se derivan de entidades ya presentes.
-
 ## 5.7 Recapitulación
 
-El capítulo dejó fijado el modelo conceptual del dominio:
-
-1. **Tres capas de modelado**: dominio completo, dominio delimitado y
-   dominio de la solución, con la justificación de qué entra y qué
-   queda afuera.
-2. **Las entidades y su papel**, en el mismo vocabulario que usan la
-   interfaz y los capítulos siguientes.
-3. **Las relaciones muchos-a-muchos** resueltas con entidades
-   intermedias explícitas.
-4. **Las reglas de negocio como invariantes**: estructurales,
-   virtualidad, sedes admisibles, recursado, materias anuales,
-   coherencia teoría-laboratorio y políticas institucionales; varias
-   reaparecen como restricciones del programa lineal en el
-   capítulo 8.
-
-El capítulo siguiente traduce este modelo a un modelo de datos
-concreto.
+Quedan fijadas las entidades, sus relaciones y las reglas de negocio
+como invariantes. El capítulo siguiente traduce este modelo a un
+esquema de datos.

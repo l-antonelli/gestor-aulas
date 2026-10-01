@@ -64,19 +64,17 @@ alumnos que pueden cursar en ella en condiciones adecuadas) y una
 durante toda la jornada de la facultad; las excepciones puntuales
 quedan fuera del alcance de este trabajo.
 
-### 3.1.4 Grilla horaria oficial
+### 3.1.4 Los horarios de cursada
 
-La facultad divide el día en tres **turnos** (mañana, tarde y noche)
-formados por **bloques de 45 minutos**, que son la unidad mínima del
-cronograma oficial y el marco común para coordinar carreras y
-compartir aulas.
-
-En la práctica, las propuestas de horarios que arman las Escuelas no
-siempre respetan esos bloques: aparecen cursadas que no duran
-múltiplos de 45 minutos, cortes desfasados y superposiciones que la
-grilla no anticiparía. Esta brecha entre la grilla oficial y la real
-es una de las fricciones del proceso actual y condiciona parte de la
-modelización del capítulo 4.
+La facultad no tiene una grilla horaria común: cada Escuela propone
+los horarios de sus materias con el criterio que le resulta cómodo, y
+las clases empiezan y terminan en cualquier minuto. Aparecen así
+cursadas de duraciones dispares y cortes desfasados entre materias que
+comparten aulas. Esa falta de una unidad común es una de las
+fricciones del proceso actual: dos clases que se pisan por unos pocos
+minutos ya no pueden compartir aula, y el problema se vuelve más
+difícil de lo necesario. El capítulo 4 retoma este punto al definir
+el horario semanal.
 
 ## 3.2 El proceso actual de asignación de aulas
 
@@ -427,21 +425,6 @@ trabajo que encara el capítulo 5.
 
 ## 3.5 Recapitulación
 
-De este capítulo retomamos cuatro puntos:
-
-1. **La FCEIA es una organización compleja**, con dos sedes, muchas
-   carreras y aulas heterogéneas; el modelo tiene que representar
-   sedes, tipos de aula y compatibilidades.
-2. **La asignación es hoy manual**: se logra con un alto costo de
-   tiempo, con dificultad para replanificar y sin trazabilidad.
-3. **Los problemas son de tres tipos** (del alumnado, del proceso
-   administrativo y estructurales); los dos primeros pueden
-   mitigarse con un sistema adecuado, el tercero exige además un
-   modelo formal.
-4. **Los datos están dispersos y codificados sin criterio común**, y
-   varios conceptos carecen de definiciones compartidas: definirlos
-   con precisión es condición previa a cualquier automatización.
-
-El capítulo siguiente toma esta operatoria y la formaliza como
-problema, con el vocabulario de la investigación de operaciones
-presentado en §2.3.
+La asignación de aulas es hoy manual, costosa de replanificar y se
+apoya en datos dispersos y sin criterio común. El capítulo siguiente
+formaliza esta operatoria como problema.

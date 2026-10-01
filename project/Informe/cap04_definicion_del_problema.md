@@ -108,11 +108,15 @@ cientos de horarios semanales pero miles de clases con fecha. Como
 el patrón se repite, resolver una vez por horario equivale a
 resolver una vez por clase, con un modelo mucho más chico.
 
-La grilla oficial de la facultad (§3.1.4) organiza el día en turnos
-y bloques de 45 minutos, pero en la práctica las Escuelas no
-siempre ajustan sus horarios a esos bloques. Por eso el modelo toma
-las horas de inicio y fin efectivas que declara cada cátedra y deja
-la grilla como referencia, no como restricción.
+Como la facultad no tiene una grilla común (§3.1.4), el sistema la
+impone: los horarios deben empezar y terminar en múltiplos de una
+granularidad configurable (por defecto, 15 minutos) y caer dentro de
+la franja operativa de la semana (de 7 a 23, de lunes a sábado).
+Encuadrar los horarios en una grilla evita choques por unos pocos
+minutos entre clases que, de otro modo, podrían compartir aula, y
+reduce el riesgo de que el problema resulte infactible por esa sola
+razón. Los horarios que no respetan la grilla se señalan al validar
+el cronograma y se pueden ajustar automáticamente.
 
 ### 4.3.2 El recurso: el aula
 
@@ -184,12 +188,15 @@ No responden a límites físicos sino a decisiones de la facultad:
   superponerse. Como cada alumno cursa una sola comisión por
   materia, alcanza con que exista al menos una combinación de
   comisiones compatible.
-- **Traslados entre sedes.** Dos clases consecutivas del mismo día
-  no pueden dictarse en sedes distintas si el intervalo entre ellas
-  es menor a un margen (por defecto, 30 minutos), porque el
-  traslado entre Pellegrini y el Centro Universitario Rosario deja
-  de ser viable. La regla protege tanto al docente de una misma
-  comisión como al alumno que cursa materias del mismo año.
+- **Traslados entre sedes.** Dos clases consecutivas del mismo día,
+  de materias que cursa un mismo alumno (las del mismo año de una
+  carrera), no pueden dictarse en sedes distintas si el intervalo
+  entre ellas es menor a un margen (por defecto, 30 minutos), porque
+  el traslado entre Pellegrini y el Centro Universitario Rosario deja
+  de ser viable.
+- **Una sede por comisión.** Opcionalmente, todos los horarios de
+  una comisión se dictan en la misma sede, para que el docente no
+  tenga que trasladarse durante la semana.
 - **Cursada posible.** Para cada carrera, año y cuatrimestre debe
   existir al menos una combinación de comisiones, una por materia
   obligatoria, que un alumno pueda cursar sin superposiciones ni
@@ -316,22 +323,7 @@ riesgo de inconsistencias.
 
 ## 4.8 Recapitulación
 
-El capítulo dejó fijados cuatro puntos que se retoman más adelante:
-
-1. **El problema es un caso de asignación de recursos bajo
-   restricciones**, una familia bien estudiada por la investigación
-   de operaciones (§4.2).
-2. **Las entidades son horarios semanales y aulas**, y la decisión
-   asigna a cada horario exactamente un aula (§4.3).
-3. **Las restricciones se agrupan en tres familias**: estructurales
-   (duras), de política institucional (en general duras) y de
-   preferencia operativa (blandas, con penalización asimétrica entre
-   sobreocupación y subocupación) (§4.4 y §4.5).
-4. **El problema es combinatoriamente grande y presenta efecto
-   cascada**, lo que justifica la programación lineal entera y el
-   diagnóstico previo presentados en el capítulo 2 (§4.7).
-
-Con esto el problema queda comprendido en su operatoria (capítulo 3)
-y definido en su estructura (capítulo 4). La Parte III construye
-sobre esta definición el modelo del dominio, base de la formulación
-matemática del capítulo 8.
+El problema queda definido como una asignación de horarios semanales
+a aulas bajo restricciones duras y blandas, combinatoriamente grande y
+con efecto cascada. El capítulo siguiente construye sobre esta
+definición el modelo del dominio.

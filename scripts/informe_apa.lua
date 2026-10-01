@@ -59,3 +59,47 @@ function Table(tbl)
   table.insert(out, tbl)
   return out
 end
+
+-- Fragmentos de código con `fuente="ruta"` en sus atributos: van dentro
+-- de una tabla de una sola celda con borde y fondo gris (Google Docs
+-- descarta los bordes de párrafo al importar), y debajo llevan un
+-- epígrafe con el archivo del que se tomaron.
+local function xml_escape(t)
+  return (t:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+end
+
+local function recuadro(codigo)
+  local borde = '<w:%s w:val="single" w:sz="6" w:space="0" w:color="8C8C8C"/>'
+  local bordes = ""
+  for _, lado in ipairs({"top", "left", "bottom", "right"}) do
+    bordes = bordes .. borde:format(lado)
+  end
+  local parrafos = {}
+  for linea in (codigo .. "\n"):gmatch("(.-)\n") do
+    table.insert(parrafos,
+      '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:jc w:val="left"/></w:pPr>'
+      .. '<w:r><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>'
+      .. '<w:sz w:val="16"/></w:rPr><w:t xml:space="preserve">' .. xml_escape(linea)
+      .. '</w:t></w:r></w:p>')
+  end
+  return '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>' .. bordes
+    .. '</w:tblBorders><w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="120" w:type="dxa"/>'
+    .. '<w:bottom w:w="80" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar></w:tblPr>'
+    .. '<w:tblGrid><w:gridCol w:w="9070"/></w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/>'
+    .. '<w:shd w:val="clear" w:color="auto" w:fill="F4F4F4"/></w:tcPr>'
+    .. table.concat(parrafos) .. '</w:tc></w:tr></w:tbl>'
+end
+
+function CodeBlock(cb)
+  local fuente = cb.attributes["fuente"]
+  if not fuente then
+    return nil
+  end
+  return {
+    pandoc.RawBlock("openxml", recuadro(cb.text)),
+    div({pandoc.Para({
+      pandoc.Emph({pandoc.Str("Fragmento"), pandoc.Space(), pandoc.Str("de")}), pandoc.Space(),
+      pandoc.Code(fuente), pandoc.Str("."),
+    })}, "Nota de figura"),
+  }
+end

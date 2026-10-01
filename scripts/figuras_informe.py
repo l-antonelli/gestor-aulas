@@ -221,9 +221,33 @@ def a6_vs_a6p() -> None:
     _guardar(fig, "a6_vs_a6p.png")
 
 
+def ramificacion_acotacion() -> None:
+    """Árbol de ramificación y acotación de un problema de minimización."""
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    nodos = {
+        "raiz": (4, 3.3, "Relajación del problema\ncota 12, x₁ = 0,5", AZUL_CLARO, AZUL),
+        "x1_0": (1.8, 1.75, "x₁ = 0\nsolución entera 13\nmejor conocida", VERDE_CLARO, VERDE),
+        "x1_1": (6.2, 1.75, "x₁ = 1\ncota 12,5, x₂ = 0,4\nse sigue ramificando", AZUL_CLARO, AZUL),
+        "x2_0": (4.9, 0.2, "x₂ = 0\nentera 14, peor que 13\nse descarta", "#f3d6d6", ROJO),
+        "x2_1": (7.5, 0.2, "x₂ = 1\ncota 15, peor que 13\nse poda", "#f3d6d6", ROJO),
+    }
+    for a, b in (("raiz", "x1_0"), ("raiz", "x1_1"), ("x1_1", "x2_0"), ("x1_1", "x2_1")):
+        xa, ya = nodos[a][:2]
+        xb, yb = nodos[b][:2]
+        ax.plot([xa, xb], [ya - 0.42, yb + 0.42], color=GRIS, lw=1.2, zorder=1)
+    for x, y, texto, fondo, borde in nodos.values():
+        _caja(ax, x, y, 2.3, 0.84, texto, fondo, borde, fontsize=8.5)
+    ax.text(4, 4.15, "Óptimo: 13 (rama x₁ = 0)", ha="center", fontsize=10, weight="bold", color=VERDE)
+    ax.set_xlim(0.3, 9)
+    ax.set_ylim(-0.45, 4.45)
+    ax.axis("off")
+    _guardar(fig, "ramificacion_acotacion.png")
+
+
 if __name__ == "__main__":
     grafo_bipartito()
     palomar()
     ejemplo_lp()
     efecto_cascada()
     a6_vs_a6p()
+    ramificacion_acotacion()

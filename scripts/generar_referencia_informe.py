@@ -161,6 +161,28 @@ def main():
     nota.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     nota.paragraph_format.space_after = Pt(10)
 
+    # Fragmentos de código: recuadrados, con fondo gris claro (el
+    # epígrafe con el archivo de origen lo agrega informe_apa.lua).
+    if "Source Code" in por_nombre:
+        cod = est("Source Code")
+        cod.font.size = Pt(8.5)
+        ppr = cod.element.get_or_add_pPr()
+        bdr = OxmlElement("w:pBdr")
+        for lado in ("top", "left", "bottom", "right"):
+            b = OxmlElement(f"w:{lado}")
+            for k, v in (("w:val", "single"), ("w:sz", "6"), ("w:space", "4"), ("w:color", "8C8C8C")):
+                b.set(qn(k), v)
+            bdr.append(b)
+        ppr.append(bdr)
+        shd = OxmlElement("w:shd")
+        for k, v in (("w:val", "clear"), ("w:color", "auto"), ("w:fill", "F4F4F4")):
+            shd.set(qn(k), v)
+        ppr.append(shd)
+        cod.paragraph_format.space_before = Pt(6)
+        cod.paragraph_format.space_after = Pt(2)
+        cod.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        cod.paragraph_format.keep_with_next = True
+
     # Tablas al estilo APA: línea arriba, debajo del encabezado y al pie,
     # sin líneas verticales; encabezado centrado.
     tabla = next(s for s in doc.styles if s.name == "Table")

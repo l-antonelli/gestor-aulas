@@ -103,11 +103,9 @@ convención usual de la investigación operativa.
   grupo `grupo(m)`.
 - `Sim`: *grupos maximales de simultaneidad*, es decir, conjuntos
   de horarios que se dictan al mismo tiempo el mismo día (§8.3.3).
-- `P_R11`: pares de horarios consecutivos separados por menos
-  tiempo que el margen fijado. Se consideran dos casos: horarios
-  de la misma comisión (traslado del docente) y horarios de
-  materias distintas de un mismo año y cuatrimestre de una
-  carrera (traslado del alumno).
+- `P_R11`: pares de horarios consecutivos de materias distintas
+  de un mismo año y cuatrimestre de una carrera, separados por
+  menos tiempo que el margen fijado.
 
 ### 8.2.2 Parámetros
 
@@ -128,8 +126,8 @@ convención usual de la investigación operativa.
   si su grupo está en modo BLANDO.
 - `pin(h)`: aula fijada manualmente por el usuario para `h`, si
   la hay.
-- Pesos y tolerancias del objetivo: `λ_over`, `λ_under`,
-  `λ_sede_pref`, `tol_over`, `tol_under`, ajustables por el
+- Pesos y tolerancias del objetivo: `λ_sobre`, `λ_sub`,
+  `λ_sede_pref`, `tol_sobre`, `tol_sub`, ajustables por el
   usuario.
 
 ### 8.2.3 Variables de decisión
@@ -142,7 +140,7 @@ convención usual de la investigación operativa.
 - `y[c, s] ∈ {0, 1}`: vale 1 si la comisión `c` se dicta en la
   sede `s`. Sólo se usa cuando se exige una única sede por
   comisión (R12).
-- `over[h], under[h] ≥ 0`: sobreocupación y subocupación del
+- `sobre[h], sub[h] ≥ 0`: sobreocupación y subocupación del
   horario `h`.
 - `α[k] ∈ [0, 1]`: proporción de la matrícula del dictado que
   corresponde a la comisión `k`. Sólo se usa cuando el usuario
@@ -153,9 +151,9 @@ convención usual de la investigación operativa.
 Minimizar
 
 $$
-\lambda_{\text{over}} \sum_{h} \text{over}[h]
+\lambda_{\text{sobre}} \sum_{h} \text{sobre}[h]
 \;+\;
-\lambda_{\text{under}} \sum_{h} \text{under}[h]
+\lambda_{\text{sub}} \sum_{h} \text{sub}[h]
 \;+\;
 \lambda_{\text{sede\_pref}} \sum_{h \in H_{\text{BLANDO}}}
 \sum_{\substack{a \in A \\ \text{sede}(a) \neq \text{sede\_pref}(h)}}
@@ -165,7 +163,7 @@ $$
 donde `H_BLANDO` son los horarios cuyo grupo está en modo BLANDO
 y tienen sede preferida.
 
-Los pesos por defecto son `λ_over = 10`, `λ_under = 1` y
+Los pesos por defecto son `λ_sobre = 10`, `λ_sub = 1` y
 `λ_sede_pref = 5`. La asimetría entre los dos primeros expresa
 que la sobreocupación (los alumnos no entran en el aula) es un
 problema físico más grave que la subocupación (un aula grande
@@ -209,15 +207,15 @@ teórica; si decide laboratorio, debe ser un laboratorio
 compatible con la materia. El vínculo se expresa con
 desigualdades lineales entre `t[h]` y las variables `x`.
 
-**R6. Sobreocupación y subocupación.** Las variables `over[h]` y
-`under[h]` miden el exceso o el faltante de capacidad del aula
+**R6. Sobreocupación y subocupación.** Las variables `sobre[h]` y
+`sub[h]` miden el exceso o el faltante de capacidad del aula
 asignada frente a los inscriptos esperados, con tolerancias:
 
 $$
-\text{over}[h] \ge \text{insc}(h) - (1 + \text{tol\_over}) \sum_{a} \text{cap}(a) \cdot x[h, a]
+\text{sobre}[h] \ge \text{insc}(h) - (1 + \text{tol\_sobre}) \sum_{a} \text{cap}(a) \cdot x[h, a]
 $$
 
-y análogamente para `under[h]`. Como el objetivo las minimiza, en
+y análogamente para `sub[h]`. Como el objetivo las minimiza, en
 el óptimo toman exactamente el valor del exceso o del faltante.
 
 **R7. Redistribución de la matrícula.** Cuando está habilitada,
@@ -254,12 +252,18 @@ $$
 $$
 
 Junto con R1, equivale a "si `h₁` se dicta en `s₁`, `h₂` no
-puede dictarse en `s₂`". Se aplica tanto a los traslados del
-docente como a los del alumno.
+puede dictarse en `s₂`": el alumno que sale de una clase llega a
+tiempo a la siguiente.
 
-**R12. Misma sede por comisión.** Cuando el usuario lo exige,
-las variables `y[c, s]` obligan a que todos los horarios de una
-comisión se dicten en la misma sede.
+Aparte de este caso, el mismo margen se aplica a un caso puntual:
+dos horarios consecutivos de una misma comisión en el mismo día,
+algo que rara vez ocurre. Si se exige R12, ese caso ya queda
+cubierto.
+
+**R12. Misma sede por comisión.** Es la regla que mira al
+docente. Cuando el usuario la exige, las variables `y[c, s]`
+obligan a que todos los horarios de una comisión se dicten en la
+misma sede.
 
 ### 8.2.6 Un ejemplo pequeño
 
@@ -289,14 +293,14 @@ Escribimos `x_ij` en lugar de `x[h_i, a_j]`. Como las clases de teoría
 sólo admiten aulas teóricas y el laboratorio sólo admite `a₃`, la
 compatibilidad (R2) deja siete variables de las doce posibles:
 `x₁₁, x₁₂, x₂₁, x₂₂, x₃₃, x₄₁` y `x₄₂`. Se usan los pesos por defecto
-(`λ_over = 10`, `λ_under = 1`), sin tolerancia para la sobreocupación
+(`λ_sobre = 10`, `λ_sub = 1`), sin tolerancia para la sobreocupación
 y con una tolerancia del 20 % para la subocupación: un aula recién
 cuenta como subocupada cuando sobra más de una quinta parte de su
 capacidad.
 
 **Función objetivo.**
 
-$$\min \; 10 \,(\text{over}_1 + \text{over}_2 + \text{over}_3 + \text{over}_4) \;+\; (\text{under}_1 + \text{under}_2 + \text{under}_3 + \text{under}_4)$$
+$$\min \; 10 \,(\text{sobre}_1 + \text{sobre}_2 + \text{sobre}_3 + \text{sobre}_4) \;+\; (\text{sub}_1 + \text{sub}_2 + \text{sub}_3 + \text{sub}_4)$$
 
 **R1. Cada horario en exactamente un aula.**
 
@@ -315,15 +319,15 @@ En `a₃` sólo puede ir `h₃`, así que su restricción se cumple sola.
 de inscriptos sobre la capacidad del aula asignada y la capacidad
 sobrante más allá de la tolerancia, una fórmula por horario:
 
-$$\text{over}_1 \ge 70 - 40\,x_{11} - 80\,x_{12}, \qquad \text{under}_1 \ge 32\,x_{11} + 64\,x_{12} - 70$$
+$$\text{sobre}_1 \ge 70 - 40\,x_{11} - 80\,x_{12}, \qquad \text{sub}_1 \ge 32\,x_{11} + 64\,x_{12} - 70$$
 
-$$\text{over}_2 \ge 35 - 40\,x_{21} - 80\,x_{22}, \qquad \text{under}_2 \ge 32\,x_{21} + 64\,x_{22} - 35$$
+$$\text{sobre}_2 \ge 35 - 40\,x_{21} - 80\,x_{22}, \qquad \text{sub}_2 \ge 32\,x_{21} + 64\,x_{22} - 35$$
 
-$$\text{over}_3 \ge 25 - 30\,x_{33}, \qquad \text{under}_3 \ge 24\,x_{33} - 25$$
+$$\text{sobre}_3 \ge 25 - 30\,x_{33}, \qquad \text{sub}_3 \ge 24\,x_{33} - 25$$
 
-$$\text{over}_4 \ge 45 - 40\,x_{41} - 80\,x_{42}, \qquad \text{under}_4 \ge 32\,x_{41} + 64\,x_{42} - 45$$
+$$\text{sobre}_4 \ge 45 - 40\,x_{41} - 80\,x_{42}, \qquad \text{sub}_4 \ge 32\,x_{41} + 64\,x_{42} - 45$$
 
-con todas las `x` binarias y `over`, `under` no negativas. El resto
+con todas las `x` binarias y `sobre`, `sub` no negativas. El resto
 de las restricciones no interviene: los tipos de clase están
 declarados (R4 y R5 se cumplen con los datos), hay una sola sede (R8,
 R10, R11 y R12) y no hay aulas fijadas ni redistribución de
@@ -335,10 +339,10 @@ compartir aula porque no se superponen. Quedan entonces dos
 alternativas:
 
 - `h₂` en `a₁` y `h₁`, `h₄` en `a₂`. Nadie queda sin lugar; sólo `h₄`
-  queda holgado (45 inscriptos en un aula de 80, `under₄ = 64 − 45 =
+  queda holgado (45 inscriptos en un aula de 80, `sub₄ = 64 − 45 =
   19`). Costo: **19**.
 - `h₂` en `a₂` y `h₁`, `h₄` en `a₁`. Faltan 30 lugares para `h₁` y 5
-  para `h₄`, y `h₂` queda holgado (`under₂ = 29`). Costo:
+  para `h₄`, y `h₂` queda holgado (`sub₂ = 29`). Costo:
   10 · (30 + 5) + 29 = **379**.
 
 El resolutor elige la primera. El ejemplo muestra el criterio del
@@ -381,39 +385,26 @@ La verificación se hace por momento de simultaneidad y por sede.
 
 ### 8.3.3 Grupos de simultaneidad
 
-La restricción R3 impide que dos horarios que se superponen compartan
-aula. La forma más directa de escribirla es *par por par*: para cada
-par de horarios superpuestos y cada aula, a lo sumo uno de los dos la
-ocupa. Funciona, pero cuando muchos horarios coinciden a la misma hora
-la cantidad de pares crece muy rápido (veinte horarios simultáneos
-forman 190 pares) y cada par aporta una restricción por aula.
+R3 impide que dos horarios superpuestos compartan aula. Escribirla
+par por par funciona, pero si veinte horarios coinciden a la misma
+hora hay 190 pares, y cada uno suma una restricción por aula.
 
-La alternativa es agrupar. Si en un instante dado hay varios horarios
-en curso, todos se superponen entre sí, y alcanza con una sola
-restricción que diga "de todos ellos, a lo sumo uno ocupa esta aula".
-Llamamos *grupo de simultaneidad* al conjunto de horarios en curso en
-un mismo instante, y *grupo maximal* al que no queda contenido dentro
-de otro grupo más grande. En el ejemplo de §8.2.6, entre las 9 y las 10
-están en curso `h₁`, `h₂` y `h₃`: ese grupo es maximal. Entre las 8 y
-las 9 sólo están `h₁` y `h₃`, pero ese grupo ya está incluido en el
-anterior y no hace falta escribirlo aparte. Una sola desigualdad por
-aula, `x₁ₐ + x₂ₐ + x₃ₐ ≤ 1`, reemplaza a las tres de los pares
-`(h₁, h₂)`, `(h₁, h₃)` y `(h₂, h₃)`.
+Hay una forma más simple: si en un instante hay varios horarios en
+curso, alcanza con decir "de todos ellos, a lo sumo uno ocupa esta
+aula". A ese conjunto de horarios en curso a la vez lo llamamos
+*grupo de simultaneidad*, y es *maximal* cuando no está contenido en
+otro más grande. En el ejemplo de §8.2.6, de 9 a 10 están en curso
+`h₁`, `h₂` y `h₃`, y una sola desigualdad por aula,
+`x₁ₐ + x₂ₐ + x₃ₐ ≤ 1`, reemplaza a las tres de los pares.
 
-Las dos formulaciones admiten exactamente las mismas asignaciones,
-pero la agrupada es mejor por dos motivos. Genera muchas menos
-restricciones: cuando los horarios son intervalos de tiempo, los
-grupos maximales son a lo sumo tantos como horarios hay, y se
-encuentran recorriendo la semana en orden de hora de inicio, como
-enseña la teoría de *grafos de intervalos* desarrollada por Golumbic
-[5]. Además, su relajación lineal (§2.3.3) es más ajustada: con la
-formulación por pares, la relajación admite soluciones fraccionarias
-que la agrupada descarta (por ejemplo, poner cada uno de tres horarios
-simultáneos "medio" en la misma aula), de modo que el resolutor
-necesita ramificar menos. En la programación lineal entera, estas
-desigualdades se conocen como *desigualdades de clique*, y Wolsey [12]
-muestra que dominan a las formuladas por pares. El Anexo B compara
-ambas formulaciones sobre casos de prueba.
+Las dos formas admiten las mismas asignaciones, pero la agrupada
+genera muchas menos restricciones (cuando los horarios son intervalos
+de tiempo, los grupos maximales son a lo sumo tantos como horarios,
+según Golumbic [5]) y le da al resolutor una relajación más ajustada
+(§2.3.3), así que tiene que ramificar menos. En programación lineal
+entera se las conoce como *desigualdades de clique*, y Wolsey [12]
+muestra que superan a las formuladas por pares. El Anexo B compara
+ambas sobre casos de prueba.
 
 ## 8.4 Verificación estructural previa
 
@@ -450,116 +441,50 @@ verificación, un plan con problemas estructurales podía ocupar al
 resolutor varios minutos y terminar en un "infactible" sin
 ninguna pista sobre la causa.
 
-## 8.5 Construcción dinámica del programa lineal
+## 8.5 Construcción, resolución y aplicación
 
 El programa lineal no es fijo: en cada corrida se arma desde cero
 con los datos vigentes y las opciones que eligió el usuario. Los
-pasos son:
+horarios virtuales se separan (cuentan para R4 pero no ocupan aula),
+sólo se crean variables para los pares horario-aula compatibles (con
+lo que R2 y R8 se cumplen de antemano), se calculan los grupos de
+simultaneidad y los pares de horarios consecutivos en riesgo de
+traslado, y se plantean las restricciones que correspondan. El
+resolutor devuelve la solución óptima, la constancia de
+infactibilidad o el aviso de que se agotó el tiempo máximo.
 
-1. **Reunir los datos** de horarios, aulas, comisiones,
-   laboratorios compatibles, grupos de materias y pronósticos de
-   matrícula, y determinar qué horarios son virtuales según la
-   regla jerárquica del capítulo 5.
-2. **Separar los horarios virtuales** en `H_∅`: cuentan para R4
-   pero no ocupan aula.
-3. **Calcular la compatibilidad** de cada par horario-aula por
-   tipo y por sede admitida. Los pares incompatibles no generan
-   variables, con lo que R2 y R8 se cumplen de antemano.
-4. **Calcular los grupos de simultaneidad** recorriendo la grilla
-   semanal en orden cronológico.
-5. **Detectar los pares de horarios consecutivos en riesgo** de
-   traslado, del docente y del alumno.
-6. **Plantear el modelo**: variables, las restricciones que
-   correspondan según las opciones elegidas y la función
-   objetivo.
-7. **Resolver**: el resolutor aplica ramificación y acotación
-   (§2.3.3) y devuelve la solución óptima, la constancia de
-   infactibilidad o el aviso de que se agotó el tiempo máximo.
+La solución óptima se aplica de una sola vez al patrón semanal: cada
+horario presencial queda con su aula y, si su tipo estaba abierto,
+con el tipo que resolvió el modelo; las aulas fijadas que el usuario
+pidió respetar no se tocan. La corrida queda registrada con su
+configuración y sus indicadores, de modo que puede reproducirse y
+compararse con otras.
 
-## 8.6 Aplicación de la solución
+## 8.6 Diagnóstico de la infactibilidad y veredicto
 
-Cuando el resolutor encuentra la solución óptima, el sistema la
-aplica al patrón semanal: cada horario presencial queda con el
-aula asignada y, si su tipo estaba abierto, con el tipo que
-resolvió el modelo. Los horarios virtuales quedan sin aula y las
-aulas fijadas manualmente que el usuario pidió respetar no se
-modifican.
+Cuando el resolutor declara el problema infactible y la verificación
+previa no había encontrado bloqueos, el sistema busca la causa
+relajando las restricciones candidatas (R3, R4, R5, R8, R11 y R12) de
+a una por vez: si al quitar una el problema pasa a tener solución,
+esa restricción es sospechosa. Entre varias causas posibles se
+informa primero la que admite la acción más directa del usuario, como
+flexibilizar la sede de un grupo de materias concreto; si ninguna
+alcanza sola, se prueban combinaciones. La técnica aproxima el
+*subsistema irreducible de infactibilidad*, el menor conjunto de
+restricciones cuya combinación impide toda solución (Anexo B).
 
-Cada corrida queda registrada con la configuración usada, el
-resultado (óptimo, infactible o tiempo agotado), los indicadores
-principales (horarios asignados y reasignados respecto de la
-corrida anterior, sobreocupaciones, subocupaciones, valor del
-objetivo) y, si corresponde, el diagnóstico de infactibilidad.
+Toda corrida termina con un **veredicto** en lenguaje llano: el
+estado final, la causa probable si la hay, los horarios que quedaron
+sin aula y la configuración usada. Así, en lugar de un "infactible"
+opaco, el usuario recibe una recomendación concreta con la que puede
+iterar.
 
-## 8.7 Diagnóstico por relajación selectiva
+## 8.7 Cierre del capítulo
 
-Cuando el resolutor declara el problema infactible y la
-verificación previa no había encontrado bloqueos, el sistema
-busca la causa con un **diagnóstico por relajación selectiva**.
-La técnica aproxima el concepto de *subsistema irreducible de
-infactibilidad*: el menor conjunto de restricciones cuya
-combinación impide toda solución. El detalle está en el Anexo B;
-en criollo, el procedimiento es el siguiente:
-
-1. **Relajar de a una.** Se quita, de a una por vez, cada
-   restricción candidata (R3, R4, R5, R8, R11, R12) y se vuelve a
-   resolver. Si al quitar una el problema pasa a tener solución,
-   esa restricción es sospechosa.
-2. **Descartar falsos culpables.** Algunas relajaciones funcionan
-   sólo porque le dan holgura al resolutor, sin ser la causa real.
-   Por ejemplo, R4 sólo se considera causa si al relajarla
-   aparecen materias cuyas horas no cierran.
-3. **Priorizar.** Si quedan varias causas, se informa primero la
-   que admite la acción más directa del usuario: las de sede
-   (R8, R12, R11) antes que las estructurales (R3, R4, R5).
-4. **Precisar el grupo cuando la causa es R8.** Se prueba pasar
-   cada grupo de modo DURO a BLANDO por separado, para recomendar
-   qué grupo concreto conviene flexibilizar.
-5. **Probar combinaciones.** Si ninguna relajación individual
-   alcanza, la infactibilidad es combinada: se prueban pares de
-   relajaciones (por ejemplo, flexibilizar un grupo y dejar de
-   exigir R12) y se informan los que funcionan.
-
-El resultado se presenta como una recomendación concreta: "la
-causa probable es tal; para resolverla, conviene hacer tal cosa".
-Esta capacidad es la que hace del sistema, más que una
-herramienta de optimización opaca, un asistente con el que el
-usuario puede iterar.
-
-## 8.8 Veredicto y transparencia
-
-Toda corrida termina con un **veredicto** de estructura fija,
-cualquiera sea el resultado: el estado final, un resumen en una o
-dos oraciones, la causa de infactibilidad si la hay, los bloqueos
-detectados con sus reglas, los horarios que quedaron sin aula y la
-configuración completa usada (pesos, tolerancias, modos y
-opciones). La interfaz muestra siempre el veredicto, con la
-posibilidad de desplegar el detalle. Como la configuración queda
-registrada, cualquier corrida puede reproducirse con exactitud y
-dos corridas pueden compararse para entender qué cambió.
-
-## 8.9 Cierre del capítulo
-
-En este capítulo formalizamos el núcleo del sistema:
-
-1. **El problema se modela como un programa lineal entero**, con
-   variables binarias `x[h, a]` para la asignación, variables
-   auxiliares `t[h]`, `y[c, s]` y `α[k]` para decisiones internas
-   y variables continuas `over[h]` y `under[h]` para el objetivo.
-2. **Las restricciones R1 a R12** traducen las reglas del
-   capítulo 5: asignación única, compatibilidad, ausencia de
-   superposiciones, reparto entre teoría y laboratorio, sedes
-   admitidas, aulas fijadas, preferencia de sede, continuidad de
-   sede para docentes y alumnos y, opcionalmente, una sede por
-   comisión.
-3. **La verificación estructural previa** (§8.4) evita resolver
-   problemas que no tienen solución, apoyándose en el principio
-   del palomar, el teorema de Hall y los grupos de simultaneidad.
-4. **El diagnóstico por relajación selectiva** (§8.7) convierte un
-   "infactible" en una recomendación concreta.
-5. **El veredicto** (§8.8) hace transparente cada corrida y
-   permite reproducirla y compararla.
-
-El capítulo siguiente trata las validaciones que rodean al
-asignador y garantizan que los datos que llegan al modelo cumplen
-las condiciones que las restricciones dan por supuestas.
+La asignación queda formulada como un programa lineal entero cuyas
+restricciones R1 a R12 traducen las reglas del capítulo 5. La
+verificación previa evita resolver problemas sin solución, y el
+diagnóstico y el veredicto convierten cada corrida en información
+útil para el usuario. El capítulo siguiente trata las validaciones
+que garantizan que los datos que llegan al modelo cumplen lo que las
+restricciones dan por supuesto.

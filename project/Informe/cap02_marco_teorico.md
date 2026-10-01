@@ -77,25 +77,13 @@ este trabajo:
 
 ### 2.1.2 Chiavenato y Mintzberg aplicados a la FCEIA
 
-La introducción ya caracterizó a la FCEIA con las dos tipologías:
-según Chiavenato [1], es una *organización compleja* (diferenciación
-horizontal alta, vertical moderada y dispersión espacial en dos
-sedes); según Mintzberg [7], es una *burocracia profesional*, cuya
-parte clave es el núcleo operativo (los docentes) y cuyo mecanismo de
-coordinación principal es la normalización de habilidades. No
-repetimos aquí esas definiciones; sólo conviene remarcar dos
-consecuencias de cada una.
-
-De Chiavenato se desprende que, en una organización compleja, la
-dificultad operativa principal no es la longitud de la cadena de mando
-sino la **multiplicidad de actores, actividades y recursos que deben
-articularse en tiempo y espacio**, que es justamente lo que enfrenta
-la coordinación académica cada cuatrimestre. De Mintzberg se
-desprende que los docentes coordinan su trabajo a partir de su
-formación previa (un profesor de Análisis Matemático sabe cómo
-enseñar la materia porque es matemático, no porque un manual se lo
-indique) y que, por eso mismo, gozan de una autonomía muy superior a
-la de un operario industrial típico.
+La introducción ya caracterizó a la FCEIA según Chiavenato [1] como
+*organización compleja* y según Mintzberg [7] como *burocracia
+profesional*. De estas caracterizaciones se desprende que la dificultad
+operativa principal es la **multiplicidad de actores, actividades y
+recursos que deben articularse en tiempo y espacio**, y que los
+docentes coordinan su trabajo a partir de su formación previa, gozando
+de una autonomía muy superior a la de un operario industrial típico.
 
 ### 2.1.3 Implicancias para el diseño de una solución
 
@@ -116,7 +104,7 @@ para el resto del informe:
    físicos.** La formación de un docente asegura que sepa dictar su
    materia, pero no decide qué aula ocupa. Esa coordinación exige un
    mecanismo adicional: información compartida, reglas explícitas y un
-   proceso de decisión. Ése es el hueco que viene a llenar este
+   proceso de decisión. Ese es el hueco que viene a llenar este
    proyecto.
 
 El producto de esta sección es un **modelo conceptual** del dominio:
@@ -131,78 +119,36 @@ darle una forma más rígida, con entidades y reglas explícitas.
 Para traducir la comprensión de la organización a un sistema de
 software fiel al dominio real tomamos como marco el *diseño guiado
 por el dominio* (DDD, del inglés *Domain-Driven Design*), formulado
-por Evans [3] y ya presentado en la introducción.
+por Evans [3]. Su premisa central es que la distancia entre el modelo
+mental del experto del dominio y el modelo implementado en el código
+es la principal causa de fracaso de los proyectos de software
+complejos.
 
-### 2.2.1 Premisa y conceptos operativos
-
-Evans sostiene que la principal causa de fracaso de los proyectos de
-software complejos no es la falta de herramientas técnicas sino la
-**distancia entre el modelo mental del experto del dominio y el modelo
-implementado en el código**. Un sistema puede ser técnicamente
-correcto y, aun así, operativamente inservible si su vocabulario, sus
-categorías y sus reglas no coinciden con las de la organización a la
-que sirve. Por eso propone que la comprensión del dominio se encarne
-en el software mismo.
-
-De su propuesta tomamos cuatro conceptos, que se aplican en los
-capítulos 5 y 6:
+De su propuesta tomamos cuatro conceptos operativos:
 
 - **Dominio**: el sector de la realidad que el software modela; en
   nuestro caso, la operatoria académica de la FCEIA en lo referente al
   dictado de clases y la ocupación de aulas.
 - **Lenguaje ubicuo** (*ubiquitous language*): un vocabulario
-  compartido entre el experto del dominio y el diseñador, que aparece
-  de forma consistente en las conversaciones, la documentación y el
-  software. Cuando alguien de la Secretaría Académica dice "materia" y
-  el sistema entiende exactamente lo mismo, con los mismos atributos,
-  hay lenguaje ubicuo.
+  compartido entre el experto y el diseñador, que aparece de forma
+  consistente en las conversaciones, la documentación y el software.
 - **Entidad**: objeto del dominio con identidad propia, que sigue
-  siendo el mismo aunque cambien sus atributos. Una comisión es la
-  misma comisión aunque le cambien el aula o el cupo.
+  siendo el mismo aunque cambien sus atributos.
 - **Invariante**: propiedad que debe cumplir toda instancia de una
-  entidad *en todo momento*; por ejemplo, "una comisión pertenece
-  siempre a exactamente una materia". Toda invariante que el sistema
-  no garantice explícitamente termina violándose y deja datos
-  inconsistentes.
-
-El método completo (agregados, repositorios, servicios de dominio,
-contextos delimitados) excede el alcance del informe; sólo se lo
-menciona cuando una decisión de diseño se apoya en él.
-
-### 2.2.2 Del modelo conceptual al modelo operativo computacional
+  entidad en todo momento; por ejemplo, "una comisión pertenece
+  siempre a exactamente una materia".
 
 DDD es, sobre todo, un método para fijar el modelo del dominio en
 artefactos ejecutables. El modelo conceptual que produjo la ingeniería
 industrial es todavía discursivo; DDD lo lleva a un plano en el que el
-modelo es al mismo tiempo documentación y motor de la solución. En
-concreto, cada concepto identificado (materia, comisión, horario,
-aula, sede) pasa a ser una entidad con nombre propio y relaciones
-explícitas; las reglas de negocio dejan de ser recordatorios en un
-documento y pasan a ser validaciones que el sistema impone en cada
-operación; y los términos del lenguaje ubicuo se repiten tal cual en
-el software, de modo que la comunicación con el experto deja de ser
-una traducción.
-
-A ese resultado combinado (entidades, invariantes y vocabulario que
-viven en el software) lo llamamos **modelo operativo computacional**.
-La expresión no es de Evans: es una denominación propia del informe.
-Su rol es doble: ser una traducción fiel del modelo conceptual, para
-que toda decisión sobre el sistema sea también una decisión sobre el
-dominio real, y ser una estructura formal sobre la que las técnicas de
-optimización puedan actuar sin reinterpretar el dominio en cada
-ejecución. Sin este paso, la investigación de operaciones sólo tendría
-datos crudos (planillas de horarios, listas de aulas); con él, opera
-sobre un modelo integrado, consistente y con sus reglas garantizadas.
-
-La combinación de marcos tan distintos responde a la idea central del
-informe: Mintzberg y Chiavenato describen la organización *como es*;
-Evans permite diseñar un sistema *fiel a esa descripción*. Sin lo
-primero, el software queda desconectado de la facultad real; sin lo
-segundo, el diagnóstico no produce una herramienta concreta. Queda
-abierta, sin embargo, una pregunta que ninguno de los dos contesta:
-**qué hacer con el modelo**. Elegir horarios y aulas admite muchas
-respuestas factibles y una noción explícita de "mejor entre las
-factibles"; para tratarla con rigor hace falta el tercer cuerpo.
+modelo es al mismo tiempo documentación y motor de la solución. Cada
+concepto identificado (materia, comisión, horario, aula, sede) pasa a
+ser una entidad con nombre propio y relaciones explícitas; las reglas
+de negocio pasan a ser validaciones que el sistema impone en cada
+operación. A ese resultado lo llamamos **modelo operativo
+computacional**: entidades, invariantes y vocabulario que viven en el
+software y permiten que las técnicas de optimización actúen sobre un
+modelo integrado, consistente y con sus reglas garantizadas.
 
 ## 2.3 Marco técnico: investigación de operaciones
 
@@ -245,14 +191,21 @@ exigencia de integralidad, se habla de *programación lineal entera*
 (PLE); si sólo una parte de las variables es entera, de programación
 lineal entera mixta.
 
-La integralidad cambia radicalmente la dificultad computacional:
-mientras la programación lineal continua se resuelve en tiempo
-polinomial, la entera pertenece a la clase de problemas *NP-difíciles*,
-para los que, en el peor caso, el tiempo de resolución crece
-exponencialmente con la cantidad de variables. En la práctica, sin
-embargo, con formulaciones cuidadas y resolutores modernos, problemas
-de cientos a miles de variables binarias se resuelven en segundos o
-minutos.
+La integralidad cambia radicalmente la dificultad computacional.
+Para medirla, la teoría de la computación clasifica los problemas
+según cómo crece el tiempo de resolución cuando el problema se
+agranda. La programación lineal continua se resuelve en *tiempo
+polinomial*: si el problema duplica su tamaño, el tiempo crece en una
+proporción acotada. La entera, en cambio, es un problema
+*NP-difícil*: no se conoce ningún método que la resuelva siempre en
+tiempo polinomial, y en el peor caso hay que explorar una cantidad de
+combinaciones que crece exponencialmente con la cantidad de
+variables. Con 30 variables binarias ya hay más de mil millones de
+combinaciones posibles. En la práctica, sin embargo, con
+formulaciones cuidadas y resolutores modernos, problemas de cientos a
+miles de variables binarias se resuelven en segundos o minutos,
+porque el algoritmo de la sección siguiente evita recorrer casi todas
+esas combinaciones.
 
 ### 2.3.3 Ramificación y acotación
 
@@ -269,6 +222,18 @@ un subproblema es peor que la mejor solución entera ya encontrada,
 todo ese subárbol se descarta sin explorarlo. Con una formulación bien
 planteada, la mayor parte del árbol se poda temprano.
 
+La Figura @fig:ramificacion muestra el recorrido en un problema de
+minimización pequeño. La relajación del problema completo da una cota
+de 12, pero con `x₁ = 0,5`. Se ramifica sobre `x₁`: con `x₁ = 0` la
+relajación da 13 y una solución entera, que pasa a ser la mejor
+conocida; con `x₁ = 1` la cota es 12,5, pero `x₂` sale fraccionaria y
+hay que volver a ramificar. Con `x₂ = 0` aparece una solución entera
+de 14, peor que la que ya se tenía; con `x₂ = 1` la cota es 15. Como
+ninguna de las dos ramas puede mejorar el 13, se descartan sin seguir
+explorando, y el óptimo queda probado: es 13.
+
+![Ramificación y acotación en un problema de minimización pequeño](figuras/ramificacion_acotacion.png){#fig:ramificacion width=13cm}
+
 ### 2.3.4 Resolutores
 
 Un *resolutor* (*solver*) es un programa que recibe la descripción de
@@ -280,7 +245,7 @@ difundidos son Gurobi y CPLEX; entre los libres, el más usado es CBC
 con planos de corte. Para usarlo desde Python se recurre a una
 biblioteca de modelado como PuLP, que permite escribir la formulación
 de forma declarativa y la traduce al formato que el resolutor espera.
-Ésa es la combinación que emplea el sistema desarrollado.
+Esa es la combinación que emplea el sistema desarrollado.
 
 ### 2.3.5 Restricciones duras y blandas
 
@@ -314,55 +279,36 @@ el teorema de Hall, que se apoyan en un vocabulario mínimo de grafos.
 
 ### 2.4.1 Grafos, grafos bipartitos y apareamientos
 
-La *teoría de grafos* es uno de los formalismos que un ingeniero tiene
-a mano para modelizar **relaciones discretas entre objetos**: captura
-quién está conectado con quién, sin importar los atributos internos de
-los objetos, y con conexiones que están o no están (una ruta une o no
-dos ciudades; un aula puede o no recibir una clase). Se la usa en
-redes de transporte y de comunicaciones, planificación de proyectos,
-asignación de personal a puestos o distribución en planta, entre
-otros campos. Su utilidad es doble: hace visible una estructura que en
-prosa o en una tabla quedaría oculta, y habilita a aplicar resultados
-y algoritmos ya conocidos (apareamientos, flujos, caminos mínimos) sin
-reinventarlos. Además, un grafo es a la vez un objeto conceptual y una
-estructura de datos, por lo que lo que se razona sobre él se traslada
-directamente al software.
+La *teoría de grafos* modela **relaciones discretas entre objetos**:
+quién está conectado con quién, sin importar atributos internos. Se la
+usa en redes de transporte, planificación de proyectos, asignación de
+personal a puestos y distribución en planta, entre otros campos. Un
+grafo es a la vez un objeto conceptual y una estructura de datos.
 
-Formalmente, un *grafo* es un par `G = (V, E)`, donde `V` es un
-conjunto de **vértices** (entidades) y `E` un conjunto de pares no
-ordenados de vértices, llamados **aristas** (relaciones). Cuando hay
-dos poblaciones distintas y las relaciones sólo se dan entre elementos
-de una y otra (personas y puestos, o clases y aulas), se habla de un
-*grafo bipartito*: sus vértices se dividen en dos conjuntos disjuntos
-`X` e `Y`, y toda arista une un vértice de `X` con uno de `Y`. Es el
-modelo natural de los problemas de asignación: si `X` son tareas e `Y`
-recursos, una arista entre `x` e `y` indica que la tarea `x` es
-compatible con el recurso `y`.
+Un *grafo* es un par `G = (V, E)`, donde `V` es un conjunto de
+**vértices** y `E` un conjunto de pares no ordenados de vértices,
+llamados **aristas**. Un *grafo bipartito* divide sus vértices en dos
+conjuntos disjuntos `X` e `Y`, y toda arista une un vértice de `X` con
+uno de `Y`. Es el modelo natural de los problemas de asignación.
 
-La Figura @fig:bipartito ilustra estas ideas con cuatro clases
-simultáneas y cuatro aulas: cada línea une una clase con un aula
-compatible, y las líneas resaltadas forman un apareamiento que le da
-un aula distinta a cada clase.
+La Figura @fig:bipartito muestra cuatro clases simultáneas y cuatro
+aulas: cada línea une una clase con un aula compatible, y las líneas
+resaltadas forman un apareamiento que le da un aula distinta a cada
+clase.
 
 ![Grafo bipartito de compatibilidad entre clases y aulas, con un apareamiento que satura a las clases](figuras/grafo_bipartito.png){#fig:bipartito width=9cm}
 
 Un *apareamiento* (*matching*) es un subconjunto de aristas en el que
 ningún vértice aparece más de una vez. Un apareamiento **satura** a
-`X` si cubre a todos sus vértices; si además `X` e `Y` tienen el mismo
-tamaño, se lo llama **apareamiento perfecto**. Para razonar sobre los
-bloqueos se usa la *vecindad* `N(S)` de un subconjunto `S ⊆ X`: el
-conjunto de vértices de `Y` unidos por alguna arista con algún
-vértice de `S`.
+`X` si cubre a todos sus vértices. La *vecindad* `N(S)` de un
+subconjunto `S ⊆ X` es el conjunto de vértices de `Y` unidos por
+alguna arista con algún vértice de `S`.
 
 En nuestro problema, `X` es el conjunto de clases que se dictan en un
 mismo instante, `Y` el de aulas disponibles en ese instante, y existe
-una arista `(clase, aula)` cuando el aula es compatible con la clase
-(tipo, sede y capacidad adecuados). Preguntar si existe una asignación
-válida equivale a preguntar si existe un apareamiento que sature a
-`X`. Decidirlo, y encontrar ese apareamiento, se puede hacer en tiempo
-polinomial (por ejemplo, con el algoritmo de Hopcroft-Karp), y cuando
-no existe se puede identificar un subconjunto de `X` que evidencie el
-bloqueo.
+una arista `(clase, aula)` cuando el aula es compatible con la clase.
+Preguntar si existe una asignación válida equivale a preguntar si
+existe un apareamiento que sature a `X`.
 
 ### 2.4.2 Principio del palomar
 
@@ -438,64 +384,20 @@ grafos bipartitos, apareamientos y el teorema de Hall se toman de la
 bibliografía estándar de teoría de grafos, detallada al final del
 informe.
 
-## 2.5 Recapitulación y sinergias
+## 2.5 Recapitulación
 
-Este capítulo dejó disponibles las herramientas que se usan en el
-resto del informe:
-
-- Del instrumental de la ingeniería industrial y, en particular, de
-  Mintzberg y Chiavenato, la caracterización de la FCEIA como
-  *burocracia profesional compleja* y sus tres implicancias:
-  decisiones distribuidas, requerimientos cambiantes y necesidad de un
-  mecanismo de coordinación adicional para los recursos físicos.
-  Producto: el **modelo conceptual del dominio**.
-- De Evans, la idea de un software guiado por el dominio y los
-  conceptos de dominio, lenguaje ubicuo, entidad e invariante.
-  Producto: el **modelo operativo computacional**.
-- De la investigación de operaciones, la programación lineal entera,
-  la ramificación y acotación y la distinción entre restricciones
-  duras y blandas. Producto: la decisión de asignación planteada como
-  un problema de optimización explícito.
-- De la teoría de grafos y la combinatoria, los grafos bipartitos, los
-  apareamientos, el principio del palomar y el teorema de Hall.
-  Producto: la verificación estructural previa, que explica al usuario
-  la causa de una eventual infactibilidad.
-
-### 2.5.1 Cómo se articulan las piezas
-
-Cada eslabón de la cadena de la Figura @fig:cadena habilita al siguiente. Sin
-modelo conceptual no hay lenguaje ubicuo, y cualquier estructura de
-datos sería una interpretación arbitraria. Sin modelo operativo
-computacional no hay sobre qué actuar: las reglas pueden estar claras
-en un documento, pero mientras no se materialicen como entidades,
-invariantes y validaciones, el sistema no puede razonar sobre ellas.
-Y sin la matemática aplicada no hay forma de decidir con fundamento
-sobre ese modelo. Esta última aporta dos cosas: un lenguaje formal
-para expresar relaciones y restricciones (el grafo de compatibilidad,
-la formulación algebraica de las horas de teoría y laboratorio), que
-permite diagnosticar la factibilidad incluso antes de buscar una
-solución; y técnicas de optimización para establecer **qué es una
-buena solución** y elegir la mejor entre las válidas según los
-criterios del negocio. Con este tercer eslabón el sistema deja de ser
-un registro informatizado y pasa a ser una herramienta que propone
-soluciones y explica sus bloqueos en términos que el usuario reconoce.
-
-La relación también funciona hacia atrás: cuando el diagnóstico
-matemático detecta un bloqueo, lo presenta con el vocabulario del
-dominio, y la corrección suele pasar por ajustar el proceso de negocio
-(mover un horario, sumar una comisión, habilitar un aula), es decir,
-por volver al primer eslabón. Es esa bidireccionalidad la que hace del
-sistema una herramienta de mejora organizacional y no un motor de
-optimización desconectado.
-
-### 2.5.2 Dónde se usa cada pieza más adelante
-
-En el capítulo 3 se aplica el análisis de procesos a la operatoria
-actual de la coordinación académica. En el capítulo 4 se combina el
-diagnóstico organizacional con el vocabulario de la programación
-lineal para definir formalmente el problema. En los capítulos 5 y 6
-se aplica el marco de Evans para construir el modelo del dominio y su
-modelo de datos. En el capítulo 8 se formula el programa lineal entero
-concreto, se lo resuelve con ramificación y acotación mediante CBC y
-se aplican el palomar y Hall a la verificación estructural sobre el
-grafo de compatibilidad.
+Este capítulo dejó disponibles tres cuerpos de herramientas: del
+instrumental de la ingeniería industrial (Mintzberg y Chiavenato), la
+caracterización de la FCEIA como burocracia profesional compleja y el
+modelo conceptual del dominio; de Evans, el diseño guiado por el
+dominio y el modelo operativo computacional que traduce conceptos en
+entidades y reglas en invariantes; de la investigación de operaciones
+y la teoría de grafos, la programación lineal entera, la ramificación
+y acotación, y los criterios combinatorios de factibilidad (palomar y
+Hall). Cada eslabón habilita al siguiente: sin modelo conceptual no
+hay lenguaje ubicuo, sin modelo operativo no hay sobre qué actuar, y
+sin matemática aplicada no hay forma de decidir con fundamento. El
+capítulo 3 aplica el análisis de procesos a la operatoria actual; el 4
+define formalmente el problema; los capítulos 5 y 6 construyen el
+modelo del dominio y su modelo de datos; el 8 formula el programa
+lineal entero y la verificación estructural.

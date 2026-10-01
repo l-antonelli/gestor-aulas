@@ -137,17 +137,7 @@ mensaje que indicaba qué corregir.
 
 ## 9.6 Recapitulación
 
-1. **Las validaciones forman parte de la solución.** Convierten
-   al asignador de una caja negra en un asistente confiable.
-2. **Se escalonan en capas complementarias**: controles al
-   guardar y al editar, validación integral del cronograma y del
-   plan, y verificación previa del programa lineal.
-3. **Tres severidades ordenan la comunicación**: bloqueante,
-   advertencia e informativa, con mensajes específicos y
-   accionables.
-4. **Ningún resultado se usa desactualizado**: el sistema avisa
-   cuando los datos cambiaron después de validar.
-
-El capítulo siguiente recorre la herramienta en acción: cómo se
-opera el sistema desde la interfaz, con capturas comentadas y un
-ejemplo integral sobre datos reales de la FCEIA.
+Las validaciones, escalonadas en capas y con tres severidades,
+convierten al asignador en un asistente confiable que avisa cuando un
+resultado deja de describir los datos. El capítulo siguiente muestra
+la herramienta en acción.

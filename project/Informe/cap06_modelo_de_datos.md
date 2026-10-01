@@ -205,20 +205,7 @@ posible, para que ninguna capa superior pueda omitirla.
 
 ## 6.6 Recapitulación
 
-En este capítulo el modelo conceptual del capítulo 5 quedó
-traducido a una base de datos relacional. Los puntos que retoman
-los capítulos siguientes son tres:
-
-1. **Cada entidad del dominio tiene su tabla**, y las relaciones
-   muchos a muchos se representan con tablas intermedias.
-2. **Las decisiones de diseño relevantes** son el versionado de
-   los planes, la doble pertenencia excluyente de la comisión, la
-   partición en grupos de materias y las excepciones acotadas a la
-   verificación de solapamiento.
-3. **La consistencia se protege en tres niveles**: el motor, el
-   sistema y las verificaciones previas al asignador.
-
-Con el modelo de datos fijado, el capítulo 7 presenta la
-arquitectura de software que lo utiliza y las tecnologías que la
-sostienen, y el capítulo 8 formaliza las restricciones del dominio
-como el programa lineal entero que resuelve la asignación.
+El modelo conceptual queda traducido a una base relacional cuya
+consistencia se protege en el motor, en el sistema y antes de cada
+corrida del asignador. El capítulo 7 presenta la arquitectura que la
+usa.

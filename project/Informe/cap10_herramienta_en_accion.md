@@ -7,8 +7,9 @@
 
 ## 10.1 Recorrido guiado por la interfaz
 
-Recorremos las pantallas principales siguiendo el flujo de uso del
-capítulo 7, sobre los datos del primer cuatrimestre de 2026. El
+Recorremos las pantallas principales en el orden en que se usan
+cada cuatrimestre (cronograma, plan de cursada y asignación de
+aulas), sobre los datos del primer cuatrimestre de 2026. El
 detalle paso a paso de cada pantalla está en el manual de usuario
 (Anexo C).
 
@@ -36,17 +37,9 @@ solución y tiempo de resolución (Figura @fig:cap-veredicto).
 
 ![Veredicto de una corrida del asignador de aulas](figuras/capturas/asignador_veredicto.png){#fig:cap-veredicto width=15cm}
 
-**El mapa de saturación.** Para cada sede, el mapa de la Figura
-@fig:cap-mapa muestra, en franjas de quince minutos, cuántas aulas de
-cada tipo están ocupadas sobre el total disponible. Los colores
-permiten ver de un vistazo las franjas ajustadas, que son las que
-limitan cualquier cambio posterior.
 
-![Mapa de saturación de aulas por franja horaria en la sede Pellegrini](figuras/capturas/mapa_saturacion.png){#fig:cap-mapa width=13cm}
-
-> **Para completar:** si se quiere, sumar una captura de la carga del
-> catálogo o del calendario del cronograma (están en
-> `figuras/capturas/`).
+> **Para completar:** si se quiere, sumar una captura del calendario
+> del cronograma (está en `figuras/capturas/`).
 
 ## 10.2 Caso de estudio integral
 
@@ -64,8 +57,7 @@ limitan cualquier cambio posterior.
 > - la corrida del asignador: configuración (pesos, tolerancias,
 >   modo de sedes) y resultado (factible o no, tiempo de resolución).
 >
-> Presentar el resultado con una tabla resumen y la vista semanal o
-> el mapa de calor de ocupación.
+> Presentar el resultado con una tabla resumen y la vista semanal.
 
 ## 10.3 Escenarios de análisis ("qué pasa si")
 
