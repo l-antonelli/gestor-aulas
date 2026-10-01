@@ -1,6 +1,6 @@
 """Tests para asignacion_aulas_service.
 
-Fase 1 (R1, R4, R7): TestBuildInputs + TestRunLPDry.
+Fase 1 (R1, R3, R6): TestBuildInputs + TestRunLPDry.
 Fase 2 (persistencia, re-run, LPRunDB): TestApply, TestRunLP.
 """
 
@@ -154,7 +154,7 @@ def _add_comision_horario(
 
     # Recalcular hteo/hlab sobre la MATERIA sumando los horarios de
     # la primera comisión (la que acabamos de crear u otra existente).
-    # Esto mantiene R5 factible por construcción.
+    # Esto mantiene R4 factible por construcción.
     mat = session.get(_MDB, materia_codigo)
     if mat is not None:
         primera_com = session.exec(
@@ -236,7 +236,7 @@ class TestBuildInputs:
     def test_materias_virtuales_entran_con_flag_no_ocupa_aula(self, session):
         """Con strict_r5=True (default, Fase 8.1) las materias virtuales
         entran al modelo con flag `no_ocupa_aula`, para que participen de
-        R5 pero no tomen aula."""
+        R4 pero no tomen aula."""
         ctx = _seed_basic(session)
         m_vir = MateriaDB(
             codigo="VIR", nombre="Virtual", virtual=True,
@@ -323,7 +323,7 @@ class TestBuildInputs:
         """HorarioDB.virtual=True marca ese horario como no_ocupa_aula
         bajo strict_r5=True (Fase 8.1). Caso: un dictado con 2 horarios,
         uno presencial y otro virtual (ej. lab presencial + teoría
-        online). Ambos participan de R5 pero sólo el presencial toma
+        online). Ambos participan de R4 pero sólo el presencial toma
         aula.
         """
         ctx = _seed_basic(session)
@@ -689,15 +689,15 @@ class TestRunLPPinManual:
 
     Esto asegura que:
     - La solución que reporta el LP coincide con la que se persiste.
-    - Las restricciones estructurales (R4 no doble booking, R6 tipo↔aula,
-      R7 penalty) se resuelven consistentemente con los pins.
+    - Las restricciones estructurales (R3 no doble booking, R5 tipo↔aula,
+      R6 penalty) se resuelven consistentemente con los pins.
     - El resto de las asignaciones se optimizan **sujetas** a los pins,
       no ignorándolos.
     """
 
     def _seed_dos_horarios_simultaneos(self, session: Session) -> dict:
         """Dos comisiones distintas, mismo horario (Lunes 8-10). Están
-        en simultaneidad ⇒ R4 fuerza aulas distintas. La materia
+        en simultaneidad ⇒ R3 fuerza aulas distintas. La materia
         `HOT` tiene 25 esperados; la `COLD`, 5. Aulas: `a_grande`
         cap=30, `a_chica` cap=10.
 
@@ -747,7 +747,7 @@ class TestRunLPPinManual:
         """Bug: si pin manual está seteado con aula subóptima
         (`a_chica` para HOT), la solución del LP debería reflejarlo:
         `x_assignments[h_hot] == 'a_chica'` y `x_assignments[h_cold]
-        == 'a_grande'` (forzado por R4 + pin). Antes del fix, el LP
+        == 'a_grande'` (forzado por R3 + pin). Antes del fix, el LP
         ignoraba el pin y reportaba `a_grande` para HOT, dejando la
         solución del solver inconsistente con lo que se aplicaba.
         """
@@ -768,7 +768,7 @@ class TestRunLPPinManual:
             f"LP debe fijar h_hot a 'a_chica' (pin manual); "
             f"got {sol.x_assignments.get(h_hot.id)}"
         )
-        # Por R4 (simultaneidad), el otro horario tiene que ir a la
+        # Por R3 (simultaneidad), el otro horario tiene que ir a la
         # otra aula.
         assert sol.x_assignments.get(ctx["h_cold"].id) == "a_grande", (
             f"LP debe reubicar h_cold a 'a_grande' porque 'a_chica' "
@@ -781,7 +781,7 @@ class TestRunLPPinManual:
         para que el usuario vea el problema, en vez de silenciarlo.
         """
         ctx = self._seed_dos_horarios_simultaneos(session)
-        # Ambos horarios pinneados a la misma aula → viola R4.
+        # Ambos horarios pinneados a la misma aula → viola R3.
         for h in (ctx["h_hot"], ctx["h_cold"]):
             h.aula_id = "a_grande"
             h.aula_asignada_manualmente = True
@@ -1006,7 +1006,7 @@ def _seed_dos_comisiones_desbalanceadas(session: Session) -> dict:
     )
     session.add_all([com1, com2, h1, h2])
     # Ajustar hteo de la materia para que cada comisión tenga 2h de
-    # teoría (R5 strict). Cada comisión tiene 1 horario de 2h.
+    # teoría (R4 strict). Cada comisión tiene 1 horario de 2h.
     m = session.get(MateriaDB, "ALFA")
     m.horas_teoria = 2.0
     m.horas_laboratorio = 0.0
@@ -1100,7 +1100,7 @@ class TestToggleAlpha:
 class TestRelaxBuildModel:
     """build_model con flag relax omite las constraints correspondientes."""
 
-    def test_relax_R5_no_genera_constraint_lab(self, session):
+    def test_relax_R4_no_genera_constraint_lab(self, session):
         from src.services.asignacion_aulas_service import build_model
         ctx = _seed_basic(session)
         ciclo = ctx["ciclo"]
@@ -1114,15 +1114,15 @@ class TestRelaxBuildModel:
 
         inputs = build_inputs(session, "plan-1", LPConfig())
         prob_full, _ = build_model(inputs, LPConfig())
-        prob_relax, _ = build_model(inputs, LPConfig(), relax={"R5"})
+        prob_relax, _ = build_model(inputs, LPConfig(), relax={"R4"})
 
-        # El nombre R5_lab_* aparece en el modelo completo, no en el relajado.
+        # El nombre R4_lab_* aparece en el modelo completo, no en el relajado.
         names_full = {c.name for c in prob_full.constraints.values()}
         names_relax = {c.name for c in prob_relax.constraints.values()}
-        assert any(n.startswith("R5_lab_") for n in names_full)
-        assert not any(n.startswith("R5_lab_") for n in names_relax)
+        assert any(n.startswith("R4_lab_") for n in names_full)
+        assert not any(n.startswith("R4_lab_") for n in names_relax)
 
-    def test_relax_R4_no_genera_constraints_simultaneidad(self, session):
+    def test_relax_R3_no_genera_constraints_simultaneidad(self, session):
         from src.services.asignacion_aulas_service import build_model
         ctx = _seed_basic(session)
         ciclo = ctx["ciclo"]
@@ -1138,12 +1138,12 @@ class TestRelaxBuildModel:
 
         inputs = build_inputs(session, "plan-1", LPConfig())
         prob_full, _ = build_model(inputs, LPConfig())
-        prob_relax, _ = build_model(inputs, LPConfig(), relax={"R4"})
+        prob_relax, _ = build_model(inputs, LPConfig(), relax={"R3"})
 
         names_full = {c.name for c in prob_full.constraints.values()}
         names_relax = {c.name for c in prob_relax.constraints.values()}
-        assert any(n.startswith("R4_g") for n in names_full)
-        assert not any(n.startswith("R4_g") for n in names_relax)
+        assert any(n.startswith("R3_g") for n in names_full)
+        assert not any(n.startswith("R3_g") for n in names_relax)
 
 
 class TestIISAutomatico:
@@ -1196,9 +1196,9 @@ class TestIISAutomatico:
         # IIS NO se ejecutó (no hace falta).
         assert "iis" not in details
 
-    def test_iis_dispara_y_identifica_R5(self, session):
+    def test_iis_dispara_y_identifica_R4(self, session):
         """Caso construido donde el LP es infactible por desajuste de
-        partición teoría/lab, sin que ninguna cota lo detecte. R5 debe
+        partición teoría/lab, sin que ninguna cota lo detecte. R4 debe
         identificarse como relajación culpable y reportar la materia."""
         from src.database.models import (
             DictadoCicloDB, DictadoDB, HorarioDB, InscripcionHistoricaDB,
@@ -1209,7 +1209,7 @@ class TestIISAutomatico:
         # Materia con horas declaradas que NO cuadran con sus horarios.
         # `MIX` tiene hteo=2, hlab=2 (total 4h), pero los dos horarios
         # cargados están fijados ambos como teoría (suman 4h teo, 0h lab).
-        # Eso hace R5 infactible: no existe forma de poner el lab en
+        # Eso hace R4 infactible: no existe forma de poner el lab en
         # ningún horario porque ya están todos fijados a teoría.
         # La pre-validación de subset-sum NO lo cacha porque todos los
         # horarios están fijados (no hay horarios libres para mover).
@@ -1244,7 +1244,7 @@ class TestIISAutomatico:
             cupo=30,
         )
         session.add(comision)
-        # Un único horario de 4h fijado a TEORICA. Esto hace R5
+        # Un único horario de 4h fijado a TEORICA. Esto hace R4
         # infactible: 0h de lab fijadas, 4h de teoría, hlab=2 declarado.
         # El LP no puede partir: t=0 → suma_lab=0 != hlab=2.
         h_id = "h_mix"
@@ -1253,7 +1253,7 @@ class TestIISAutomatico:
             dia="Lunes", hora_inicio=time(8, 0), hora_fin=time(12, 0),
             tipo_clase="teorica",
         ))
-        # Aulas suficientes para que R3, R4, R6 NO sean limitantes.
+        # Aulas suficientes para que R2, R3, R5 NO sean limitantes.
         session.add_all([
             AulaDB(
                 id="t1", sede_id="S1", codigo_aula="t1",
@@ -1264,7 +1264,7 @@ class TestIISAutomatico:
                 nombre="Lab 1", capacidad=30, tipo="laboratorio",
             ),
         ])
-        # Compatibilidad lab para MIX (por si R6 con tipo=None decide).
+        # Compatibilidad lab para MIX (por si R5 con tipo=None decide).
         from src.database.models import MateriaLaboratorioDB
         session.add(MateriaLaboratorioDB(
             materia_codigo="MIX", aula_id="L1",
@@ -1285,10 +1285,10 @@ class TestIISAutomatico:
             assert "iis" not in details
         else:
             # Si no lo detectó, el IIS debe haberse ejecutado y
-            # señalado R5 como culpable.
+            # señalado R4 como culpable.
             iis = details.get("iis", {})
             assert iis.get("ran") is True
-            assert "R5" in iis.get("culpables", [])
+            assert "R4" in iis.get("culpables", [])
 
 
 # =============================================================================
@@ -1464,7 +1464,7 @@ class TestHerenciaPatron:
 
 
 # =============================================================================
-# R10 — Restriccion de sede por carrera/materia
+# R8 — Restriccion de sede por carrera/materia
 # =============================================================================
 
 
@@ -1501,12 +1501,12 @@ def _seed_plan_con_carrera(
     return ctx
 
 
-class TestR10SedePorCarrera:
+class TestR8SedePorCarrera:
     """Filtro de sedes admisibles aplicado a `compat` en build_inputs."""
 
     def test_carrera_sin_sedes_configuradas_no_filtra(self, session):
         """Si la carrera no tiene sedes configuradas, el LP asume 'todas'
-        (fallback) y compat se mantiene como sin R10."""
+        (fallback) y compat se mantiene como sin R8."""
         from src.services.asignacion_aulas_service import build_inputs
         _seed_plan_con_carrera(session, "A")
         # 2 aulas en sedes distintas.
@@ -1522,7 +1522,7 @@ class TestR10SedePorCarrera:
         session.commit()
         inputs = build_inputs(session, "plan-1", LPConfig())
         h_id = inputs.horarios[0].id
-        # Las 2 aulas deben ser compatibles (sin R10).
+        # Las 2 aulas deben ser compatibles (sin R8).
         assert inputs.compat[(h_id, "a1")] is True
         assert inputs.compat[(h_id, "a2")] is True
 
@@ -1941,7 +1941,7 @@ class TestComputeEstadoMetricas:
 
 
 # =============================================================================
-# Fase 3: preferencia blanda de sede (R12)
+# Fase 3: preferencia blanda de sede (R10)
 # =============================================================================
 
 
@@ -2041,7 +2041,7 @@ class TestPreferenciaBlandaSede:
 
         _inputs, solution = run_lp_dry(session, "plan-1", LPConfig())
         assert solution.status == "optimal"
-        # Cada horario tiene una aula distinta (R4: no doble booking).
+        # Cada horario tiene una aula distinta (R3: no doble booking).
         aulas_asignadas = set(solution.x_assignments.values())
         assert aulas_asignadas == {"a_pref", "a_alt"}
 
@@ -2073,7 +2073,7 @@ class TestPreferenciaBlandaSede:
 
 
 # =============================================================================
-# Fase 4: restricción de sedes consecutivas (R13)
+# Fase 4: restricción de sedes consecutivas (R11)
 # =============================================================================
 
 
@@ -2194,8 +2194,8 @@ class TestRestriccionSedesConsecutivas:
         assert inputs.pares_intersede_riesgo == []
 
 
-class TestR13ParesEntreMaterias:
-    """R13 debe forzar el margen intersede **también** entre horarios
+class TestR11ParesEntreMaterias:
+    """R11 debe forzar el margen intersede **también** entre horarios
     de materias distintas del mismo (carrera, año, cuatri).
 
     Motivación: aunque una comisión no tenga traslado interno (el
@@ -2289,7 +2289,7 @@ class TestR13ParesEntreMaterias:
         # Hoy la función sólo mira misma comisión: falla → 0 pares.
         # Con el fix debería ser 1 par (entre M1 y M2).
         assert len(inputs.pares_intersede_riesgo) >= 1, (
-            "R13 debería detectar el par intercomisión del mismo "
+            "R11 debería detectar el par intercomisión del mismo "
             "grupo curricular con gap corto"
         )
 
@@ -2308,11 +2308,11 @@ class TestR13ParesEntreMaterias:
         }
         assert len(sedes_asignadas) == 1, (
             f"El LP asignó M1 y M2 a sedes distintas: "
-            f"{sedes_asignadas}. Debería respetar R13 intercomisión."
+            f"{sedes_asignadas}. Debería respetar R11 intercomisión."
         )
 
     def test_lp_gap_suficiente_puede_dividir_sedes(self, session):
-        """Con gap >= margen, R13 no aplica → el LP puede elegir
+        """Con gap >= margen, R11 no aplica → el LP puede elegir
         libremente (aunque la preferencia blanda pueda influir)."""
         self._seed_dos_materias_contiguas(
             session, h2_ini=11, h2_fin=13,  # gap = 60 min
@@ -2322,12 +2322,12 @@ class TestR13ParesEntreMaterias:
 
 
 # =============================================================================
-# Fase 8.1: R5 completa (teoría + laboratorio) — nuevas ecuaciones
+# Fase 8.1: R4 completa (teoría + laboratorio) — nuevas ecuaciones
 # =============================================================================
 
 
-class TestR5Completa:
-    """R5 con strict_r5=True valida tanto teoría como laboratorio."""
+class TestR4Completa:
+    """R4 con strict_r5=True valida tanto teoría como laboratorio."""
 
     def _seed(self, session, hteo, hlab):
         ciclo = CicloDB(

@@ -166,7 +166,7 @@ vez con criterio estricto, para verificar su factibilidad, y otra con
 criterio flexible, para reducir traslados. Las materias que todavía
 no se clasificaron caen en un grupo *sin clasificar*, cuya presencia
 el sistema señala como advertencia. El grupo de materias interviene
-en las restricciones R10 y R12 del programa lineal (capítulo 8).
+en las restricciones R8 y R10 del programa lineal (capítulo 8).
 
 ## 5.4 Relaciones y multiplicidades
 
@@ -272,7 +272,7 @@ dos del mismo año si es anual.
 En cada comisión, la suma de las duraciones de los horarios de teoría
 debe coincidir con las horas de teoría declaradas por la materia, y
 lo mismo para las de laboratorio. La regla se refleja en la
-restricción R5 del programa lineal (capítulo 8): si el cronograma no
+restricción R4 del programa lineal (capítulo 8): si el cronograma no
 permite un reparto que respete la carga declarada, el problema
 resulta infactible.
 
@@ -290,14 +290,14 @@ dominio e indicamos dónde se las trata:
 - **Continuidad de sede para el docente.** Dos horarios de la misma
   comisión en el mismo día, separados por menos de un margen
   configurable (30 minutos por defecto), deben dictarse en la misma
-  sede (restricción R13 del capítulo 8).
+  sede (restricción R11 del capítulo 8).
 - **Continuidad de sede para el alumno.** La misma condición se
   aplica a horarios consecutivos de materias distintas de una misma
   carrera, año y cuatrimestre, para que el alumno tipo pueda pasar de
-  una clase a la siguiente (restricción R13).
+  una clase a la siguiente (restricción R11).
 - **Misma sede por comisión.** Opcionalmente, todos los horarios de
   una comisión deben caer en la misma sede, porque ciertos docentes
-  no se trasladan entre sedes durante la semana (restricción R14).
+  no se trasladan entre sedes durante la semana (restricción R12).
 - **Flexibilidad por calendario de exámenes.** En los períodos de
   exámenes debe poder generarse una variante transitoria de la
   asignación sin perder la de base. Queda fuera del programa lineal y

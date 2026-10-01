@@ -126,24 +126,24 @@ class TestR1SinAulaCompatible:
         assert any(b.codigo_regla == "R1" for b in r.bloqueos)
 
 
-class TestR5ParticionImposible:
+class TestR4ParticionImposible:
 
     def test_horas_no_cierran_bloquea(self, session):
         """Materia 2h teoría + 6h lab = 8h total, pero 1 horario de 2h."""
         _seed_plan_basico(session, hteo=2, hlab=6)
         r = check_factibilidad_estructural(session, "plan-1")
-        assert any(b.codigo_regla == "R5" for b in r.bloqueos)
+        assert any(b.codigo_regla == "R4" for b in r.bloqueos)
 
     def test_materia_sin_lab_horas_incompletas_no_bloquea(self, session):
-        """Materia con hlab=0: R5 no se aplica al LP, así que no debe
+        """Materia con hlab=0: R4 no se aplica al LP, así que no debe
         reportar bloqueo aunque suma_horarios < hteo (regresión: bug
         de falso positivo detectado 2026-09-07)."""
         # Materia con hteo=4, hlab=0 pero un solo horario de 2h.
-        # Esto NO es infactible para el LP (R5 no se materializa).
+        # Esto NO es infactible para el LP (R4 no se materializa).
         _seed_plan_basico(session, hteo=4, hlab=0)
         r = check_factibilidad_estructural(session, "plan-1")
-        assert not any(b.codigo_regla == "R5" for b in r.bloqueos), (
-            "R5 no debe reportar bloqueo cuando la materia no tiene "
+        assert not any(b.codigo_regla == "R4" for b in r.bloqueos), (
+            "R4 no debe reportar bloqueo cuando la materia no tiene "
             "laboratorio: la ecuación de partición no se instancia "
             "en el LP para esas materias."
         )
@@ -182,8 +182,8 @@ class TestR5ParticionImposible:
 
         r = check_factibilidad_estructural(session, "plan-1")
         # Total = 2 (lab) + 2 (teo pres) + 2 (teo virt) = 6 = hteo+hlab.
-        # R5 debe pasar aunque uno de los horarios sea virtual.
-        assert not any(b.codigo_regla == "R5" for b in r.bloqueos), (
+        # R4 debe pasar aunque uno de los horarios sea virtual.
+        assert not any(b.codigo_regla == "R4" for b in r.bloqueos), (
             "Los horarios virtuales deben contar hacia hteo/hlab. "
             "Bloqueos: "
             + str([(b.codigo_regla, b.titulo) for b in r.bloqueos])
@@ -191,7 +191,7 @@ class TestR5ParticionImposible:
 
     def test_horarios_virtuales_no_tapan_falta_real_de_horas(self, session):
         """Contra-prueba: si aun contando virtuales la suma no cierra,
-        R5 debe reportar bloqueo."""
+        R4 debe reportar bloqueo."""
         # Materia hteo=4, hlab=2 (total 6h), pero sólo 2 horarios de
         # 2h cada uno (1 lab + 1 teo virt) = 4h. Faltan 2h.
         _seed_plan_basico(session, hteo=4, hlab=2)
@@ -213,7 +213,7 @@ class TestR5ParticionImposible:
         session.commit()
 
         r = check_factibilidad_estructural(session, "plan-1")
-        assert any(b.codigo_regla == "R5" for b in r.bloqueos)
+        assert any(b.codigo_regla == "R4" for b in r.bloqueos)
 
 
 class TestCompatHall:
@@ -284,7 +284,7 @@ class TestCompatHall:
         )
 
 
-class TestR11PinManualIncompatible:
+class TestR9PinManualIncompatible:
 
     def test_pin_manual_apuntando_a_aula_incompatible(self, session):
         _seed_plan_basico(session)
@@ -301,7 +301,7 @@ class TestR11PinManualIncompatible:
         session.commit()
 
         r = check_factibilidad_estructural(session, "plan-1")
-        assert any(b.codigo_regla == "R11" for b in r.bloqueos)
+        assert any(b.codigo_regla == "R9" for b in r.bloqueos)
 
 
 class TestPlanInexistente:

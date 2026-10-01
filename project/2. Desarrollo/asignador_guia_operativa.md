@@ -96,7 +96,7 @@ El flujo típico es:
 4. **Balance teoría / laboratorio** declarado por la materia.
 5. **Ediciones manuales**, si el toggle "respetar ediciones
    manuales" está activo (§ 6).
-6. **Continuidad de sede intersede** (R13) para pares de horarios
+6. **Continuidad de sede intersede** (R11) para pares de horarios
    contiguos en riesgo — profesor de la misma comisión o alumno de
    materias distintas del mismo grupo curricular.
 7. **Preferencia de sede** (grupos en modo BLANDO — § 3).
@@ -139,19 +139,19 @@ prioridad — a usar con criterio.
 
 | Parámetro | Default | Efecto |
 |---|---|---|
-| **Peso de preferencia de sede (`λ_sede_pref`)** | 5 | Multiplicador del término R12. Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Cuanto más alto, más fuerte la preferencia por la primera sede de la lista blanda; con 0 se desactiva completamente. |
-| **Margen mínimo intersede (minutos)** | 30 | Umbral para detectar pares de horarios contiguos "en riesgo" que no dan tiempo para un traslado. Se aplica a R13 (pares de la misma comisión y pares de alumno del mismo grupo curricular). Con 0 se desactiva. |
-| **Forzar misma sede por comisión** | Off | Toggle que activa R14: todos los horarios de una misma comisión deben caer en la misma sede. Utíl cuando el docente no viaja entre sedes a mitad de semana. |
+| **Peso de preferencia de sede (`λ_sede_pref`)** | 5 | Multiplicador del término R10. Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Cuanto más alto, más fuerte la preferencia por la primera sede de la lista blanda; con 0 se desactiva completamente. |
+| **Margen mínimo intersede (minutos)** | 30 | Umbral para detectar pares de horarios contiguos "en riesgo" que no dan tiempo para un traslado. Se aplica a R11 (pares de la misma comisión y pares de alumno del mismo grupo curricular). Con 0 se desactiva. |
+| **Forzar misma sede por comisión** | Off | Toggle que activa R12: todos los horarios de una misma comisión deben caer en la misma sede. Utíl cuando el docente no viaja entre sedes a mitad de semana. |
 | **Modos por grupo (DURO/BLANDO)** | Todos DURO | Sección desplegable donde por cada grupo de materias se elige el modo con el que corre en esta corrida. Se detalla en § 3. |
 
 ### 2.4 Configuración avanzada
 
 | Parámetro | Default | Efecto |
 |---|---|---|
-| **Estricto R5 (`strict_r5`)** | On | Valida horas de teoría y horas de laboratorio por separado (ver R5 en el planteo). Con Off, sólo valida laboratorio (modo legacy). |
+| **Estricto R4 (`strict_r5`)** | On | Valida horas de teoría y horas de laboratorio por separado (ver R4 en el planteo). Con Off, sólo valida laboratorio (modo legacy). |
 | **Respetar ediciones manuales** | On | Fija como restricción dura las aulas marcadas manualmente. Con Off, el LP reasigna libremente incluso las aulas con pin manual (§ 6). |
-| **Redistribuir inscriptos entre comisiones (`activar_alpha`)** | Off | Activa R9: variables `α[k]` que reasignan la matrícula entre comisiones del mismo dictado. Experimental. |
-| **Peso intersede blanda (`λ_intersede`)** | 0 | Cableado en el modelo pero no activo hoy. Reservado para una variante blanda de R13. |
+| **Redistribuir inscriptos entre comisiones (`activar_alpha`)** | Off | Activa R7: variables `α[k]` que reasignan la matrícula entre comisiones del mismo dictado. Experimental. |
+| **Peso intersede blanda (`λ_intersede`)** | 0 | Cableado en el modelo pero no activo hoy. Reservado para una variante blanda de R11. |
 
 ### 2.5 Botones
 
@@ -192,7 +192,7 @@ listas independientes.
 ### 3.2 Modo DURO
 
 - Las sedes del set duro son las **únicas** admisibles para las
-  materias del grupo. R10 filtra las variables `x[h, a]` a esas
+  materias del grupo. R8 filtra las variables `x[h, a]` a esas
   sedes antes de instanciar el modelo.
 - El orden no tiene efecto: todas las sedes del set son
   equivalentes a nivel objetivo.
@@ -206,7 +206,7 @@ listas independientes.
 
 ### 3.3 Modo BLANDO
 
-- **Todas** las sedes son admisibles (R10 no filtra).
+- **Todas** las sedes son admisibles (R8 no filtra).
 - La primera sede de la lista blanda es la preferida: cero costo
   al objetivo.
 - El resto son alternativas: cada horario asignado a una de ellas
@@ -280,7 +280,7 @@ reasignar materias con un clic.
 - A5 tiene laboratorios compatibles en Pellegrini
   (`MateriaLaboratorioDB`).
 
-Resultado: R10 admite aulas de Siberia + los labs compatibles en
+Resultado: R8 admite aulas de Siberia + los labs compatibles en
 Pellegrini (por la excepción de laboratorio). El LP puede usar
 cualquiera.
 
@@ -302,7 +302,7 @@ estados posibles:
 El solver encontró la solución óptima. Todos los horarios
 presenciales recibieron aula. Los horarios virtuales quedan sin
 aula por diseño (no ocupan aula pero cuentan hacia las horas
-declaradas de la materia por R5 estricta).
+declaradas de la materia por R4 estricta).
 
 **Qué mirar después**:
 
@@ -318,7 +318,7 @@ declaradas de la materia por R5 estricta).
 
 El **chequeo pre-solve** detectó bloqueos antes de encender el
 solver. No se gastó tiempo de CBC. El veredicto enumera cada
-bloqueo con su regla (R1, R3+R4, R5, R11, R13, R13-camino,
+bloqueo con su regla (R1, R2+R3, R4, R9, R11, R11-camino,
 compat-pigeonhole, compat-hall) y las entidades involucradas.
 
 **Acción**: corregir los datos según el detalle del bloqueo. Ver
@@ -348,7 +348,7 @@ hay ambigüedades costosas de resolver.
 - Subir `timeout_seconds` en la configuración avanzada.
 - Revisar si hay bloqueos estructurales ocultos (correr chequeo
   pre-solve).
-- Simplificar la config (menos grupos BLANDO, R14 apagado, margen
+- Simplificar la config (menos grupos BLANDO, R12 apagado, margen
   intersede más bajo).
 
 ### 4.5 Restricciones activas — expander de auditoría
@@ -381,15 +381,15 @@ El panel muestra tres bloques:
 1. **Restricciones que rescatan al modelo** cuando se las relaja
    individualmente. Cada una viene con `feasible_relajado = true`.
 2. **Causa principal**. La restricción con mayor prioridad
-   accionable, elegida con el orden `R10 → R14 → R13 → R4 → R5 → R6`.
+   accionable, elegida con el orden `R8 → R12 → R11 → R3 → R4 → R5`.
    Es la que la UI recomienda revisar primero.
 3. **Falsos positivos filtrados**. Las restricciones que rescatan
-   al modelo pero por un artefacto conocido (típicamente R5 y R6
-   se marcan como culpables espurias cuando la causa real es R4).
+   al modelo pero por un artefacto conocido (típicamente R4 y R5
+   se marcan como culpables espurias cuando la causa real es R3).
 
 ### 5.2 Recomendaciones específicas por regla
 
-- **R10 (filtro DURO de sedes)** — Cuando R10 es la principal, el
+- **R8 (filtro DURO de sedes)** — Cuando R8 es la principal, el
   diagnóstico refina el análisis probando **cada grupo DURO a
   BLANDO por separado** (`_iss_r10_grupos_rescate`) y lista los que
   rescatan al modelo individualmente. Cada uno viene con:
@@ -401,28 +401,28 @@ El panel muestra tres bloques:
   BLANDO". El usuario elige cuál pasar (típicamente el de menor
   cantidad de materias — menos invasivo).
 
-- **R14 (forzar misma sede por comisión)** — Si estaba On, la
+- **R12 (forzar misma sede por comisión)** — Si estaba On, la
   recomendación es apagarlo. La UI lo señaliza con un botón directo
   en el diagnóstico.
 
-- **R13 (margen intersede)** — Recomendación: bajar
+- **R11 (margen intersede)** — Recomendación: bajar
   `margen_min_intersede_minutos` (por ejemplo de 30 a 15 o 0). El
   diagnóstico indica cuántos pares están efectivamente en riesgo
   con el margen actual.
 
-- **R4 (doble asignación)** — Es la más difícil de accionar porque
+- **R3 (doble asignación)** — Es la más difícil de accionar porque
   requiere agregar aulas al catálogo o mover horarios del
   cronograma. El diagnóstico apunta a la franja saturada y a la
   cantidad de aulas del tipo requerido en la unión de sedes
   admisibles.
 
-- **R5 (partición teoría / lab)** — Cuando la causa es real (no
+- **R4 (partición teoría / lab)** — Cuando la causa es real (no
   falso positivo), indica que las horas declaradas por la materia
   no cierran con las duraciones de los horarios cargados en el
   cronograma. Se arregla en Materias → editar → horas de teoría /
   laboratorio o ajustando los horarios.
 
-- **R6 (consistencia tipo ↔ pool)** — Cuando la causa es real,
+- **R5 (consistencia tipo ↔ pool)** — Cuando la causa es real,
   indica que un horario con `tipo_clase = ⊥` no tiene ni aula
   teórica ni laboratorio compatible disponible. Se arregla
   agregando laboratorios compatibles a la materia.
@@ -434,7 +434,7 @@ Cuando ninguna regla individual rescata al modelo, la UI muestra
 un bloque **"Combinaciones que rescatan"**. Se probaron pares de
 relajaciones:
 
-- Cada grupo DURO → BLANDO **combinado con** desactivar R14.
+- Cada grupo DURO → BLANDO **combinado con** desactivar R12.
 - Cada grupo DURO → BLANDO **combinado con** poner margen intersede
   en 0.
 
@@ -445,16 +445,16 @@ combinaciones.
 
 **Cuándo ocurre esto**: típicamente cuando el problema es
 saturación combinada entre un grupo DURO estricto y un margen
-intersede alto, o entre un grupo DURO y R14 activo. Rara vez
+intersede alto, o entre un grupo DURO y R12 activo. Rara vez
 requiere relajar tres o más restricciones simultáneamente.
 
 ### 5.4 Flujo recomendado ante `infeasible`
 
 1. Leer la **causa principal** que reporta el veredicto.
-2. Si es R10, mirar los **grupos de rescate** y pasar el que menos
+2. Si es R8, mirar los **grupos de rescate** y pasar el que menos
    materias afecte a BLANDO.
-3. Si es R14, apagar el toggle.
-4. Si es R13, bajar el margen.
+3. Si es R12, apagar el toggle.
+4. Si es R11, bajar el margen.
 5. Si no hay causa individual, mirar las **combinaciones** y
    aplicar la de menor impacto.
 6. Re-correr. Si el veredicto sigue siendo `infeasible`, iterar
@@ -471,13 +471,13 @@ fue el que resolvió.
 El operador puede fijar manualmente el aula de un horario desde
 distintos puntos de la UI (Cronogramas, Detalle del plan, Aulas
 por sede). Cuando lo hace, el horario queda marcado con
-`HorarioDB.aula_asignada_manualmente = True` — R11 en el planteo.
+`HorarioDB.aula_asignada_manualmente = True` — R9 en el planteo.
 
 ### 6.1 Toggle "Respetar ediciones manuales"
 
 En el panel del asignador está el toggle **"Respetar ediciones
 manuales"** (default On). Con On, las aulas manuales quedan fijas
-como restricción dura R11. Con Off, el LP las reasigna libremente y
+como restricción dura R9. Con Off, el LP las reasigna libremente y
 borra el flag manual.
 
 El flujo típico es dejarlo On: las decisiones manuales del operador
@@ -518,7 +518,7 @@ automáticamente.
 Si el aula pinneada dejó de ser compatible con el horario (cambió
 el tipo del aula, la sede quedó fuera de las admisibles del grupo
 en modo DURO, etc.), la corrida devuelve infactibilidad estructural
-en R11. La UI reporta el pin problemático y sugiere dos acciones:
+en R9. La UI reporta el pin problemático y sugiere dos acciones:
 
 - **Editar el horario** para elegir un aula compatible.
 - **Desmarcar el pin** (bajar el flag `aula_asignada_manualmente`)
@@ -565,7 +565,7 @@ comisiones o ajustar horarios.
 ### 7.2 Alcance de la excepción
 
 Las excepciones **sólo se aplican al chequeo de solapamiento**. El
-chequeo de intersede (R13, R13-camino) las **ignora**: el traslado
+chequeo de intersede (R11, R11-camino) las **ignora**: el traslado
 físico entre sedes es un problema independiente de qué alumnos
 cursen qué. Un alumno que teóricamente no cursa las dos materias
 igual puede necesitar el traslado, por lo que la excepción no
@@ -605,7 +605,7 @@ expander "Restricciones activas" se ve la config completa.
 
 Descripto en § 5. Aparece sólo cuando el veredicto es `infeasible`
 (no `infeasible_estructural`). Lista la causa principal, los grupos
-de rescate (si R10 es la culpable) y las combinaciones de rescate
+de rescate (si R8 es la culpable) y las combinaciones de rescate
 (si ninguna regla individual funciona).
 
 ### 8.3 Bloqueos estructurales (sólo `infeasible_estructural`)
@@ -613,7 +613,7 @@ de rescate (si R10 es la culpable) y las combinaciones de rescate
 Aparece cuando el chequeo pre-solve detectó bloqueos. Cada bloqueo
 viene con:
 
-- **Regla** (R1, R3+R4, R5, R11, R13, R13-camino, compat-pigeonhole,
+- **Regla** (R1, R2+R3, R4, R9, R11, R11-camino, compat-pigeonhole,
   compat-hall).
 - **Descripción** en lenguaje natural.
 - **Entidades involucradas** (horarios, materias, aulas, franjas).
@@ -637,7 +637,7 @@ Tabla con todos los horarios asignados en la corrida. Columnas:
 Expander que lista los horarios cuyo grupo corría en BLANDO y
 terminaron en una sede alternativa. Cada uno muestra la sede
 preferida, la sede efectiva y una razón hipotética (típicamente
-capacidad o combinación con R14). Sirve para auditar rápido el
+capacidad o combinación con R12). Sirve para auditar rápido el
 impacto de la preferencia blanda.
 
 ### 8.6 Mapa de saturación
@@ -763,23 +763,23 @@ Leer los bloqueos que reporta el veredicto en orden de aparición.
 Cada bloqueo tiene una regla y una descripción concreta. Las causas
 típicas:
 
-- **R1 con "sin aula compatible por R10"**: la materia del horario
+- **R1 con "sin aula compatible por R8"**: la materia del horario
   tiene un grupo con set duro vacío o con sedes donde no hay aulas
   del tipo requerido. Revisar en Materias → Grupos de materias.
 - **R1 con "sin aula compatible por tipo"**: la materia declara
   laboratorio pero no tiene ninguna aula en `MateriaLaboratorioDB`.
   Revisar en Aulas → laboratorio → "Materias que usan este
   laboratorio".
-- **R5 con "particion imposible"**: las horas declaradas por la
+- **R4 con "particion imposible"**: las horas declaradas por la
   materia no cierran con las duraciones de los horarios cargados
   en el cronograma. Revisar Materias → editar → horas de teoría y
   laboratorio, o el cronograma.
-- **R11 con "pin incompatible"**: un horario tiene aula manual que
+- **R9 con "pin incompatible"**: un horario tiene aula manual que
   ya no cumple las restricciones. Desmarcar o reasignar.
-- **R13 con "pares intersede"**: dos horarios contiguos de la misma
+- **R11 con "pares intersede"**: dos horarios contiguos de la misma
   comisión sin sede común factible. Bajar margen o cambiar
   cronograma.
-- **R13-camino con "sin combinación viable"**: no existe
+- **R11-camino con "sin combinación viable"**: no existe
   combinación de comisiones que un alumno de la carrera-año-cuatri
   pueda cursar sin conflictos. Revisar horarios de las materias
   involucradas.
@@ -788,7 +788,7 @@ típicas:
 
 Leer el diagnóstico cruzado (§ 5). La UI recomienda una acción
 concreta. Regla general: aplicar la recomendación **menos
-invasiva** primero (grupo con menos materias a BLANDO, apagar R14,
+invasiva** primero (grupo con menos materias a BLANDO, apagar R12,
 bajar margen).
 
 ### 10.3 El LP resolvió pero muchos horarios quedaron en sede alternativa
@@ -797,8 +797,8 @@ Revisar el mapa de saturación en vista **preferida** y **máxima**:
 
 - Si la sede preferida está muy saturada, es un problema de
   capacidad — hay que sumar aulas o mover horarios.
-- Si la máxima no está saturada, es que otras restricciones (R13,
-  R14) empujaron a alternativas. Revisar si conviene relajarlas.
+- Si la máxima no está saturada, es que otras restricciones (R11,
+  R12) empujaron a alternativas. Revisar si conviene relajarlas.
 
 También revisar el expander **"Horarios fuera de sede preferida"**
 del panel de resultado. Lista uno por uno con razón hipotética.
@@ -808,7 +808,7 @@ del panel de resultado. Lista uno por uno con razón hipotética.
 - Subir `timeout_seconds` en la configuración avanzada.
 - Bajar cantidad de grupos BLANDO (menos flexibilidad = menos
   búsqueda).
-- Apagar R14.
+- Apagar R12.
 - Bajar `margen_min_intersede_minutos`.
 - Revisar si hay bloqueos estructurales que estén generando
   búsqueda inútil (correr chequeo pre-solve primero).
@@ -849,8 +849,8 @@ se recalcula automáticamente. Volver a apretar "Correr asignador".
 ### 10.9 El chequeo dice verde pero el LP da infactible
 
 Es raro pero puede pasar por combinaciones inusuales que el chequeo
-estructural no captura (por ejemplo, saturación combinada entre R13
-y R10 muy específica). El diagnóstico cruzado post-solve va a
+estructural no captura (por ejemplo, saturación combinada entre R11
+y R8 muy específica). El diagnóstico cruzado post-solve va a
 identificar la causa. Si aparece "combinaciones que rescatan", la
 recomendación de menor impacto es la que hay que probar primero.
 

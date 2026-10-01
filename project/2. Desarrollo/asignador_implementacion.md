@@ -2,8 +2,8 @@
 
 > **Última actualización**: 2026-09-11.
 > **Estado**: Fases 1 a 8 completas, más las extensiones posteriores
-> descriptas en este documento (Grupos de materias, R13-alumno,
-> R13-camino, IIS combinado, saneamiento de virtuales, veredicto
+> descriptas en este documento (Grupos de materias, R11-alumno,
+> R11-camino, IIS combinado, saneamiento de virtuales, veredicto
 > estructurado, panel de calidad).
 >
 > **Ver también**:
@@ -45,13 +45,23 @@ Cuatro decisiones de diseño rigen toda la implementación:
 3. **Re-run incremental**. Cada corrida tiene un parámetro
    `fecha_desde` que acota la propagación al *cache*. Las clases
    con fecha anterior quedan intactas. El toggle "respetar
-   ediciones manuales" traduce los pins del usuario a R11 (dura).
+   ediciones manuales" traduce los pins del usuario a R9 (dura).
 4. **Auditoría completa por corrida**. Cada ejecución persiste un
    `LPRunDB` con la config completa, status, métricas top-line y
    un `details_json` con el resultado por horario, el veredicto
    humano-legible, el diagnóstico y el IIS si corrió.
 
 ---
+
+> **Numeración de las restricciones (2026-10-01).** Las restricciones
+> se numeran R1 a R12 en forma correlativa (RF-LP-19). Los
+> identificadores internos en minúscula conservan la numeración
+> anterior porque son campos de configuración y claves guardadas en
+> las corridas: `strict_r5` gobierna la R4 (reparto teoría-laboratorio)
+> y los nombres con `r10` (`relax_r10`, `aulas_admisibles_pre_r10`,
+> `compute_impacto_r10`…) se refieren a la R8 (sedes admitidas por
+> grupo). La tabla completa está en
+> `src/database/connection.py:EQUIVALENCIAS_CODIGOS_RESTRICCIONES`.
 
 ## 2. Arquitectura del servicio
 
@@ -89,13 +99,13 @@ base de datos:
   aislar el resto del código de los modelos ORM.
 - **`compute_simultaneidad_groups(horarios)`**. Barrido de eventos
   `O(N log N)` por día que devuelve los **grupos maximales de
-  simultaneidad** `Sim` para R4. Cada grupo es un `set[str]` de
+  simultaneidad** `Sim` para R3. Cada grupo es un `set[str]` de
   IDs de horarios que comparten al menos un instante activo. La
   formulación por grupos maximales domina a la formulación por
   pares en cantidad de restricciones y en fuerza de la relajación
   lineal (ver § 5.3 del Doc 1).
-- **`compute_compat(horario, aula, materia_lab_map)`**. Aplica R3
-  (compatibilidad por tipo). No mira sedes — R10 se aplica encima
+- **`compute_compat(horario, aula, materia_lab_map)`**. Aplica R2
+  (compatibilidad por tipo). No mira sedes — R8 se aplica encima
   en `build_inputs`.
 - **`compute_pares_intersede_riesgo(horarios, comision_de_horario,
   margen_min, grupos_curriculares_por_horario)`**. Detecta pares
@@ -117,9 +127,9 @@ base de datos:
   falla Hall, el subconjunto testigo.
 - **`diagnose_infeasibility(...)`**. Diagnóstico estructural
   clásico pre-solve. Cubre 5 familias: horarios sin aula
-  compatible (R1+R3+R10), franjas saturadas (pigeonhole global),
+  compatible (R1+R2+R8), franjas saturadas (pigeonhole global),
   saturación por tipo (refinamiento por pools disjuntos), Hall
-  violators (matching bipartito), partición teoría/lab (R5). Ver
+  violators (matching bipartito), partición teoría/lab (R4). Ver
   § 4.1.
 
 ### 2.2 `factibilidad_service` (con DB)
@@ -131,7 +141,7 @@ Consolida el chequeo estructural pre-solve en una API única:
   con la lista de `Bloqueo`s, cada uno con `codigo_regla`,
   `severidad`, `titulo`, `detalle` y `entidades_a_revisar`.
 - **`check_camino_cursada(session, plan_id, margen_min)`**. Chequeo
-  R13-camino: para cada terna `(carrera, año, cuatri)` verifica
+  R11-camino: para cada terna `(carrera, año, cuatri)` verifica
   que exista al menos una combinación de comisiones que un alumno
   pueda cursar sin conflictos horarios ni traslados imposibles.
   Backtracking DFS con cache por par `(cid_a, cid_b)`. Cap
@@ -175,20 +185,20 @@ Arma el `LPInputs` del modelo desde la base:
 2. Filtra los horarios virtuales (`resolve_virtual`) y decide qué
    hacer con ellos según `strict_r5`:
    - Si `strict_r5=True` (default): entran al conjunto `H`
-     marcados en `no_ocupa_aula_ids`. Participan de R5 pero se
-     excluyen de R1/R3/R4/R7/R10/R11/R12/R13/R14.
+     marcados en `no_ocupa_aula_ids`. Participan de R4 pero se
+     excluyen de R1/R2/R3/R6/R8/R9/R10/R11/R12.
    - Si `strict_r5=False` (legacy): se filtran completamente.
 3. Resuelve `insc[h]` desde el forecast por comisión.
 4. Resuelve sedes admisibles y preferidas por horario consultando
    `resolver_sedes_admisibles_por_materia` del servicio de grupos.
-5. Computa `compat[(h, a)]` aplicando R3 + R10. Con `relax_r10=True`,
-   se salta el filtro R10 completamente (usado por IIS).
+5. Computa `compat[(h, a)]` aplicando R2 + R8. Con `relax_r10=True`,
+   se salta el filtro R8 completamente (usado por IIS).
 6. Computa los grupos de simultaneidad sobre la grilla semanal.
-7. Computa los pares intersede en riesgo (R13), incluyendo
+7. Computa los pares intersede en riesgo (R11), incluyendo
    traslado del docente (misma comisión) y traslado del alumno
    (materias distintas del mismo grupo curricular).
 8. Carga los pins manuales cuando `respetar_ediciones_manuales=True`
-   (para R11).
+   (para R9).
 
 Devuelve un `LPInputs` con todos los conjuntos y parámetros
 pre-computados, más `warnings` no fatales (materias sin forecast,
@@ -200,31 +210,31 @@ Instancia el `pulp.LpProblem` y agrega restricciones en el orden
 canónico:
 
 - **R1** (asignación única): `Σ_a x[h, a] = 1 ∀ h ∈ H \ H_∅`.
-- **R3** (compatibilidad tipo aula ↔ tipo clase): pre-aplicada en
+- **R2** (compatibilidad tipo aula ↔ tipo clase): pre-aplicada en
   `compat`, se instancian variables sólo para pares compatibles.
-- **R4** (no doble asignación): `Σ_{h ∈ S} x[h, a] ≤ 1` por cada
+- **R3** (no doble asignación): `Σ_{h ∈ S} x[h, a] ≤ 1` por cada
   `S ∈ Sim` y cada `a ∈ A`. Los virtuales quedan fuera.
-- **R5** (partición teoría / lab): `Σ dur · t + Σ dur · t_const =
+- **R4** (partición teoría / lab): `Σ dur · t + Σ dur · t_const =
   hlab(m)` por comisión. Con `strict_r5=True`, también `Σ dur ·
   (1 - t) + Σ dur · (1 - t_const) = hteo(m)`. Los virtuales
   contribuyen al balance con su duración pero no toman `x`.
-- **R6** (consistencia tipo ↔ pool) para horarios con `tipo_clase =
+- **R5** (consistencia tipo ↔ pool) para horarios con `tipo_clase =
   None`: `Σ_{a ∈ A_teo} x[h, a] = 1 - t[h]` y
   `Σ_{a ∈ A_lab(m)} x[h, a] = t[h]`.
-- **R7** (definición lineal de over/under en función de la
+- **R6** (definición lineal de over/under en función de la
   capacidad).
-- **R9** (redistribución α opcional): sólo si `activar_alpha=True`.
-- **R11** (pins manuales): `x[h, aula_manual] = 1` para cada
+- **R7** (redistribución α opcional): sólo si `activar_alpha=True`.
+- **R9** (pins manuales): `x[h, aula_manual] = 1` para cada
   horario con pin, si `respetar_ediciones_manuales=True`. Si el
   pin apunta a un par no compatible, se emite una restricción
-  imposible con nombre parlante (`R11_pin_incompat_<hid>`).
-- **R12** (preferencia blanda de sede): añade `λ_sede_pref · x[h, a]`
+  imposible con nombre parlante (`R9_pin_incompat_<hid>`).
+- **R10** (preferencia blanda de sede): añade `λ_sede_pref · x[h, a]`
   al objetivo cuando `sede(a) ≠ sede_pref(h)` y el grupo del
   horario corre en modo BLANDO con lista blanda no vacía.
-- **R13** (continuidad de sede en pares en riesgo):
+- **R11** (continuidad de sede en pares en riesgo):
   `Σ_{a ∈ aulas(s1)} x[h1, a] + Σ_{a ∈ aulas(s2)} x[h2, a] ≤ 1`
   para cada par de sedes distintas `(s1, s2)` y cada par en riesgo.
-- **R14** (misma sede por comisión, opcional): sólo cuando el
+- **R12** (misma sede por comisión, opcional): sólo cuando el
   toggle está On. Introduce `y[c, s] ∈ {0, 1}` con
   `Σ_s y[c, s] = 1` y `x[h, a] ≤ y[c, sede(a)]`.
 
@@ -257,7 +267,7 @@ del plan:
    - Setea `HorarioDB.aula_id = a`.
    - Preserva `aula_asignada_manualmente=True` si el horario tenía
      pin y `respetar_manuales=True` (la escritura es idempotente
-     por R11). Si no, baja el flag.
+     por R9). Si no, baja el flag.
    - Persiste `HorarioDB.tipo_clase` si `t[h]` resolvió el tipo y
      estaba en `None`.
    - Propaga a las `ClaseDB` no ejecutadas con `fecha ≥ fecha_desde`.
@@ -325,12 +335,12 @@ asignación que la vez anterior) no emiten evento.
 | Horarios del plan | `HorarioDB` filtrado por `comision_id ∈ comisiones(plan)` | Virtualidad resuelta con `resolve_virtual` (H > D > M). |
 | `dur[h]` | `hora_fin - hora_inicio` | En horas. |
 | `insc[h]` | `get_inscriptos_esperados_por_comision` | Forecast × coef comisión. Con α activo se reemplaza por `total_esp · α`. |
-| `hteo[m]`, `hlab[m]` | `MateriaDB.horas_teoria` y `horas_laboratorio` | Alimentan R5. |
-| `tipo(h)` fijado | `HorarioDB.tipo_clase` | `None` deja la decisión al LP (R6). |
+| `hteo[m]`, `hlab[m]` | `MateriaDB.horas_teoria` y `horas_laboratorio` | Alimentan R4. |
+| `tipo(h)` fijado | `HorarioDB.tipo_clase` | `None` deja la decisión al LP (R5). |
 | Sedes admisibles y preferida por horario | `resolver_sedes_admisibles_por_materia` (servicio de grupos) | Depende del grupo de la materia y del modo elegido en la corrida (`modos_por_grupo`). |
 | Sim groups | `compute_simultaneidad_groups(horarios)` | Excluye virtuales. |
 | Pares intersede en riesgo | `compute_pares_intersede_riesgo(...)` | Docente + alumno. Vacío si `margen_min = 0`. |
-| Grupos curriculares por horario | Derivado de `PlanEstudioDB` + materia | Alimenta el eje "alumno" de R13. |
+| Grupos curriculares por horario | Derivado de `PlanEstudioDB` + materia | Alimenta el eje "alumno" de R11. |
 | Pins manuales | `HorarioDB.aula_id` con `aula_asignada_manualmente=True` | Sólo si `respetar_ediciones_manuales=True`. |
 
 ---
@@ -360,17 +370,17 @@ asignador debajo del semáforo de factibilidad.
 Familias implementadas:
 
 1. **R1** — Horarios sin aula compatible. Distingue causas:
-   R1+R3 clásica (sin lab compatible o tipo desalineado) y R10
+   R1+R2 clásica (sin lab compatible o tipo desalineado) y R8
    (sedes vacías después del filtro).
-2. **R3+R4** — Saturación por tipo dentro de una franja
+2. **R2+R3** — Saturación por tipo dentro de una franja
    (refinamiento del *pigeonhole* clásico por pools disjuntos
    teóricas / labs).
-3. **R5** — Partición teoría / lab infactible: la suma de
+3. **R4** — Partición teoría / lab infactible: la suma de
    duraciones no cierra con `hteo + hlab`, o alguna partición
    necesaria por materia no existe (subset-sum).
-4. **R11** — Pin manual apunta a un aula ya no compatible.
-5. **R13** — Par de horarios en riesgo sin sede común factible.
-6. **R13-camino** — No existe combinación de comisiones viable
+4. **R9** — Pin manual apunta a un aula ya no compatible.
+5. **R11** — Par de horarios en riesgo sin sede común factible.
+6. **R11-camino** — No existe combinación de comisiones viable
    para algún grupo curricular (§ 2.2, `check_camino_cursada`).
 7. **compat-pigeonhole** — Pigeonhole por celda del mapa
    (unión de labs compatibles < demanda simultánea).
@@ -388,34 +398,34 @@ Cuando el solver reporta `infeasible` y el pre-solve no detectó
 bloqueos que expliquen la causa, se dispara `_run_iis_relajacion`.
 
 **Relajación individual** — Se prueba, una a la vez, saltar cada
-una de las restricciones candidatas: R4, R5, R6, R10, R13, R14.
-R10 se relaja reconstruyendo `build_inputs` con `relax_r10=True`
+una de las restricciones candidatas: R3, R4, R5, R8, R11, R12.
+R8 se relaja reconstruyendo `build_inputs` con `relax_r10=True`
 (el filtro se aplica en la matriz `compat`, no en el modelo); el
 resto se saltea vía `build_model(relax={"Rk"})`. La restricción
 que rescata la solución es la culpable candidata.
 
 **Filtros de falsos positivos** — Cuando la causa real es una
-restricción saturadora (típicamente R4), relajar otras también
+restricción saturadora (típicamente R3), relajar otras también
 funciona porque le da libertad extra al solver. Para evitar
 culpables espurios:
 
-- **R5**. Se descarta si al relajar no aparece ninguna materia
+- **R4**. Se descarta si al relajar no aparece ninguna materia
   con `hlab_declarado > 0` desalineada. Si sólo materias sin lab
   declarado quedan con `t[h]` cambiado, el "arreglo" es efecto
   secundario.
-- **R6**. Se descarta si todos los horarios con `tipo(h) = ⊥`
+- **R5**. Se descarta si todos los horarios con `tipo(h) = ⊥`
   tienen alternativa válida (aula teórica o lab compatible). Si
-  todos tienen alternativa, la causa real es saturación (R4).
-- **R4** se prioriza sobre R5/R6 cuando aparecen juntos como
+  todos tienen alternativa, la causa real es saturación (R3).
+- **R3** se prioriza sobre R4/R5 cuando aparecen juntos como
   candidatos.
 
 **Priorización de la causa principal** — Cuando quedan varios
 culpables reales, se elige con el orden accionable
-`R10 → R14 → R13 → R4 → R5 → R6`. Las restricciones "de sede"
-(R10, R14, R13) tienen prioridad porque el usuario las controla
+`R8 → R12 → R11 → R3 → R4 → R5`. Las restricciones "de sede"
+(R8, R12, R11) tienen prioridad porque el usuario las controla
 directamente desde el panel.
 
-**Refinamiento cuando R10 es la principal**
+**Refinamiento cuando R8 es la principal**
 (`_iss_r10_grupos_rescate`) — Se prueba pasar **cada grupo DURO a
 BLANDO por separado** y se registra cuáles rescatan
 individualmente. Se filtran grupos que:
@@ -425,13 +435,13 @@ individualmente. Se filtran grupos que:
 - Tienen al menos una materia con comisiones en el plan.
 
 La UI puede así recomendar "pasá el grupo *X* a modo BLANDO" en
-vez del genérico "R10 es la causa".
+vez del genérico "R8 es la causa".
 
 **Análisis combinado** — Cuando ninguna regla individual rescata,
 la infactibilidad es combinada. `_iss_combinaciones_rescate` prueba
 combinaciones de a pares:
 
-- Cada grupo DURO → BLANDO **combinado con** desactivar R14 (si
+- Cada grupo DURO → BLANDO **combinado con** desactivar R12 (si
   estaba On).
 - Cada grupo DURO → BLANDO **combinado con** poner
   `margen_min_intersede = 0` (si era > 0).
@@ -445,12 +455,12 @@ impacto (grupos con menos materias primero).
 ```jsonc
 {
   "ran": true,
-  "culpables": ["R10", "R13"],
-  "principal": "R10",
+  "culpables": ["R8", "R11"],
+  "principal": "R8",
   "detalles": {
-    "R4": {"feasible_relajado": false, "es_falso_positivo": false, ...},
-    "R5": {"feasible_relajado": true, "es_falso_positivo": true, ...},
-    "R10": {
+    "R3": {"feasible_relajado": false, "es_falso_positivo": false, ...},
+    "R4": {"feasible_relajado": true, "es_falso_positivo": true, ...},
+    "R8": {
       "feasible_relajado": true,
       "grupos_rescate": [
         {"grupo_id": "...", "grupo_nombre": "Específicas de Ing. Eléctrica",
@@ -507,10 +517,10 @@ asume DURO (default seguro).
 
 `build_inputs` consume la resolución para:
 
-- Alimentar la matriz `compat` con R10 (modo DURO con lista no
+- Alimentar la matriz `compat` con R8 (modo DURO con lista no
   vacía → filtro; modo BLANDO → sin filtro, todas admisibles).
 - Alimentar `sede_preferida_por_horario` (modo BLANDO con lista
-  no vacía → primera sede; en otro caso `None`, no aplica R12).
+  no vacía → primera sede; en otro caso `None`, no aplica R10).
 
 **Excepción de laboratorio compatible**: si el aula está en
 `MateriaLaboratorioDB` para la materia, se acepta aunque su sede
@@ -601,17 +611,17 @@ Este flujo se dispara en:
 ### 6.3 Toggle "respetar ediciones manuales"
 
 - **On (default)**. Los horarios con
-  `aula_asignada_manualmente=True` entran como R11 (dura) al
+  `aula_asignada_manualmente=True` entran como R9 (dura) al
   modelo. La solución del solver ya trae `x[h, a_pin] = 1` y
   `apply_solution` preserva el flag. La lista de pins se muestra
   en un expander del panel con botón para liberar cualquiera.
 - **Off**. Los pins se ignoran al construir el modelo (no se
-  emite R11) y el flag se baja a `False` para cada horario que
+  emite R9) y el flag se baja a `False` para cada horario que
   el LP reasigna.
 
 Si un pin apunta a un aula ya no compatible (cambió el tipo, la
 sede quedó fuera de las admisibles del grupo en modo DURO, etc.),
-el LP reporta infactibilidad estructural en R11 y la UI ofrece
+el LP reporta infactibilidad estructural en R9 y la UI ofrece
 liberar el pin o reasignar manualmente.
 
 ### 6.4 Badge visual "manual"
@@ -628,13 +638,13 @@ operador de las resueltas por el LP.
 Cuando los pesos manuales (`ComisionDB.coef_asignacion`) no calzan
 con la capacidad disponible, el toggle "Redistribuir pesos α
 (avanzado)" en el panel permite que el LP los proponga sujeto a
-`Σ_{k ∈ dictado} α[k] = 1` (R9).
+`Σ_{k ∈ dictado} α[k] = 1` (R7).
 
 Flujo:
 
 1. El usuario activa el toggle y corre el LP.
 2. El LP usa variables continuas `α[k] ∈ [0, 1]` y reemplaza
-   `insc[h]` por `total_esperado[m] · α[k]` en R7. La formulación
+   `insc[h]` por `total_esperado[m] · α[k]` en R6. La formulación
    sigue siendo lineal porque `cap[a]` se multiplica por `x[h, a]`,
    no por `α[k]`.
 3. La solución incluye `alpha_resuelto: dict[comision_id → α*]`.
@@ -669,7 +679,7 @@ distintos del plan, por ejemplo).
 Alcance de la excepción:
 
 - **Solapamiento horario**: la excepción salta el chequeo.
-- **Intersede (R13, R13-camino)**: la excepción NO aplica. El
+- **Intersede (R11, R11-camino)**: la excepción NO aplica. El
   traslado físico es independiente de qué alumnos cursen qué.
 
 ### 8.1 Auto-limpieza de excepciones stale
@@ -701,7 +711,7 @@ de varios bloques que aparecen según el estado de la corrida:
   vigente para consistencia.
 - **Horarios fuera de sede preferida**. Expander que lista los
   horarios cuyo grupo corría en BLANDO y terminaron en una sede
-  alternativa. Sirve para auditar el impacto de R12.
+  alternativa. Sirve para auditar el impacto de R10.
 - **Mapa de saturación por sede**. Cuatro vistas seleccionables
   (dura, preferida, máxima, total-sin-sede) con sub-control de
   oferta de labs (todo el catálogo / sólo compatibles). Las
@@ -764,7 +774,7 @@ Cobertura principal:
 - **`tests/test_asignacion_aulas_service.py`** — `build_inputs`,
   `run_lp_dry` con fixtures mínimas, persistencia y `LPRunDB`,
   fecha_desde y respetar_manuales, lab/teoría split, edición
-  manual, toggle α, R13 pares en riesgo, saneamiento de virtuales
+  manual, toggle α, R11 pares en riesgo, saneamiento de virtuales
   stale, integración con `strict_r5=True`.
 - **`tests/test_factibilidad_service.py`** —
   `check_factibilidad_estructural`, `check_camino_cursada`,
@@ -795,9 +805,9 @@ externas (moto / mocks / DB en memoria).
 - **Ventanas operativas por sede**. Hoy `ConfiguracionHoraria` es
   global. Si se abren sedes con horarios distintos, agregar
   `hora_apertura / cierre` a `SedeDB`.
-- **R13 blanda**. `lambda_intersede` está cableado en el modelo
+- **R11 blanda**. `lambda_intersede` está cableado en el modelo
   pero no activo (default 0). Reservado para una variante blanda
-  de R13 que penalice cambios de sede pero no los prohíba.
+  de R11 que penalice cambios de sede pero no los prohíba.
 - **Combinaciones IIS de a tres o más**. Hoy sólo se prueban
-  pares (grupo DURO → BLANDO + R14 / margen). Combinaciones de
+  pares (grupo DURO → BLANDO + R12 / margen). Combinaciones de
   tres serían explosivas; se dejó fuera del alcance.

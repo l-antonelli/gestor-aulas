@@ -211,7 +211,7 @@ Compone el siguiente resumen contra un cronograma + ciclo:
    derivadas del preview evita solapamientos entre materias
    obligatorias. Antes este chequeo sólo corría al armar el plan;
    ahora el usuario lo ve durante la fase de recolección de horarios
-   de las cátedras. `codigo_regla="R13-camino-cronograma"`. El detalle
+   de las cátedras. `codigo_regla="R11-camino-cronograma"`. El detalle
    se guarda en `details_json["camino_bloqueos"]`.
 9. **Config aplicada**: `excluir_optativas` queda persistido en el
    snapshot. Si el toggle cambia entre runs, el snapshot está stale.
@@ -323,7 +323,7 @@ materia_b` lexicográficamente.
   `remove_ignored_pair(...)`, `get_ignored_pairs(plan_id) -> set`.
 - **Alcance de la excepción**: sólo aplica al chequeo de
   **solapamiento horario**. El chequeo de **intersede**
-  (R13, R13-camino) las ignora, porque el traslado físico entre
+  (R11, R11-camino) las ignora, porque el traslado físico entre
   sedes es un problema independiente de qué alumnos cursen qué.
 - **Auto-limpieza**: `cleanup_stale_ignored_pairs` en
   `plan_validation_service.py`. Se ejecuta en cada `validate_plan`.
@@ -392,15 +392,15 @@ lleva `codigo_regla`, `severidad`, `titulo`, `detalle` y
 
 Familias implementadas:
 
-- **R1** — Horarios sin aula compatible (falta lab compatible, R10
+- **R1** — Horarios sin aula compatible (falta lab compatible, R8
   dejó cero sedes admisibles, tipo desalineado).
-- **R3+R4** — Saturación por tipo dentro de una franja
+- **R2+R3** — Saturación por tipo dentro de una franja
   (refinamiento del *pigeonhole* clásico por pools disjuntos
   teóricas / labs).
-- **R5** — Partición teoría / laboratorio infactible.
-- **R11** — Pin manual apunta a un aula ya no compatible.
-- **R13** — Par de horarios en riesgo sin sede común factible.
-- **R13-camino** — No existe combinación de comisiones viable
+- **R4** — Partición teoría / laboratorio infactible.
+- **R9** — Pin manual apunta a un aula ya no compatible.
+- **R11** — Par de horarios en riesgo sin sede común factible.
+- **R11-camino** — No existe combinación de comisiones viable
   para algún grupo curricular (ver § 2.5).
 - **compat-pigeonhole** — Pigeonhole por celda del mapa (unión de
   labs compatibles < demanda simultánea).
@@ -416,7 +416,7 @@ Consumidores:
   factibilidad"** que dispara el reporte aislado, para que el
   operador pueda descartar bloqueos antes de correr.
 
-### 2.5. R13-camino — Camino de cursada intersede factible
+### 2.5. R11-camino — Camino de cursada intersede factible
 
 `check_camino_cursada(session, plan_id, margen_min_intersede_minutos)`
 en `factibilidad_service.py`. Verifica que para cada terna
@@ -443,14 +443,14 @@ cursar sin conflictos horarios ni traslados imposibles entre sedes.
 **Ejemplo canónico**: Electrónica 3° 1C tiene específicas en Siberia
 (grupo DURO) + FB12 en Pellegrini (grupo DURO). Si el cronograma
 coloca FB12 y una específica contigua sin margen suficiente, el
-alumno no puede cursar ambas → bloqueo `R13-camino`.
+alumno no puede cursar ambas → bloqueo `R11-camino`.
 
-**Diferencia con R13 en el LP**: R13 (por-comisión) sólo cubre pares
+**Diferencia con R11 en el LP**: R11 (por-comisión) sólo cubre pares
 de horarios de la **misma comisión** o de materias distintas del
 mismo grupo curricular donde ambos horarios están en el modelo. El
 chequeo camino garantiza que, aún después de que el LP asigne,
 exista al menos una elección de comisiones que el alumno pueda
-sostener. Ver `1. Diseño/asignacion-aulas-LP.md` § 4 (R13-camino).
+sostener. Ver `1. Diseño/asignacion-aulas-LP.md` § 4 (R11-camino).
 
 **Excepciones ignoradas**: los pares en `IgnoredConflictDB` se
 saltan del chequeo de solapamiento (§ 2.3). El chequeo de intersede
@@ -465,9 +465,9 @@ Cada `LPRunDB` persistida incluye en `details_json` un bloque
 {
   "status": "optimal" | "infeasible_estructural" | "infeasible" | "timeout" | "error",
   "resumen": "✅ Plan resuelto. Se asignó aula a los N horarios...",
-  "causa_infactibilidad": "R10 dura: sedes del grupo Específicas..." | null,
+  "causa_infactibilidad": "R8 dura: sedes del grupo Específicas..." | null,
   "bloqueos_diagnosticados": [
-    {"codigo_regla": "R10", "severidad": "blocker", "titulo": "...",
+    {"codigo_regla": "R8", "severidad": "blocker", "titulo": "...",
      "detalle": "...", "entidades_a_revisar": [...]}
   ],
   "horarios_sin_asignar": ["h1", "h2", ...],

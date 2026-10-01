@@ -1182,7 +1182,7 @@ def _render_heatmap_por_sede(
     semántica del heatmap:
 
     - ``"saturacion"``: **demanda vs oferta** según reglas vigentes
-      (R10 sede admisible, R3 tipo, R6 lab). Sirve para planificar
+      (R8 sede admisible, R2 tipo, R5 lab). Sirve para planificar
       la asignación automática. Verde ≤80%, rojo >100% = "faltan
       aulas del catálogo".
     - ``"ocupacion"``: **usadas vs total** sobre el estado actual
@@ -2344,7 +2344,7 @@ def _render_inspector_franja(
     horario_slot_map = {h.id: h for h in horario_slots}
 
     # Sólo demandantes de la sede inspeccionada — alinea exactamente con
-    # la demanda que cuenta el heatmap por sede. Los horarios cuya R10
+    # la demanda que cuenta el heatmap por sede. Los horarios cuya R8
     # no admite esta sede no aparecen (no aportan al diagnóstico).
     res = horarios_que_intersectan_rango(
         horarios=horario_slots,
@@ -2542,8 +2542,8 @@ def _render_inspector_franja(
             f"fuera de esa franja para descomprimir.\n\n"
             f"📐 **Este número surge de la demanda proyectada** "
             f"según las **reglas y restricciones vigentes** del "
-            f"asignador (R10 sede admisible por carrera, R3 tipo de "
-            f"aula, R6 lab compatible, etc.) — asume que si el LP "
+            f"asignador (R8 sede admisible por carrera, R2 tipo de "
+            f"aula, R5 lab compatible, etc.) — asume que si el LP "
             f"tuviera que resolver el plan hoy, N horarios no "
             f"encontrarían aula en esta sede. Es una **guía para "
             f"planificar la asignación automática**, no una "
@@ -2973,27 +2973,27 @@ def _render_diagnostico_infactibilidad(
 
         principal = iis.get("principal")
         descripciones_cortas = {
-            "R4": (
+            "R3": (
                 "Más clases simultáneas que aulas disponibles "
                 "para recibirlas"
             ),
-            "R5": (
+            "R4": (
                 "Horas declaradas teoría/laboratorio no cuadran "
                 "con los horarios cargados"
             ),
-            "R6": (
+            "R5": (
                 "Horarios sin tipo determinado sin aula compatible "
                 "ni como teoría ni como lab"
             ),
-            "R10": (
+            "R8": (
                 "Filtro de sede por grupo (modo DURO): la demanda "
                 "en las sedes admisibles supera la oferta"
             ),
-            "R13": (
+            "R11": (
                 "Margen intersede: horarios contiguos de la misma "
                 "comisión no pueden separarse entre sedes"
             ),
-            "R14": (
+            "R12": (
                 "Forzar misma sede por comisión: la config obliga "
                 "más de lo que la oferta puede absorber"
             ),
@@ -3003,11 +3003,11 @@ def _render_diagnostico_infactibilidad(
             st.error(
                 f"**Causa probable: {descripciones_cortas.get(principal, principal)}**"
             )
-            # Recomendación accionable: si la causa es R10 y el IIS
+            # Recomendación accionable: si la causa es R8 y el IIS
             # identificó qué grupo(s) DURO rescatarían el modelo al
             # pasar a BLANDO, mostrar la lista.
-            if principal == "R10":
-                _det_r10 = (iis.get("detalles") or {}).get("R10") or {}
+            if principal == "R8":
+                _det_r10 = (iis.get("detalles") or {}).get("R8") or {}
                 _grupos = _det_r10.get("grupos_rescate") or []
                 if _grupos:
                     st.info(
@@ -3092,12 +3092,12 @@ def _render_diagnostico_infactibilidad(
                 )
 
         st.markdown("**Detalle por regla:**")
-        # Orden de exposición: sede-related primero (R10/R14/R13),
-        # después las históricas (R4/R5/R6). Iteramos sobre las que
+        # Orden de exposición: sede-related primero (R8/R12/R11),
+        # después las históricas (R3/R4/R5). Iteramos sobre las que
         # realmente aparecen en `detalles` para no listar reglas no
         # probadas.
         _detalles_map = iis.get("detalles") or {}
-        _orden_ui = ("R10", "R14", "R13", "R4", "R5", "R6")
+        _orden_ui = ("R8", "R12", "R11", "R3", "R4", "R5")
         for ri in _orden_ui:
             _det = _detalles_map.get(ri)
             if not _det:
@@ -3130,7 +3130,7 @@ def _render_diagnostico_infactibilidad(
                 st.markdown(_det.get("explicacion", ""))
 
                 _materias_problema = _det.get("materias_problema") or []
-                if _materias_problema and ri == "R5":
+                if _materias_problema and ri == "R4":
                     st.markdown(
                         f"**Materias con desajuste "
                         f"({len(_materias_problema)}):**"
@@ -3328,8 +3328,8 @@ def render_resultado(
                 key=_modo_key,
                 help=(
                     "**Saturación**: demanda vs oferta según las "
-                    "reglas vigentes del asignador (R10 sede "
-                    "admisible, R3 tipo, R6 lab). Sirve para "
+                    "reglas vigentes del asignador (R8 sede "
+                    "admisible, R2 tipo, R5 lab). Sirve para "
                     "planificar la corrida del LP.\n\n"
                     "**Ocupación**: aulas usadas vs total según el "
                     "estado actual del plan. Sirve para ver "

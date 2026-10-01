@@ -101,7 +101,7 @@ def _run_migrations(eng):
         # cache técnico deprecado, y podía dar 0 aunque el patrón
         # hubiera cambiado). Default 0 en runs históricos.
         "ALTER TABLE lp_runs ADD COLUMN n_horarios_reasignados INTEGER NOT NULL DEFAULT 0",
-        # Restriccion de sede por carrera (R10):
+        # Restriccion de sede por carrera (R8):
         # - es_default_comunes en sedes: marca la sede a la que se
         #   mandan las materias comunes (>=2 carreras). Como mucho una
         #   sede tiene este flag activado a la vez (lo asegura el
@@ -170,7 +170,7 @@ def _run_migrations(eng):
         "ALTER TABLE schedule_validations ADD COLUMN content_hash VARCHAR NOT NULL DEFAULT ''",
         "ALTER TABLE plan_validations ADD COLUMN content_hash VARCHAR NOT NULL DEFAULT ''",
         # Chequeo de camino de cursada para el cronograma (Fase B del
-        # rediseño 2026-09-15). Cuenta bloqueos R13-camino-cronograma;
+        # rediseño 2026-09-15). Cuenta bloqueos R11-camino-cronograma;
         # detalle estructurado en `details_json["camino_bloqueos"]`.
         "ALTER TABLE schedule_validations ADD COLUMN n_camino_bloqueos INTEGER NOT NULL DEFAULT 0",
         # Auditoria minima de inscripciones (Fase E2 del rediseño
@@ -275,7 +275,7 @@ def _run_migrations(eng):
     # CE, Específicas de <Carrera>, Sin clasificar) y asigna cada
     # materia al grupo que corresponda por prefijo o por carrera única.
     # Reemplaza a `CarreraSedeDB` + `SedeDB.es_default_comunes` en la
-    # resolución de sedes admisibles del LP (R10/R12). Idempotente.
+    # resolución de sedes admisibles del LP (R8/R10). Idempotente.
     _migrate_grupos_materia(eng)
 
     # Rediseño schema grupos (2026-09-09): cada grupo declara AMBAS
@@ -293,6 +293,9 @@ def _run_migrations(eng):
     # SQLite no permite ALTER PRIMARY KEY. Idempotente: sólo actúa
     # si detecta la PK vieja.
     _migrate_grupo_materia_sede_pk(eng)
+    # 2026-10-01: renumeración correlativa de las restricciones del LP
+    # (R1–R12) en corridas y validaciones guardadas. Una sola vez.
+    _migrate_codigos_restricciones(eng)
 
 
 def _migrate_schedules_nullable_ciclo(eng):
@@ -1451,6 +1454,74 @@ def _migrate_grupo_materia_schema_v2(eng):
                 "VALUES (?, ?)",
                 (grupo_id, cod),
             )
+        conn.commit()
+
+
+# Renumeración correlativa de las restricciones del programa lineal
+# (2026-10-01): R2 y R8 eran restricciones reformuladas que dejaron
+# huecos en la numeración. R1 no cambia.
+EQUIVALENCIAS_CODIGOS_RESTRICCIONES = {
+    "R3": "R2", "R4": "R3", "R5": "R4", "R6": "R5", "R7": "R6",
+    "R9": "R7", "R10": "R8", "R11": "R9", "R12": "R10", "R13": "R11",
+    "R14": "R12",
+}
+_CODIGO_RESTRICCION = re.compile(r"(?<![A-Za-z0-9])R(\d{1,2})(?![A-Za-z0-9])")
+
+
+def renumerar_codigos_restricciones(texto: str) -> str:
+    """Pasa los códigos viejos de restricción a los nuevos en un texto.
+
+    Las equivalencias se aplican todas a la vez (una R13 vieja queda en
+    R11, no en R9) y sólo sobre códigos aislados: "R13-camino" sí,
+    "R100" o "AR10" no.
+    """
+    return _CODIGO_RESTRICCION.sub(
+        lambda m: EQUIVALENCIAS_CODIGOS_RESTRICCIONES.get(m.group(0), m.group(0)), texto,
+    )
+
+
+def _migrate_codigos_restricciones(eng):
+    """Renumera los códigos de restricción guardados en corridas del
+    asignador y en validaciones (``details_json`` y ``error_message``).
+
+    Se aplica una sola vez por base: queda anotada en la tabla
+    ``migraciones_de_datos``. Correrla de nuevo no hace nada (si no,
+    una R11 ya migrada pasaría a R9).
+    """
+    nombre = "codigos_restricciones_correlativos"
+    columnas = {
+        "lp_runs": ("details_json", "error_message"),
+        "schedule_validations": ("details_json",),
+        "plan_validations": ("details_json",),
+    }
+    with eng.connect() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS migraciones_de_datos ("
+            "nombre VARCHAR PRIMARY KEY, aplicada_en VARCHAR NOT NULL)"
+        )
+        ya = conn.exec_driver_sql(
+            "SELECT 1 FROM migraciones_de_datos WHERE nombre = ?", (nombre,)
+        ).fetchone()
+        if ya:
+            return
+        for tabla, cols in columnas.items():
+            existentes = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({tabla})")}
+            for col in cols:
+                if col not in existentes:
+                    continue
+                filas = conn.exec_driver_sql(
+                    f"SELECT rowid, {col} FROM {tabla} WHERE {col} IS NOT NULL"
+                ).fetchall()
+                for rowid, valor in filas:
+                    nuevo = renumerar_codigos_restricciones(valor)
+                    if nuevo != valor:
+                        conn.exec_driver_sql(
+                            f"UPDATE {tabla} SET {col} = ? WHERE rowid = ?", (nuevo, rowid),
+                        )
+        conn.exec_driver_sql(
+            "INSERT INTO migraciones_de_datos (nombre, aplicada_en) VALUES (?, datetime('now'))",
+            (nombre,),
+        )
         conn.commit()
 
 

@@ -231,7 +231,7 @@ def _render_check_factibilidad(
             "sabemos que no va a resolver."
         )
 
-        # Toggle margen intersede — para que el chequeo R13 refleje
+        # Toggle margen intersede — para que el chequeo R11 refleje
         # la misma config que se va a usar al correr el LP.
         margen_key = f"{key_ns}_check_margen_intersede"
         margen_val = st.session_state.get(
@@ -516,7 +516,7 @@ def _render_shortcut_ignorar_par(
     Sólo se activa cuando el bloqueo publica un contexto con
     ``tipo="solapamiento"`` y ``par_materias=[a, b]`` (lo que hace
     ``_add_bloqueos_camino_cursada`` para conflictos de solapamiento
-    horario). Otros bloqueos (intersede, R1, R4, etc.) no ofrecen el
+    horario). Otros bloqueos (intersede, R1, R3, etc.) no ofrecen el
     shortcut — la excepción no aplica al problema.
     """
     ctx = getattr(bloqueo, "contexto", None) or {}
@@ -744,12 +744,12 @@ def _render_config_form(
                 | Regla | Qué garantiza | Dónde se configuran los datos |
                 |---|---|---|
                 | R1 · Asignación única | Cada horario recibe un aula. | Automática. |
-                | R3 · Tipo compatible | Teórica → aulas teóricas/anfiteatros; laboratorio → labs de la lista de compatibles de la materia. | 🏛️ **Aulas** → tipo del aula y "Materias que usan este laboratorio". |
-                | R4 · Sin doble booking | Dos horarios simultáneos no comparten aula. | 📅 Cronogramas (la simultaneidad se deriva). |
-                | R5 · Horas teoría/lab | La comisión cumple las horas declaradas. | 📚 **Materias** → horas de teoría y de laboratorio. |
-                | R10 · Sedes admisibles | Sólo aulas de sedes habilitadas para la materia. | 🎓 **Carreras** → sedes habilitadas · 🏛️ Aulas → **Sedes** → default de comunes · Cronogramas → override por comisión. |
-                | R11 · Pins manuales | Se respetan aulas fijadas a mano. | Toggle abajo + edición manual en el panel de horarios. |
-                | R13 · Sedes consecutivas | Horarios contiguos de la misma comisión con gap corto quedan en la misma sede. | Parámetro `Margen mínimo entre sedes` de este panel. |
+                | R2 · Tipo compatible | Teórica → aulas teóricas/anfiteatros; laboratorio → labs de la lista de compatibles de la materia. | 🏛️ **Aulas** → tipo del aula y "Materias que usan este laboratorio". |
+                | R3 · Sin doble booking | Dos horarios simultáneos no comparten aula. | 📅 Cronogramas (la simultaneidad se deriva). |
+                | R4 · Horas teoría/lab | La comisión cumple las horas declaradas. | 📚 **Materias** → horas de teoría y de laboratorio. |
+                | R8 · Sedes admisibles | Sólo aulas de sedes habilitadas para la materia. | 🎓 **Carreras** → sedes habilitadas · 🏛️ Aulas → **Sedes** → default de comunes · Cronogramas → override por comisión. |
+                | R9 · Pins manuales | Se respetan aulas fijadas a mano. | Toggle abajo + edición manual en el panel de horarios. |
+                | R11 · Sedes consecutivas | Horarios contiguos de la misma comisión con gap corto quedan en la misma sede. | Parámetro `Margen mínimo entre sedes` de este panel. |
 
                 **🎯 Preferencias blandas** (aparecen en la función objetivo)
 
@@ -757,11 +757,11 @@ def _render_config_form(
                 |---|---|---|
                 | Ajuste al forecast (over) | Aulas que no rebalsan. | `Peso de sobre-ocupación (λ over)`. |
                 | Ajuste al forecast (under) | Aulas ajustadas al forecast. | `Peso de sub-utilización (λ under)`. |
-                | Sede preferida (R12) | Sede del lab si hay lab; si no, sede de la carrera. | `Peso de preferencia de sede (λ sede)`. |
+                | Sede preferida (R10) | Sede del lab si hay lab; si no, sede de la carrera. | `Peso de preferencia de sede (λ sede)`. |
 
                 **Regla rápida de troubleshooting**
 
-                - "Este horario no encuentra aula" → revisar R3/R10:
+                - "Este horario no encuentra aula" → revisar R2/R8:
                   faltan labs compatibles o la carrera no tiene sedes
                   habilitadas con aulas del tipo correcto.
                 - "Este horario está en otra sede que la que esperaba"
@@ -954,16 +954,16 @@ def _render_config_form(
             )
 
             strict_r5 = st.toggle(
-                "R5 estricta (valida horas de teoría y de laboratorio)",
+                "R4 estricta (valida horas de teoría y de laboratorio)",
                 value=True,
                 help=(
-                    "Con **R5 estricta** el LP exige que la suma de "
+                    "Con **R4 estricta** el LP exige que la suma de "
                     "horarios de teoría iguale las horas de teoría "
                     "declaradas por la materia, **y** que la suma de "
                     "horarios de laboratorio iguale las horas de "
                     "laboratorio. Además, los horarios virtuales "
                     "cuentan hacia estas sumas aunque no ocupen aula.\n\n"
-                    "Con R5 estricta **apagada** (modo legacy) sólo "
+                    "Con R4 estricta **apagada** (modo legacy) sólo "
                     "se valida el balance de laboratorio, y los "
                     "horarios virtuales quedan excluidos del modelo. "
                     "Los planes con teoría incompleta pasan sin aviso. "
@@ -1132,7 +1132,7 @@ def _render_modos_por_grupo(
                     )
             else:
                 st.caption(
-                    "🎯 **BLANDO**: lista blanda vacía → no aplica R12 "
+                    "🎯 **BLANDO**: lista blanda vacía → no aplica R10 "
                     "para este grupo (cualquier sede, sin preferencia). "
                     "Configuralo en **Materias → 📦 Grupos**."
                 )
@@ -1460,7 +1460,7 @@ def _compute_estado_metricas(
                     colisiones += 1
 
     # Desactualizados: horarios cuya aula actual ya NO es compatible
-    # con las reglas vigentes (R3 tipo, R6 lab, R10 sede admisible).
+    # con las reglas vigentes (R2 tipo, R5 lab, R8 sede admisible).
     # Detecta asignaciones heredadas de corridas viejas donde las
     # reglas eran distintas (ej: se cambió la carrera admisible de
     # una comisión, o la sede default de comunes, o el tipo de aula).
@@ -1486,7 +1486,7 @@ def _contar_desactualizados(
     N desactualizados para mostrar en el banner.
 
     Razón habitual: la asignación fue seteada por una corrida vieja
-    del LP, y desde entonces cambió alguna regla (R10 sede admisible,
+    del LP, y desde entonces cambió alguna regla (R8 sede admisible,
     tipo de aula, compatibilidad lab). El aula está seteada pero el
     LP la rechazaría hoy — el flujo se ve inconsistente al usuario
     (aparecen "aulas libres" en franjas saturadas porque hay horarios
@@ -1785,7 +1785,7 @@ def render_panel(session: Session, plan_id: str, key_ns: str = "asig") -> None:
                 "ℹ️ La asignación intenta encontrar un aula a cada "
                 "horario presencial del plan. Los horarios virtuales "
                 "entran al modelo con flag `no_ocupa_aula` — cuentan "
-                "para R5 pero no toman aula. Si la asignación no "
+                "para R4 pero no toman aula. Si la asignación no "
                 "resuelve, revisá el chequeo de factibilidad "
                 "estructural arriba."
             )

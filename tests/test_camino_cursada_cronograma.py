@@ -12,7 +12,7 @@ Casos cubiertos:
   días distintos → chequeo devuelve lista vacía.
 - **Bloqueo por solapamiento irresoluble**: dos materias obligatorias
   del mismo (carrera, año, cuatri) con una sola comisión cada una y
-  horarios pisándose → bloqueo `R13-camino-cronograma`.
+  horarios pisándose → bloqueo `R11-camino-cronograma`.
 - **Rescatado por alternativa**: la misma configuración pero una de
   las materias tiene una segunda comisión en otro día → el DFS
   encuentra la combinación factible y no bloquea.
@@ -182,7 +182,7 @@ class TestBloqueoIrresoluble:
         bloqueos = check_camino_cursada_cronograma(session, sched.id, ciclo.id)
         assert len(bloqueos) == 1
         b = bloqueos[0]
-        assert b.codigo_regla == "R13-camino-cronograma"
+        assert b.codigo_regla == "R11-camino-cronograma"
         assert b.severidad == "bloqueante"
         assert "MAT101" in b.contexto["par_materias"]
         assert "FIS101" in b.contexto["par_materias"]
@@ -319,7 +319,7 @@ class TestIntegracionValidarCronograma:
         assert len(summary.camino_bloqueos) == 1
         assert (
             summary.camino_bloqueos[0]["codigo_regla"]
-            == "R13-camino-cronograma"
+            == "R11-camino-cronograma"
         )
 
     def test_badge_rojo_por_camino(self, session, setup_ing_1c_2mats):

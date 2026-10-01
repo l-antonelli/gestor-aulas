@@ -33,20 +33,20 @@
 >    Al generar el plan desde un cronograma, las comisiones template
 >    se **clonan** al plan. Ver [sesiones/COMISIONES_POR_CARRERA.md](sesiones/COMISIONES_POR_CARRERA.md).
 > 4. **Grupos de Materias reemplazan `CarreraSedeDB`** (2026-09). La
->    resolución de sedes admisibles del LP (R10) y la preferencia
->    blanda (R12) van exclusivamente por el grupo de la materia.
+>    resolución de sedes admisibles del LP (R8) y la preferencia
+>    blanda (R10) van exclusivamente por el grupo de la materia.
 >    Cada grupo declara set duro + lista blanda ordenada; el modo
 >    por-grupo se elige por corrida (`LPConfig.modos_por_grupo`).
 >    `CarreraSedeDB` y `SedeDB.es_default_comunes` quedan deprecados.
 >    `ComisionDB.carrera_asignada` sobrevive como etiqueta visual sin
 >    efecto en el LP. Ver `asignador_implementacion.md` § 5.
-> 5. **R13 extendida y R13-camino** (2026-09). R13 detecta pares
+> 5. **R11 extendida y R11-camino** (2026-09). R11 detecta pares
 >    intersede en riesgo tanto por traslado del docente (misma
 >    comisión) como por traslado del alumno (materias distintas del
->    mismo grupo curricular). Un chequeo pre-solve **R13-camino**
+>    mismo grupo curricular). Un chequeo pre-solve **R11-camino**
 >    verifica que para cada `(carrera, año, cuatri)` exista al menos
 >    una combinación de comisiones viable. Ver `VALIDACIONES.md` § 2.5.
-> 6. **Toggle R14 y veredicto estructurado** (2026-09). Nuevo toggle
+> 6. **Toggle R12 y veredicto estructurado** (2026-09). Nuevo toggle
 >    `forzar_misma_sede_por_comision` en el panel del asignador.
 >    Cada corrida persiste un veredicto humano-legible en
 >    `LPRunDB.details_json` con status, causa, bloqueos y config
@@ -1186,9 +1186,9 @@ lista.
 El LP corre sobre la "semana modelo" (variables por `HorarioDB`,
 propagación a `ClaseDB` con `fecha ≥ fecha_desde`) y cubre:
 
-- R1 asignación única, R3 compatibilidad por tipo, R4 no doble
-  booking vía grupos de simultaneidad, R5 partición teoría/lab,
-  R6 consistencia tipo↔aula, R7 penalty lineal asimétrico.
+- R1 asignación única, R2 compatibilidad por tipo, R3 no doble
+  booking vía grupos de simultaneidad, R4 partición teoría/lab,
+  R5 consistencia tipo↔aula, R6 penalty lineal asimétrico.
 - Re-run incremental con flag `aula_asignada_manualmente` y toggle
   "respetar ediciones manuales" / "sobreescribir todo".
 - Diagnóstico estructural de infactibilidad antes y después del
@@ -1199,7 +1199,7 @@ propagación a `ClaseDB` con `fecha ≥ fecha_desde`) y cubre:
 - Edición manual de aula con dialog de tres modos (puntual /
   rango / desde hoy) y validación pre-confirmación.
 - Toggle α opcional para que el LP redistribuya
-  `coef_asignacion` entre comisiones del mismo dictado (R9), con
+  `coef_asignacion` entre comisiones del mismo dictado (R7), con
   diff visual y persistencia bajo confirmación.
 
 Detalle completo de la implementación:
@@ -1272,7 +1272,7 @@ Detalle completo de la implementación:
 El planteo formal y la implementación del programa lineal de
 asignación de aulas están en documentos dedicados:
 
-- **Planteo formal** (variables, restricciones R1–R10, función
+- **Planteo formal** (variables, restricciones R1–R12, función
   objetivo, ejemplos): `1. Diseño/asignacion-aulas-LP.md`.
 - **Implementación** (servicios, flujo, diagnóstico de
   infactibilidad, panel operativo, edición manual del patrón):

@@ -1,14 +1,14 @@
-"""Tests de integración LP × Grupos de Materias (R10/R12/R14).
+"""Tests de integración LP × Grupos de Materias (R8/R10/R12).
 
 Cubre el refactor del LP a la resolución vía `GrupoMateriaDB`:
 
-- **R10 DURO / DURO-vacío**: filtrado de `compat` por sede según el
+- **R8 DURO / DURO-vacío**: filtrado de `compat` por sede según el
   modo del grupo.
-- **R12 BLANDO**: `sede_preferida_por_horario[h]` sale de la primera
+- **R10 BLANDO**: `sede_preferida_por_horario[h]` sale de la primera
   sede del grupo BLANDO. En modo DURO no hay preferencia.
 - **Etiqueta visual**: `ComisionDB.carrera_asignada` no interviene en
   la resolución.
-- **R14 misma sede por comisión**: genera las variables `y[c, s]` y
+- **R12 misma sede por comisión**: genera las variables `y[c, s]` y
   restricciones ``Σ_s y[c, s] = 1`` sólo cuando el toggle está ON.
 
 Los tests que necesitan `pulp` verifican estructura del modelo (no lo
@@ -163,11 +163,11 @@ def _add_materia_comision_horario(
 
 
 # =============================================================================
-# R10 — Filtrado DURO
+# R8 — Filtrado DURO
 # =============================================================================
 
 
-class TestR10Duro:
+class TestR8Duro:
 
     def test_grupo_duro_una_sede_filtra_aulas_de_otras_sedes(self, session):
         """Materia en grupo DURO=[SA]: compat con aulas de SB debe ser
@@ -212,11 +212,11 @@ class TestR10Duro:
 
 
 # =============================================================================
-# R12 — Preferencia BLANDA
+# R10 — Preferencia BLANDA
 # =============================================================================
 
 
-class TestR12Blando:
+class TestR10Blando:
 
     def test_grupo_blando_preferida_es_la_primera(self, session):
         ctx = _seed_basico(session)
@@ -306,11 +306,11 @@ class TestCarreraAsignadaEsSoloEtiqueta:
 
 
 # =============================================================================
-# R14 — Misma sede por comisión
+# R12 — Misma sede por comisión
 # =============================================================================
 
 
-class TestR14MismaSedePorComision:
+class TestR12MismaSedePorComision:
 
     def _seed_materia_multihorario(
         self, session, ctx, grupo_id: str,
@@ -360,7 +360,7 @@ class TestR14MismaSedePorComision:
     def test_r14_on_no_crea_y_para_comision_de_un_solo_horario(
         self, session,
     ):
-        """Comisiones con un único horario tienen R14 trivial → no se
+        """Comisiones con un único horario tienen R12 trivial → no se
         crean variables auxiliares."""
         from src.services.asignacion_aulas_service import build_model
         ctx = _seed_basico(session)
@@ -381,7 +381,7 @@ class TestR14MismaSedePorComision:
 
     def test_r14_solo_sedes_candidatas_generan_variables(self, session):
         """Si la materia está en un grupo DURO=[SA] (una sola sede), aunque
-        R14 esté ON, sólo debería generar una variable y[c, SA] — no y[c, SB]
+        R12 esté ON, sólo debería generar una variable y[c, SA] — no y[c, SB]
         porque no hay aulas candidatas en SB para esta comisión."""
         from src.services.asignacion_aulas_service import build_model
         ctx = _seed_basico(session)
@@ -396,7 +396,7 @@ class TestR14MismaSedePorComision:
         assert (cid, "SB") not in y  # sin candidaturas de aula en SB
 
     def test_r14_default_es_off(self, session):
-        """Verificamos que el default de `LPConfig` deja R14 desactivada
+        """Verificamos que el default de `LPConfig` deja R12 desactivada
         para no alterar el comportamiento previo del solver."""
         cfg = LPConfig()
         assert cfg.forzar_misma_sede_por_comision is False

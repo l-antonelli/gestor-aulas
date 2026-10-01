@@ -1,12 +1,12 @@
 """Servicio del LP de asignación de aulas.
 
 Implementa la Fase 1 del plan: backend mínimo del LP con R1 (asignación
-única), R4 (no solapamiento por aula vía grupos de simultaneidad) y R7
+única), R3 (no solapamiento por aula vía grupos de simultaneidad) y R6
 (penalty de capacidad lineal asimétrico).
 
 NO incluye todavía:
-- t[h] / R5 / R6 (lab/teoría split): se agregan en Fase 5.
-- α[k] / R9 (toggle redistribución de pesos): se agrega en Fase 8.
+- t[h] / R4 / R5 (lab/teoría split): se agregan en Fase 5.
+- α[k] / R7 (toggle redistribución de pesos): se agrega en Fase 8.
 - apply_solution / persistencia (LPRunDB): se agrega en Fase 2.
 
 Funciones públicas:
@@ -72,7 +72,7 @@ class LPConfig:
     lambda_under: float = 1.0
     tol_over: float = 0.0
     tol_under: float = 0.20
-    # Peso del término blando de preferencia de sede (R12). Cuando > 0,
+    # Peso del término blando de preferencia de sede (R10). Cuando > 0,
     # entre dos aulas compatibles con capacidad similar, el LP prefiere
     # la que está en la sede preferida de la materia (regla
     # `sede_preferida_para_horario`: sede del lab compatible primero,
@@ -87,19 +87,19 @@ class LPConfig:
     # de sede), el término no aplica para ese horario aunque λ sea > 0.
     lambda_sede_pref: float = 5.0
     # Margen mínimo en minutos entre dos horarios contiguos de la
-    # misma comisión que caen en sedes distintas (R13, Fase 4). Si
+    # misma comisión que caen en sedes distintas (R11, Fase 4). Si
     # el gap entre fin(h1) y inicio(h2) es < margen, el par no puede
     # asignarse a sedes distintas (dura). Setear a 0 desactiva la
     # restricción. 30 min es el default: cubre traslados cortos sin
     # ser demasiado agresivo. Sedes muy alejadas pueden requerir 60.
     margen_min_intersede_minutos: int = 30
-    # Peso del término blando de intersede (R13 blanda). Con
+    # Peso del término blando de intersede (R11 blanda). Con
     # `lambda_intersede = 0` (default) la restricción es puramente
     # dura. Con λ > 0 se agrega un costo por par contiguo en sedes
     # distintas (además de la restricción dura). Reservado para
     # futuras iteraciones — hoy solo se cablea la infraestructura.
     lambda_intersede: float = 0.0
-    # R14 — Forzar misma sede para todos los horarios de una comisión.
+    # R12 — Forzar misma sede para todos los horarios de una comisión.
     # Cuando True, se introduce y[c, s] ∈ {0, 1} para cada comisión ×
     # sede, con Σ_s y[c, s] = 1, y x[h, a] ≤ y[c, sede(a)] para todo
     # horario h de c. Impide que una comisión se dicte fragmentada
@@ -112,10 +112,10 @@ class LPConfig:
     # ``{grupo_id: "DURO" | "BLANDO"}``. Si un grupo no aparece en el
     # dict, se asume ``DURO`` como default seguro (más restrictivo).
     modos_por_grupo: dict[str, str] = field(default_factory=dict)
-    # R5 completa (Fase 8.1): además de exigir que Σ dur·t == hlab,
+    # R4 completa (Fase 8.1): además de exigir que Σ dur·t == hlab,
     # exige que Σ dur·(1-t) == hteo. En este modo los horarios
     # virtuales se incluyen en el modelo (sin ocupar aula) para que
-    # sus duraciones sumen al balance R5. Con strict_r5=False se
+    # sus duraciones sumen al balance R4. Con strict_r5=False se
     # recupera el comportamiento previo (sólo se controla hlab; hteo
     # queda como "flotante" implícito). El default es True porque es
     # la semántica que corresponde al problema de negocio.
@@ -150,14 +150,14 @@ class LPInputs:
     # Map materia_codigo -> set[aula_id] de labs compatibles. Necesario
     # para diagnosticar infactibilidad después.
     materia_lab_map: dict[str, set[str]] = field(default_factory=dict)
-    # Horas de teoría / laboratorio por materia (para R5).
+    # Horas de teoría / laboratorio por materia (para R4).
     hteo: dict[str, float] = field(default_factory=dict)
     hlab: dict[str, float] = field(default_factory=dict)
-    # Total esperado de inscriptos por materia (para R9 cuando alpha está
+    # Total esperado de inscriptos por materia (para R7 cuando alpha está
     # activo: insc[h] se reemplaza por total_esp[m] * alpha[k]).
     total_esp: dict[str, float] = field(default_factory=dict)
     # Comisiones del plan: comision_id -> dictado_id (para agrupar α
-    # por dictado en R9) y comision_id -> coef actual (para diff).
+    # por dictado en R7) y comision_id -> coef actual (para diff).
     dictado_de_comision: dict[str, Optional[str]] = field(default_factory=dict)
     coef_actual: dict[str, float] = field(default_factory=dict)
     # Pins manuales: horario_id -> aula_id que el LP debe fijar como
@@ -166,7 +166,7 @@ class LPInputs:
     # ``config.respetar_ediciones_manuales=True``. Sin pins, el dict
     # queda vacío y el LP resuelve libre.
     aulas_fijas: dict[str, str] = field(default_factory=dict)
-    # Sede preferida por horario (R12, Fase 3). Se resuelve via
+    # Sede preferida por horario (R10, Fase 3). Se resuelve via
     # `sede_preferida_para_horario` respetando el override de carrera
     # asignada por comisión. Puede quedar ``None`` para horarios sin
     # sede preferida (materias comunes sin default para comunes) — el
@@ -178,7 +178,7 @@ class LPInputs:
     # armar los coeficientes del término blando de preferencia de sede.
     aula_sede_id: dict[str, str] = field(default_factory=dict)
     # Pares de horarios contiguos de la misma comisión el mismo día
-    # con gap < `margen_min_intersede_minutos` (R13, Fase 4). Cada
+    # con gap < `margen_min_intersede_minutos` (R11, Fase 4). Cada
     # entrada es (h1_id, h2_id, gap_minutos). El LP usa estos pares
     # para bloquear que caigan en sedes distintas cuando el gap no
     # alcanza para un traslado. Vacío si `margen_min = 0` (desactivado).
@@ -187,8 +187,8 @@ class LPInputs:
     )
     # IDs de horarios que están en el modelo pero NO deben tomar aula
     # (por ejemplo, horarios virtuales cuando strict_r5=True). Estos
-    # participan en R5 (contribuyen a hteo/hlab) pero se excluyen de
-    # R1/R3/R4/R7 (no ocupan aula, no colisionan, no penalizan cap).
+    # participan en R4 (contribuyen a hteo/hlab) pero se excluyen de
+    # R1/R2/R3/R6 (no ocupan aula, no colisionan, no penalizan cap).
     no_ocupa_aula_ids: set[str] = field(default_factory=set)
     # Errores no fatales detectados durante build_inputs (materias sin
     # forecast, virtuales filtradas, etc.). El caller decide si abortar.
@@ -210,10 +210,10 @@ def build_inputs(
        virtuales.
     3. Resuelve forecast por comisión (vía
        ``get_inscriptos_esperados_por_comision``).
-    4. Computa compat[h, a] aplicando R3.
+    4. Computa compat[h, a] aplicando R2.
     5. Computa los grupos de simultaneidad sobre la grilla semanal.
 
-    ``relax_r10``: cuando ``True``, se omite el filtro por sede (R10)
+    ``relax_r10``: cuando ``True``, se omite el filtro por sede (R8)
     en la construcción de ``compat``. Se usa solo desde el diagnóstico
     IIS para detectar cuándo el filtro de sede es el que hace el
     modelo infactible.
@@ -235,7 +235,7 @@ def build_inputs(
     for ml in matlab_pairs:
         materia_lab_map.setdefault(ml.materia_codigo, set()).add(ml.aula_id)
 
-    # Materias del plan (para filtrar virtuales y para R5).
+    # Materias del plan (para filtrar virtuales y para R4).
     materias_db = list(session.exec(select(MateriaDB)).all())
     # materia_codigo -> bool: virtualidad DECLARADA en la materia (raiz
     # de la cadena de resolucion jerarquica).
@@ -251,7 +251,7 @@ def build_inputs(
         select(ComisionDB).where(ComisionDB.plan_cursada_id == plan_id)
     ).all())
     comision_ids = {c.id for c in comisiones}
-    # Mapeos para R9: cada comisión a su dictado y a su coef actual.
+    # Mapeos para R7: cada comisión a su dictado y a su coef actual.
     dictado_de_comision: dict[str, Optional[str]] = {
         c.id: c.dictado_id for c in comisiones
     }
@@ -292,7 +292,7 @@ def build_inputs(
     materia_de_horario: dict[str, str] = {}
     comision_de_horario: dict[str, str] = {}
     dur: dict[str, float] = {}
-    # Override de carrera para la restriccion de sede (R10). Se llena
+    # Override de carrera para la restriccion de sede (R8). Se llena
     # solo con horarios cuya comisión tiene `carrera_asignada != None`.
     # Se usa mas abajo para decidir sedes admisibles por horario en vez
     # de por materia. Ver RF-LP-15.
@@ -334,7 +334,7 @@ def build_inputs(
                 )
                 continue
             # strict_r5=True: los virtuales entran al modelo pero
-            # marcados como "no toman aula". Contribuyen a R5.
+            # marcados como "no toman aula". Contribuyen a R4.
             no_ocupa_aula_ids.add(h.id)
         _car = carrera_asignada_por_comision.get(h.comision_id)
         if _car:
@@ -396,7 +396,7 @@ def build_inputs(
             )
             insc[h.id] = 0.0
 
-    # total_esp por materia (para R9 con α activo). Reusa la misma
+    # total_esp por materia (para R7 con α activo). Reusa la misma
     # lógica de get_inscriptos_esperados_por_comision pero antes del
     # producto por coef.
     from src.database.models import CicloDB
@@ -415,14 +415,14 @@ def build_inputs(
             elif f_cuatri is not None:
                 total_esp[mc] = float(f_cuatri.valor)
 
-    # Compatibilidad pre-computada (R3 sin sede).
+    # Compatibilidad pre-computada (R2 sin sede).
     compat: dict[tuple[str, str], bool] = {}
     for h in horarios:
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas:
             compat[(h.id, a.id)] = compute_compat(h, a, lab_aulas_m)
 
-    # R10 — Restricción de sede vía Grupo de Materias.
+    # R8 — Restricción de sede vía Grupo de Materias.
     #
     # Cada horario se resuelve al grupo de su materia
     # (`resolver_sedes_admisibles_por_materia`). El grupo devuelve
@@ -434,7 +434,7 @@ def build_inputs(
     #     durante la transición).
     #   - Modo BLANDO: no hay filtro (todas las sedes son admisibles).
     #     La primera sede (`sedes_ordenadas[0]`) es la preferida y
-    #     alimenta R12 con un costo `λ_sede_pref` por horario asignado
+    #     alimenta R10 con un costo `λ_sede_pref` por horario asignado
     #     a otra sede.
     #
     # `ComisionDB.carrera_asignada` queda como **etiqueta visual** y
@@ -471,18 +471,18 @@ def build_inputs(
         _gid, modo, sedes_ord = grupo_por_materia.get(
             h.materia_codigo, (None, "DURO", []),
         )
-        # R12: preferida sólo si BLANDO y hay al menos una sede en la
+        # R10: preferida sólo si BLANDO y hay al menos una sede en la
         # lista. En DURO no hay preferencia porque todas las sedes del
         # set son equivalentes a nivel objetivo.
         if modo == "BLANDO" and sedes_ord:
             sede_preferida_por_horario[h.id] = sedes_ord[0]
         else:
             sede_preferida_por_horario[h.id] = None
-        # R10: filtro sólo se aplica en modo DURO con lista no vacía.
+        # R8: filtro sólo se aplica en modo DURO con lista no vacía.
         # DURO con lista vacía = "todas admisibles" (fallback permisivo).
         # BLANDO nunca filtra (todas admisibles con distinto costo).
         # `relax_r10` (usado por el IIS) desactiva completamente el filtro
-        # de sede — útil para detectar si es R10 la causa del infeasible.
+        # de sede — útil para detectar si es R8 la causa del infeasible.
         if relax_r10 or modo != "DURO" or not sedes_ord:
             continue
         admisibles = set(sedes_ord)
@@ -498,7 +498,7 @@ def build_inputs(
 
     # `sim_groups` sólo debe contener horarios que compiten por aula
     # física — los virtuales/no_ocupa_aula no toman aula y por lo tanto
-    # no participan de R4 ni de las cotas Hall/pigeonhole que verifican
+    # no participan de R3 ni de las cotas Hall/pigeonhole que verifican
     # capacidad. Sin este filtro `diagnose_infeasibility` los cuenta
     # como demanda y reporta franjas saturadas falsamente.
     horarios_para_sim = [
@@ -506,7 +506,7 @@ def build_inputs(
     ]
     sim_groups = compute_simultaneidad_groups(horarios_para_sim)
 
-    # R13 (Fase 4): pares de horarios contiguos en riesgo intersede.
+    # R11 (Fase 4): pares de horarios contiguos en riesgo intersede.
     # Dos tipos de riesgo se detectan:
     #   (a) traslado del profesor: dos horarios de la misma comisión.
     #   (b) traslado del alumno: dos horarios de materias distintas
@@ -625,8 +625,8 @@ def diagnose(inputs: LPInputs) -> InfeasibilityDiagnosis:
     con todas las causas estructurales detectables sin correr el LP."""
     # Excluir horarios `no_ocupa_aula` (virtuales bajo strict_r5) del
     # diagnóstico de asignación de aulas: no toman aula y por lo tanto
-    # no aportan a la demanda R1/R3/R4/R6. `sim_groups` ya viene
-    # filtrado de `build_inputs`. Sí participan de R5, que se maneja
+    # no aportan a la demanda R1/R2/R3/R5. `sim_groups` ya viene
+    # filtrado de `build_inputs`. Sí participan de R4, que se maneja
     # aparte más abajo.
     horarios_activos = [
         h for h in inputs.horarios
@@ -639,7 +639,7 @@ def diagnose(inputs: LPInputs) -> InfeasibilityDiagnosis:
         sim_groups=inputs.sim_groups,
         compat_override=inputs.compat,
     )
-    # Pre-validación R5 (partición factible). Acá SÍ incluimos los
+    # Pre-validación R4 (partición factible). Acá SÍ incluimos los
     # virtuales porque contribuyen a hteo/hlab.
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
     for h in inputs.horarios:
@@ -674,7 +674,7 @@ class LPSolution:
     x_assignments: dict[str, str]
     # horario_id -> tipo_clase resuelto ("teorica"|"laboratorio"). Sólo
     # entrega las claves para horarios que tenían tipo_clase=None y el
-    # LP les puso un valor (R5/R6). Para los que tenían tipo fijado, no
+    # LP les puso un valor (R4/R5). Para los que tenían tipo fijado, no
     # aparecen acá (su tipo no cambió).
     tipo_resuelto: dict[str, str]
     over: dict[str, float]   # horario_id -> over[h]
@@ -692,15 +692,15 @@ def build_model(
     *,
     relax: Optional[set[str]] = None,
 ) -> tuple[pulp.LpProblem, dict]:
-    """Instancia el modelo PuLP con R1, R3 (compatibilidad), R4 (no
-    doble booking), R5 (partición teoría/lab), R6 (consistencia
-    tipo↔aula), R7 (penalty de capacidad).
+    """Instancia el modelo PuLP con R1, R2 (compatibilidad), R3 (no
+    doble booking), R4 (partición teoría/lab), R5 (consistencia
+    tipo↔aula), R6 (penalty de capacidad).
 
     Args:
         inputs: conjuntos y parámetros precomputados.
         config: configuración del LP (lambdas, tolerancias, alpha).
         relax: conjunto opcional de IDs de restricciones a OMITIR del
-            modelo. Valores soportados: ``"R4"``, ``"R5"``, ``"R6"``.
+            modelo. Valores soportados: ``"R3"``, ``"R4"``, ``"R5"``.
             Útil para diagnóstico IIS por relajación selectiva: cuando
             el modelo completo es infactible y las cotas estructurales
             no detectan causas, se prueba relajar cada Ri por separado
@@ -714,7 +714,7 @@ def build_model(
     relax_set = relax or set()
     prob = pulp.LpProblem("asignacion_aulas", pulp.LpMinimize)
 
-    # Variables x[h, a] solo para pares compatibles (R3 pre-computada).
+    # Variables x[h, a] solo para pares compatibles (R2 pre-computada).
     # Horarios en `no_ocupa_aula_ids` (virtuales bajo strict_r5) no
     # generan variables x — no toman aula por diseño.
     x: dict[tuple[str, str], pulp.LpVariable] = {}
@@ -742,8 +742,8 @@ def build_model(
             t[h.id] = pulp.LpVariable(f"t_{h.id}", cat=pulp.LpBinary)
 
     # Variables α[k]: una por comisión, sólo cuando el toggle está
-    # activo. R9: Σ α[k] = 1 por dictado. Si toggle OFF, alpha queda
-    # vacío y se usa coef_asignacion de la base como constante en R7.
+    # activo. R7: Σ α[k] = 1 por dictado. Si toggle OFF, alpha queda
+    # vacío y se usa coef_asignacion de la base como constante en R6.
     alpha: dict[str, pulp.LpVariable] = {}
     if config.activar_alpha:
         comision_ids_unicos = {
@@ -753,7 +753,7 @@ def build_model(
             alpha[cid] = pulp.LpVariable(
                 f"a_{cid}", lowBound=0, upBound=1, cat=pulp.LpContinuous,
             )
-        # R9: Σ α por dictado = 1.
+        # R7: Σ α por dictado = 1.
         por_dictado: dict[str, list[str]] = {}
         for cid in comision_ids_unicos:
             did = inputs.dictado_de_comision.get(cid)
@@ -765,12 +765,12 @@ def build_model(
         for did, cids in por_dictado.items():
             prob += (
                 pulp.lpSum(alpha[c] for c in cids) == 1,
-                f"R9_{did}",
+                f"R7_{did}",
             )
         # Comisiones sin dictado: α=1 forzado.
         for cid in comision_ids_unicos:
             if inputs.dictado_de_comision.get(cid) is None:
-                prob += alpha[cid] == 1, f"R9_solo_{cid}"
+                prob += alpha[cid] == 1, f"R7_solo_{cid}"
 
     # Variables over[h], under[h].
     over_vars: dict[str, pulp.LpVariable] = {}
@@ -785,7 +785,7 @@ def build_model(
 
     # Función objetivo.
     #
-    # R12 (Fase 3): término blando de preferencia de sede. Para cada
+    # R10 (Fase 3): término blando de preferencia de sede. Para cada
     # variable x[h, a], sumamos `λ_sede_pref` al costo si el aula está
     # en una sede distinta a la preferida de h. Sin variables nuevas:
     # el coeficiente se computa acá y se acumula en el lpSum. Horarios
@@ -831,7 +831,7 @@ def build_model(
             f"R1_{h.id}",
         )
 
-    # R11: pins de ediciones manuales. Cuando el usuario marcó
+    # R9: pins de ediciones manuales. Cuando el usuario marcó
     # ``HorarioDB.aula_asignada_manualmente=True`` y el toggle
     # "respetar ediciones manuales" está activo, el LP debe fijar
     # ``x[h, a*] == 1`` para esa aula. Si el pin apunta a un aula
@@ -842,16 +842,16 @@ def build_model(
         if (hid, aid_fija) not in x:
             prob += (
                 pulp.lpSum([]) == 1,
-                f"R11_pin_incompat_{hid}",
+                f"R9_pin_incompat_{hid}",
             )
             continue
         prob += (
             x[(hid, aid_fija)] == 1,
-            f"R11_pin_{hid}",
+            f"R9_pin_{hid}",
         )
 
-    # R4: para cada (aula, grupo de simultaneidad), suma de x ≤ 1.
-    if "R4" not in relax_set:
+    # R3: para cada (aula, grupo de simultaneidad), suma de x ≤ 1.
+    if "R3" not in relax_set:
         for gi, grupo in enumerate(inputs.sim_groups):
             for a in inputs.aulas:
                 terms = [
@@ -862,10 +862,10 @@ def build_model(
                 if len(terms) >= 2:
                     prob += (
                         pulp.lpSum(terms) <= 1,
-                        f"R4_g{gi}_{a.id}",
+                        f"R3_g{gi}_{a.id}",
                     )
 
-    # R5: Partición teoría/lab por comisión.
+    # R4: Partición teoría/lab por comisión.
     #
     # Ecuación de laboratorio:
     #     Σ_{h ∈ k} dur[h] · t[h] = hlab[materia(k)]
@@ -885,7 +885,7 @@ def build_model(
     for hid, cid in inputs.comision_de_horario.items():
         horarios_por_comision.setdefault(cid, []).append(hid)
 
-    if "R5" not in relax_set:
+    if "R4" not in relax_set:
         for cid, hids in horarios_por_comision.items():
             if not hids:
                 continue
@@ -905,22 +905,22 @@ def build_model(
                     terms_teo.append(d * (1 - tc))
             prob += (
                 pulp.lpSum(terms_lab) == hl,
-                f"R5_lab_{cid}",
+                f"R4_lab_{cid}",
             )
             if config.strict_r5:
                 prob += (
                     pulp.lpSum(terms_teo) == ht,
-                    f"R5_teo_{cid}",
+                    f"R4_teo_{cid}",
                 )
 
-    # R6: Pool de aulas para tipo decidido (sólo aplica cuando
+    # R5: Pool de aulas para tipo decidido (sólo aplica cuando
     # tipo_clase=None y por lo tanto t[h] es variable).
-    # Los horarios `no_ocupa_aula` no tienen x[h,a], no aplica R6.
-    if "R6" not in relax_set:
+    # Los horarios `no_ocupa_aula` no tienen x[h,a], no aplica R5.
+    if "R5" not in relax_set:
         aulas_teoricas = {a.id for a in inputs.aulas if a.tipo == "teorica"}
         for h in inputs.horarios:
             if h.id not in t:
-                continue  # tipo fijado, R3 lo cubre
+                continue  # tipo fijado, R2 lo cubre
             if h.id in inputs.no_ocupa_aula_ids:
                 continue
             lab_aulas_m = inputs.materia_lab_map.get(h.materia_codigo, set())
@@ -952,10 +952,10 @@ def build_model(
                 # No hay labs compatibles: t[h] DEBE ser 0.
                 prob += t[h.id] == 0, f"R6lab_forzado_{h.id}"
 
-    # R7: linealización del penalty de capacidad.
+    # R6: linealización del penalty de capacidad.
     # Cuando α está activo, insc[h] no es una constante sino la
     # expresión lineal `total_esp[materia(h)] · α[comision(h)]`.
-    # Horarios `no_ocupa_aula` no tienen R7: no consumen capacidad.
+    # Horarios `no_ocupa_aula` no tienen R6: no consumen capacidad.
     cap_por_aula = {a.id: a.capacidad for a in inputs.aulas}
     for h in inputs.horarios:
         if h.id in inputs.no_ocupa_aula_ids:
@@ -989,7 +989,7 @@ def build_model(
             f"R7under_{h.id}",
         )
 
-    # R13 (Fase 4): pares de horarios contiguos de la misma comisión
+    # R11 (Fase 4): pares de horarios contiguos de la misma comisión
     # con gap < margen_min_intersede no pueden asignarse a sedes
     # distintas. Para cada par (h1, h2) de riesgo y cada par de sedes
     # distintas (s1, s2), se agrega:
@@ -1005,7 +1005,7 @@ def build_model(
     # blando `y[h1, h2]` binaria con `y ≥ (x1_s1 + x2_s2) - 1` para
     # cada par (s1, s2). Hoy queda cableado por si se usa después.
     intersede_pares: dict[tuple[str, str], pulp.LpVariable] = {}
-    if inputs.pares_intersede_riesgo and "R13" not in relax_set:
+    if inputs.pares_intersede_riesgo and "R11" not in relax_set:
         # Aulas por sede.
         aulas_de_sede: dict[str, list[str]] = {}
         for a in inputs.aulas:
@@ -1016,7 +1016,7 @@ def build_model(
         sedes_lista = sorted(aulas_de_sede.keys())
 
         for h1_id, h2_id, _gap in inputs.pares_intersede_riesgo:
-            # Si alguno del par es virtual (no ocupa aula), R13 no
+            # Si alguno del par es virtual (no ocupa aula), R11 no
             # aplica: no hay conflicto de sede porque uno de los
             # horarios no cae en ninguna aula física.
             if (
@@ -1044,17 +1044,17 @@ def build_model(
                 )
                 for s2 in sedes_h2:
                     if s2 == s1:
-                        continue  # misma sede no viola R13
+                        continue  # misma sede no viola R11
                     sum_h2_s2 = pulp.lpSum(
                         x[(h2_id, a)] for a in aulas_de_sede.get(s2, [])
                         if (h2_id, a) in x
                     )
                     prob += (
                         sum_h1_s1 + sum_h2_s2 <= 1,
-                        f"R13_{h1_id}_{h2_id}_{s1}_{s2}",
+                        f"R11_{h1_id}_{h2_id}_{s1}_{s2}",
                     )
 
-    # R14 — Forzar misma sede por comisión.
+    # R12 — Forzar misma sede por comisión.
     #
     # Cuando `config.forzar_misma_sede_por_comision=True`, todos los
     # horarios de una misma comisión deben caer en la misma sede. Se
@@ -1071,10 +1071,10 @@ def build_model(
     # Motivación: los profesores generalmente no viajan entre sedes a
     # mitad de semana. Sin este toggle, el LP puede fragmentar una
     # comisión (una clase en Pellegrini, otra en Siberia) para
-    # cumplir R13 o para minimizar `λ_sede_pref` — resultado técnicamente
+    # cumplir R11 o para minimizar `λ_sede_pref` — resultado técnicamente
     # óptimo pero inaplicable en la práctica.
     y_vars: dict[tuple[str, str], pulp.LpVariable] = {}
-    if config.forzar_misma_sede_por_comision and "R14" not in relax_set:
+    if config.forzar_misma_sede_por_comision and "R12" not in relax_set:
         # Agrupar horarios activos (que toman aula) por comisión.
         horarios_por_com: dict[str, list[str]] = {}
         for h in inputs.horarios:
@@ -1087,7 +1087,7 @@ def build_model(
 
         for cid, hids in horarios_por_com.items():
             if len(hids) < 2:
-                # Comisión con un único horario: R14 es trivial.
+                # Comisión con un único horario: R12 es trivial.
                 continue
             # Sedes candidatas: unión de las sedes de las aulas
             # compatibles con al menos uno de los horarios de c.
@@ -1106,7 +1106,7 @@ def build_model(
                 )
             prob += (
                 pulp.lpSum(y_vars[(cid, s)] for s in sedes_candidatas) == 1,
-                f"R14_sum_{cid}",
+                f"R12_sum_{cid}",
             )
             # Vínculo x[h, a] ≤ y[c, sede(a)].
             for hid in hids:
@@ -1119,12 +1119,12 @@ def build_model(
                         # variable no existe → forzamos x=0.
                         prob += (
                             x[(hid, aid)] == 0,
-                            f"R14_forbid_{hid}_{aid}",
+                            f"R12_forbid_{hid}_{aid}",
                         )
                         continue
                     prob += (
                         x[(hid, aid)] <= y_vars[(cid, sede_a)],
-                        f"R14_link_{hid}_{aid}",
+                        f"R12_link_{hid}_{aid}",
                     )
 
     return prob, {
@@ -1315,7 +1315,7 @@ def apply_solution(
 
         # 1) Escribir al patrón. Si el horario estaba pinneado como
         # manual y el toggle está activo, el LP ya trajo el aula
-        # manual en la solución (por R11) — la escritura es
+        # manual en la solución (por R9) — la escritura es
         # idempotente y preservamos el flag. Si no, el flag baja.
         era_manual = respetar_manuales and horario.aula_asignada_manualmente
         if era_manual:
@@ -1431,7 +1431,7 @@ def _build_details_json(
         })
     # Heatmap PARTICIONADO POR SEDE — la herramienta principal para
     # ver exactamente en qué sede × franja × tipo de aula falta capacidad
-    # (la restricción de sedes R10 puede generar saturación).
+    # (la restricción de sedes R8 puede generar saturación).
     # El heatmap de carga global (día × franja, sin discriminar sede
     # ni tipo) se deprecó porque no aportaba nada útil sobre este.
     from src.services.asignacion_aulas_helpers import (
@@ -1646,23 +1646,23 @@ def persist_run(
     # Si se ejecutó IIS, anteponer un resumen humano al error_message.
     # Usamos `principal` (filtrado de falsos positivos) en vez de
     # listar todas las restricciones que arreglaron al relajarse —
-    # eso confunde al usuario cuando el problema real es solo R4 y
-    # R5/R6 aparecen por libertad extra (efecto secundario).
+    # eso confunde al usuario cuando el problema real es solo R3 y
+    # R4/R5 aparecen por libertad extra (efecto secundario).
     if iis is not None:
         principal = iis.get("principal")
         descripciones_cortas = {
-            "R4": "más clases simultáneas que aulas disponibles",
-            "R5": "horas declaradas vs horarios cargados (teoría/lab)",
-            "R6": "horarios sin tipo determinado sin aula compatible",
-            "R10": (
+            "R3": "más clases simultáneas que aulas disponibles",
+            "R4": "horas declaradas vs horarios cargados (teoría/lab)",
+            "R5": "horarios sin tipo determinado sin aula compatible",
+            "R8": (
                 "sedes DURO del grupo insuficientes para acomodar la "
                 "demanda"
             ),
-            "R13": (
+            "R11": (
                 "margen intersede impide combinar horarios contiguos "
                 "de la misma comisión entre sedes distintas"
             ),
-            "R14": (
+            "R12": (
                 "obligar misma sede por comisión no es compatible con "
                 "la oferta de aulas por sede"
             ),
@@ -1674,11 +1674,11 @@ def persist_run(
                 "Mirá la sección 'Diagnóstico cruzado' abajo para "
                 "detalles y acciones específicas."
             )
-            # Cuando la causa es R10, si el IIS refinó qué grupos
+            # Cuando la causa es R8, si el IIS refinó qué grupos
             # rescatan individualmente el modelo, enganchamos una
             # recomendación accionable al resumen humano.
-            if principal == "R10":
-                _det_r10 = (iis.get("detalles") or {}).get("R10") or {}
+            if principal == "R8":
+                _det_r10 = (iis.get("detalles") or {}).get("R8") or {}
                 _grupos = _det_r10.get("grupos_rescate") or []
                 if _grupos:
                     _grupos_txt = ", ".join(
@@ -1779,38 +1779,38 @@ def _run_iis_relajacion(
 
     Restricciones probadas:
 
-    - ``R4``: no dos horarios simultáneos en la misma aula.
-    - ``R5``: horas de teoría/lab declaradas cuadran con el total.
-    - ``R6``: horarios con tipo determinado.
-    - ``R10``: filtro de sede admisible por grupo (modo DURO).
-    - ``R13``: margen mínimo intersede entre horarios contiguos.
-    - ``R14``: forzar misma sede por comisión (sólo se prueba si
+    - ``R3``: no dos horarios simultáneos en la misma aula.
+    - ``R4``: horas de teoría/lab declaradas cuadran con el total.
+    - ``R5``: horarios con tipo determinado.
+    - ``R8``: filtro de sede admisible por grupo (modo DURO).
+    - ``R11``: margen mínimo intersede entre horarios contiguos.
+    - ``R12``: forzar misma sede por comisión (sólo se prueba si
       está activo en la config).
 
-    ``R10`` requiere reconstruir ``inputs`` sin el filtro de sede; por
+    ``R8`` requiere reconstruir ``inputs`` sin el filtro de sede; por
     eso este helper puede recibir ``session`` y ``plan_id`` para
-    hacerlo. Si no se le pasan, se saltea R10 (fallback compatible).
+    hacerlo. Si no se le pasan, se saltea R8 (fallback compatible).
 
     **Filtro de falsos positivos**: la relajación independiente
     sufre de un problema conocido — cuando hay una restricción
-    fuertemente saturadora (típicamente R4: muchas clases
-    simultáneas vs pocas aulas), relajar R5 o R6 también arregla,
+    fuertemente saturadora (típicamente R3: muchas clases
+    simultáneas vs pocas aulas), relajar R4 o R5 también arregla,
     porque eso le da al solver más libertad y la restricción real
-    deja de morder. Para evitar reportar R5/R6 como culpables
+    deja de morder. Para evitar reportar R4/R5 como culpables
     espurios:
 
-    - **R5** se descarta como culpable si NO hay materias con
+    - **R4** se descarta como culpable si NO hay materias con
       `hlab_declarado > 0` cuyo `lab_resuelto` haya quedado en otro
       valor. Es decir: si todas las materias afectadas tienen
       `hlab=0` y el LP les puso lab solo porque le sirvió, no es
       problema de catálogo, es libertad recién obtenida.
-    - **R6** se descarta como culpable si todos los horarios con
+    - **R5** se descarta como culpable si todos los horarios con
       `tipo_clase=None` admiten al menos una alternativa válida (al
       menos un aula teórica O al menos un lab compatible).
       Comprobado a priori con `materia_lab_map` y el inventario de
       teóricas.
-    - **R4** se considera causa principal cuando aparece junto con
-      R5/R6 falsos positivos (los otros sólo "ayudan" porque le
+    - **R3** se considera causa principal cuando aparece junto con
+      R4/R5 falsos positivos (los otros sólo "ayudan" porque le
       dan al solver libertad extra que oculta el problema real).
 
     Args:
@@ -1823,17 +1823,17 @@ def _run_iis_relajacion(
 
             {
                 "ran": True,
-                "culpables": ["R4", ...],
-                "principal": "R4" | None,
+                "culpables": ["R3", ...],
+                "principal": "R3" | None,
                 "detalles": {
-                    "R4": {"feasible_relajado": bool,
+                    "R3": {"feasible_relajado": bool,
                            "es_falso_positivo": False,
                            "explicacion": str},
-                    "R5": {"feasible_relajado": bool,
+                    "R4": {"feasible_relajado": bool,
                            "es_falso_positivo": bool,
                            "explicacion": str,
                            "materias_problema": [...]},
-                    "R6": {"feasible_relajado": bool,
+                    "R5": {"feasible_relajado": bool,
                            "es_falso_positivo": bool,
                            "explicacion": str},
                 },
@@ -1841,7 +1841,7 @@ def _run_iis_relajacion(
 
         - ``culpables`` lista las restricciones que arreglaron Y NO
           fueron filtradas como falso positivo.
-        - ``principal`` es la causa probable: R4 si aparece, sino la
+        - ``principal`` es la causa probable: R3 si aparece, sino la
           primera de la lista. None si no hay culpables.
         - ``detalles[Ri]["es_falso_positivo"]`` indica que la
           relajación arregló pero descartamos esa Ri como causa
@@ -1852,7 +1852,7 @@ def _run_iis_relajacion(
     # Mensajes accionables en castellano "criollo", sin terminología
     # técnica (no doble booking, pigeonhole, partición, etc).
     explicaciones = {
-        "R4": (
+        "R3": (
             "Hay franjas horarias con **más clases simultáneas que "
             "aulas disponibles** para recibirlas. Acciones que suelen "
             "resolver:\n"
@@ -1864,7 +1864,7 @@ def _run_iis_relajacion(
             "- **Mover horarios** a franjas menos cargadas en el "
             "cronograma."
         ),
-        "R5": (
+        "R4": (
             "Las **horas declaradas de teoría / laboratorio** de "
             "alguna materia no cuadran con los horarios cargados en "
             "el cronograma. La materia dice 'tengo X horas de lab' "
@@ -1876,7 +1876,7 @@ def _run_iis_relajacion(
             "- **Cambiar el tipo (teoría / lab)** de algún horario "
             "en el cronograma para que la suma cuadre."
         ),
-        "R6": (
+        "R5": (
             "Hay horarios sin tipo determinado (sin marcar como "
             "teoría ni como laboratorio en el cronograma) que **no "
             "encuentran un aula compatible** ni como teóricos ni "
@@ -1887,7 +1887,7 @@ def _run_iis_relajacion(
             "- **Cargar más laboratorios compatibles** para esa "
             "materia (página Materias → laboratorios)."
         ),
-        "R10": (
+        "R8": (
             "El **filtro de sede por grupo** (modo DURO) deja a "
             "algunos horarios sin aulas suficientes en las sedes "
             "admisibles del grupo. La demanda dentro de esas sedes "
@@ -1901,7 +1901,7 @@ def _run_iis_relajacion(
             "- **Reasignar materias** a un grupo con más sedes "
             "admisibles si están mal clasificadas."
         ),
-        "R13": (
+        "R11": (
             "El **margen intersede** (traslados entre sedes) impide "
             "combinar comisiones simultáneas de la misma comisión "
             "con horarios contiguos. Acciones:\n"
@@ -1910,7 +1910,7 @@ def _run_iis_relajacion(
             "- **Separar los horarios** con más gap en el cronograma "
             "para que quepa un traslado."
         ),
-        "R14": (
+        "R12": (
             "**Forzar misma sede por comisión** (toggle del panel) "
             "obliga a que todos los horarios de una comisión caigan "
             "en la misma sede. Combinado con set DURO o falta de "
@@ -1926,7 +1926,7 @@ def _run_iis_relajacion(
 
     # Pre-checks para detectar falsos positivos a priori.
     # 1) ¿Hay horarios `tipo_clase=None` que no tengan ninguna
-    #    alternativa? Si todos tienen alternativa, R6 individual no
+    #    alternativa? Si todos tienen alternativa, R5 individual no
     #    debería ser causa.
     aulas_teoricas_existen = any(
         a.tipo in ("teorica", "anfiteatro") for a in inputs.aulas
@@ -1943,11 +1943,11 @@ def _run_iis_relajacion(
     )
 
     # Reglas del modelo (build_model reconoce la clave `relax`).
-    reglas_del_modelo = ["R4", "R5", "R6", "R13"]
+    reglas_del_modelo = ["R3", "R4", "R5", "R11"]
     if config.forzar_misma_sede_por_comision:
-        # Sólo tiene sentido probar R14 si está activo — sino ya no hay
+        # Sólo tiene sentido probar R12 si está activo — sino ya no hay
         # nada que relajar en el modelo por esa vía.
-        reglas_del_modelo.append("R14")
+        reglas_del_modelo.append("R12")
 
     for ri in reglas_del_modelo:
         prob_r, vars_r = build_model(inputs, config, relax={ri})
@@ -1963,7 +1963,7 @@ def _run_iis_relajacion(
             ),
         }
         if feas:
-            if ri == "R5":
+            if ri == "R4":
                 # Identificar las comisiones cuya partición está mal.
                 horarios_por_comision: dict[str, list[str]] = {}
                 for hid, cid in inputs.comision_de_horario.items():
@@ -2011,12 +2011,12 @@ def _run_iis_relajacion(
                     materias_problema_unicas.append(mp)
                 item["materias_problema"] = materias_problema_unicas
 
-                # FILTRO DE FALSO POSITIVO PARA R5:
-                # R5 es causa real solo si hay materias con
+                # FILTRO DE FALSO POSITIVO PARA R4:
+                # R4 es causa real solo si hay materias con
                 # `hlab_declarado > 0` cuyo `lab_resuelto` quedó
                 # distinto. Si todas las afectadas tienen
                 # `hlab_declarado=0`, el LP les puso lab solo porque
-                # ganó libertad al relajar R5 — no es problema de
+                # ganó libertad al relajar R4 — no es problema de
                 # catálogo, es ruido.
                 materias_con_hlab_real = [
                     mp for mp in materias_problema_unicas
@@ -2030,7 +2030,7 @@ def _run_iis_relajacion(
                         "causa real**: ninguna materia con horas "
                         "de lab declaradas quedó con números "
                         "incoherentes. Cuando el modelo está "
-                        "infactible por falta de aulas (R4), "
+                        "infactible por falta de aulas (R3), "
                         "relajar las horas teoría/lab también "
                         "ayuda al solver, pero como efecto "
                         "secundario, no como causa directa. Si "
@@ -2045,11 +2045,11 @@ def _run_iis_relajacion(
                     # para que el usuario vea las relevantes primero.
                     item["materias_problema"] = materias_con_hlab_real
 
-            elif ri == "R6":
-                # FILTRO DE FALSO POSITIVO PARA R6:
+            elif ri == "R5":
+                # FILTRO DE FALSO POSITIVO PARA R5:
                 # Si todos los horarios sin tipo determinado tienen
                 # al menos un aula teórica disponible globalmente o
-                # al menos un lab compatible para su materia, R6
+                # al menos un lab compatible para su materia, R5
                 # individualmente no es la causa.
                 if todos_los_none_tienen_alternativa:
                     item["es_falso_positivo"] = True
@@ -2061,7 +2061,7 @@ def _run_iis_relajacion(
                         "compatible (teórica o laboratorio), así "
                         "que el LP siempre puede decidir un tipo "
                         "consistente. Cuando el modelo está "
-                        "infactible por falta de aulas (R4), "
+                        "infactible por falta de aulas (R3), "
                         "permitir que un horario teórico vaya a un "
                         "lab también ayuda al solver, pero como "
                         "efecto secundario, no como causa directa."
@@ -2069,7 +2069,7 @@ def _run_iis_relajacion(
 
         detalles[ri] = item
 
-    # R10 se aplica en `build_inputs` (filtro de sede sobre `compat`).
+    # R8 se aplica en `build_inputs` (filtro de sede sobre `compat`).
     # Para probarlo, reconstruimos los inputs con `relax_r10=True` y
     # corremos el modelo original. Sólo tiene sentido si tenemos
     # session/plan_id — sino saltamos.
@@ -2085,12 +2085,12 @@ def _run_iis_relajacion(
                 "feasible_relajado": feas_r10,
                 "es_falso_positivo": False,
                 "explicacion": (
-                    explicaciones["R10"] if feas_r10 else
+                    explicaciones["R8"] if feas_r10 else
                     "Sin el filtro de sede el modelo sigue infactible "
                     "— la sede no es la causa por sí sola."
                 ),
             }
-            # Cuando R10 es culpable, refinamos: probamos pasar cada
+            # Cuando R8 es culpable, refinamos: probamos pasar cada
             # grupo DURO a BLANDO por separado para identificar QUÉ
             # grupo específico está causando la infactibilidad. La
             # UI usa esta lista para recomendar acciones concretas
@@ -2103,14 +2103,14 @@ def _run_iis_relajacion(
                 )
                 if grupos_rescate:
                     item_r10["grupos_rescate"] = grupos_rescate
-            detalles["R10"] = item_r10
+            detalles["R8"] = item_r10
         except Exception:  # pragma: no cover
-            # Si algo falla al reconstruir, marcamos R10 como no probado.
-            detalles["R10"] = {
+            # Si algo falla al reconstruir, marcamos R8 como no probado.
+            detalles["R8"] = {
                 "feasible_relajado": False,
                 "es_falso_positivo": False,
                 "explicacion": (
-                    "No se pudo probar la relajación de R10 (error al "
+                    "No se pudo probar la relajación de R8 (error al "
                     "reconstruir inputs)."
                 ),
             }
@@ -2123,11 +2123,11 @@ def _run_iis_relajacion(
         if detalles[ri]["feasible_relajado"]
         and not detalles[ri]["es_falso_positivo"]
     ]
-    # Prioridad: primero las restricciones "de sede" nuevas (R10, R14,
-    # R13) porque suelen ser las que el usuario controla directamente
-    # desde el panel — accionables inmediatas. Después R4 (saturación
-    # global). Después R5/R6 (que muchas veces son efecto secundario).
-    orden_prioridad = ("R10", "R14", "R13", "R4", "R5", "R6")
+    # Prioridad: primero las restricciones "de sede" nuevas (R8, R12,
+    # R11) porque suelen ser las que el usuario controla directamente
+    # desde el panel — accionables inmediatas. Después R3 (saturación
+    # global). Después R4/R5 (que muchas veces son efecto secundario).
+    orden_prioridad = ("R8", "R12", "R11", "R3", "R4", "R5")
     principal: Optional[str]
     principal_candidatos = [ri for ri in orden_prioridad if ri in culpables]
     if principal_candidatos:
@@ -2139,7 +2139,7 @@ def _run_iis_relajacion(
 
     # Análisis combinado: cuando NINGUNA regla individual rescata, el
     # modelo es infactible por combinación. Probamos pares comunes
-    # (grupo DURO→BLANDO + relajar R14 / bajar margen) para dar
+    # (grupo DURO→BLANDO + relajar R12 / bajar margen) para dar
     # recomendaciones accionables. Sólo si el usuario nos dio session
     # y plan_id.
     combinaciones_rescate: list[dict] = []
@@ -2170,7 +2170,7 @@ def _iss_combinaciones_rescate(
 ) -> list[dict]:
     """Cuando ninguna regla individual rescata el modelo, prueba
     combinaciones de a pares: cada grupo DURO → BLANDO junto con
-    relajar R14 o bajar margen intersede a 0. Devuelve la lista de
+    relajar R12 o bajar margen intersede a 0. Devuelve la lista de
     combinaciones que resuelven, para que la UI las presente como
     recomendaciones accionables.
 
@@ -2281,7 +2281,7 @@ def _iss_r10_grupos_rescate(
     plan_id: str,
     base_config: LPConfig,
 ) -> list[dict]:
-    """Cuando el IIS detecta que R10 es culpable, prueba pasar cada
+    """Cuando el IIS detecta que R8 es culpable, prueba pasar cada
     grupo DURO a BLANDO por separado. Devuelve la lista de grupos
     cuyo cambio individual rescata el modelo — son recomendaciones
     directas para el usuario.
@@ -2745,7 +2745,7 @@ def get_aulas_disponibles_para_horario(
         o el ``HorarioDB.tipo_clase`` actual.
       - Sin choque con OTROS HorarioDB del mismo plan en la misma
         franja (mismo día y solapamiento horario).
-      - Restriccion de sede (R10): si ``horario.carrera_asignada`` esta
+      - Restriccion de sede (R8): si ``horario.carrera_asignada`` esta
         seteado, solo aulas de sedes admisibles para esa carrera;
         sino, sedes admisibles segun la materia (comun/exclusiva).
         Excepcion: labs compatibles con la materia siempre pasan
@@ -2785,7 +2785,7 @@ def get_aulas_disponibles_para_horario(
     else:
         compat = list(aulas_db)
 
-    # Filtrado por sede (R10) via grupo de materias. `carrera_asignada`
+    # Filtrado por sede (R8) via grupo de materias. `carrera_asignada`
     # a nivel comisión quedó como etiqueta visual — la sede se resuelve
     # exclusivamente por la materia. Sólo el modo DURO con lista no
     # vacía filtra; BLANDO deja pasar todas las sedes (la preferencia
@@ -2973,7 +2973,7 @@ def get_aulas_todas_para_horario(
 
     Filtra:
       - Compatibilidad tipo<->aula.
-      - Restricción de sede (R10).
+      - Restricción de sede (R8).
 
     Metadata por aula candidata:
       - ``libre_en_franja``: True si ningún otro horario del plan usa
@@ -3017,7 +3017,7 @@ def get_aulas_todas_para_horario(
     else:
         compat = list(aulas_db)
 
-    # Filtrado por sede (R10) via grupo de materias. Sólo DURO no-vacío
+    # Filtrado por sede (R8) via grupo de materias. Sólo DURO no-vacío
     # filtra; BLANDO acepta todas y sólo preferencia. `carrera_asignada`
     # es etiqueta visual: no interviene.
     if materia_codigo:

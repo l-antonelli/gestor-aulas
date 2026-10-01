@@ -220,7 +220,7 @@ def compute_metricas_calidad(
     # Sedes admisibles resueltas por HORARIO vía Grupo de Materias.
     # ``ComisionDB.carrera_asignada`` quedó como etiqueta visual y no
     # interviene en la resolución (el LP tampoco la usa — ver
-    # `asignacion_aulas_service.build_inputs`, sección R10). Todo se
+    # `asignacion_aulas_service.build_inputs`, sección R8). Todo se
     # resuelve por la materia y su grupo.
     #
     # Nota: acá pasamos ``modos_por_grupo={}`` porque las métricas se

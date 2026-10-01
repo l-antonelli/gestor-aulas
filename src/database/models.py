@@ -198,7 +198,7 @@ class MateriaDB(SQLModel, table=True):
     dicta_recursado: Optional[bool] = Field(default=None)
     # Grupo de materias al que pertenece esta materia (partición estricta:
     # cada materia pertenece a exactamente un grupo). Determina la config
-    # de sedes admisibles para el LP (R10/R12). Nullable a nivel schema
+    # de sedes admisibles para el LP (R8/R10). Nullable a nivel schema
     # porque SQLite no permite ADD COLUMN NOT NULL con FK; la validación
     # de "siempre asignada" se hace en service layer, y la migración
     # garantiza que todas las materias existentes queden asignadas.
@@ -258,7 +258,7 @@ class ComisionDB(SQLModel, table=True):
     # deberia ser ~1.0 (validacion en service layer, no constraint de DB).
     # Default 1.0 para que sea consistente cuando hay una sola comision.
     coef_asignacion: float = Field(default=1.0, ge=0, le=1)
-    # Override de la carrera que define la sede admisible del LP (R10).
+    # Override de la carrera que define la sede admisible del LP (R8).
     # Ver RF-LP-15. None (default) = sin override.
     carrera_asignada: Optional[str] = Field(
         default=None, foreign_key="carreras.codigo", index=True,
@@ -638,7 +638,7 @@ class ScheduleValidationDB(SQLModel, table=True):
     n_conflictos_horarios: int = Field(default=0, ge=0)
 
     # Bloqueos de camino de cursada detectados sobre el cronograma
-    # (R13-camino-cronograma, Fase B del rediseño 2026-09-15). Cuenta
+    # (R11-camino-cronograma, Fase B del rediseño 2026-09-15). Cuenta
     # grupos (carrera, año, cuatri) donde ninguna combinación de
     # comisiones derivadas del preview evita solapamientos + advertencias
     # por cap de combinaciones. Detalle en `details_json["camino_bloqueos"]`.

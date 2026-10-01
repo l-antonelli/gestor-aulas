@@ -125,8 +125,8 @@ class TestCompat:
         assert compute_compat(h, a_teo, compat_set) is False
 
     def test_tipo_None_acepta_todas(self):
-        # Sin tipo fijado, R3 deja todas las aulas en el dominio (la
-        # decisión final la hace t[h] junto con R6, no R3).
+        # Sin tipo fijado, R2 deja todas las aulas en el dominio (la
+        # decisión final la hace t[h] junto con R5, no R2).
         h = _h("h1", "Lunes", 8, 10, tipo=None)
         a_teo = _a("a1", tipo="teorica")
         a_lab = _a("a2", tipo="laboratorio")
@@ -161,7 +161,7 @@ class TestDiagnoseInfeasibility:
         assert "teóricas" in diag.horarios_sin_aula_compatible[0]["razon"]
 
     def test_franja_saturada_pigeonhole(self):
-        # 3 clases solapadas, sólo 2 aulas → infactible por R4.
+        # 3 clases solapadas, sólo 2 aulas → infactible por R3.
         hs = [
             _h("h1", "Lunes", 8, 10, tipo="teorica"),
             _h("h2", "Lunes", 8, 10, tipo="teorica"),
@@ -253,7 +253,7 @@ class TestSaturacionPorTipo:
 
     def test_none_se_fuerza_teorica_si_no_hay_lab(self):
         """Sin lab para la materia, una clase None DEBE ir a teórica
-        (R6) y entonces sí cuenta contra el pool teórico."""
+        (R5) y entonces sí cuenta contra el pool teórico."""
         hs = [
             _h("h1", "Lunes", 8, 10, materia="A", tipo="teorica"),
             _h("h2", "Lunes", 8, 10, materia="B", tipo="teorica"),
@@ -470,12 +470,12 @@ class TestValidarParticion:
 # =============================================================================
 
 
-def _build_compat_R3(
+def _build_compat_R2(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],
     materia_lab_map: dict[str, set[str]] | None = None,
 ) -> dict[tuple[str, str], bool]:
-    """Helper: arma compat usando solo R3 (sin R10)."""
+    """Helper: arma compat usando solo R2 (sin R8)."""
     materia_lab_map = materia_lab_map or {}
     out: dict[tuple[str, str], bool] = {}
     for h in horarios:
@@ -490,7 +490,7 @@ class TestHeatmapDemandaOferta:
     def test_celda_sin_demanda_es_cero(self):
         h = _h("h1", "Lunes", 8, 10, tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h], aulas)
+        compat = _build_compat_R2([h], aulas)
         out = compute_heatmap_demanda_oferta([h], aulas, compat)
         # Lunes 14:00-14:15 no debería tener demanda.
         slot_idx = out["slots"].index("14:00-14:15")
@@ -501,7 +501,7 @@ class TestHeatmapDemandaOferta:
     def test_demanda_uno_oferta_dos_ratio_05(self):
         h = _h("h1", "Lunes", 8, 10, tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h], aulas)
+        compat = _build_compat_R2([h], aulas)
         out = compute_heatmap_demanda_oferta([h], aulas, compat)
         slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
@@ -514,7 +514,7 @@ class TestHeatmapDemandaOferta:
         h2 = _h("h2", "Lunes", 8, 10, materia="OTRA", tipo="teorica")
         h3 = _h("h3", "Lunes", 8, 10, materia="TERC", tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h1, h2, h3], aulas)
+        compat = _build_compat_R2([h1, h2, h3], aulas)
         out = compute_heatmap_demanda_oferta([h1, h2, h3], aulas, compat)
         slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
@@ -531,7 +531,7 @@ class TestHeatmapDemandaOferta:
         h2 = _h("h2", "Lunes", 8, 10, materia="FIS", tipo="laboratorio")
         aulas = [_a("L1", tipo="laboratorio"), _a("L2", tipo="laboratorio")]
         materia_lab_map = {"QUIM": {"L1"}, "FIS": {"L2"}}
-        compat = _build_compat_R3([h1, h2], aulas, materia_lab_map)
+        compat = _build_compat_R2([h1, h2], aulas, materia_lab_map)
         out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
         slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
@@ -544,7 +544,7 @@ class TestHeatmapDemandaOferta:
         h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
         h2 = _h("h2", "Lunes", 8, 10, materia="OTRA", tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h1, h2], aulas)
+        compat = _build_compat_R2([h1, h2], aulas)
         # Filtramos sólo h1: demanda baja a 1, oferta sigue siendo 2.
         out = compute_heatmap_demanda_oferta(
             [h1, h2], aulas, compat, horarios_filtrados=[h1],
@@ -558,7 +558,7 @@ class TestHeatmapDemandaOferta:
         h1 = _h("h1", "Lunes", 8, 10, materia="MAT_A", tipo="teorica")
         h2 = _h("h2", "Lunes", 8, 10, materia="MAT_B", tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h1, h2], aulas)
+        compat = _build_compat_R2([h1, h2], aulas)
         out = compute_heatmap_demanda_oferta([h1, h2], aulas, compat)
         slot_idx = out["slots"].index("08:00-08:15")
         dia_idx = out["dias"].index("Lunes")
@@ -568,7 +568,7 @@ class TestHeatmapDemandaOferta:
 
 
 # =============================================================================
-# Impacto de R10
+# Impacto de R8
 # =============================================================================
 
 
@@ -577,7 +577,7 @@ class TestImpactoR10:
     def test_sin_r10_no_hay_excluidas(self):
         h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
         aulas = [_a("a1"), _a("a2")]
-        compat = _build_compat_R3([h1], aulas)
+        compat = _build_compat_R2([h1], aulas)
         out = compute_impacto_r10([h1], aulas, {}, compat)
         assert len(out) == 1
         row = out[0]
@@ -589,7 +589,7 @@ class TestImpactoR10:
     def test_r10_excluye_aulas(self):
         h1 = _h("h1", "Lunes", 8, 10, tipo="teorica")
         aulas = [_a("a1"), _a("a2"), _a("a3")]
-        # compat post-R10: solo a1 admite a h1.
+        # compat post-R8: solo a1 admite a h1.
         compat = {
             ("h1", "a1"): True,
             ("h1", "a2"): False,
@@ -697,7 +697,7 @@ class TestHeatmapPorSede:
         out = compute_heatmap_por_sede(
             horarios=[h], aulas=aulas,
             materia_lab_map={"M1": {"L_S2"}},
-            # M1 en teoría solo admite S1 según R10, pero el lab está
+            # M1 en teoría solo admite S1 según R8, pero el lab está
             # en S2: la sede S2 cuenta como admisible vía lab compatible.
             sedes_admisibles_por_materia={"M1": {"S1"}},
             aula_sede_id=self._aula_sede_id(),
@@ -709,7 +709,7 @@ class TestHeatmapPorSede:
         s2_lab = out["data"]["S2"]["laboratorio"]
         assert s2_lab["demanda"][slot_idx][dia_idx] == 1
         assert s2_lab["oferta"][slot_idx][dia_idx] == 1
-        # En S1 la materia es admisible por R10 pero NO tiene lab
+        # En S1 la materia es admisible por R8 pero NO tiene lab
         # compatible con M1, así que no aparece como demanda de lab.
         s1_lab = out["data"]["S1"]["laboratorio"]
         assert s1_lab["demanda"][slot_idx][dia_idx] == 0

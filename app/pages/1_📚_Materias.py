@@ -455,7 +455,7 @@ def render_custom_materia_page():
                                     key=f"edit_{materia_codigo}_grupo",
                                     help=(
                                         "Determina qué sedes son admisibles "
-                                        "para esta materia (R10 / R12 del "
+                                        "para esta materia (R8 / R10 del "
                                         "asignador). La configuración de "
                                         "cada grupo se edita en la "
                                         "pestaña 'Grupos de materias'."

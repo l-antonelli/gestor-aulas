@@ -55,7 +55,7 @@ estén todas las materias esperadas y ninguna de más), la
 partición entre teoría y laboratorio de cada comisión, los
 conflictos horarios dentro de cada grupo curricular y, en el
 plan, la existencia de un camino de cursada viable entre sedes
-(R13-camino). Como parte de ella, las excepciones que el operador
+(R11-camino). Como parte de ella, las excepciones que el operador
 había marcado como ignoradas y que ya no aplican se eliminan
 solas, y se le informa de la limpieza. Finalmente, antes de
 invocar al resolutor, el asignador ejecuta la *verificación
@@ -122,7 +122,7 @@ generado.
    para tercer año de Ingeniería Electrónica, no existe una
    combinación de comisiones viable porque dos materias
    contiguas se dictan en sedes distintas sin margen suficiente
-   (R13-camino). El operador amplía el margen entre sedes o mueve
+   (R11-camino). El operador amplía el margen entre sedes o mueve
    una comisión.
 4. **Vuelve a ejecutar el asignador.** El resolutor encuentra la
    solución óptima, que se aplica al plan y queda guardada junto

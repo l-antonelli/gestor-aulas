@@ -470,7 +470,7 @@ def _render_editor_grupo(
 
         if not blandas_local:
             st.caption(
-                "_(Lista vacía — el modo BLANDO no aplica R12 para este "
+                "_(Lista vacía — el modo BLANDO no aplica R10 para este "
                 "grupo.)_"
             )
 

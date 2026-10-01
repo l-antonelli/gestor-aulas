@@ -425,7 +425,7 @@ Antes de crear un ciclo hay que asegurar el estado del catálogo:
 - **Materias** cargadas (`📚 Materias`) con:
   - `periodo`: `"cuatrimestral"` o `"anual"`.
   - `horas_teoria` y `horas_laboratorio` correctas (impactan
-    directamente al asignador vía R5).
+    directamente al asignador vía R4).
   - `virtual`: `True` sólo si la materia se dicta virtual **por
     diseño en el plan** (no para casos puntuales de un ciclo).
   - `dicta_recursado`: `None` por defecto (heredar de la
@@ -569,7 +569,7 @@ antes de correr el LP:
 - [ ] **Cronograma cargado y prevalidado**. Todos los dictados
       no virtuales tienen horarios cargados. La prevalidación
       no reporta "no esperadas".
-- [ ] **Grupos de materias configurados** (para R10 y R12 del
+- [ ] **Grupos de materias configurados** (para R8 y R10 del
       LP). Ver `asignador_implementacion.md § 5`.
 
 ---

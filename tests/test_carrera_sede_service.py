@@ -1,4 +1,4 @@
-"""Tests para carrera_sede_service.py (R10: restriccion de sede por carrera)."""
+"""Tests para carrera_sede_service.py (R8: restriccion de sede por carrera)."""
 
 import uuid
 from datetime import date

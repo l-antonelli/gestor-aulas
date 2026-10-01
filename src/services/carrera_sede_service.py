@@ -1,4 +1,4 @@
-"""Servicio para la restriccion de sede por carrera (R10 del LP).
+"""Servicio para la restriccion de sede por carrera (R8 del LP).
 
 Encapsula tres operaciones principales:
 
@@ -14,7 +14,7 @@ Tambien expone helpers de lectura usados por el LP:
 
 - ``materia_es_comun``: True si la materia aparece en >= 2 carreras.
 - ``sedes_admisibles_para_materia``: devuelve el set de ``sede_id``
-  donde la materia puede dictarse, segun la regla R10.
+  donde la materia puede dictarse, segun la regla R8.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def sedes_admisibles_para_carrera(
 def sedes_admisibles_para_materia(
     session: Session, materia_codigo: str,
 ) -> set[str] | None:
-    """Devuelve el set de ``sede_id`` admisibles para la materia segun R10.
+    """Devuelve el set de ``sede_id`` admisibles para la materia segun R8.
 
     Reglas:
 

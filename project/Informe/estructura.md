@@ -273,14 +273,14 @@ simultaneidad domina a la formulación por pares).
     `Sim`.
   - Parámetros y variables de decisión.
   - Función objetivo asimétrica (sobre/sub-ocupación).
-  - Restricciones R1 a R10, cada una acompañada de su lectura en
+  - Restricciones R1 a R12, cada una acompañada de su lectura en
     prosa. Las derivaciones se remiten al anexo.
 - 8.3 Herramientas conceptuales para el diagnóstico:
   - Principio del palomar (*pigeonhole*): motivación y aplicación al
     chequeo de saturación por franja horaria.
   - Teorema de Hall y apareamiento bipartito: cuándo el principio
     del palomar no alcanza y hay que mirar subconjuntos.
-  - Grupos de simultaneidad como formulación de la restricción R4;
+  - Grupos de simultaneidad como formulación de la restricción R3;
     la comparación detallada con la formulación por pares queda en
     el anexo.
 - 8.4 Chequeo estructural pre-solve: el semáforo de factibilidad

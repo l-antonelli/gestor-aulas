@@ -16,18 +16,18 @@ Familias de bloqueos detectadas:
 - **R1 · Horario sin aula compatible**: un horario individual no
   tiene ninguna aula del catálogo que pueda recibirlo (falta lab
   compatible, sede admisible vacía, tipo desalineado).
-- **R3+R4 · Franja saturada por tipo**: refinamiento de pigeonhole
+- **R2+R3 · Franja saturada por tipo**: refinamiento de pigeonhole
   discriminando teórica vs laboratorio.
-- **R5 · Partición teoría/lab imposible**: la suma de duraciones de
+- **R4 · Partición teoría/lab imposible**: la suma de duraciones de
   los horarios de una comisión no admite bipartición según las horas
   declaradas por la materia.
 - **compat-pigeonhole**: en una franja, la unión de labs
   compatibles de las materias con demanda no alcanza para la demanda.
 - **compat-hall**: subconjunto de materias con lab que comparten un
   pool insuficiente aunque la unión global cierre.
-- **R11 · Pin manual incompatible**: un horario tiene un aula
+- **R9 · Pin manual incompatible**: un horario tiene un aula
   manual fijada que ya no es compatible (cambió tipo, sede, etc.).
-- **R13 · Sedes consecutivas sin sede común**: un par de horarios
+- **R11 · Sedes consecutivas sin sede común**: un par de horarios
   contiguos de la misma comisión con gap < margen no tiene ninguna
   sede admisible en común.
 """
@@ -74,7 +74,7 @@ from src.services.resolucion_jerarquica import resolve_virtual
 @dataclass
 class Bloqueo:
     """Un problema concreto detectado por el chequeo estructural."""
-    codigo_regla: str          # p.ej. "R1", "R5", "compat-hall"
+    codigo_regla: str          # p.ej. "R1", "R4", "compat-hall"
     severidad: str             # "bloqueante" | "advertencia"
     titulo: str                # línea corta con el problema
     detalle: str               # markdown con contexto (materias, aulas, día)
@@ -82,7 +82,7 @@ class Bloqueo:
     # Datos estructurados que la UI puede usar para acciones directas
     # sobre el bloqueo (por ej. shortcuts). Formato libre — cada
     # codigo_regla decide qué claves publica. Ejemplo para
-    # "R13-camino" con tipo="solapamiento":
+    # "R11-camino" con tipo="solapamiento":
     #   {"tipo": "solapamiento",
     #    "par_materias": ("M1", "M2"),      # ordenadas lex
     #    "carrera": "A", "anio": 1, "cuatri": "1C"}
@@ -169,9 +169,9 @@ def check_factibilidad_estructural(
             materia_dict_virtual[mc] = v
 
     # Filtrar virtuales para todo lo que tiene que ver con asignación
-    # de aula (R1, R3, R4, R10, R13, compat-hall). Pero mantener una
+    # de aula (R1, R2, R3, R8, R11, compat-hall). Pero mantener una
     # lista aparte con TODOS los horarios (incluidos virtuales) para
-    # R5 — la partición teoría/lab tiene que reflejar todas las horas
+    # R4 — la partición teoría/lab tiene que reflejar todas las horas
     # que se dictan, no sólo las que ocupan aula.
     hteo = {m.codigo: float(m.horas_teoria or 0) for m in materias_db}
     hlab = {m.codigo: float(m.horas_laboratorio or 0) for m in materias_db}
@@ -207,7 +207,7 @@ def check_factibilidad_estructural(
 
         horarios_slots_con_virtuales.append(slot)
         # Los virtuales quedan afuera de las validaciones que dependen
-        # de asignación de aula, pero entran en la lista completa para R5.
+        # de asignación de aula, pero entran en la lista completa para R4.
         if resolve_virtual(
             horario_virtual=h.virtual,
             dictado_virtual=materia_dict_virtual.get(h.codigo_materia),
@@ -245,7 +245,7 @@ def check_factibilidad_estructural(
 
     # Sedes admisibles resueltas por HORARIO vía Grupo de Materias.
     # ``ComisionDB.carrera_asignada`` quedó como etiqueta visual y no
-    # interviene en la resolución (idem LP en R10). Ver
+    # interviene en la resolución (idem LP en R8). Ver
     # `asignacion_aulas_service.build_inputs`.
     sedes_admis_mat: dict[str, Optional[set[str]]] = {
         mc: sedes_admisibles_set_por_materia(session, mc)
@@ -257,7 +257,7 @@ def check_factibilidad_estructural(
         return sedes_admis_mat.get(mc)
 
     # -------------------------------------------------------------------------
-    # Construir compat[(h,a)] con filtro R3 + R10 (idéntico a build_inputs
+    # Construir compat[(h,a)] con filtro R2 + R8 (idéntico a build_inputs
     # de manera abreviada).
     # -------------------------------------------------------------------------
     compat: dict[tuple[str, str], bool] = {}
@@ -274,14 +274,14 @@ def check_factibilidad_estructural(
             if not compat[(h.id, a.id)]:
                 continue
             if a.id in labs_m:
-                continue  # Lab compatible prevalece sobre R10.
+                continue  # Lab compatible prevalece sobre R8.
             if aula_sede_id.get(a.id) not in admis:
                 compat[(h.id, a.id)] = False
 
     sim_groups = compute_simultaneidad_groups(horarios_slots)
 
     # =========================================================================
-    # 1. Diagnóstico estructural clásico (R1, R3+R4, R5, Hall global).
+    # 1. Diagnóstico estructural clásico (R1, R2+R3, R4, Hall global).
     # =========================================================================
     diag = diagnose_infeasibility(
         horarios=horarios_slots, aulas=aulas_slots,
@@ -309,10 +309,10 @@ def check_factibilidad_estructural(
             entidades_a_revisar=[f"materia:{mc}"],
         ))
 
-    # R3+R4: saturación por tipo (más informativa que la global).
+    # R2+R3: saturación por tipo (más informativa que la global).
     for item in diag.saturacion_por_tipo:
         tipo = item["tipo"]
-        codigo = "R3+R4"
+        codigo = "R2+R3"
         mats = item.get("materias", [])
         materia_ref = item.get("materia")  # para labs, la materia puntual
         titulo = (
@@ -341,9 +341,9 @@ def check_factibilidad_estructural(
             entidades_a_revisar=[f"materia:{m}" for m in mats],
         ))
 
-    # R5: particiones teoría/lab imposibles.
+    # R4: particiones teoría/lab imposibles.
     # Sólo aplica a materias con laboratorio (hlab > 0). Para materias
-    # sin laboratorio, la ecuación R5 del LP no se instancia: los
+    # sin laboratorio, la ecuación R4 del LP no se instancia: los
     # horarios teóricos "flotan libres" y una suma menor a hteo+hlab
     # no genera infactibilidad estructural. Alineado con la validación
     # oficial del panel de Detalle (que también filtra por hlab > 0).
@@ -358,7 +358,7 @@ def check_factibilidad_estructural(
     horarios_por_comision: dict[str, list[tuple[str, float, str | None]]] = {}
     for h in horarios_slots_con_virtuales:
         cid = comision_de_horario[h.id]
-        # Materias sin laboratorio: R5 no se aplica.
+        # Materias sin laboratorio: R4 no se aplica.
         if hlab.get(h.materia_codigo, 0.0) <= 0:
             continue
         horarios_por_comision.setdefault(cid, []).append(
@@ -379,7 +379,7 @@ def check_factibilidad_estructural(
         com_lbl = com.nombre if com else cid
         mc = prob.get("materia", "")
         reporte.bloqueos.append(Bloqueo(
-            codigo_regla="R5",
+            codigo_regla="R4",
             severidad="bloqueante",
             titulo=(
                 f"Partición teoría/lab imposible · {mc} "
@@ -504,7 +504,7 @@ def check_factibilidad_estructural(
                 ))
 
     # =========================================================================
-    # 3. R11 · Pins manuales incompatibles.
+    # 3. R9 · Pins manuales incompatibles.
     # =========================================================================
     for h in horarios_slots:
         h_db = horario_db_by_id.get(h.id)
@@ -517,7 +517,7 @@ def check_factibilidad_estructural(
             aula = aula_by_id.get(aula_pin)
             aula_lbl = aula.codigo_aula if aula else aula_pin
             reporte.bloqueos.append(Bloqueo(
-                codigo_regla="R11",
+                codigo_regla="R9",
                 severidad="bloqueante",
                 titulo=(
                     f"Pin manual incompatible · {h.materia_codigo} "
@@ -541,7 +541,7 @@ def check_factibilidad_estructural(
             ))
 
     # =========================================================================
-    # 4. R13 · Sedes consecutivas sin sede común admisible.
+    # 4. R11 · Sedes consecutivas sin sede común admisible.
     # =========================================================================
     pares_riesgo = compute_pares_intersede_riesgo(
         horarios=horarios_slots,
@@ -581,7 +581,7 @@ def check_factibilidad_estructural(
             com = com_by_id.get(cid) if cid else None
             com_lbl = com.nombre if com else "?"
             reporte.bloqueos.append(Bloqueo(
-                codigo_regla="R13",
+                codigo_regla="R11",
                 severidad="bloqueante",
                 titulo=(
                     f"Comisión {com_lbl} · {h1.materia_codigo}/"
@@ -621,7 +621,7 @@ def check_factibilidad_estructural(
             ))
 
     # =========================================================================
-    # 5. R13-camino · Camino de cursada intersede factible por grupo curricular.
+    # 5. R11-camino · Camino de cursada intersede factible por grupo curricular.
     # =========================================================================
     # Verifica que, para cada (carrera, año, cuatri), exista al menos
     # una combinación de comisiones (una por materia obligatoria) tal
@@ -629,7 +629,7 @@ def check_factibilidad_estructural(
     # intersede — considerando las sedes admisibles del grupo de cada
     # materia (unión: dura ∪ blanda, ver `resolver_sedes_admisibles_por_materia`).
     #
-    # Complementa R13 (que actúa por-comisión) capturando problemas
+    # Complementa R11 (que actúa por-comisión) capturando problemas
     # que sólo emergen a nivel del "camino que cursa un alumno". Ej.:
     # cada comisión de una materia común es factible por sí sola en
     # Pellegrini, pero al combinarla con las específicas de Electrónica
@@ -662,7 +662,7 @@ def check_factibilidad_estructural(
 
 
 # =============================================================================
-# Chequeo camino de cursada (R13-camino)
+# Chequeo camino de cursada (R11-camino)
 # =============================================================================
 
 
@@ -683,7 +683,7 @@ def _add_bloqueos_camino_cursada(
     mat_nombre: dict[str, str],
     sede_nombre: dict[str, str],
 ) -> None:
-    """Chequea R13-camino y agrega bloqueos/advertencias al reporte.
+    """Chequea R11-camino y agrega bloqueos/advertencias al reporte.
 
     Reusa el patrón de `validar_conflictos_horarios_plan` (L354-410 de
     ``validations.py``) para agrupar por (carrera, año, cuatri) y
@@ -965,7 +965,7 @@ def _add_bloqueos_camino_cursada(
         # Determinar si el DFS cortó por cap o por infactibilidad real.
         if excede_cap or combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
             reporte.advertencias.append(Bloqueo(
-                codigo_regla="R13-camino",
+                codigo_regla="R11-camino",
                 severidad="advertencia",
                 titulo=(
                     f"Camino de cursada · {carrera} · Año {anio} · "
@@ -1063,7 +1063,7 @@ def _add_bloqueos_camino_cursada(
             contexto["par_materias"] = [a, b]
 
         reporte.bloqueos.append(Bloqueo(
-            codigo_regla="R13-camino",
+            codigo_regla="R11-camino",
             severidad="bloqueante",
             titulo=(
                 f"Camino de cursada · {carrera} · Año {anio} · "
@@ -1108,7 +1108,7 @@ def check_camino_cursada(
             comportamiento del pre-check del asignador.
 
     Returns:
-        Lista de ``Bloqueo`` con ``codigo_regla="R13-camino"``. Cada
+        Lista de ``Bloqueo`` con ``codigo_regla="R11-camino"``. Cada
         bloqueo trae ``contexto["tipo"] ∈ {"solapamiento",
         "intersede"}`` para que la UI pueda diferenciarlos.
     """
@@ -1202,7 +1202,7 @@ def check_camino_cursada_cronograma(
 
     Se enfoca en **solapamiento horario** entre pares de materias del
     mismo grupo curricular (carrera, año, cuatri del ciclo, más
-    anuales). El chequeo intersede de R13-camino se delega al plan —
+    anuales). El chequeo intersede de R11-camino se delega al plan —
     depende de sedes admisibles configuradas en el asignador, no del
     cronograma.
 
@@ -1211,7 +1211,7 @@ def check_camino_cursada_cronograma(
     (mismo criterio que ``validar_conflictos_horarios_cronograma``).
 
     Returns:
-        Lista de ``Bloqueo`` con ``codigo_regla="R13-camino-cronograma"``.
+        Lista de ``Bloqueo`` con ``codigo_regla="R11-camino-cronograma"``.
         Vacía si el cronograma no tiene entries, hay errores de preview,
         o no hay pares infactibles.
     """
@@ -1367,7 +1367,7 @@ def check_camino_cursada_cronograma(
         # Cap excedido → advertencia, no bloqueo.
         if excede_cap or combinaciones_probadas[0] >= MAX_COMBINACIONES_CAMINO:
             advertencias.append(Bloqueo(
-                codigo_regla="R13-camino-cronograma",
+                codigo_regla="R11-camino-cronograma",
                 severidad="advertencia",
                 titulo=(
                     f"Camino de cursada · {carrera} · Año {anio} · "
@@ -1433,7 +1433,7 @@ def check_camino_cursada_cronograma(
             contexto["par_materias"] = par_materias
 
         bloqueos.append(Bloqueo(
-            codigo_regla="R13-camino-cronograma",
+            codigo_regla="R11-camino-cronograma",
             severidad="bloqueante",
             titulo=(
                 f"Camino de cursada · {carrera} · Año {anio} · "

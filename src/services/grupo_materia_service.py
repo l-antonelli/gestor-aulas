@@ -496,7 +496,7 @@ def resolver_config_sedes_por_materia(
     - Si ``modo = DURO``: devuelve el set duro del grupo. Si está
       vacío → lista vacía (el LP interpreta como fallback permisivo).
     - Si ``modo = BLANDO``: devuelve la lista blanda ordenada del
-      grupo. Si está vacía → lista vacía (el LP no aplica R12 para
+      grupo. Si está vacía → lista vacía (el LP no aplica R10 para
       esta materia).
     """
     grupo = resolver_grupo_de_materia(session, materia_codigo)
@@ -552,7 +552,7 @@ def sedes_admisibles_set_por_materia(
     usada por chequeos y heatmaps que necesitan el mismo filtro que
     el LP aplica.
 
-    Semántica (idéntica al bloque R10 de ``build_inputs``):
+    Semántica (idéntica al bloque R8 de ``build_inputs``):
 
     - Modo **DURO** con lista no vacía → ``set(sedes_ordenadas)``.
     - Modo **DURO** con lista vacía → ``None`` (fallback permisivo).

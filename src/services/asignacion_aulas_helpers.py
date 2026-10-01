@@ -4,17 +4,17 @@ Funciones puras (sin DB) que se usan al construir el modelo:
 
 - ``compute_simultaneidad_groups``: a partir de un conjunto de horarios
   semanales, devuelve los grupos maximales de simultaneidad (clases que
-  comparten al menos un instante). Cada grupo genera una restricción R4
+  comparten al menos un instante). Cada grupo genera una restricción R3
   por aula en el LP. Algoritmo de barrido de eventos en O(N log N) por día.
 
-- ``compute_compat``: aplica la regla de compatibilidad R3 entre un horario
+- ``compute_compat``: aplica la regla de compatibilidad R2 entre un horario
   y un aula, con `tipo_clase` fijado en el horario.
 
 - ``diagnose_infeasibility``: detecta causas estructurales de
   infactibilidad antes de correr el solver, para reportarlas al usuario
   con mensajes accionables.
 
-Ver `project/1. Diseño/asignacion-aulas-LP.md` § 3.5 R3 y R4.
+Ver `project/1. Diseño/asignacion-aulas-LP.md` § 3.5 R2 y R3.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class AulaSlot:
 
 
 # =============================================================================
-# Grupos de simultaneidad (R4)
+# Grupos de simultaneidad (R3)
 # =============================================================================
 
 def compute_simultaneidad_groups(
@@ -66,7 +66,7 @@ def compute_simultaneidad_groups(
     Cada grupo retornado es un ``set[str]`` de IDs de horarios. Dos grupos
     distintos no son comparables por inclusión (son maximales).
 
-    Implementa el algoritmo descripto en R4 del documento de diseño § 3.5.
+    Implementa el algoritmo descripto en R3 del documento de diseño § 3.5.
 
     Args:
         horarios: lista de HorarioSlot (puede ser de varios días).
@@ -74,7 +74,7 @@ def compute_simultaneidad_groups(
     Returns:
         Lista de grupos maximales. Cada grupo tiene >= 2 horarios (los
         grupos triviales de tamaño 1 se filtran porque no aportan
-        restricciones útiles para R4).
+        restricciones útiles para R3).
     """
     grupos: list[set[str]] = []
 
@@ -128,7 +128,7 @@ def _add_if_maximal(grupos: list[set[str]], nuevo: set[str]) -> None:
 
 
 # =============================================================================
-# Compatibilidad (R3)
+# Compatibilidad (R2)
 # =============================================================================
 
 def compute_compat(
@@ -138,7 +138,7 @@ def compute_compat(
 ) -> bool:
     """Devuelve True si el horario puede dictarse en el aula.
 
-    Aplica R3 del documento de diseño:
+    Aplica R2 del documento de diseño:
 
     - Si ``horario.tipo_clase == "teorica"``: el aula debe ser
       ``tipo ∈ {teorica, anfiteatro}``.
@@ -147,7 +147,7 @@ def compute_compat(
       derivada de MateriaLaboratorioDB).
     - Si ``horario.tipo_clase`` es ``None``: cualquier aula es compatible
       en principio (la compatibilidad se decide vía la variable t[h] en
-      el LP, junto con R6).
+      el LP, junto con R5).
 
     Args:
         horario: el horario semanal.
@@ -163,7 +163,7 @@ def compute_compat(
     if horario.tipo_clase == "laboratorio":
         return aula.id in materia_lab_aulas
     # tipo_clase = None → cualquier aula compatible en principio. La
-    # consistencia con t[h] se fuerza vía R6 en el LP.
+    # consistencia con t[h] se fuerza vía R5 en el LP.
     return True
 
 
@@ -179,13 +179,13 @@ class InfeasibilityDiagnosis:
     que detecta cubren las situaciones más comunes en que el modelo es
     infactible aunque el solver no dé pistas:
 
-    1. **Horarios sin aula compatible** (R1 + R3): un horario que no
+    1. **Horarios sin aula compatible** (R1 + R2): un horario que no
        tiene NI UNA sola aula que pueda recibirlo. Causa típica: lab
        sin entradas en `MateriaLaboratorioDB` para esa materia.
-    2. **Franjas saturadas** (R4 + R3, cota pigeonhole sobre la unión):
+    2. **Franjas saturadas** (R3 + R2, cota pigeonhole sobre la unión):
        grupo de simultaneidad donde la unión de aulas compatibles tiene
        menos elementos que el grupo. Necesaria pero no suficiente.
-    3. **Saturación por tipo dentro de una franja** (R3 + R4 + R6):
+    3. **Saturación por tipo dentro de una franja** (R2 + R3 + R5):
        refinamiento de (2). Mira por separado teóricas vs laboratorios:
        si las clases del grupo que NECESITAN aula teórica son más que
        el inventario de teóricas/anfiteatros, infactible. Para labs,
@@ -194,7 +194,7 @@ class InfeasibilityDiagnosis:
        (sólo cuentan como teóricas si NO admiten ir a lab; sólo cuentan
        como lab si NO admiten ir a teórica) para evitar falsos
        positivos.
-    4. **Hall violators** (R3 + R4 vía matching bipartito): test
+    4. **Hall violators** (R2 + R3 vía matching bipartito): test
        suficiente y necesario sobre cada grupo. Para cada subconjunto
        S del grupo, verifica `|N(S)| >= |S|` donde N(S) es la unión
        de aulas compatibles de S. Si falla, identifica el subconjunto
@@ -204,11 +204,11 @@ class InfeasibilityDiagnosis:
        pigeonhole, pero `|N({B,C})|=1 < 2` también falla Hall y es
        más informativo. Para grupos chicos (≤8) por enumeración de
        subconjuntos; para más grandes, matching bipartito clásico.
-    5. **Partición teoría/lab infactible** (R5): comisión cuya suma
+    5. **Partición teoría/lab infactible** (R4): comisión cuya suma
        de horas no admite una bipartición que cumpla `hteo + hlab`.
 
     Las tolerancias del penalty (λ_over, λ_under, tol_*) NO pueden
-    hacer infactible al modelo porque R7 es de desigualdad con
+    hacer infactible al modelo porque R6 es de desigualdad con
     `over, under ≥ 0`.
     """
     # (1) Horarios sin ninguna aula compatible.
@@ -290,7 +290,7 @@ def diagnose_infeasibility(
         sim_groups: grupos de simultaneidad maximales.
         compat_override: si se pasa, este dict (computado por
             ``build_inputs`` y que YA incluye filtros adicionales como
-            R10 — restricción de sede) se usa en lugar de
+            R8 — restricción de sede) se usa en lugar de
             ``compute_compat``. Permite que el diagnóstico reporte
             causas reales del problema posterior al filtrado.
 
@@ -314,14 +314,14 @@ def diagnose_infeasibility(
             return bool(compat_override.get((h.id, a.id), False))
         return compute_compat(h, a, materia_lab_map.get(h.materia_codigo, set()))
 
-    # 1. Horarios sin ninguna aula compatible (R1 + R3 estructural; +R10
+    # 1. Horarios sin ninguna aula compatible (R1 + R2 estructural; +R8
     #    si compat_override viene).
     for h in horarios:
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         compat_count = sum(1 for a in aulas if _es_compat(h, a))
         if compat_count == 0:
-            # ¿Sería compatible si no fuera por R10? Si sin override
-            # también queda en 0, es la causa "clásica" R1+R3.
+            # ¿Sería compatible si no fuera por R8? Si sin override
+            # también queda en 0, es la causa "clásica" R1+R2.
             compat_sin_r10 = sum(
                 1 for a in aulas if compute_compat(h, a, lab_aulas_m)
             )
@@ -329,7 +329,7 @@ def diagnose_infeasibility(
 
             if es_r10:
                 razon = (
-                    "ningún aula admisible por R10 (restricción de "
+                    "ningún aula admisible por R8 (restricción de "
                     "sede por carrera/materia). Revisá las sedes "
                     "habilitadas para la carrera o la sede default "
                     f"para materias comunes ({h.materia_codigo})."
@@ -432,7 +432,7 @@ def _diagnose_saturacion_por_tipo(
     - **Teóricas**: clases que ESTRICTAMENTE requieren aula teórica
       (tipo_clase="teorica") más aquellas con `tipo_clase=None` que
       no admiten ir a lab (sin lab compatible para su materia). Estas
-      últimas son las que el LP forzosamente mandará a teórica via R6,
+      últimas son las que el LP forzosamente mandará a teórica via R5,
       por lo que cuentan contra la pool teórica.
     - **Laboratorios**: por materia. Cada materia tiene su pool propio
       `materia_lab_map[m]`. Las clases con `tipo_clase=None` que no
@@ -441,7 +441,7 @@ def _diagnose_saturacion_por_tipo(
 
     El manejo OPTIMISTA de las `None` evita falsos positivos: una
     clase con `tipo_clase=None` y materia con lab disponible no se
-    cuenta contra teórica porque el LP puede mandarla a lab via R5.
+    cuenta contra teórica porque el LP puede mandarla a lab via R4.
 
     Args:
         sim_groups: grupos maximales de simultaneidad.
@@ -466,7 +466,7 @@ def _diagnose_saturacion_por_tipo(
             continue
 
         # Clases que necesitan teórica: tipo="teorica" + las None sin lab
-        # disponible (R6 las fuerza a teoría).
+        # disponible (R5 las fuerza a teoría).
         n_teorica_forzadas = []
         for h in hs_grupo:
             if h.tipo_clase == "teorica":
@@ -474,7 +474,7 @@ def _diagnose_saturacion_por_tipo(
             elif h.tipo_clase is None:
                 lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
                 if not lab_aulas_m:
-                    # No hay labs compatibles: R6 fuerza t[h]=0 (teórica).
+                    # No hay labs compatibles: R5 fuerza t[h]=0 (teórica).
                     n_teorica_forzadas.append(h)
 
         if len(n_teorica_forzadas) > n_teoricas:
@@ -507,7 +507,7 @@ def _diagnose_saturacion_por_tipo(
             if h.tipo_clase == "laboratorio":
                 por_materia_lab.setdefault(h.materia_codigo, []).append(h)
             elif h.tipo_clase is None and n_teoricas == 0:
-                # Forzosamente lab via R6 (no hay aulas teóricas).
+                # Forzosamente lab via R5 (no hay aulas teóricas).
                 lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
                 if lab_aulas_m:
                     por_materia_lab.setdefault(h.materia_codigo, []).append(h)
@@ -833,7 +833,7 @@ def compute_heatmap_demanda_oferta(
     - ``ratio = demanda / oferta``. ratio > 1 ⇒ saturación segura
       (más horarios que aulas), ratio = 1 ⇒ frontera, ratio < 1 ⇒ holgura.
 
-    El ``compat`` se asume ya filtrado por R10 (sede), R3 (tipo) y lab
+    El ``compat`` se asume ya filtrado por R8 (sede), R2 (tipo) y lab
     compatible. Si el caller pasa un compat sin esos filtros, el heatmap
     seguirá funcionando pero con cobertura distinta.
 
@@ -940,7 +940,7 @@ def compute_heatmap_demanda_oferta(
     # - "laboratorio:m": aulas en materia_lab_map[m] que ademas pasan
     #   el filtro de compat con esos horarios.
     # - "sin_determinar": union de aulas admisibles para los horarios
-    #   sin tipo (R6 deja la decision al LP, pero acotamos por compat).
+    #   sin tipo (R5 deja la decision al LP, pero acotamos por compat).
 
     aula_ids = [a.id for a in aulas]
 
@@ -1001,7 +1001,7 @@ def compute_heatmap_demanda_oferta(
 
 
 # =============================================================================
-# Impacto de R10 (restriccion de sede por carrera)
+# Impacto de R8 (restriccion de sede por carrera)
 # =============================================================================
 
 def sede_preferida_desde_sets(
@@ -1097,7 +1097,7 @@ def compute_heatmap_por_sede(
 
     - **demanda**: cuántos horarios activos en esa franja **necesitan**
       una aula de esa sede. Un horario "necesita" una sede si esa sede
-      es admisible para él (según R10 o por ser lab compatible).
+      es admisible para él (según R8 o por ser lab compatible).
     - **oferta**: cuántas aulas de la sede son del tipo necesario y
       admiten al menos uno de esos horarios.
     - **ratio**: demanda / oferta. Verde ≤0.8, amarillo 0.8–1, rojo >1.
@@ -1111,7 +1111,7 @@ def compute_heatmap_por_sede(
         aulas: catálogo de aulas.
         materia_lab_map: aulas compatibles para lab por materia.
         sedes_admisibles_por_materia: por cada materia, set de
-            sede_ids admisibles según R10. Si la materia no está en el
+            sede_ids admisibles según R8. Si la materia no está en el
             dict o el valor es None, se asume que admite todas las sedes.
         aula_sede_id: mapping aula_id → sede_id.
         sede_nombre: mapping sede_id → nombre legible.
@@ -1488,7 +1488,7 @@ def compute_pares_intersede_riesgo(
        contiguos. Ningún alumno del grupo puede trasladarse. Sólo se
        detecta si se provee ``grupos_curriculares_de_horario``.
 
-    La restricción R13 del LP bloquea ambos tipos por igual: para
+    La restricción R11 del LP bloquea ambos tipos por igual: para
     cada par en riesgo, no puede haber una asignación que ubique
     los dos horarios en sedes distintas.
 
@@ -1507,7 +1507,7 @@ def compute_pares_intersede_riesgo(
         Lista de tuplas ``(h1_id, h2_id, gap_minutos)`` con h1 anterior
         a h2 (por hora_inicio). Sólo entradas con `0 <= gap < margen`.
         Si dos horarios se solapan (gap < 0), NO se incluye acá porque
-        eso lo maneja R4 (grupos de simultaneidad).
+        eso lo maneja R3 (grupos de simultaneidad).
     """
     if margen_min_intersede_minutos <= 0:
         return []
@@ -1811,7 +1811,7 @@ def horarios_que_intersectan_rango(
 ) -> dict:
     """Para el inspector de franja: devuelve los horarios que
     intersectan alguno de los días/slots seleccionados, marcando si
-    cada uno demanda la sede inspeccionada (R10 + lab compatible).
+    cada uno demanda la sede inspeccionada (R8 + lab compatible).
 
     Cada horario se devuelve **completo** (de su ``hora_inicio`` a su
     ``hora_fin``), aunque el rango seleccionado sólo cubra parte.
@@ -1824,7 +1824,7 @@ def horarios_que_intersectan_rango(
         slots_seleccionados: lista de slots de 30 min en formato
             ``"HH:MM-HH:MM"`` (mismo formato que ``compute_heatmap_por_sede``).
         sedes_admisibles_por_materia: por materia, set de sede_ids
-            admisibles según R10 (None = sin restricción).
+            admisibles según R8 (None = sin restricción).
         sede_id_inspeccionada: la sede que se está inspeccionando.
         materia_lab_map: aulas-lab compatibles por materia.
         aula_sede_id: mapping aula_id → sede_id.
@@ -1869,7 +1869,7 @@ def horarios_que_intersectan_rango(
     dias_set = set(dias_seleccionados)
 
     def _demanda_sede(h: HorarioSlot) -> bool:
-        """¿El horario admite la sede inspeccionada (R10 + lab)?"""
+        """¿El horario admite la sede inspeccionada (R8 + lab)?"""
         admis = sedes_admisibles_por_materia.get(h.materia_codigo)
         if admis is None:
             return True
@@ -1930,7 +1930,7 @@ def compute_impacto_r10(
     compat: dict[tuple[str, str], bool],
 ) -> list[dict]:
     """Para cada materia presente en ``horarios``, mide cuantas aulas
-    quedaron afuera por R10 (vs. el inventario que la materia podria
+    quedaron afuera por R8 (vs. el inventario que la materia podria
     usar por su tipo solamente).
 
     Devuelve una lista de dicts ordenada por mayor impacto (mas aulas
@@ -1938,11 +1938,11 @@ def compute_impacto_r10(
 
     - ``materia_codigo``
     - ``aulas_admisibles_post_r10``: cantidad de aulas que aceptan al
-      menos un horario de la materia despues de R10 (segun ``compat``).
-    - ``aulas_admisibles_pre_r10``: cantidad que aceptarian sin R10
-      (sólo R3: tipo + lab compatible).
+      menos un horario de la materia despues de R8 (segun ``compat``).
+    - ``aulas_admisibles_pre_r10``: cantidad que aceptarian sin R8
+      (sólo R2: tipo + lab compatible).
     - ``aulas_excluidas_por_r10``: diferencia.
-    - ``ids_excluidas``: lista de aula_ids descartadas por R10.
+    - ``ids_excluidas``: lista de aula_ids descartadas por R8.
 
     Materias con ``aulas_excluidas_por_r10 == 0`` igual aparecen en la
     lista (con 0) — el caller decide si las muestra.
@@ -1954,14 +1954,14 @@ def compute_impacto_r10(
 
     out: list[dict] = []
     for materia_codigo, hs in horarios_por_materia.items():
-        # Pre-R10: usando compute_compat (sólo R3 + lab).
+        # Pre-R8: usando compute_compat (sólo R2 + lab).
         lab_aulas_m = materia_lab_map.get(materia_codigo, set())
         ids_pre: set[str] = set()
         for h in hs:
             for a in aulas:
                 if compute_compat(h, a, lab_aulas_m):
                     ids_pre.add(a.id)
-        # Post-R10: usando el compat ya filtrado.
+        # Post-R8: usando el compat ya filtrado.
         ids_post: set[str] = set()
         for h in hs:
             for a in aulas:

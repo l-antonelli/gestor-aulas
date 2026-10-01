@@ -27,11 +27,11 @@ Antes de entrar al planteo, fijamos los términos técnicos que aparecen a lo la
 | **Sub-ocupación** | Cantidad de lugares vacíos en el aula asignada respecto a un umbral mínimo de aprovechamiento. |
 | **Ventana operativa** | Rango horario en el que la facultad opera. Por defecto de 7 a 23 hs, configurable en `ConfiguracionHoraria`. Ningún horario puede caer fuera. |
 | **Doble asignación** (*double booking*) | Situación prohibida en la que un mismo aula recibe dos horarios que se dictan al mismo tiempo. |
-| **Modalidad virtual** | Horario que se dicta en forma remota o asincrónica. No consume aula. Cuando la restricción R5 está en modo estricto, entra al modelo pero sin ocupar aula (contribuye al balance de horas teoría/lab); cuando no, se filtra completamente. |
+| **Modalidad virtual** | Horario que se dicta en forma remota o asincrónica. No consume aula. Cuando la restricción R4 está en modo estricto, entra al modelo pero sin ocupar aula (contribuye al balance de horas teoría/lab); cuando no, se filtra completamente. |
 | **Restricción dura** vs **restricción blanda** | Una restricción dura no admite violación: o se cumple o el modelo es infactible. Una restricción blanda admite violación pero la castiga con un peso en la función objetivo. En este modelo, capacidad (sobre-ocupación y sub-ocupación) es blanda; el resto son duras salvo que se indique. |
 | **Grupo de materias** | Entidad del dominio (`GrupoMateriaDB`) que agrupa materias que comparten el mismo criterio de sedes admisibles. Cada materia pertenece a exactamente un grupo (partición estricta). Cada grupo declara dos configuraciones simultáneas: un **set duro** de sedes admisibles cuando corre en modo DURO, y una **lista blanda ordenada** de sedes preferidas cuando corre en modo BLANDO. El modo se elige por-grupo al momento de correr el asignador. |
 | **Camino de cursada** | Chequeo estructural que verifica que, para cada terna `(carrera, año, cuatrimestre)`, exista al menos una combinación de comisiones — una por materia obligatoria — que un alumno pueda cursar sin conflictos horarios ni de traslado entre sedes. |
-| **Grupo de simultaneidad** | Conjunto maximal de horarios activos en un mismo instante del cuatrimestre. Se calcula analizando la grilla semanal y sirve para modelar la restricción de doble asignación de aula (R4) sin necesidad de comparar todos los pares de horarios. |
+| **Grupo de simultaneidad** | Conjunto maximal de horarios activos en un mismo instante del cuatrimestre. Se calcula analizando la grilla semanal y sirve para modelar la restricción de doble asignación de aula (R3) sin necesidad de comparar todos los pares de horarios. |
 | **Sedes admisibles por horario** | Conjunto de sedes en las que un horario particular puede ser asignado. Se resuelve consultando el grupo de la materia del horario y el modo elegido en la corrida (DURO o BLANDO). En modo BLANDO todas las sedes son admisibles pero la primera de la lista es preferida (paga cero al objetivo); las alternativas suman un costo `λ_sede_pref` por cada horario que caiga en ellas. En modo DURO sólo las sedes del set duro son admisibles; la lista vacía se interpreta como *fallback* permisivo. |
 | **Excepción de conflicto ignorado** | Registro en `IgnoredConflictDB` que marca un par de materias como no bloqueante para el chequeo de camino de cursada. Se usa cuando en la práctica una comisión de la materia A y una de la materia B nunca son cursadas por el mismo alumno (por ejemplo, materias homónimas de distintos años del plan). |
 | **IIS** (*Irreducible Infeasible Subsystem*) | Subconjunto mínimo de restricciones cuya interacción produce la infactibilidad. En este proyecto no computamos el IIS teórico exacto sino un **diagnóstico por relajación selectiva**: se relaja cada restricción "candidata" por separado y se re-corre el modelo para ver cuál rescata la solución. Cuando ninguna funciona, se prueban combinaciones de a pares. |
@@ -48,7 +48,7 @@ El programa lineal decide tres cosas simultáneamente:
 
 El **objetivo** es lineal y asimétrico: minimizar la sobre-ocupación con peso `λ_over` (default 10), la sub-ocupación con peso `λ_under` (default 1) y la asignación a una sede alternativa —cuando el grupo corre en modo BLANDO— con peso `λ_sede_pref` (default 5). Todos los pesos son configurables desde la UI.
 
-Las **restricciones duras** garantizan asignación única, ausencia de doble asignación, compatibilidad del tipo del aula con la clase, balance correcto entre horas de teoría y de laboratorio declaradas por la materia, filtro por sedes admisibles según el grupo de la materia (R10), continuidad de sede para pares de horarios contiguos en riesgo intersede (R13), y opcionalmente misma sede para todos los horarios de una comisión (R14).
+Las **restricciones duras** garantizan asignación única, ausencia de doble asignación, compatibilidad del tipo del aula con la clase, balance correcto entre horas de teoría y de laboratorio declaradas por la materia, filtro por sedes admisibles según el grupo de la materia (R8), continuidad de sede para pares de horarios contiguos en riesgo intersede (R11), y opcionalmente misma sede para todos los horarios de una comisión (R12).
 
 Antes de correr el resolutor se ejecuta un **chequeo estructural pre-solve** que detecta situaciones que garantizan infactibilidad sin necesidad de encender el modelo entero. Si el solver da infactible pese al chequeo, se corre un **diagnóstico por relajación selectiva** que identifica qué restricciones son las culpables. Ambos mecanismos están descriptos en detalle en las secciones §7 y §8.
 
@@ -93,14 +93,14 @@ Trabajar sobre el patrón mantiene el programa lineal chico: un cuatrimestre tí
 ### 2.1 Qué decide el programa lineal
 
 - A qué **aula** va cada horario presencial del cuatrimestre.
-- De qué **tipo** es cada horario cuando el cronograma no lo predetermina (con restricción R5 estricta activa, que es el default).
+- De qué **tipo** es cada horario cuando el cronograma no lo predetermina (con restricción R4 estricta activa, que es el default).
 - Cómo se **distribuyen los inscriptos esperados** entre comisiones de un mismo dictado (sólo si el usuario activa la opción "permitir reasignar pesos").
 
 ### 2.2 Qué NO toca el programa lineal
 
 - **No crea ni elimina comisiones**. Las comisiones llegan ya definidas desde el panel de planificación.
 - **No reescribe horarios**. Los días, horas y duraciones son datos de entrada fijos.
-- **No asigna aulas a horarios virtuales**. Los horarios que resuelven a virtuales por la cadena `horario > dictado > materia` se filtran del modelo o entran con la marca `no_ocupa_aula`, según el modo de R5.
+- **No asigna aulas a horarios virtuales**. Los horarios que resuelven a virtuales por la cadena `horario > dictado > materia` se filtran del modelo o entran con la marca `no_ocupa_aula`, según el modo de R4.
 - **No decide reservas puntuales de laboratorio**. La reserva se hace a nivel patrón: si un horario semanal debe dictarse en un laboratorio, se marca su `tipo_clase` y el programa lineal le asigna un aula de laboratorio.
 - **No considera horarios ya ejecutados**. Si la corrida es a mitad del cuatrimestre, las clases con `fecha < fecha_desde` quedan intactas.
 
@@ -119,8 +119,8 @@ Todos los conjuntos se computan una sola vez al inicio de la corrida, dentro de 
 
 | Símbolo | Descripción | Origen |
 |---|---|---|
-| `H` | Conjunto de horarios semanales activos del plan de cursada. Se excluyen los virtuales cuando R5 no es estricta; con R5 estricta los virtuales entran a `H` pero se marcan en `H_∅ ⊆ H` como *no ocupan aula*. | `HorarioDB` filtrado por `PlanificacionCursadaDB.id` y resuelto vía `resolve_virtual`. |
-| `H_∅` | Subconjunto de `H` que no ocupa aula física (horarios virtuales bajo R5 estricta). Participa en R5 pero se excluye de R1, R3, R4, R7, R10, R12, R13, R14. | Se calcula al iterar `HorarioDB` en `build_inputs`. |
+| `H` | Conjunto de horarios semanales activos del plan de cursada. Se excluyen los virtuales cuando R4 no es estricta; con R4 estricta los virtuales entran a `H` pero se marcan en `H_∅ ⊆ H` como *no ocupan aula*. | `HorarioDB` filtrado por `PlanificacionCursadaDB.id` y resuelto vía `resolve_virtual`. |
+| `H_∅` | Subconjunto de `H` que no ocupa aula física (horarios virtuales bajo R4 estricta). Participa en R4 pero se excluye de R1, R2, R3, R6, R8, R10, R11, R12. | Se calcula al iterar `HorarioDB` en `build_inputs`. |
 | `A` | Conjunto de aulas del catálogo. Cada aula tiene tipo (`teorica`, `anfiteatro`, `laboratorio`), capacidad y sede. | `AulaDB`. |
 | `A_teo ⊆ A` | Aulas de tipo `teorica` o `anfiteatro`. | Derivado. |
 | `A_lab ⊆ A` | Aulas de tipo `laboratorio`. | Derivado. |
@@ -136,7 +136,7 @@ Todos los conjuntos se computan una sola vez al inicio de la corrida, dentro de 
 | `S_B(g)` (lista ordenada) | Lista blanda ordenada de sedes preferidas del grupo `g`. La primera es la preferida (paga cero al objetivo); el resto son alternativas con costo `λ_sede_pref`. | `GrupoMateriaSedeDB` con `tipo=BLANDO` ordenado por `orden`. |
 | `modo(g) ∈ {DURO, BLANDO}` | Modo con el que se corre el grupo `g` en esta corrida. Se elige en el panel del asignador. | `LPConfig.modos_por_grupo` (default DURO). |
 | `Sim` | Conjunto de **grupos de simultaneidad maximales**: subconjuntos `S ⊆ H \ H_∅` tales que existe un instante de la semana en el que todos los horarios de `S` están activos y no puede agregarse ningún horario más manteniendo esa propiedad. | Computado por `compute_simultaneidad_groups` sobre la grilla semanal. |
-| `P_R13` | Conjunto de pares `(h1, h2)` de horarios contiguos el mismo día con gap menor a `margen_min_intersede_minutos`. Incluye pares de la misma comisión (traslado del docente) y pares de distintas materias del mismo grupo curricular `(carrera, año, cuatri)` (traslado del alumno). | Computado por `compute_pares_intersede_riesgo`. |
+| `P_R11` | Conjunto de pares `(h1, h2)` de horarios contiguos el mismo día con gap menor a `margen_min_intersede_minutos`. Incluye pares de la misma comisión (traslado del docente) y pares de distintas materias del mismo grupo curricular `(carrera, año, cuatri)` (traslado del alumno). | Computado por `compute_pares_intersede_riesgo`. |
 | `K` | Conjunto de dictados que agrupan más de una comisión (con `α` activo). | Derivado de `ComisionDB.dictado_id`. |
 
 ### 3.2 Parámetros
@@ -145,33 +145,33 @@ Todos los conjuntos se computan una sola vez al inicio de la corrida, dentro de 
 |---|---|---|
 | `dur(h)` | Duración del horario `h` en horas. | `HorarioDB.hora_fin - HorarioDB.hora_inicio`. |
 | `cap(a)` | Capacidad del aula `a`. | `AulaDB.capacidad`. |
-| `tipo(h) ∈ {teorica, laboratorio, ⊥}` | Tipo declarado del horario `h`. `⊥` significa que el cronograma no lo predeterminó y el modelo lo decide vía R6. | `HorarioDB.tipo_clase`. |
+| `tipo(h) ∈ {teorica, laboratorio, ⊥}` | Tipo declarado del horario `h`. `⊥` significa que el cronograma no lo predeterminó y el modelo lo decide vía R5. | `HorarioDB.tipo_clase`. |
 | `tipo(a) ∈ {teorica, anfiteatro, laboratorio}` | Tipo del aula. | `AulaDB.tipo`. |
 | `insc(h)` | Inscriptos esperados en `h`. Se propaga desde el forecast de la comisión (con o sin `α[k]`). | `get_inscriptos_esperados_por_comision`. |
 | `hteo(m)` | Horas semanales de teoría declaradas por la materia `m`. | `MateriaDB.horas_teoria`. |
 | `hlab(m)` | Horas semanales de laboratorio declaradas por la materia `m`. | `MateriaDB.horas_laboratorio`. |
-| `sedes_adm(h) ⊆ S` | Conjunto efectivo de sedes admisibles para el horario `h`, resuelto por `grupo(materia(h))` y `modo(grupo)`. **En modo DURO**: `S_D(g)` si no está vacío, todas las sedes si lo está (*fallback* permisivo). **En modo BLANDO**: todas las sedes son admisibles (sin filtro por R10; el sesgo hacia la preferida vive en R12). | Ver §5.2. |
-| `sede_pref(h) ∈ S ∪ {⊥}` | Sede preferida para `h`. En modo BLANDO con `S_B(g)` no vacía, es la primera de la lista. En cualquier otro caso, `⊥` (no aplica R12). | `sede_preferida_por_horario` en `build_inputs`. |
-| `pin(h) ∈ A ∪ {⊥}` | Aula fijada manualmente por el operador si `HorarioDB.aula_asignada_manualmente=True`. `⊥` si no hay pin. Sólo se propaga a R11 cuando `respetar_ediciones_manuales=True`. | `HorarioDB.aula_id`, `aula_asignada_manualmente`. |
+| `sedes_adm(h) ⊆ S` | Conjunto efectivo de sedes admisibles para el horario `h`, resuelto por `grupo(materia(h))` y `modo(grupo)`. **En modo DURO**: `S_D(g)` si no está vacío, todas las sedes si lo está (*fallback* permisivo). **En modo BLANDO**: todas las sedes son admisibles (sin filtro por R8; el sesgo hacia la preferida vive en R10). | Ver §5.2. |
+| `sede_pref(h) ∈ S ∪ {⊥}` | Sede preferida para `h`. En modo BLANDO con `S_B(g)` no vacía, es la primera de la lista. En cualquier otro caso, `⊥` (no aplica R10). | `sede_preferida_por_horario` en `build_inputs`. |
+| `pin(h) ∈ A ∪ {⊥}` | Aula fijada manualmente por el operador si `HorarioDB.aula_asignada_manualmente=True`. `⊥` si no hay pin. Sólo se propaga a R9 cuando `respetar_ediciones_manuales=True`. | `HorarioDB.aula_id`, `aula_asignada_manualmente`. |
 | `tol_over ∈ [0, 1]` | Fracción de la capacidad que la sobre-ocupación puede exceder sin penalidad. Default 0. | `LPConfig.tol_over`. |
 | `tol_under ∈ [0, 1]` | Fracción de la capacidad que la sub-ocupación puede tener sin penalidad. Default 0.20. | `LPConfig.tol_under`. |
 | `λ_over` | Peso de la sobre-ocupación en el objetivo. Default 10. | `LPConfig.lambda_over`. |
 | `λ_under` | Peso de la sub-ocupación en el objetivo. Default 1. | `LPConfig.lambda_under`. |
-| `λ_sede_pref` | Peso del término blando de preferencia de sede (R12). Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Default 5. | `LPConfig.lambda_sede_pref`. |
-| `λ_intersede` | Peso del término blando de intersede (variante blanda de R13, hoy no activa por default). Default 0. | `LPConfig.lambda_intersede`. |
-| `margen_min_intersede_minutos` | Umbral en minutos para considerar dos horarios contiguos "en riesgo" de traslado imposible. Default 30. Con 0 se desactiva R13. | `LPConfig.margen_min_intersede_minutos`. |
-| `forzar_misma_sede_por_comision ∈ {False, True}` | Toggle que activa R14 (todos los horarios de una comisión en la misma sede). | `LPConfig.forzar_misma_sede_por_comision`. |
-| `strict_r5 ∈ {False, True}` | Modo de R5. Con `True` (default) valida horas de teoría y de laboratorio y admite virtuales al modelo con marca `no_ocupa_aula`. Con `False` (legacy) sólo valida laboratorio y filtra virtuales. | `LPConfig.strict_r5`. |
-| `respetar_ediciones_manuales ∈ {False, True}` | Si `True`, los pins manuales se aplican como restricciones duras R11. Default `True`. | `LPConfig.respetar_ediciones_manuales`. |
+| `λ_sede_pref` | Peso del término blando de preferencia de sede (R10). Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Default 5. | `LPConfig.lambda_sede_pref`. |
+| `λ_intersede` | Peso del término blando de intersede (variante blanda de R11, hoy no activa por default). Default 0. | `LPConfig.lambda_intersede`. |
+| `margen_min_intersede_minutos` | Umbral en minutos para considerar dos horarios contiguos "en riesgo" de traslado imposible. Default 30. Con 0 se desactiva R11. | `LPConfig.margen_min_intersede_minutos`. |
+| `forzar_misma_sede_por_comision ∈ {False, True}` | Toggle que activa R12 (todos los horarios de una comisión en la misma sede). | `LPConfig.forzar_misma_sede_por_comision`. |
+| `strict_r5 ∈ {False, True}` | Modo de R4. Con `True` (default) valida horas de teoría y de laboratorio y admite virtuales al modelo con marca `no_ocupa_aula`. Con `False` (legacy) sólo valida laboratorio y filtra virtuales. | `LPConfig.strict_r5`. |
+| `respetar_ediciones_manuales ∈ {False, True}` | Si `True`, los pins manuales se aplican como restricciones duras R9. Default `True`. | `LPConfig.respetar_ediciones_manuales`. |
 | `activar_alpha ∈ {False, True}` | Si `True`, se agregan las variables `α[k]` que redistribuyen inscriptos entre comisiones del mismo dictado. Default `False`. | `LPConfig.activar_alpha`. |
 
 ### 3.3 Variables de decisión
 
 | Variable | Dominio | Semántica |
 |---|---|---|
-| `x[h, a]` | `{0, 1}`, para cada `h ∈ H \ H_∅` y `a ∈ A` con `compat(h, a) = 1` | Toma valor 1 si el horario `h` se asigna al aula `a`. La compatibilidad `compat` se pre-computa aplicando R3 y R10 antes de instanciar las variables (así se reduce el tamaño del modelo). |
-| `t[h]` | `{0, 1}`, para cada `h ∈ H` con `tipo(h) = ⊥` | Toma valor 1 si `h` se resuelve como laboratorio, 0 si se resuelve como teoría. Sólo se instancia para horarios con tipo indefinido. Si `tipo(h) ≠ ⊥`, `t[h]` se fija por R6. |
-| `y[c, s]` | `{0, 1}`, para cada `c ∈ C` con más de un horario y `s ∈ S`, sólo si `forzar_misma_sede_por_comision=True` | Toma valor 1 si la comisión `c` cae en la sede `s`. Se usa para R14. |
+| `x[h, a]` | `{0, 1}`, para cada `h ∈ H \ H_∅` y `a ∈ A` con `compat(h, a) = 1` | Toma valor 1 si el horario `h` se asigna al aula `a`. La compatibilidad `compat` se pre-computa aplicando R2 y R8 antes de instanciar las variables (así se reduce el tamaño del modelo). |
+| `t[h]` | `{0, 1}`, para cada `h ∈ H` con `tipo(h) = ⊥` | Toma valor 1 si `h` se resuelve como laboratorio, 0 si se resuelve como teoría. Sólo se instancia para horarios con tipo indefinido. Si `tipo(h) ≠ ⊥`, `t[h]` se fija por R5. |
+| `y[c, s]` | `{0, 1}`, para cada `c ∈ C` con más de un horario y `s ∈ S`, sólo si `forzar_misma_sede_por_comision=True` | Toma valor 1 si la comisión `c` cae en la sede `s`. Se usa para R12. |
 | `over[h]` | `ℝ_{≥0}`, para cada `h ∈ H \ H_∅` | Sobre-ocupación del horario `h`: unidades de inscriptos que exceden `cap(aula(h)) · (1 + tol_over)`. |
 | `under[h]` | `ℝ_{≥0}`, para cada `h ∈ H \ H_∅` | Sub-ocupación del horario `h`: unidades de asientos vacíos respecto al umbral `cap(aula(h)) · (1 − tol_under)`. |
 | `α[k]` | `ℝ ∈ [0, 1]`, para cada `k ∈ K` con `activar_alpha=True` | Fracción de inscriptos del dictado que va a la comisión `k`. |
@@ -193,7 +193,7 @@ donde `H_BLANDO = {h ∈ H \ H_∅ : sede_pref(h) ≠ ⊥}` son los horarios cuy
 
 El término asimétrico entre `λ_over` y `λ_under` refleja que sobre-ocupación es un problema físico (los alumnos no entran al aula) mientras que sub-ocupación es un problema económico (aula grande desaprovechada). Los defaults `λ_over = 10 · λ_under` codifican esa jerarquía.
 
-El término de preferencia de sede sólo tiene efecto cuando el grupo del horario corre en modo BLANDO. En modo DURO no aparece porque la restricción R10 hace que sólo las sedes del set duro sean admisibles, y todas se consideran equivalentes al objetivo.
+El término de preferencia de sede sólo tiene efecto cuando el grupo del horario corre en modo BLANDO. En modo DURO no aparece porque la restricción R8 hace que sólo las sedes del set duro sean admisibles, y todas se consideran equivalentes al objetivo.
 
 ### 3.5 Salida del programa lineal
 
@@ -205,7 +205,7 @@ El término de preferencia de sede sólo tiene efecto cuando el grupo del horari
 
 ## 4. Restricciones
 
-Cada restricción se identifica con un código (R1, R3, ..., R14, R13-camino). Se describen a continuación en orden de aplicación. Cada una lleva:
+Cada restricción se identifica con un código (R1, R2, ..., R12, R11-camino). Se describen a continuación en orden de aplicación. Cada una lleva:
 
 - **Motivación** en un párrafo.
 - **Formulación matemática** rigurosa.
@@ -221,17 +221,17 @@ $$
 \sum_{a \in A} x[h, a] = 1 \qquad \forall\, h \in H \setminus H_\emptyset
 $$
 
-Los horarios en `H_∅` (virtuales bajo R5 estricta) no reciben aula: se saltan de esta restricción.
+Los horarios en `H_∅` (virtuales bajo R4 estricta) no reciben aula: se saltan de esta restricción.
 
 **Implementación.** `build_model:820`. No se puede relajar en el IIS: es constitutiva del problema.
 
-### R3 — Compatibilidad tipo aula ↔ tipo clase
+### R2 — Compatibilidad tipo aula ↔ tipo clase
 
 **Motivación.** Una clase teórica no puede darse en un aula de laboratorio y una clase de laboratorio no puede darse en un aula teórica común. Cuando la clase es de laboratorio, además, tiene que ser un laboratorio compatible con la materia (por instrumental, mesada de trabajo, etc.).
 
-**Implementación.** R3 se aplica **antes** de instanciar las variables `x[h, a]`: se computa la matriz `compat(h, a)` y sólo se crean variables para pares con `compat(h, a) = 1`. Esto reduce dramáticamente el tamaño del modelo.
+**Implementación.** R2 se aplica **antes** de instanciar las variables `x[h, a]`: se computa la matriz `compat(h, a)` y sólo se crean variables para pares con `compat(h, a) = 1`. Esto reduce dramáticamente el tamaño del modelo.
 
-**Formulación (equivalente, si expresáramos R3 con variables completas).**
+**Formulación (equivalente, si expresáramos R2 con variables completas).**
 
 $$
 \begin{aligned}
@@ -241,9 +241,9 @@ x[h, a] &= 0 \quad \text{si } \text{tipo}(h) = \bot \text{ y } a \notin A_{\text
 \end{aligned}
 $$
 
-**Interacción con R6.** Cuando `tipo(h) = ⊥`, la restricción R6 obliga a que el tipo resuelto sea consistente con la aula asignada (ver R6). Esto significa que las clases sin tipo definido pueden ir a cualquier aula teórica o a cualquier laboratorio compatible con su materia; R6 fuerza la coherencia entre `t[h]` y `tipo(a)`.
+**Interacción con R5.** Cuando `tipo(h) = ⊥`, la restricción R5 obliga a que el tipo resuelto sea consistente con la aula asignada (ver R5). Esto significa que las clases sin tipo definido pueden ir a cualquier aula teórica o a cualquier laboratorio compatible con su materia; R5 fuerza la coherencia entre `t[h]` y `tipo(a)`.
 
-### R4 — No doble asignación (grupos de simultaneidad)
+### R3 — No doble asignación (grupos de simultaneidad)
 
 **Motivación.** Dos horarios que se dictan a la misma hora del mismo día no pueden compartir aula. La formulación por grupos de simultaneidad maximales es preferible a la formulación por pares por dos motivos: genera menos restricciones (una por grupo × aula en lugar de una por par × aula) y tiene una relajación lineal más fuerte (ver §5.3).
 
@@ -255,7 +255,7 @@ $$
 
 **Implementación.** `build_model:970`. Los horarios en `H_∅` se excluyen de `Sim` porque no compiten por aula. Se puede relajar en el IIS (permitir sobre-asignación aula por aula) para diagnosticar saturación.
 
-### R5 — Partición teoría/laboratorio por materia
+### R4 — Partición teoría/laboratorio por materia
 
 **Motivación.** Muchas materias declaran cuántas horas semanales corresponden a teoría (`hteo(m)`) y cuántas a laboratorio (`hlab(m)`). El asignador debe respetar esa partición sumando las duraciones de los horarios asignados a cada tipo.
 
@@ -278,7 +278,7 @@ por cada comisión `c ∈ C` cuya materia declara `hteo` o `hlab` positivos. Los
 
 **Implementación.** `build_model:850`. Se puede relajar en el IIS para diagnosticar desalineaciones entre las horas declaradas y las cargadas en el cronograma.
 
-### R6 — Consistencia tipo ↔ pool de aulas (cuando el tipo es indefinido)
+### R5 — Consistencia tipo ↔ pool de aulas (cuando el tipo es indefinido)
 
 **Motivación.** Los horarios con `tipo(h) = ⊥` tienen una variable `t[h]` que decide si son teoría o laboratorio. Esa decisión debe ser consistente con el tipo del aula asignada: si `t[h] = 0` (teoría), el aula tiene que ser teórica; si `t[h] = 1` (laboratorio), el aula tiene que ser laboratorio compatible.
 
@@ -294,7 +294,7 @@ $$
 
 **Implementación.** `build_model:920`. Se puede relajar en el IIS.
 
-### R7 — Sobre-ocupación y sub-ocupación (definiciones lineales)
+### R6 — Sobre-ocupación y sub-ocupación (definiciones lineales)
 
 **Motivación.** No es una restricción "clásica" sino la definición lineal de las variables `over[h]` y `under[h]` en función de la capacidad del aula asignada y de los inscriptos esperados. Aparece como restricción porque de otra manera las variables serían libres.
 
@@ -313,7 +313,7 @@ Como el objetivo minimiza `over` y `under`, en la solución óptima ambas quedan
 
 **Implementación.** `build_model:1000`.
 
-### R9 — Redistribución de coeficientes (opcional, off por default)
+### R7 — Redistribución de coeficientes (opcional, off por default)
 
 **Motivación.** Cuando un dictado tiene varias comisiones, la matrícula esperada puede distribuirse desigualmente. El toggle `activar_alpha` permite al asignador redistribuir esos pesos si eso mejora la sobre/sub-ocupación agregada. Con `α` desactivado, cada comisión conserva su `coef_asignacion` original.
 
@@ -328,9 +328,9 @@ Con `activar_alpha = False`, `insc[h]` es constante y `α` no aparece.
 
 **Implementación.** `build_model:1050`.
 
-### R10 — Sedes admisibles por horario (vía grupo de materias)
+### R8 — Sedes admisibles por horario (vía grupo de materias)
 
-**Motivación.** No todas las materias pueden dictarse en todas las sedes. La restricción se modela por-grupo: cada `GrupoMateriaDB` declara dos configuraciones simultáneas (set duro y lista blanda ordenada), y en cada corrida el usuario elige el modo por-grupo (`modo(g) ∈ {DURO, BLANDO}`). La restricción dura R10 sólo se activa en modo DURO.
+**Motivación.** No todas las materias pueden dictarse en todas las sedes. La restricción se modela por-grupo: cada `GrupoMateriaDB` declara dos configuraciones simultáneas (set duro y lista blanda ordenada), y en cada corrida el usuario elige el modo por-grupo (`modo(g) ∈ {DURO, BLANDO}`). La restricción dura R8 sólo se activa en modo DURO.
 
 **Formulación.**
 
@@ -347,13 +347,13 @@ cuando se cumple lo siguiente:
 
 Es decir, se prohíbe la asignación al aula `a` para el horario `h` a menos que la aula sea un laboratorio compatible con la materia (donde la compatibilidad física prevalece sobre la preferencia curricular).
 
-**Implementación.** Se aplica **antes** de instanciar las variables: `build_inputs:475` recorre cada horario y anula `compat[(h, a)]` para las aulas prohibidas. En modo BLANDO no se aplica R10 y todas las sedes son admisibles; el sesgo hacia la sede preferida vive en R12.
+**Implementación.** Se aplica **antes** de instanciar las variables: `build_inputs:475` recorre cada horario y anula `compat[(h, a)]` para las aulas prohibidas. En modo BLANDO no se aplica R8 y todas las sedes son admisibles; el sesgo hacia la sede preferida vive en R10.
 
-**Fallback permisivo.** Si `S_D(g) = ∅` para un grupo en modo DURO, R10 no filtra (todas las sedes son admisibles). Se usa para el grupo "Sin clasificar" durante la transición inicial y se emite un warning en la UI.
+**Fallback permisivo.** Si `S_D(g) = ∅` para un grupo en modo DURO, R8 no filtra (todas las sedes son admisibles). Se usa para el grupo "Sin clasificar" durante la transición inicial y se emite un warning en la UI.
 
-**IIS**. R10 se relaja reconstruyendo `build_inputs` con el flag `relax_r10=True`, que salta el filtro de sede completamente.
+**IIS**. R8 se relaja reconstruyendo `build_inputs` con el flag `relax_r10=True`, que salta el filtro de sede completamente.
 
-### R11 — Pins de ediciones manuales
+### R9 — Pins de ediciones manuales
 
 **Motivación.** Cuando el operador fija manualmente el aula de un horario y marca la asignación como manual (`HorarioDB.aula_asignada_manualmente = True`), el asignador debe respetar esa elección. Es una restricción dura sólo cuando `respetar_ediciones_manuales = True`.
 
@@ -363,13 +363,13 @@ $$
 x[h, a] = 1 \qquad \forall\, h \in H \setminus H_\emptyset : \text{pin}(h) = a,\ \text{respetar\_ediciones\_manuales}
 $$
 
-Si `respetar_ediciones_manuales = False`, R11 no se activa y el LP reasigna libremente.
+Si `respetar_ediciones_manuales = False`, R9 no se activa y el LP reasigna libremente.
 
 **Implementación.** `build_model:830`.
 
-### R12 — Preferencia blanda de sede (grupos BLANDO)
+### R10 — Preferencia blanda de sede (grupos BLANDO)
 
-**Motivación.** Cuando un grupo corre en modo BLANDO, todas las sedes son admisibles (R10 no aplica) pero la primera de la lista blanda es la preferida. El LP asigna cero costo si el aula elegida está en esa sede y suma `λ_sede_pref` por cada horario que caiga en otra sede admisible.
+**Motivación.** Cuando un grupo corre en modo BLANDO, todas las sedes son admisibles (R8 no aplica) pero la primera de la lista blanda es la preferida. El LP asigna cero costo si el aula elegida está en esa sede y suma `λ_sede_pref` por cada horario que caiga en otra sede admisible.
 
 **Formulación.** Aparece en el objetivo (ver §3.4), no como restricción. En términos de variables:
 
@@ -381,16 +381,16 @@ Se acumula al objetivo multiplicado por `λ_sede_pref`.
 
 **Implementación.** `build_model:780`.
 
-### R13 — Continuidad de sede en pares en riesgo
+### R11 — Continuidad de sede en pares en riesgo
 
 **Motivación.** Cuando dos horarios contiguos el mismo día tienen un gap menor al margen mínimo intersede, no dan tiempo para un traslado entre sedes. Se detectan dos tipos de riesgo:
 
 - **Traslado del docente**: pares de horarios de la **misma comisión** (el mismo profesor debe estar en los dos).
 - **Traslado del alumno**: pares de horarios de **distintas materias** del mismo grupo curricular `(carrera, año, cuatri)` (un alumno inscripto en las dos materias tiene que hacer el traslado).
 
-R13 impone que, para cada par en riesgo, los dos horarios caigan en la misma sede o al menos en sedes compatibles.
+R11 impone que, para cada par en riesgo, los dos horarios caigan en la misma sede o al menos en sedes compatibles.
 
-**Formulación.** Para cada par `(h1, h2) ∈ P_R13` y cada par de sedes distintas `(s1, s2) ∈ S²` con `s1 ≠ s2`:
+**Formulación.** Para cada par `(h1, h2) ∈ P_R11` y cada par de sedes distintas `(s1, s2) ∈ S²` con `s1 ≠ s2`:
 
 $$
 \sum_{a \in A : \text{sede}(a) = s_1} x[h_1, a]
@@ -408,7 +408,7 @@ Dado que R1 fuerza `Σ_a x[h, a] = 1` para todo horario, la restricción equival
 
 **Implementación.** `build_model:995`. Se puede relajar en el IIS. Se desactiva completamente si `margen_min_intersede_minutos = 0`.
 
-### R14 — Forzar misma sede por comisión (opcional)
+### R12 — Forzar misma sede por comisión (opcional)
 
 **Motivación.** Cuando el toggle `forzar_misma_sede_por_comision` está activo, todos los horarios de una misma comisión deben caer en la misma sede. Refleja que el docente no cambia de sede a mitad de semana y que fragmentar una comisión entre sedes es operativamente indeseable, aunque sea técnicamente posible.
 
@@ -425,9 +425,9 @@ La primera obliga a que cada comisión con más de un horario caiga en exactamen
 
 **Implementación.** `build_model:1070`. Sólo se activa cuando el toggle está prendido. Se puede relajar en el IIS.
 
-### R13-camino — Chequeo estructural de camino de cursada
+### R11-camino — Chequeo estructural de camino de cursada
 
-R13-camino no es una restricción del modelo LP: es un **chequeo pre-solve** que se ejecuta antes de armar el modelo y aborta la corrida si detecta que no hay solución posible desde el punto de vista de un alumno. Se describe en detalle en §7.5. Se menciona acá para la numeración canónica de restricciones.
+R11-camino no es una restricción del modelo LP: es un **chequeo pre-solve** que se ejecuta antes de armar el modelo y aborta la corrida si detecta que no hay solución posible desde el punto de vista de un alumno. Se describe en detalle en §7.5. Se menciona acá para la numeración canónica de restricciones.
 
 ## 5. Semántica de sedes y grupos de materias
 
@@ -450,9 +450,9 @@ Dado un horario `h`, la resolución de sedes admisibles procede así:
    - Si `S_D(g) ≠ ∅`: `sedes_adm(h) = S_D(g)`, sede preferida `⊥`.
    - Si `S_D(g) = ∅`: `sedes_adm(h) = S` (fallback permisivo), sede preferida `⊥`.
 4. Si `modo(g) = BLANDO`:
-   - `sedes_adm(h) = S` (todas admisibles, no aplica R10).
+   - `sedes_adm(h) = S` (todas admisibles, no aplica R8).
    - Si `S_B(g) ≠ ∅`: sede preferida `= primera de S_B(g)`.
-   - Si `S_B(g) = ∅`: sede preferida `⊥` (no aplica R12).
+   - Si `S_B(g) = ∅`: sede preferida `⊥` (no aplica R10).
 
 **Excepción de laboratorio compatible.** Si `a ∈ A_lab(materia(h))`, entonces `a` es admisible para `h` aunque `sede(a) ∉ sedes_adm(h)`. Refleja que la compatibilidad física del laboratorio es más restrictiva que la preferencia curricular.
 
@@ -460,9 +460,9 @@ Esta resolución la implementa `resolver_config_sedes_por_materia` en `grupo_mat
 
 ### 5.3 Grupos de simultaneidad — motivación de la formulación
 
-R4 se formula por grupos de simultaneidad maximales y no por pares de horarios. Las dos formulaciones son equivalentes en cuanto al conjunto factible, pero difieren en dos aspectos importantes:
+R3 se formula por grupos de simultaneidad maximales y no por pares de horarios. Las dos formulaciones son equivalentes en cuanto al conjunto factible, pero difieren en dos aspectos importantes:
 
-- **Cantidad de restricciones**. Un grupo de simultaneidad con `n` horarios genera **una sola** restricción R4 por aula (`Σ_{h ∈ S} x[h, a] ≤ 1`), mientras que la formulación por pares genera `n(n−1)/2` restricciones por aula (una por cada par). Para franjas populares con `n = 20`, la diferencia es de 1 vs 190 restricciones por aula.
+- **Cantidad de restricciones**. Un grupo de simultaneidad con `n` horarios genera **una sola** restricción R3 por aula (`Σ_{h ∈ S} x[h, a] ≤ 1`), mientras que la formulación por pares genera `n(n−1)/2` restricciones por aula (una por cada par). Para franjas populares con `n = 20`, la diferencia es de 1 vs 190 restricciones por aula.
 - **Fuerza de la relajación lineal**. La restricción por grupo tiene una relajación lineal más ajustada que las restricciones por pares equivalentes. En la práctica esto se traduce en menos nodos explorados durante el *branch and bound* y tiempos de resolución menores.
 
 La construcción de `Sim` (`compute_simultaneidad_groups`) recorre la grilla semanal detectando maximalidad: en cada instante activo se registra qué horarios están corriendo, y se emite un grupo cuando el conjunto activo cambia (algún horario terminó o algún horario nuevo comenzó).
@@ -479,7 +479,7 @@ La función objetivo agrega tres términos con pesos distintos:
 
 La asimetría `λ_over = 10 · λ_under` codifica que sobre-ocupación es más grave que sub-ocupación. La razón operativa es que sobre-ocupación es un problema físico (alumnos no entran al aula) mientras que sub-ocupación es un problema económico (aula desaprovechada).
 
-El término blando de intersede (`λ_intersede`) está cableado en el código pero no se activa por default: con `λ_intersede = 0` no aparece en el objetivo. Se dejó como preparación para una posible variante blanda de R13.
+El término blando de intersede (`λ_intersede`) está cableado en el código pero no se activa por default: con `λ_intersede = 0` no aparece en el objetivo. Se dejó como preparación para una posible variante blanda de R11.
 
 ## 7. Chequeo estructural pre-solve
 
@@ -491,8 +491,8 @@ Los chequeos se implementan en `factibilidad_service.py` y son los siguientes.
 
 Para cada horario `h ∈ H \ H_∅`, verifica que exista al menos un aula `a` con `compat(h, a) = 1`. Si no, el horario es infactible por sí mismo: el LP no tiene dónde asignarlo. El chequeo distingue dos causas:
 
-- **R1+R3 clásica**: sin `compat_override`, no hay aula compatible por tipo o por lab.
-- **R10**: sin filtro de sede sí habría aula compatible, pero al aplicar R10 el conjunto queda vacío.
+- **R1+R2 clásica**: sin `compat_override`, no hay aula compatible por tipo o por lab.
+- **R8**: sin filtro de sede sí habría aula compatible, pero al aplicar R8 el conjunto queda vacío.
 
 ### 7.2 Saturación por tipo dentro de una franja
 
@@ -513,9 +513,9 @@ Hall es una condición necesaria y suficiente para la existencia de una asignaci
 
 ### 7.4 Partición teoría/laboratorio infactible
 
-Para cada comisión `c ∈ C` cuya materia declara horas de teoría y de laboratorio, verifica que la suma total de duraciones de los horarios de `c` sea compatible con `hteo(m) + hlab(m)`, y que exista al menos una partición de los horarios de tipo indefinido que respete R5. Si la partición no cierra —por ejemplo, la materia declara 3 horas de lab pero los horarios cargados sólo suman 2— la infactibilidad es estructural y se reporta antes del solve.
+Para cada comisión `c ∈ C` cuya materia declara horas de teoría y de laboratorio, verifica que la suma total de duraciones de los horarios de `c` sea compatible con `hteo(m) + hlab(m)`, y que exista al menos una partición de los horarios de tipo indefinido que respete R4. Si la partición no cierra —por ejemplo, la materia declara 3 horas de lab pero los horarios cargados sólo suman 2— la infactibilidad es estructural y se reporta antes del solve.
 
-### 7.5 R13-camino — Camino de cursada factible
+### 7.5 R11-camino — Camino de cursada factible
 
 Para cada terna `(carrera, año, cuatri)` del ciclo del plan, verifica que exista al menos una combinación de comisiones (una por materia obligatoria) que un alumno pueda cursar sin conflictos. El chequeo cubre dos ejes:
 
@@ -540,36 +540,36 @@ Se implementa en `_run_iis_relajacion` en `asignacion_aulas_service.py`.
 
 Se prueban las siguientes restricciones, una a la vez, y se re-corre el modelo:
 
-- **R4**: doble asignación.
-- **R5**: partición teoría/lab.
-- **R6**: consistencia tipo ↔ pool.
-- **R10**: filtro de sede DURO (se reconstruye `build_inputs` con `relax_r10=True`).
-- **R13**: margen intersede.
-- **R14**: forzar misma sede por comisión (sólo si estaba activo).
+- **R3**: doble asignación.
+- **R4**: partición teoría/lab.
+- **R5**: consistencia tipo ↔ pool.
+- **R8**: filtro de sede DURO (se reconstruye `build_inputs` con `relax_r10=True`).
+- **R11**: margen intersede.
+- **R12**: forzar misma sede por comisión (sólo si estaba activo).
 
 Para cada regla que arregla el modelo al relajarse, se registra `feasible_relajado = True`.
 
 ### 8.2 Filtros de falsos positivos
 
-La relajación selectiva sufre de un artefacto conocido: cuando la causa real es una restricción fuertemente saturadora (típicamente R4), relajar otras reglas también arregla porque le da al solver más libertad y la restricción real deja de morder. Para evitar reportar culpables espurios:
+La relajación selectiva sufre de un artefacto conocido: cuando la causa real es una restricción fuertemente saturadora (típicamente R3), relajar otras reglas también arregla porque le da al solver más libertad y la restricción real deja de morder. Para evitar reportar culpables espurios:
 
-- **R5** se descarta como culpable si ninguna materia con `hlab_declarado > 0` quedó con desalineación. Es decir: si sólo materias sin lab declarado aparecen con `t[h]` cambiado al relajar R5, el "arreglo" es un efecto secundario de la libertad extra.
-- **R6** se descarta como culpable si todos los horarios con `tipo(h) = ⊥` admiten al menos una alternativa válida (aula teórica o lab compatible). Si todos tienen alternativa, el problema es de saturación (R4) y no de tipo.
-- **R4** se prioriza como causa principal cuando aparece junto con R5/R6 falsos positivos.
+- **R4** se descarta como culpable si ninguna materia con `hlab_declarado > 0` quedó con desalineación. Es decir: si sólo materias sin lab declarado aparecen con `t[h]` cambiado al relajar R4, el "arreglo" es un efecto secundario de la libertad extra.
+- **R5** se descarta como culpable si todos los horarios con `tipo(h) = ⊥` admiten al menos una alternativa válida (aula teórica o lab compatible). Si todos tienen alternativa, el problema es de saturación (R3) y no de tipo.
+- **R3** se prioriza como causa principal cuando aparece junto con R4/R5 falsos positivos.
 
 ### 8.3 Priorización de la causa principal
 
 Cuando hay varios culpables reales, se elige el "principal" con un orden de prioridad accionable:
 
 ```
-R10 → R14 → R13 → R4 → R5 → R6
+R8 → R12 → R11 → R3 → R4 → R5
 ```
 
-Las restricciones "de sede" (R10, R14, R13) se priorizan porque son las que el usuario controla directamente desde el panel del asignador. R4 (saturación global) es más difícil de accionar porque requiere agregar aulas o mover horarios. R5/R6 son las menos frecuentes como causa real.
+Las restricciones "de sede" (R8, R12, R11) se priorizan porque son las que el usuario controla directamente desde el panel del asignador. R3 (saturación global) es más difícil de accionar porque requiere agregar aulas o mover horarios. R4/R5 son las menos frecuentes como causa real.
 
-### 8.4 Análisis refinado cuando R10 es la culpable
+### 8.4 Análisis refinado cuando R8 es la culpable
 
-Cuando R10 rescata el modelo al relajarse por completo, se ejecuta un análisis adicional en `_iss_r10_grupos_rescate`: se prueba pasar **cada grupo DURO a BLANDO por separado** y se registra cuáles rescatan el modelo individualmente. Esto permite dar recomendaciones accionables del tipo "pasá el grupo *X* a modo BLANDO" en lugar del genérico "R10 es la culpable".
+Cuando R8 rescata el modelo al relajarse por completo, se ejecuta un análisis adicional en `_iss_r10_grupos_rescate`: se prueba pasar **cada grupo DURO a BLANDO por separado** y se registra cuáles rescatan el modelo individualmente. Esto permite dar recomendaciones accionables del tipo "pasá el grupo *X* a modo BLANDO" en lugar del genérico "R8 es la culpable".
 
 Los grupos candidatos se filtran por:
 
@@ -581,7 +581,7 @@ Los grupos candidatos se filtran por:
 
 Cuando el IIS no encuentra ninguna causa individual, es porque la infactibilidad es combinada: relajar sólo una restricción no alcanza, hay que relajar dos o más juntas. Se ejecuta `_iss_combinaciones_rescate`, que prueba combinaciones de a pares:
 
-- Cada grupo DURO → BLANDO **combinado con** desactivar R14 (si estaba activo).
+- Cada grupo DURO → BLANDO **combinado con** desactivar R12 (si estaba activo).
 - Cada grupo DURO → BLANDO **combinado con** poner margen intersede en 0 (si era > 0).
 
 Se registra cada combinación que rescata el modelo. El costo es acotado por `CAP_PRUEBAS = 40` combinaciones. La UI presenta las combinaciones ordenadas por menor impacto (grupos con menos materias en el plan primero) para que el usuario elija la menos invasiva.
@@ -593,13 +593,13 @@ El diagnóstico se serializa en `LPRunDB.details_json` bajo la clave `iis`:
 ```jsonc
 {
   "ran": true,
-  "culpables": ["R10", "R13"],   // reglas que rescatan y no son falsos positivos
-  "principal": "R10",            // causa principal según prioridad
+  "culpables": ["R8", "R11"],   // reglas que rescatan y no son falsos positivos
+  "principal": "R8",            // causa principal según prioridad
   "detalles": {
-    "R4": {"feasible_relajado": false, "es_falso_positivo": false, "explicacion": "..."},
-    "R5": {"feasible_relajado": true, "es_falso_positivo": true, "explicacion": "...", "materias_problema": [...]},
+    "R3": {"feasible_relajado": false, "es_falso_positivo": false, "explicacion": "..."},
+    "R4": {"feasible_relajado": true, "es_falso_positivo": true, "explicacion": "...", "materias_problema": [...]},
     // ...
-    "R10": {
+    "R8": {
       "feasible_relajado": true,
       "es_falso_positivo": false,
       "explicacion": "...",
@@ -627,7 +627,7 @@ Cuando el solver devuelve `optimal`, la función `apply_solution` (en `asignacio
 
 Para cada `(h, a) ∈ x_assignments`:
 
-- Si `respetar_ediciones_manuales = True` y `HorarioDB.aula_asignada_manualmente = True`, la solución del LP ya vino con `x[h, a] = 1` fijado por R11, la escritura es idempotente y el flag de manual se preserva.
+- Si `respetar_ediciones_manuales = True` y `HorarioDB.aula_asignada_manualmente = True`, la solución del LP ya vino con `x[h, a] = 1` fijado por R9, la escritura es idempotente y el flag de manual se preserva.
 - Si no, `HorarioDB.aula_id = a` y se baja el flag manual.
 - Si `t[h]` está definido y `HorarioDB.tipo_clase` era `⊥`, se persiste el tipo resuelto.
 
@@ -637,7 +637,7 @@ Para cada `ClaseDB` del plan con `fecha ≥ fecha_desde` y `executed = False`, s
 
 ### 9.3 Saneamiento de virtuales stale
 
-Los horarios en `H_∅` (virtuales bajo R5 estricta) no producen entrada en `x_assignments` porque no participan del modelo. Si arrastraban una `aula_id` de una corrida anterior en la que eran presenciales, quedaría stale. `apply_solution` recibe `no_ocupa_aula_ids` como parámetro y libera esas aulas: `HorarioDB.aula_id = None`, `aula_asignada_manualmente = False`, propagando el cambio a las clases puntuales correspondientes.
+Los horarios en `H_∅` (virtuales bajo R4 estricta) no producen entrada en `x_assignments` porque no participan del modelo. Si arrastraban una `aula_id` de una corrida anterior en la que eran presenciales, quedaría stale. `apply_solution` recibe `no_ocupa_aula_ids` como parámetro y libera esas aulas: `HorarioDB.aula_id = None`, `aula_asignada_manualmente = False`, propagando el cambio a las clases puntuales correspondientes.
 
 Este saneamiento fue agregado tras detectar que corridas viejas dejaban aulas asignadas a horarios que después se marcaban como virtuales, generando falsas colisiones en las vistas de aulas.
 
@@ -676,23 +676,23 @@ Cada grupo declara set duro y lista blanda al mismo tiempo, y el modo se elige p
 
 - **Iterar sin re-configurar los grupos**. El usuario puede probar la misma corrida en modo DURO (más estricto) o BLANDO (más flexible) sin tocar la config de sedes.
 - **Modelizar preferencia sin rigidez**. En BLANDO la primera sede es preferida pero no obligatoria. El LP paga costo por asignar alternativas pero puede hacerlo si mejora el objetivo global (o resuelve una infactibilidad local).
-- **Facilitar el diagnóstico**. Cuando el IIS detecta que R10 es la causa, propone pasar grupos específicos de DURO a BLANDO — una acción directa del usuario, sin necesidad de tocar la lista de sedes.
+- **Facilitar el diagnóstico**. Cuando el IIS detecta que R8 es la causa, propone pasar grupos específicos de DURO a BLANDO — una acción directa del usuario, sin necesidad de tocar la lista de sedes.
 
-### 11.3 Por qué R13 aplica al alumno además del profesor
+### 11.3 Por qué R11 aplica al alumno además del profesor
 
-En el planteo original, la restricción de continuidad de sede (R13) sólo consideraba pares de horarios de la **misma comisión** — modelaba el traslado del docente entre dos clases suyas contiguas. Al analizar casos reales aparecieron infactibilidades desde el punto de vista del alumno: una comisión de FB12 en Pellegrini y una de A6 en Siberia con gap 0 min hacen imposible el traslado, aunque cada comisión aislada sea factible.
+En el planteo original, la restricción de continuidad de sede (R11) sólo consideraba pares de horarios de la **misma comisión** — modelaba el traslado del docente entre dos clases suyas contiguas. Al analizar casos reales aparecieron infactibilidades desde el punto de vista del alumno: una comisión de FB12 en Pellegrini y una de A6 en Siberia con gap 0 min hacen imposible el traslado, aunque cada comisión aislada sea factible.
 
-La extensión de R13 a pares intercomisión del mismo grupo curricular refleja que **cada alumno concreto** debe poder cursar sin traslados imposibles. El LP ahora bloquea también estos pares y el chequeo pre-solve R13-camino lo verifica antes de correr el modelo.
+La extensión de R11 a pares intercomisión del mismo grupo curricular refleja que **cada alumno concreto** debe poder cursar sin traslados imposibles. El LP ahora bloquea también estos pares y el chequeo pre-solve R11-camino lo verifica antes de correr el modelo.
 
-### 11.4 Por qué R13-camino como chequeo pre-solve y no como restricción del modelo
+### 11.4 Por qué R11-camino como chequeo pre-solve y no como restricción del modelo
 
 El chequeo de camino de cursada verifica **existencia** de una combinación viable, no la fuerza. En modelo LP, forzarlo requeriría variables adicionales por alumno hipotético — algo que aumentaría dramáticamente el tamaño del modelo sin beneficio directo: si existe al menos una combinación viable, cualquier alumno concreto podrá elegirla al inscribirse. El LP mismo no elige comisiones por alumno.
 
-Por eso R13-camino se implementa como **pre-check estructural**: si no existe combinación viable, se aborta antes del solve. Si existe, el LP asigna aulas libremente y cada alumno elige su combinación de manera independiente.
+Por eso R11-camino se implementa como **pre-check estructural**: si no existe combinación viable, se aborta antes del solve. Si existe, el LP asigna aulas libremente y cada alumno elige su combinación de manera independiente.
 
 ### 11.5 Por qué IIS con análisis combinado
 
-Cuando ninguna regla individual rescata el modelo, el diagnóstico simple ("no hay causa única") deja al usuario sin acción concreta. La extensión a combinaciones de a pares refleja la observación empírica de que los casos combinados típicos son: **algún grupo DURO** + **R14 activo** o **margen intersede alto**. Probar todas las combinaciones de tres o más restricciones sería explosivo; con pares se cubren los casos frecuentes sin costo prohibitivo.
+Cuando ninguna regla individual rescata el modelo, el diagnóstico simple ("no hay causa única") deja al usuario sin acción concreta. La extensión a combinaciones de a pares refleja la observación empírica de que los casos combinados típicos son: **algún grupo DURO** + **R12 activo** o **margen intersede alto**. Probar todas las combinaciones de tres o más restricciones sería explosivo; con pares se cubren los casos frecuentes sin costo prohibitivo.
 
 ### 11.6 Por qué `apply_solution` sanea virtuales stale
 

@@ -46,7 +46,7 @@ Los grandes cambios estructurales, en orden cronológico:
    flag vive en `HorarioDB.aula_asignada_manualmente`.
 7. **2026-09**. **Grupos de Materias** reemplazan a `CarreraSedeDB`
    como fuente de verdad para la resolución de sedes admisibles
-   (R10) y preferidas (R12) del LP. Cada materia pertenece a
+   (R8) y preferidas (R10) del LP. Cada materia pertenece a
    exactamente un grupo (partición estricta), y cada grupo declara
    dos configuraciones simultáneas de sedes (set duro + lista
    blanda). `CarreraSedeDB` y `MateriaDB.es_default_comunes`
@@ -54,11 +54,11 @@ Los grandes cambios estructurales, en orden cronológico:
 8. **2026-09**. `ComisionDB.carrera_asignada` sobrevive como
    etiqueta visual sin efecto en el LP: la resolución de sedes va
    exclusivamente por el grupo de la materia.
-9. **2026-09**. R13 extendida al eje alumno (pares intersede de
+9. **2026-09**. R11 extendida al eje alumno (pares intersede de
    materias distintas del mismo grupo curricular). Chequeo
-   pre-solve **R13-camino** para asegurar que exista al menos una
+   pre-solve **R11-camino** para asegurar que exista al menos una
    combinación de comisiones viable por grupo curricular. Toggle
-   **R14** (`forzar_misma_sede_por_comision`). Veredicto
+   **R12** (`forzar_misma_sede_por_comision`). Veredicto
    estructurado por corrida persistido en `LPRunDB.details_json`.
 10. **2026-09**. Excepciones de conflicto ignoradas
     (`IgnoredConflictDB`) con auto-limpieza cuando cambia la
@@ -124,7 +124,7 @@ Catálogo estático de asignaturas. Persiste entre ciclos.
 | `virtual` | `bool` | Default heredado por `DictadoDB.virtual`. Ver §4.1. |
 | `optativa` | `bool` | Si la materia es opcional en el plan. |
 | `dicta_recursado` | `Optional[bool]` | Override sobre `CarreraDB.dicta_recursado`. `None` = usar el de la carrera. Ver §4.2. |
-| `grupo_id` | `str` FK NOT NULL | Grupo de materias al que pertenece (partición estricta). Alimenta R10/R12 del LP. |
+| `grupo_id` | `str` FK NOT NULL | Grupo de materias al que pertenece (partición estricta). Alimenta R8/R10 del LP. |
 
 **Invariantes**:
 
@@ -179,9 +179,9 @@ M:N entre materias y aulas de tipo laboratorio compatibles.
 | `materia_codigo` | PK, FK `materias.codigo` |
 | `aula_id` | PK, FK `aulas.id` |
 
-Alimenta R3 del LP (una clase de laboratorio sólo va a un lab
+Alimenta R2 del LP (una clase de laboratorio sólo va a un lab
 compatible con su materia). Además habilita la **excepción de
-lab** de R10 (§5.5.3).
+lab** de R8 (§5.5.3).
 
 #### `CorrelativaDB`
 
@@ -196,7 +196,7 @@ Precedencia entre materias por carrera.
 ### 2.2 Zona: grupos de materias
 
 Reemplazo (2026-09) de `CarreraSedeDB` como fuente de verdad de
-la resolución R10/R12 del LP.
+la resolución R8/R10 del LP.
 
 #### `GrupoMateriaDB`
 
@@ -215,12 +215,12 @@ Agrupa materias que comparten criterio de sedes.
 **Dos configuraciones simultáneas de sedes**:
 
 - **Set duro** (`tipo=DURO` en `GrupoMateriaSedeDB`): sedes
-  admisibles cuando el grupo corre en modo DURO. R10 filtra a
+  admisibles cuando el grupo corre en modo DURO. R8 filtra a
   esas sedes. Lista vacía = fallback permisivo (todas admisibles).
 - **Lista blanda ordenada** (`tipo=BLANDO`): sedes cuando el grupo
   corre en modo BLANDO. La primera es la preferida (paga cero al
   objetivo); el resto son alternativas con costo `λ_sede_pref`
-  por horario asignado (R12).
+  por horario asignado (R10).
 
 El modo por-grupo se elige por corrida desde
 `LPConfig.modos_por_grupo` en el panel del asignador.
@@ -463,7 +463,7 @@ Patrón semanal de una comisión.
 | `hora_fin` | `time` | |
 | `tipo_clase` | `Optional[str]` | `"teorica"` / `"laboratorio"` / `None` (LP decide). |
 | `aula_id` | `Optional[str]` FK, index | **Objetivo del asignador**. |
-| `aula_asignada_manualmente` | `bool` | Pin manual (R11 del LP). |
+| `aula_asignada_manualmente` | `bool` | Pin manual (R9 del LP). |
 | `virtual` | `Optional[bool]` | Override de virtualidad. Ver §4.1. |
 
 #### `ClaseDB` (DEPRECADA — caché técnico)
@@ -507,7 +507,7 @@ ignorar en el chequeo de solapamiento del plan.
 | `fecha_creacion` | `datetime` | |
 
 **Alcance**: sólo aplica al chequeo de **solapamiento horario**.
-El chequeo de **intersede** (R13, R13-camino) las ignora.
+El chequeo de **intersede** (R11, R11-camino) las ignora.
 
 **Auto-limpieza**:
 `plan_validation_service.cleanup_stale_ignored_pairs` corre en
@@ -668,7 +668,7 @@ dos primeros son `Optional[bool]` (`None` = heredar). El helper
 jerarquía y devuelve el primer valor no nulo.
 
 **Consecuencia operativa**: un horario efectivamente virtual **no
-ocupa aula**. El asignador lo excluye del modelo salvo bajo R5
+ocupa aula**. El asignador lo excluye del modelo salvo bajo R4
 estricto, donde participa del balance teoría/lab sin variable de
 aula.
 
@@ -811,7 +811,7 @@ familia.
 | Constraints declarativas (PK, FK, unique, ge, gt) | Schema del ORM (`src/database/models.py`). |
 | Invariantes de aplicación (XOR de comisión, partición grupo, sumas de coeficientes) | Servicios (`src/services/*.py`). |
 | Validaciones agregadoras (cobertura, conflictos, partición T/L, camino cursada) | `cronograma_validation_service.py`, `plan_validation_service.py`, `factibilidad_service.py`. |
-| Chequeo pre-solve del LP (R1..R14 estructural) | `factibilidad_service.check_factibilidad_estructural`. |
+| Chequeo pre-solve del LP (R1..R12 estructural) | `factibilidad_service.check_factibilidad_estructural`. |
 
 Detalle completo:
 [`../2. Desarrollo/VALIDACIONES.md`](../2.%20Desarrollo/VALIDACIONES.md).
@@ -827,7 +827,7 @@ Entidades planteadas y diferidas:
 | Alumno, Profesor, Inscripción, Asistencia | Modelo de personas | Cuando se implemente la gestión de inscripciones y de personal docente. |
 | Reserva de aula | Bloqueo puntual (mantenimiento, evento) | Requiere una tabla `AulaIndisponibleDB(aula_id, fecha, hora_inicio, hora_fin)` que el LP consultaría. |
 | Ventana operativa por sede | Sedes con horarios distintos | Requiere migrar `ConfiguracionHoraria` de global a por-sede. |
-| R13 blanda | Costo por cambio de sede en pares en riesgo | Cableado en `LPConfig.lambda_intersede` pero no activo (default 0). Reservado para variante blanda futura. |
+| R11 blanda | Costo por cambio de sede en pares en riesgo | Cableado en `LPConfig.lambda_intersede` pero no activo (default 0). Reservado para variante blanda futura. |
 
 ---
 

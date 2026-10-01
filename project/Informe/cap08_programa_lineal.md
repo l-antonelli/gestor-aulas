@@ -103,7 +103,7 @@ convención usual de la investigación operativa.
   grupo `grupo(m)`.
 - `Sim`: *grupos maximales de simultaneidad*, es decir, conjuntos
   de horarios que se dictan al mismo tiempo el mismo día (§8.3.3).
-- `P_R13`: pares de horarios consecutivos separados por menos
+- `P_R11`: pares de horarios consecutivos separados por menos
   tiempo que el margen fijado. Se consideran dos casos: horarios
   de la misma comisión (traslado del docente) y horarios de
   materias distintas de un mismo año y cuatrimestre de una
@@ -141,12 +141,12 @@ convención usual de la investigación operativa.
   se resuelven como laboratorio y 0 si se resuelven como teoría.
 - `y[c, s] ∈ {0, 1}`: vale 1 si la comisión `c` se dicta en la
   sede `s`. Sólo se usa cuando se exige una única sede por
-  comisión (R14).
+  comisión (R12).
 - `over[h], under[h] ≥ 0`: sobreocupación y subocupación del
   horario `h`.
 - `α[k] ∈ [0, 1]`: proporción de la matrícula del dictado que
   corresponde a la comisión `k`. Sólo se usa cuando el operador
-  habilita la redistribución (R9).
+  habilita la redistribución (R7).
 
 ### 8.2.4 Función objetivo
 
@@ -182,13 +182,13 @@ exactamente un aula.
 
 $$\sum_{a \in A} x[h, a] = 1 \qquad \forall h \in H \setminus H_\emptyset$$
 
-**R3. Compatibilidad entre tipo de aula y tipo de clase.** Las
+**R2. Compatibilidad entre tipo de aula y tipo de clase.** Las
 clases teóricas van a aulas teóricas o anfiteatros; los
 laboratorios, a laboratorios compatibles con la materia. Se
 cumple por construcción: las variables `x[h, a]` de pares
 incompatibles directamente no existen.
 
-**R4. Sin superposición en un aula.** Dos horarios que se
+**R3. Sin superposición en un aula.** Dos horarios que se
 superponen en el tiempo no comparten aula. En lugar de escribirla
 par por par, se formula por grupos maximales de simultaneidad:
 para cada grupo `S ∈ Sim` y cada aula `a`,
@@ -197,19 +197,19 @@ $$\sum_{h \in S} x[h, a] \le 1$$
 
 Las ventajas de esta formulación se explican en §8.3.3.
 
-**R5. Reparto entre teoría y laboratorio.** En cada comisión con
+**R4. Reparto entre teoría y laboratorio.** En cada comisión con
 horas de teoría y de laboratorio, la suma de las duraciones de
 sus horarios de cada tipo debe coincidir con las horas de la
 materia. Los horarios virtuales cuentan para este balance aunque
 no ocupen aula.
 
-**R6. Coherencia de tipo en horarios abiertos.** Si `t[h]` decide
+**R5. Coherencia de tipo en horarios abiertos.** Si `t[h]` decide
 que un horario sin tipo es de teoría, el aula asignada debe ser
 teórica; si decide laboratorio, debe ser un laboratorio
 compatible con la materia. El vínculo se expresa con
 desigualdades lineales entre `t[h]` y las variables `x`.
 
-**R7. Sobreocupación y subocupación.** Las variables `over[h]` y
+**R6. Sobreocupación y subocupación.** Las variables `over[h]` y
 `under[h]` miden el exceso o el faltante de capacidad del aula
 asignada frente a los inscriptos esperados, con tolerancias:
 
@@ -220,12 +220,12 @@ $$
 y análogamente para `under[h]`. Como el objetivo las minimiza, en
 el óptimo toman exactamente el valor del exceso o del faltante.
 
-**R9. Redistribución de la matrícula.** Cuando está habilitada,
+**R7. Redistribución de la matrícula.** Cuando está habilitada,
 los inscriptos esperados de cada comisión dejan de ser un dato y
 pasan a ser el total del dictado multiplicado por `α[k]`; las
 proporciones de cada dictado deben sumar 1.
 
-**R10. Sedes admitidas por grupo de materias (modo duro).** Si el
+**R8. Sedes admitidas por grupo de materias (modo duro).** Si el
 grupo de la materia está en modo DURO, sólo se admiten aulas de
 las sedes de su conjunto obligatorio:
 
@@ -235,17 +235,17 @@ siempre que el conjunto no esté vacío. La excepción son los
 laboratorios declarados compatibles con la materia, que se
 admiten aunque estén en otra sede.
 
-**R11. Aulas fijadas manualmente.** Si el operador fijó el aula
+**R9. Aulas fijadas manualmente.** Si el operador fijó el aula
 de un horario y pidió respetar esas decisiones, se impone
 `x[h, pin(h)] = 1`.
 
-**R12. Preferencia de sede (modo blando).** Si el grupo está en
-modo BLANDO, todas las sedes son admisibles (R10 no se aplica),
+**R10. Preferencia de sede (modo blando).** Si el grupo está en
+modo BLANDO, todas las sedes son admisibles (R8 no se aplica),
 pero cada horario asignado fuera de la sede preferida suma
 `λ_sede_pref` al objetivo (§8.2.4).
 
-**R13. Continuidad de sede entre horarios consecutivos.** Para
-cada par `(h₁, h₂) ∈ P_R13` y cada par de sedes distintas
+**R11. Continuidad de sede entre horarios consecutivos.** Para
+cada par `(h₁, h₂) ∈ P_R11` y cada par de sedes distintas
 `(s₁, s₂)`,
 
 $$
@@ -257,7 +257,7 @@ Junto con R1, equivale a "si `h₁` se dicta en `s₁`, `h₂` no
 puede dictarse en `s₂`". Se aplica tanto a los traslados del
 docente como a los del alumno.
 
-**R14. Misma sede por comisión.** Cuando el operador lo exige,
+**R12. Misma sede por comisión.** Cuando el operador lo exige,
 las variables `y[c, s]` obligan a que todos los horarios de una
 comisión se dicten en la misma sede.
 
@@ -299,7 +299,7 @@ La verificación se hace por momento de simultaneidad y por sede.
 Un grupo maximal de simultaneidad es un conjunto de horarios que
 están activos en un mismo momento y que no se puede agrandar sin
 incluir un horario que no se superponga con los demás. Formular
-R4 por grupos, en lugar de por pares de horarios, es equivalente
+R3 por grupos, en lugar de por pares de horarios, es equivalente
 pero mejor: genera menos restricciones y su relajación lineal es
 más ajustada, lo que reduce el trabajo de ramificación y acotación
 del resolutor (§2.3.3). El Anexo E compara ambas formulaciones
@@ -316,17 +316,17 @@ situaciones que verifica son:
 
 1. **R1. Horarios sin aula posible**, por tipo, por compatibilidad
    de laboratorio o por sede admitida.
-2. **R3+R4. Falta de aulas de un tipo en una franja.** Versión del
+2. **R2+R3. Falta de aulas de un tipo en una franja.** Versión del
    principio del palomar por tipo de aula: no basta con que
    alcancen las aulas en total; tienen que alcanzar las del tipo
    requerido.
-3. **R5. Reparto imposible entre teoría y laboratorio**, cuando
+3. **R4. Reparto imposible entre teoría y laboratorio**, cuando
    las duraciones de los horarios de una comisión no pueden
    cerrar con las horas de la materia.
-4. **R11. Aula fijada que ya no es válida**, porque cambió de
+4. **R9. Aula fijada que ya no es válida**, porque cambió de
    tipo o su sede quedó fuera de las admitidas para el grupo.
-5. **R13. Horarios consecutivos sin sede común posible.**
-6. **R13 a nivel de recorrido.** Ninguna combinación de comisiones
+5. **R11. Horarios consecutivos sin sede común posible.**
+6. **R11 a nivel de recorrido.** Ninguna combinación de comisiones
    le permite a un alumno de un año y cuatrimestre dados cursar
    sin traslados imposibles.
 7. **Palomar por sede**, aplicado a cada franja y sede.
@@ -350,11 +350,11 @@ pasos son:
    laboratorios compatibles, grupos de materias y pronósticos de
    matrícula, y determinar qué horarios son virtuales según la
    regla jerárquica del capítulo 5.
-2. **Separar los horarios virtuales** en `H_∅`: cuentan para R5
+2. **Separar los horarios virtuales** en `H_∅`: cuentan para R4
    pero no ocupan aula.
 3. **Calcular la compatibilidad** de cada par horario-aula por
    tipo y por sede admitida. Los pares incompatibles no generan
-   variables, con lo que R3 y R10 se cumplen de antemano.
+   variables, con lo que R2 y R8 se cumplen de antemano.
 4. **Calcular los grupos de simultaneidad** recorriendo la grilla
    semanal en orden cronológico.
 5. **Detectar los pares de horarios consecutivos en riesgo** de
@@ -392,23 +392,23 @@ combinación impide toda solución. El detalle está en el Anexo E;
 en criollo, el procedimiento es el siguiente:
 
 1. **Relajar de a una.** Se quita, de a una por vez, cada
-   restricción candidata (R4, R5, R6, R10, R13, R14) y se vuelve a
+   restricción candidata (R3, R4, R5, R8, R11, R12) y se vuelve a
    resolver. Si al quitar una el problema pasa a tener solución,
    esa restricción es sospechosa.
 2. **Descartar falsos culpables.** Algunas relajaciones funcionan
    sólo porque le dan holgura al resolutor, sin ser la causa real.
-   Por ejemplo, R5 sólo se considera causa si al relajarla
+   Por ejemplo, R4 sólo se considera causa si al relajarla
    aparecen materias cuyas horas no cierran.
 3. **Priorizar.** Si quedan varias causas, se informa primero la
    que admite la acción más directa del operador: las de sede
-   (R10, R14, R13) antes que las estructurales (R4, R5, R6).
-4. **Precisar el grupo cuando la causa es R10.** Se prueba pasar
+   (R8, R12, R11) antes que las estructurales (R3, R4, R5).
+4. **Precisar el grupo cuando la causa es R8.** Se prueba pasar
    cada grupo de modo DURO a BLANDO por separado, para recomendar
    qué grupo concreto conviene flexibilizar.
 5. **Probar combinaciones.** Si ninguna relajación individual
    alcanza, la infactibilidad es combinada: se prueban pares de
    relajaciones (por ejemplo, flexibilizar un grupo y dejar de
-   exigir R14) y se informan los que funcionan.
+   exigir R12) y se informan los que funcionan.
 
 El resultado se presenta como una recomendación concreta: "la
 causa probable es tal; para resolverla, conviene hacer tal cosa".
@@ -436,7 +436,7 @@ En este capítulo formalizamos el núcleo del sistema:
    variables binarias `x[h, a]` para la asignación, variables
    auxiliares `t[h]`, `y[c, s]` y `α[k]` para decisiones internas
    y variables continuas `over[h]` y `under[h]` para el objetivo.
-2. **Las restricciones R1 a R14** traducen las reglas del
+2. **Las restricciones R1 a R12** traducen las reglas del
    capítulo 5: asignación única, compatibilidad, ausencia de
    superposiciones, reparto entre teoría y laboratorio, sedes
    admitidas, aulas fijadas, preferencia de sede, continuidad de

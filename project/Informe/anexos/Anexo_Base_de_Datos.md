@@ -143,7 +143,7 @@ Estas cadenas se resuelven en `src/services/resolucion_jerarquica.py` con la reg
 
 ### 3.4 Nomenclatura de constraints logicas
 
-Las restricciones logicas del modelo de asignacion se numeran (R1..R10) siguiendo el documento `project/1. Diseño/asignacion-aulas-LP.md`. Las restricciones funcionales de UI se numeran RF-LP-N. Ambas familias se referencian desde el codigo.
+Las restricciones logicas del modelo de asignacion se numeran (R1..R12) siguiendo el documento `project/1. Diseño/asignacion-aulas-LP.md`. Las restricciones funcionales de UI se numeran RF-LP-N. Ambas familias se referencian desde el codigo.
 
 ---
 
@@ -193,7 +193,7 @@ Datos base estables y de larga vigencia.
 | `virtual` | `bool` | — | `False` | Modalidad virtual por default. |
 | `optativa` | `bool` | — | `False` | Materia optativa (opcional en el plan). |
 | `dicta_recursado` | `Optional[bool]` | — | `None` | Override de `CarreraDB.dicta_recursado`. `None` = usar el de la carrera. |
-| `grupo_id` | `str` | FK `grupo_materia.id`, `NOT NULL` | — | **Grupo de Materias al que pertenece (2026-09)**. Particion estricta: cada materia pertenece a exactamente un grupo. Alimenta R10/R12 del LP via `resolver_sedes_admisibles_por_materia`. |
+| `grupo_id` | `str` | FK `grupo_materia.id`, `NOT NULL` | — | **Grupo de Materias al que pertenece (2026-09)**. Particion estricta: cada materia pertenece a exactamente un grupo. Alimenta R8/R10 del LP via `resolver_sedes_admisibles_por_materia`. |
 
 **Invariantes**:
 
@@ -326,13 +326,13 @@ Datos base estables y de larga vigencia.
 | `materia_codigo` | `str` | PK, FK `materias.codigo` |
 | `aula_id` | `str` | PK, FK `aulas.id` |
 
-**Uso en el LP**: el asignador consulta esta tabla para armar el conjunto de aulas admisibles para horarios de tipo `"laboratorio"`. Los horarios teoricos ignoran la tabla y pueden asignarse a cualquier aula compatible por tipo/sede. Habilita ademas la **excepcion de laboratorio compatible** de R10: un aula listada en `MateriaLaboratorioDB` para una materia se acepta aunque su sede no pertenezca al set duro del grupo, porque la compatibilidad fisica del laboratorio prevalece sobre la preferencia curricular.
+**Uso en el LP**: el asignador consulta esta tabla para armar el conjunto de aulas admisibles para horarios de tipo `"laboratorio"`. Los horarios teoricos ignoran la tabla y pueden asignarse a cualquier aula compatible por tipo/sede. Habilita ademas la **excepcion de laboratorio compatible** de R8: un aula listada en `MateriaLaboratorioDB` para una materia se acepta aunque su sede no pertenezca al set duro del grupo, porque la compatibilidad fisica del laboratorio prevalece sobre la preferencia curricular.
 
 ---
 
 #### 5.1.7 `GrupoMateriaDB` — tabla `grupo_materia`
 
-**Proposito**: agrupar materias que comparten el mismo criterio de sedes admisibles. Reemplaza (2026-09) a la vieja `CarreraSedeDB` como fuente de verdad para la resolucion R10/R12 del LP. Cada `MateriaDB` pertenece a **exactamente un** grupo (particion estricta).
+**Proposito**: agrupar materias que comparten el mismo criterio de sedes admisibles. Reemplaza (2026-09) a la vieja `CarreraSedeDB` como fuente de verdad para la resolucion R8/R10 del LP. Cada `MateriaDB` pertenece a **exactamente un** grupo (particion estricta).
 
 **Schema**:
 
@@ -355,7 +355,7 @@ Datos base estables y de larga vigencia.
 
 **Semantica**: cada grupo declara **dos configuraciones simultaneas** de sedes, persistidas en `GrupoMateriaSedeDB`:
 
-- **Set duro** (`tipo=DURO`): sedes admisibles cuando el grupo corre en modo DURO. R10 del LP filtra la matriz `compat` a esas sedes.
+- **Set duro** (`tipo=DURO`): sedes admisibles cuando el grupo corre en modo DURO. R8 del LP filtra la matriz `compat` a esas sedes.
 - **Lista blanda ordenada** (`tipo=BLANDO`): sedes preferidas cuando el grupo corre en modo BLANDO. La primera (`orden=0`) es la preferida; el resto son alternativas con costo `λ_sede_pref`.
 
 El modo con el que corre cada grupo en una corrida especifica se elige desde `LPConfig.modos_por_grupo` en el panel del asignador. Los grupos declaran ambas configs; el LP elige cual usar en cada corrida.
@@ -381,7 +381,7 @@ El modo con el que corre cada grupo en una corrida especifica se elige desde `LP
 | `tipo` | `str` | PK | `"DURO"` o `"BLANDO"`. Permite que una misma sede aparezca en ambos sets del mismo grupo. |
 | `orden` | `int` | `ge=0` | Default 0. Semantico solo en BLANDO (0 = preferida). En DURO solo estabilidad visual. |
 
-**Uso en el LP**: `resolver_sedes_admisibles_por_materia(session, materia_codigo)` en `grupo_materia_service.py` devuelve `(sedes_ordenadas, modo)` a partir de la configuracion del grupo. Con modo DURO se aplica R10 (filtro); con modo BLANDO se aplica R12 (preferencia blanda al objetivo).
+**Uso en el LP**: `resolver_sedes_admisibles_por_materia(session, materia_codigo)` en `grupo_materia_service.py` devuelve `(sedes_ordenadas, modo)` a partir de la configuracion del grupo. Con modo DURO se aplica R8 (filtro); con modo BLANDO se aplica R10 (preferencia blanda al objetivo).
 
 ---
 
@@ -856,7 +856,7 @@ Planificacion trabajable generada a partir de un cronograma.
 
 **Invariante**: `materia_a < materia_b` lexicograficamente. Deduplica pares en cualquier orden de creacion.
 
-**Alcance**: la excepcion aplica al chequeo de **solapamiento horario** (`validar_conflictos_horarios_plan`). **No aplica** al chequeo de **intersede** (R13, R13-camino): el traslado fisico es independiente de que alumnos cursen que materia.
+**Alcance**: la excepcion aplica al chequeo de **solapamiento horario** (`validar_conflictos_horarios_plan`). **No aplica** al chequeo de **intersede** (R11, R11-camino): el traslado fisico es independiente de que alumnos cursen que materia.
 
 **Auto-limpieza**: `plan_validation_service.cleanup_stale_ignored_pairs` elimina las excepciones huerfanas cuando las materias del par ya no coexisten en ningun grupo curricular `(carrera, año, cuatri)` del plan. Se corre automaticamente en cada `validate_plan` y se reporta al usuario en el summary (`excepciones_stale_removidas`).
 
@@ -873,7 +873,7 @@ Planificacion trabajable generada a partir de un cronograma.
 | Catalogo maestro | `aulas` | `AulaDB` | Espacio fisico |
 | Catalogo maestro | `correlativas` | `CorrelativaDB` | Precedencia entre materias |
 | Catalogo maestro | `materia_laboratorio` | `MateriaLaboratorioDB` | Compatibilidad materia↔lab |
-| Catalogo maestro | `grupo_materia` | `GrupoMateriaDB` | Grupo de materias (R10/R12) |
+| Catalogo maestro | `grupo_materia` | `GrupoMateriaDB` | Grupo de materias (R8/R10) |
 | Catalogo maestro | `grupo_materia_sede` | `GrupoMateriaSedeDB` | Sedes DURO/BLANDO por grupo |
 | Catalogo maestro | `grupo_materia_carrera` | `GrupoMateriaCarreraDB` | Carreras asociadas al grupo (chequeo consistencia) |
 | Catalogo maestro | `carrera_sede` | `CarreraSedeDB` | **Deprecada**: sedes habilitadas por carrera (legacy) |
@@ -1116,7 +1116,7 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 - **Chequeo pre-solve**: antes de instanciar el modelo, `check_factibilidad_estructural` (de `factibilidad_service.py`) corre las siete familias de bloqueos y, si detecta al menos uno, saltea el solver y devuelve status `infeasible_estructural`.
 - **Outputs si `apply=True`**:
   - Actualiza `HorarioDB.aula_id` para los horarios asignados por el LP.
-  - Respeta `HorarioDB.aula_asignada_manualmente=True` si `config.respetar_ediciones_manuales=True` (los agrega como restriccion dura `x[h,a]=1` de R11 en vez de sobreescribirlos).
+  - Respeta `HorarioDB.aula_asignada_manualmente=True` si `config.respetar_ediciones_manuales=True` (los agrega como restriccion dura `x[h,a]=1` de R9 en vez de sobreescribirlos).
   - Sanea horarios virtuales stale: si un horario paso a virtual entre corridas, se libera su `aula_id` para preservar la invariante "horario virtual ⇒ sin aula".
   - Inserta una fila `LPRunDB` con el snapshot completo de la corrida.
 - **Outputs si `apply=False`** (dry-run): devuelve el resultado sin tocar la base. Util para test y CLI.
@@ -1124,17 +1124,17 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 **Restricciones del modelo** (formalizacion completa en `project/1. Diseño/asignacion-aulas-LP.md` § 4):
 
 - **R1**: cada horario se asigna a exactamente una aula.
-- **R3**: compatibilidad por tipo (teoricas ↔ aulas teoricas/anfiteatros; laboratorios ↔ labs compatibles con la materia).
-- **R4**: no solapamiento por aula, formulado por grupos de simultaneidad maximales.
-- **R5**: particion teoria/laboratorio por comision; con `strict_r5=True` ademas cierra la ecuacion de teoria.
-- **R6**: consistencia tipo↔pool cuando el horario tiene `tipo_clase=None`.
-- **R7**: definicion lineal de sobre/sub-ocupacion.
-- **R9**: redistribucion `α[k]` de coeficientes entre comisiones del mismo dictado (opcional).
-- **R10**: sede admisible vía grupo de la materia en modo DURO. Excepcion de lab compatible.
-- **R11**: pins manuales.
-- **R12**: preferencia blanda de sede vía grupo de la materia en modo BLANDO.
-- **R13**: continuidad de sede en pares en riesgo (docente y alumno).
-- **R14**: forzar misma sede por comision (opcional).
+- **R2**: compatibilidad por tipo (teoricas ↔ aulas teoricas/anfiteatros; laboratorios ↔ labs compatibles con la materia).
+- **R3**: no solapamiento por aula, formulado por grupos de simultaneidad maximales.
+- **R4**: particion teoria/laboratorio por comision; con `strict_r5=True` ademas cierra la ecuacion de teoria.
+- **R5**: consistencia tipo↔pool cuando el horario tiene `tipo_clase=None`.
+- **R6**: definicion lineal de sobre/sub-ocupacion.
+- **R7**: redistribucion `α[k]` de coeficientes entre comisiones del mismo dictado (opcional).
+- **R8**: sede admisible vía grupo de la materia en modo DURO. Excepcion de lab compatible.
+- **R9**: pins manuales.
+- **R10**: preferencia blanda de sede vía grupo de la materia en modo BLANDO.
+- **R11**: continuidad de sede en pares en riesgo (docente y alumno).
+- **R12**: forzar misma sede por comision (opcional).
 
 **Chequeo estructural pre-solve** (`factibilidad_service.py`) y **diagnostico post-solve por relajacion selectiva** (`_run_iis_relajacion`): documentados en detalle en `2. Desarrollo/asignador_implementacion.md` § 4.
 
@@ -1167,7 +1167,7 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 
 ### 7.11 Servicio de Grupos de Materias (`grupo_materia_service.py`)
 
-**Rol**: gestiona la particion estricta materia ↔ grupo y la resolucion de sedes admisibles/preferidas que alimenta R10 y R12 del LP. Reemplaza (2026-09) al viejo `carrera_sede_service.py`.
+**Rol**: gestiona la particion estricta materia ↔ grupo y la resolucion de sedes admisibles/preferidas que alimenta R8 y R10 del LP. Reemplaza (2026-09) al viejo `carrera_sede_service.py`.
 
 **Operaciones principales**:
 
@@ -1179,7 +1179,7 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 - `resolver_sedes_admisibles_por_materia(session, materia_codigo) -> tuple[list[sede_id], "DURO"|"BLANDO"]`:
   - Consulta el grupo de la materia y devuelve `(sedes_ordenadas, modo)` segun `LPConfig.modos_por_grupo` de la corrida.
   - Modo DURO con lista vacia → fallback permisivo (todas admisibles).
-  - Modo BLANDO → todas admisibles; el orden define la preferencia (R12).
+  - Modo BLANDO → todas admisibles; el orden define la preferencia (R10).
 - `chequear_consistencia_grupo(session, grupo_id) -> InconsistenciasGrupo`: aplica los tres flags configurables (pertenencia, exclusividad, completitud) y devuelve `faltantes` y `ajenas`. Herramienta de curacion; no afecta al LP.
 
 **Bootstrap** (`_migrate_grupos_materia` en `connection.py`): idempotente. Crea el grupo `Sin clasificar` y los grupos transversales (`FB`, `F`, `FI`, `CE`) + un `Específicas de <Carrera>` por cada carrera. Asigna materias por prefijo de codigo o por "exclusiva de una carrera".
@@ -1190,7 +1190,7 @@ Uso tipico: `materia_crud.create(session, MateriaDB(...))`.
 
 **Operaciones principales**:
 
-- `check_factibilidad_estructural(session, plan_id, config) -> ReporteFactibilidad`: corre todas las familias de bloqueo (R1 sin aula compatible, R3+R4 saturacion por tipo, R5 particion, R11 pin incompatible, R13 pares intersede, R13-camino, compat-pigeonhole, compat-hall) y devuelve la lista de `Bloqueo`s por regla.
+- `check_factibilidad_estructural(session, plan_id, config) -> ReporteFactibilidad`: corre todas las familias de bloqueo (R1 sin aula compatible, R2+R3 saturacion por tipo, R4 particion, R9 pin incompatible, R11 pares intersede, R11-camino, compat-pigeonhole, compat-hall) y devuelve la lista de `Bloqueo`s por regla.
 - `check_camino_cursada(session, plan_id, margen_min)`: chequea que para cada terna `(carrera, año, cuatri)` exista al menos una combinacion de comisiones viable respetando solapamiento y margen intersede. Consulta `IgnoredConflictDB` para saltar excepciones de solapamiento (no de intersede). Cap `MAX_COMBINACIONES_CAMINO = 10 000`.
 - `_add_bloqueos_camino_cursada(...)`: helper interno que integra el chequeo con el reporte global.
 
@@ -1299,24 +1299,24 @@ Restricciones que **no** existen fisicamente pero se garantizan en la capa de se
 | INV-HOR-VIRT | Un horario virtual (resuelto via `resolve_virtual`) **no** tiene aula asignada. | `apply_solution` sanea via `no_ocupa_aula_ids` |
 | INV-GRUPO-1..4 | Nombre unico globalmente; a lo sumo un `es_sin_clasificar=True`; toda materia tiene grupo; no se borra un grupo con materias. | `grupo_materia_service` |
 
-### 8.3 Restricciones del LP (R1..R14)
+### 8.3 Restricciones del LP (R1..R12)
 
 Formalizacion resumida (detalle completo en `project/1. Diseño/asignacion-aulas-LP.md`):
 
 - **R1**: `∀ h: Σ_a x[h, a] = 1`.
-- **R3**: compatibilidad por tipo (pre-filtrado de variables).
-- **R4**: `∀ grupo_simultaneidad G, ∀ aula a: Σ_{h ∈ G} x[h, a] ≤ 1`.
-- **R5**: particion teoria/laboratorio por comision (con `strict_r5=True` cierra ambas ecuaciones).
-- **R6**: consistencia tipo↔pool para horarios con `tipo_clase=None`.
-- **R7**: definicion lineal de sobre/sub-ocupacion con penalidad asimetrica.
-- **R9**: redistribucion `α[k]` entre comisiones del mismo dictado (opcional).
-- **R10**: `x[h, a] = 0` para toda `a` cuya sede no este en `S_D(grupo(materia(h)))` cuando el grupo corre en modo DURO (con excepcion de lab compatible).
-- **R11**: pins manuales (`x[h, aula_pin] = 1`).
-- **R12**: preferencia blanda de sede vía costo `λ_sede_pref` cuando el grupo corre en modo BLANDO.
-- **R13**: continuidad de sede en pares en riesgo (docente + alumno).
-- **R14**: forzar misma sede por comision (opcional, con variables auxiliares `y[c, s]`).
+- **R2**: compatibilidad por tipo (pre-filtrado de variables).
+- **R3**: `∀ grupo_simultaneidad G, ∀ aula a: Σ_{h ∈ G} x[h, a] ≤ 1`.
+- **R4**: particion teoria/laboratorio por comision (con `strict_r5=True` cierra ambas ecuaciones).
+- **R5**: consistencia tipo↔pool para horarios con `tipo_clase=None`.
+- **R6**: definicion lineal de sobre/sub-ocupacion con penalidad asimetrica.
+- **R7**: redistribucion `α[k]` entre comisiones del mismo dictado (opcional).
+- **R8**: `x[h, a] = 0` para toda `a` cuya sede no este en `S_D(grupo(materia(h)))` cuando el grupo corre en modo DURO (con excepcion de lab compatible).
+- **R9**: pins manuales (`x[h, aula_pin] = 1`).
+- **R10**: preferencia blanda de sede vía costo `λ_sede_pref` cuando el grupo corre en modo BLANDO.
+- **R11**: continuidad de sede en pares en riesgo (docente + alumno).
+- **R12**: forzar misma sede por comision (opcional, con variables auxiliares `y[c, s]`).
 
-Chequeo pre-solve **R13-camino**: fuera del modelo LP. Verifica que exista al menos una combinacion de comisiones viable por grupo curricular `(carrera, año, cuatri)`.
+Chequeo pre-solve **R11-camino**: fuera del modelo LP. Verifica que exista al menos una combinacion de comisiones viable por grupo curricular `(carrera, año, cuatri)`.
 
 ---
 
@@ -1371,7 +1371,7 @@ Ordenadas cronologicamente (extracto de `_run_migrations` y helpers en `src/data
 | 14 | `horarios.aula_id` | LP asigna al patron (no a cada clase). |
 | 15 | `horarios.aula_asignada_manualmente` | Sucesor del flag equivalente en `ClaseDB`. |
 | 16 | `lp_runs.n_horarios_reasignados` | Reemplazo de `n_clases_actualizadas`. |
-| 17 | `sedes.es_default_comunes` + indice + `carrera_sede` | R10 del LP. |
+| 17 | `sedes.es_default_comunes` + indice + `carrera_sede` | R8 del LP. |
 | 18 | `horarios.virtual`, `schedule_entries.virtual` | Override de virtualidad. |
 | 19 | `comisiones.carrera_asignada` + indice | RF-LP-15. |
 | 20 | `comisiones.schedule_id` + indice | Comisiones template. |
@@ -1381,7 +1381,7 @@ Ordenadas cronologicamente (extracto de `_run_migrations` y helpers en `src/data
 | 24 | `_migrate_schedules_nullable_ciclo` | `ScheduleDB.ciclo_id` pasa a `Optional`. |
 | 25 | `_migrate_forecast_config_metodo_nullable` | `metodo` pasa a `Optional` (permite filas con solo `valor_override`). |
 | 26 | `_migrate_aulas_drop_legacy_sede` | Elimina columna legacy `sede` (string). |
-| 27 | `_migrate_horario_entries_drop_carrera_asignada` | Elimina columnas legacy de un intento previo del refactor R10. |
+| 27 | `_migrate_horario_entries_drop_carrera_asignada` | Elimina columnas legacy de un intento previo del refactor R8. |
 | 28 | `_migrate_planificacion_cursada_drop_activo` | Elimina `activo` del plan (concepto obsoleto). |
 | 29 | `_migrate_grupos_materia` (2026-09) | Crea `grupo_materia`, `grupo_materia_sede` y `grupo_materia_carrera`. Bootstrapea grupos `Sin clasificar`, `FB`, `F`, `FI`, `CE` y `Específicas de <Carrera>` por cada carrera, asignando materias por prefijo o exclusividad. Marca `MateriaDB.grupo_id` como NOT NULL. |
 | 30 | `_migrate_ignored_conflicts` | Crea `ignored_conflicts` con PK compuesta y auto-limpieza al validar plan. |
@@ -1513,7 +1513,7 @@ Futura mejora: politica de retencion (conservar los ultimos N por par o los ulti
 
 **Comision viva**: `ComisionDB` con `plan_cursada_id` seteado. Referenciada por `HorarioDB`; participa del LP y las validaciones.
 
-**Compat**: matriz `compat[h, a]` que indica si un horario `h` puede asignarse a un aula `a`. Se computa en `asignacion_aulas_service.build_inputs` combinando R3, R5/R6 y R10.
+**Compat**: matriz `compat[h, a]` que indica si un horario `h` puede asignarse a un aula `a`. Se computa en `asignacion_aulas_service.build_inputs` combinando R2, R4/R5 y R8.
 
 **Cronograma**: archivo de horarios cargado en el sistema, modelado como `ScheduleDB` + `ScheduleEntryDB`.
 
@@ -1523,7 +1523,7 @@ Futura mejora: politica de retencion (conservar los ultimos N por par o los ulti
 
 **Forecast**: estimacion de inscriptos esperados por comision. Alimenta al LP como `insc[h]`. Se recomputa on-demand (no se persiste).
 
-**Grupo de simultaneidad**: conjunto de horarios que comparten dia y tienen interseccion horaria. Al no soportarse simultaneamente en una misma aula, restringen `x[h, a] ≤ 1` en R4.
+**Grupo de simultaneidad**: conjunto de horarios que comparten dia y tienen interseccion horaria. Al no soportarse simultaneamente en una misma aula, restringen `x[h, a] ≤ 1` en R3.
 
 **Idempotencia**: propiedad de una operacion que puede ejecutarse multiples veces sin cambiar el resultado despues de la primera. Todas las migraciones son idempotentes.
 

@@ -1,4 +1,4 @@
-"""Tests para el chequeo camino de cursada (R13-camino).
+"""Tests para el chequeo camino de cursada (R11-camino).
 
 Cubre el `_add_bloqueos_camino_cursada` que corre dentro de
 `check_factibilidad_estructural`.
@@ -203,7 +203,7 @@ class TestCaminoCursadaBloqueo:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert len(camino_bloqueos) == 1
         assert not reporte.factible
@@ -243,7 +243,7 @@ class TestCaminoCursadaBloqueo:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert camino_bloqueos == []
 
@@ -269,7 +269,7 @@ class TestCaminoCursadaBloqueo:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert camino_bloqueos == []
 
@@ -294,7 +294,7 @@ class TestGruposPermisivos:
 
         reporte = check_factibilidad_estructural(session, "plan-1")
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
     def test_grupo_blando_no_bloquea(self, session):
@@ -319,7 +319,7 @@ class TestGruposPermisivos:
         # BLANDO significa "cualquier sede posible" a nivel camino →
         # M2 puede ir a Pellegrini con M1, no hay bloqueo.
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
 
@@ -344,7 +344,7 @@ class TestOptativasIgnoradas:
         reporte = check_factibilidad_estructural(session, "plan-1")
         # M2 optativa → skip. Sólo queda M1 → no hay pares → no bloqueo.
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
 
@@ -381,7 +381,7 @@ class TestCarreraAsignadaIgnorada:
         # Sigue detectándose el bloqueo (el grupo de M2 sigue siendo
         # Siberia — la etiqueta a B no cambia esto).
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] != []
 
 
@@ -429,10 +429,10 @@ class TestCapExcedido:
         reporte = check_factibilidad_estructural(session, "plan-1")
         # No hay bloqueo, hay advertencia.
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         camino_adv = [
-            b for b in reporte.advertencias if b.codigo_regla == "R13-camino"
+            b for b in reporte.advertencias if b.codigo_regla == "R11-camino"
         ]
         assert camino_bloqueos == []
         assert len(camino_adv) == 1
@@ -443,7 +443,7 @@ class TestGruposNoRelevantes:
 
     def test_una_sola_materia_en_grupo_curricular_no_chequea(self, session):
         """Con una sola materia en (carrera, año, cuatri), no hay
-        pares → no aplica R13-camino."""
+        pares → no aplica R11-camino."""
         ctx = _seed_ciclo_y_carrera(session)
         g_pel = create_grupo(session, "G_PEL9", sedes_duras=[ctx["pel"]])
         _add_materia_al_plan(
@@ -452,7 +452,7 @@ class TestGruposNoRelevantes:
         _add_comision(session, "M1", "plan-1", horarios=[("Lunes", 8, 10)])
         reporte = check_factibilidad_estructural(session, "plan-1")
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
     def test_grupo_cuatri_opuesto_no_participa(self, session):
@@ -472,7 +472,7 @@ class TestGruposNoRelevantes:
         # El ciclo es 1C → grupo 2C se ignora.
         reporte = check_factibilidad_estructural(session, "plan-1")
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
     def test_anuales_se_juntan_con_1c(self, session):
@@ -492,7 +492,7 @@ class TestGruposNoRelevantes:
 
         reporte = check_factibilidad_estructural(session, "plan-1")
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] != []
 
 
@@ -533,7 +533,7 @@ class TestCaminoCursadaSolapamiento:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert len(camino_bloqueos) == 1, (
             "Dos materias obligatorias solapadas deberían bloquear "
@@ -593,7 +593,7 @@ class TestCaminoCursadaSolapamiento:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert len(camino_bloqueos) == 1
         assert not reporte.factible
@@ -633,7 +633,7 @@ class TestCaminoCursadaSolapamiento:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] == []
 
     def test_solapamiento_parcial_bloquea(self, session):
@@ -659,7 +659,7 @@ class TestCaminoCursadaSolapamiento:
 
         reporte = check_factibilidad_estructural(session, "plan-1")
         assert [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ] != []
 
 
@@ -700,7 +700,7 @@ class TestCaminoCursadaExcepcionesIgnoradas:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert camino_bloqueos == []
 
@@ -737,7 +737,7 @@ class TestCaminoCursadaExcepcionesIgnoradas:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert len(camino_bloqueos) == 1
 
@@ -768,7 +768,7 @@ class TestCaminoCursadaExcepcionesIgnoradas:
         reporte = check_factibilidad_estructural(session, "plan-1")
 
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         # M1-M3 sigue bloqueando; M2-M3 no chocan (10-12 vs 11-13 se
         # solapan sólo si están ambas activas, pero como M1-M2 está
@@ -811,6 +811,6 @@ class TestCaminoCursadaExcepcionesIgnoradas:
 
         # Debe bloquear igual: la excepción sólo cubre solapamiento.
         camino_bloqueos = [
-            b for b in reporte.bloqueos if b.codigo_regla == "R13-camino"
+            b for b in reporte.bloqueos if b.codigo_regla == "R11-camino"
         ]
         assert len(camino_bloqueos) == 1
