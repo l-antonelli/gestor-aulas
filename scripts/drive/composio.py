@@ -109,3 +109,20 @@ def exportar_pestana_docx(doc_id: str, tab_id: str, destino: Path) -> Path:
     d = proxy(f"https://docs.google.com/document/d/{doc_id}/export?format=docx&tab={tab_id}",
               toolkit="googledocs")
     return descargar(d["binary_data"]["url"], destino)
+
+
+def texto_doc(doc_id: str, revision_link: str | None = None) -> str:
+    """Texto plano del Google Doc (o de una revisión), sin las marcas
+    que Google agrega por cada comentario ("[a]", "[b]"...) ni el bloque
+    final con el texto de los comentarios. Sirve para detectar
+    ediciones de texto ignorando los comentarios."""
+    import re
+    url = revision_link or f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+    r = subprocess.run([CLI, "proxy", url, "--toolkit", "googledrive", "--method", "GET"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    t = r.stdout
+    corte = re.search(r"\n\[a\][^\n]*\n", t)
+    if corte:
+        t = t[:corte.start()]
+    t = re.sub(r"\[[a-z]{1,2}\]", "", t)
+    return "\n".join(l.rstrip() for l in t.splitlines() if l.strip())

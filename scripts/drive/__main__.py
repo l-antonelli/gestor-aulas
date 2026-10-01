@@ -3,6 +3,7 @@
 
 Uso:
     python -m scripts.drive informe          # informe completo (pautas I-32), actualiza el Doc compartido
+                                             # (se frena si alguien editó texto en el Doc; --forzar lo pisa)
     python -m scripts.drive previa           # lo mismo, pero sólo genera un PDF para revisar
     python -m scripts.drive docs [filtro]    # docs técnicos y anexos (.md -> Google Doc)
     python -m scripts.drive archivos         # archivos crudos e imágenes (Diagramas)
@@ -153,12 +154,28 @@ def previa() -> None:
     print(f"✓ PDF de la vista previa: {pdf.relative_to(RAIZ)}")
 
 
-def informe() -> None:
+def _huella(texto: str) -> str:
+    import hashlib
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+
+def informe(*opciones: str) -> None:
+    """Actualiza el Doc compartido. Antes compara el texto actual del
+    Doc con el que quedó en la última publicación: si alguien lo editó
+    (por ejemplo, las secciones a cargo del compañero), se detiene para
+    no pisarlo. Los comentarios no cuentan como edición. `--forzar`
+    publica igual."""
     est = _estado()
     inf = est["informe"]
     base = DIST / "informe_docx"
+    if inf.get("doc_id") and inf.get("huella_publicada") and "--forzar" not in opciones:
+        if _huella(cx.texto_doc(inf["doc_id"])) != inf["huella_publicada"]:
+            raise SystemExit(
+                "✗ El Doc tiene ediciones de texto posteriores a la última publicación. "
+                "Traelas al repo antes de regenerar, o usá `informe --forzar` para pisarlas.")
     final = _armar_informe(inf)
     inf["doc_id"] = cx.docx_a_gdoc(final, est["carpetas"]["Informe"], "Informe", inf.get("doc_id"))
+    inf["huella_publicada"] = _huella(cx.texto_doc(inf["doc_id"]))
     _guardar(est)
     pdf = cx.exportar_pdf(inf["doc_id"], base / "Informe.pdf")
     print(f"✓ Informe actualizado: https://docs.google.com/document/d/{inf['doc_id']}/edit")
