@@ -1,15 +1,15 @@
-# Capítulo 6. Del dominio al modelo de datos
+## 3.6 Del dominio al modelo de datos
 
-En el capítulo 5 dejamos fijado el modelo conceptual del dominio:
+En la sección 3.5 dejamos fijado el modelo conceptual del dominio:
 qué entidades intervienen, cómo se relacionan y qué reglas las
 gobiernan. Ese modelo habla en el vocabulario del dominio y no
-depende de ninguna tecnología. Este capítulo da el paso siguiente:
+depende de ninguna tecnología. Esta sección da el paso siguiente:
 muestra **cómo se traduce ese modelo a una base de datos** y qué
 decisiones de diseño de esa traducción importan para la solución.
 El detalle tabla por tabla queda para el anexo A, y la
-justificación de las tecnologías elegidas, para el capítulo 7.
+justificación de las tecnologías elegidas, para la sección 3.7.
 
-## 6.1 Del modelo conceptual al modelo relacional
+### 3.6.1 Del modelo conceptual al modelo relacional
 
 Una *base de datos relacional* es la herramienta más difundida para
 guardar información estructurada: organiza los datos en tablas,
@@ -18,7 +18,7 @@ atributos. Las filas de tablas distintas se vinculan entre sí
 mediante *claves*: cada fila tiene un identificador propio (su
 *clave primaria*) y, cuando necesita referirse a una fila de otra
 tabla, guarda el identificador de esa fila (una *clave foránea*).
-Elegimos este enfoque porque el dominio del capítulo 5 ya está
+Elegimos este enfoque porque el dominio de la sección 3.5 ya está
 expresado en esos términos: entidades, relaciones con
 multiplicidades precisas y reglas de consistencia.
 
@@ -29,8 +29,8 @@ una sola vez, como una clase del lenguaje de programación, y que se
 encarga de crear la tabla correspondiente y de traducir las
 operaciones del programa en consultas a la base.
 
-En la mayoría de los casos la correspondencia es directa: cada entidad del capítulo 5 tiene su propia tabla. Las excepciones son las que vale la pena explicar, y se tratan
-en la sección 6.4.
+En la mayoría de los casos la correspondencia es directa: cada entidad de la sección 3.5 tiene su propia tabla. Las excepciones son las que vale la pena explicar, y se tratan
+en la sección 3.6.4.
 
 
 Además de estas tablas, la base guarda información que el sistema
@@ -39,7 +39,7 @@ el historial de inscripciones que alimenta la estimación de
 demanda o los parámetros globales de la grilla horaria. Se
 describen en el anexo A.
 
-## 6.2 Diagrama entidad-relación
+### 3.6.2 Diagrama entidad-relación
 
 Un *diagrama entidad-relación* es la notación habitual para
 mostrar la estructura de una base de datos: cada caja es una tabla
@@ -74,9 +74,9 @@ erDiagram
     AULA |o--o{ HORARIO_SEMANAL : "aloja"
 ```
 
-## 6.3 Codificación de las relaciones
+### 3.6.3 Codificación de las relaciones
 
-Cada relación del capítulo 5 se codifica según su multiplicidad.
+Cada relación de la sección 3.5 se codifica según su multiplicidad.
 
 - **Uno a muchos.** Se representa con una clave foránea en la
   tabla del lado *muchos*. Por ejemplo, cada aula guarda la sede a
@@ -93,19 +93,19 @@ Cada relación del capítulo 5 se codifica según su multiplicidad.
   vinculación de un dictado con sus ciclos permite que un dictado
   anual cubra dos cuatrimestres.
 - **Jerarquías.** Las reglas jerárquicas de virtualidad y de
-  recursado (secciones 5.5.2 y 5.5.4) se guardan como atributos que
+  recursado (secciones 3.5.5.2 y 3.5.5.4) se guardan como atributos que
   pueden quedar sin valor en cada nivel de la jerarquía. El valor
   efectivo no lo resuelve la base: lo calcula el sistema al
   consultarlo, recorriendo la jerarquía desde el nivel más
   específico hasta encontrar el primero que tenga un valor
   definido.
 
-## 6.4 Decisiones de diseño del modelo de datos
+### 3.6.4 Decisiones de diseño del modelo de datos
 
 Las decisiones que siguen son las que agregan algo al modelo
 conceptual o lo matizan.
 
-### 6.4.1 Versionado de planes de estudio
+#### 3.6.4.1 Versionado de planes de estudio
 
 Los planes de estudio cambian con el tiempo: se incorpora una
 materia, otra pasa de cuatrimestre, una tercera cambia de año.
@@ -117,7 +117,7 @@ pueden convivir varias versiones vigentes, una por cada cohorte de
 estudiantes, y siempre se puede reconstruir el plan que se le
 prometió a una cohorte aunque luego haya cambiado.
 
-### 6.4.2 Comisión con dos posibles pertenencias
+#### 3.6.4.2 Comisión con dos posibles pertenencias
 
 La comisión es una entidad con tabla propia, porque el usuario
 necesita editar sus atributos (nombre, cupo, carrera a la que se
@@ -150,9 +150,9 @@ regla "o bien una cosa o bien la otra" no se puede declarar en el
 motor, por lo que la garantiza el propio sistema al crear y
 modificar comisiones.
 
-### 6.4.3 Grupo de materias como partición
+#### 3.6.4.3 Grupo de materias como partición
 
-La regla de sedes admisibles (sección 5.5.3) se apoya en los
+La regla de sedes admisibles (sección 3.5.5.3) se apoya en los
 grupos de materias. En la base, toda materia debe pertenecer a
 exactamente un grupo: los grupos forman una *partición* del
 conjunto de materias, es decir, lo cubren por completo y sin
@@ -162,12 +162,12 @@ recibe por defecto; la interfaz lo señala con una advertencia para
 que el usuario las ubique en su grupo curricular.
 
 Cada grupo guarda su lista de sedes junto con un indicador que
-distingue las dos configuraciones definidas en el capítulo 5: la
+distingue las dos configuraciones definidas en la sección 3.5: la
 *dura*, que restringe las sedes posibles, y la *blanda*, que las
 ordena por preferencia. Ambas se guardan a la vez, y en cada
 corrida del asignador se elige cuál aplicar.
 
-### 6.4.4 Excepciones a la verificación de conflictos
+#### 3.6.4.4 Excepciones a la verificación de conflictos
 
 El usuario puede marcar pares de materias cuyo solapamiento
 horario se acepta deliberadamente, por ejemplo porque en la
@@ -181,7 +181,7 @@ solapamiento. La verificación de traslado entre sedes la ignora a
 propósito: que dos materias no compartan alumnos no cambia el
 tiempo que le lleva a un estudiante moverse de una sede a otra.
 
-## 6.5 Cómo se protege la consistencia
+### 3.6.5 Cómo se protege la consistencia
 
 Un modelo de datos no es sólo su estructura: incluye también los
 mecanismos que garantizan que lo guardado respeta las reglas del
@@ -197,15 +197,15 @@ dominio. Distinguimos tres niveles:
    se documentan en el anexo A.
 3. **Verificaciones previas al asignador.** Reglas que combinan
    horarios, capacidades y sedes, y que se verifican antes de
-   resolver el programa lineal. Se desarrollan en los capítulos 8
-   y 9.
+   resolver el programa lineal. Se desarrollan en las secciones 3.8
+   y 3.9.
 
 El criterio general es declarar cada regla en el nivel más bajo
 posible, para que ninguna capa superior pueda omitirla.
 
-## 6.6 Recapitulación
+### 3.6.6 Recapitulación
 
 El modelo conceptual queda traducido a una base relacional cuya
 consistencia se protege en el motor, en el sistema y antes de cada
-corrida del asignador. El capítulo 7 presenta la arquitectura que la
+corrida del asignador. La sección 3.7 presenta la arquitectura que la
 usa.

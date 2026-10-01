@@ -123,10 +123,9 @@ def archivos() -> None:
     print(f"{nuevos} archivo(s) nuevo(s) de {len(plan)}")
 
 
-def _armar_informe(inf: dict) -> Path:
-    """Regenera el .docx del informe y le pone la portada del borrador."""
+def _componer(inf: dict, extra: list[str]) -> Path:
     base = DIST / "informe_docx"
-    subprocess.run([sys.executable, "-m", "scripts.exportar_informe_docx", "--informe"], cwd=RAIZ, check=True)
+    subprocess.run([sys.executable, "-m", "scripts.exportar_informe_docx", "--informe", *extra], cwd=RAIZ, check=True)
     portada = cx.exportar_pestana_docx(inf["portada"]["doc_id"], inf["portada"]["tab_id"],
                                        base / "portada_borrador.docx")
     final = base / "Informe_final.docx"
@@ -136,21 +135,38 @@ def _armar_informe(inf: dict) -> Path:
     return final
 
 
-def previa() -> None:
-    """Como `informe`, pero sin tocar el Doc compartido: convierte en un
-    Doc temporal de tu Drive personal, exporta el PDF y manda el temporal
-    a la papelera. Para revisar una iteración antes de publicarla."""
-    est = _estado()
-    final = _armar_informe(est["informe"])
-    subido = cx.run("GOOGLEDRIVE_UPLOAD_FILE", {}, file=str(final))
+def _pdf_temporal(docx: Path, pdf: Path) -> Path:
+    """Convierte el .docx en un Doc temporal de tu Drive, exporta el PDF
+    y manda el temporal a la papelera."""
+    subido = cx.run("GOOGLEDRIVE_UPLOAD_FILE", {}, file=str(docx))
     doc = cx.run("GOOGLEDRIVE_COPY_FILE_ADVANCED", {
         "fileId": subido["id"], "name": "PREVIA Informe (temporal)", "mimeType": cx.GDOC, "fields": "id"})
-    pdf = DIST / "informe_docx" / "Informe_previa.pdf"
     try:
-        cx.exportar_pdf(doc["id"], pdf)
+        return cx.exportar_pdf(doc["id"], pdf)
     finally:
         for fid in (subido["id"], doc["id"]):
             cx.a_papelera(fid)
+
+
+def _armar_informe(inf: dict) -> Path:
+    """Regenera el .docx del informe con la portada del borrador, en dos
+    pasadas: la primera, con números de página provisorios en el índice,
+    se pagina en Google Docs para saber en qué página cae cada título; la
+    segunda completa el índice con esos números."""
+    base = DIST / "informe_docx"
+    primera = _componer(inf, [])
+    _pdf_temporal(primera, base / "Informe_paginado.pdf")
+    subprocess.run(["uv", "run", "--quiet", "--with", "pymupdf", "python",
+                    "scripts/paginas_indice.py", str(base / "Informe_paginado.pdf")], cwd=RAIZ, check=True)
+    return _componer(inf, ["--con-paginas"])
+
+
+def previa() -> None:
+    """Como `informe`, pero sin tocar el Doc compartido: deja un PDF para
+    revisar una iteración antes de publicarla."""
+    est = _estado()
+    final = _armar_informe(est["informe"])
+    pdf = _pdf_temporal(final, DIST / "informe_docx" / "Informe_previa.pdf")
     print(f"✓ PDF de la vista previa: {pdf.relative_to(RAIZ)}")
 
 

@@ -1,21 +1,21 @@
-# Capítulo 5. El modelo conceptual
+## 3.5 El modelo conceptual
 
-En los capítulos 3 y 4 la operatoria y el problema quedaron descritos
-al nivel de "qué se hace y qué hay que decidir". Este capítulo da el
+En las secciones 3.3 y 3.4 la operatoria y el problema quedaron descritos
+al nivel de "qué se hace y qué hay que decidir". Esta sección da el
 paso siguiente: identificar las entidades del dominio, sus relaciones
 y las reglas de negocio que las gobiernan. Es el primer eslabón de la
-cadena introducida en §2.5, el **modelo conceptual del dominio**; su
-traducción a un esquema de datos queda para el capítulo 6, y su uso
-como piezas del programa lineal, para el capítulo 8.
+cadena introducida en §3.2.5, el **modelo conceptual del dominio**; su
+traducción a un esquema de datos queda para la sección 3.6, y su uso
+como piezas del programa lineal, para la sección 3.8.
 
 El objetivo es doble. Por un lado, fijar un **lenguaje ubicuo** en el
-sentido de Evans [3] (§2.2): los términos de este capítulo son los
+sentido de Evans [3] (§3.2.2): los términos de esta sección son los
 mismos que aparecen en la interfaz del sistema y en el resto del
 informe. Por otro, hacer explícitas las **reglas de negocio** que la
 FCEIA aplica en la práctica y que hoy viven mayormente en el criterio
 de las personas.
 
-## 5.1 Enfoque metodológico: modelado en capas
+### 3.5.1 Enfoque metodológico: modelado en capas
 
 No todas las entidades de la facultad son relevantes para asignar
 aulas. Por eso organizamos el modelo en **tres capas** (Figura @fig:capas):
@@ -37,10 +37,10 @@ flowchart LR
     class C1,C2,C3 body
 ```
 
-## 5.2 Entidades del dominio del problema
+### 3.5.2 Entidades del dominio del problema
 
 Del inventario completo de la facultad, el problema de asignación
-definido en el capítulo 4 sólo necesita una parte. Quedan **fuera del
+definido en la sección 3.4 sólo necesita una parte. Quedan **fuera del
 alcance**:
 
 - **Alumno** e **inscripción**: la asignación decide sobre horarios y
@@ -58,13 +58,13 @@ grupos de dictado); el aula y la sede (los recursos que se asignan);
 el ciclo lectivo (el marco temporal); el cronograma (la entrada del
 proceso) y la clase (cada encuentro concreto en el calendario).
 
-## 5.3 Las entidades del modelo
+### 3.5.3 Las entidades del modelo
 
 Presentamos las entidades agrupadas según el papel que cumplen. Para
 cada una indicamos qué representa y para qué sirve; los atributos y
-su codificación se tratan en el capítulo 6 y en el anexo A.
+su codificación se tratan en la sección 3.6 y en el anexo A.
 
-### 5.3.1 La oferta académica
+#### 3.5.3.1 La oferta académica
 
 La **carrera** es un programa de grado o tecnicatura que ofrece la
 facultad. Su contenido se describe en un **plan de estudios**, que
@@ -86,7 +86,7 @@ haberse cursado antes que otras dentro de una carrera; no intervienen
 en la asignación de aulas, pero sirven para verificar que el
 cronograma sea cursable por un alumno tipo.
 
-### 5.3.2 Los recursos físicos
+#### 3.5.3.2 Los recursos físicos
 
 La **sede** es un edificio de la facultad que agrupa aulas. El
 **aula** es el espacio físico donde se dicta, pertenece a una única
@@ -100,7 +100,7 @@ son técnicamente aptos para la parte práctica de cada materia; una
 materia puede tener varios laboratorios compatibles y un laboratorio
 puede servir a varias materias.
 
-### 5.3.3 La planificación del cuatrimestre
+#### 3.5.3.3 La planificación del cuatrimestre
 
 El **ciclo lectivo** es cada cuatrimestre de operación académica y
 contextualiza todo lo demás: en él están vigentes ciertas versiones
@@ -129,12 +129,12 @@ un mismo esquema semanal; una materia puede abrir varias comisiones.
 Cada comisión se compone de **horarios semanales**: franjas
 recurrentes con día, hora de inicio, hora de fin y tipo de clase
 (teoría o laboratorio). El horario semanal es la unidad sobre la que
-se decide el aula, según se justificó en §4.3.1. Finalmente, la
+se decide el aula, según se justificó en §3.4.3.1. Finalmente, la
 **clase** es cada encuentro concreto en una fecha del calendario; se
 obtiene repitiendo el horario semanal a lo largo del ciclo y hereda
 su aula.
 
-### 5.3.4 El grupo de materias
+#### 3.5.3.4 El grupo de materias
 
 La pregunta "¿en qué sedes puede dictarse esta materia?" no se
 responde materia por materia, sino por bloques: las materias del
@@ -157,15 +157,15 @@ vez con criterio estricto, para verificar su factibilidad, y otra con
 criterio flexible, para reducir traslados. Las materias que todavía
 no se clasificaron caen en un grupo *sin clasificar*, cuya presencia
 el sistema señala como advertencia. El grupo de materias interviene
-en las restricciones R8 y R10 del programa lineal (capítulo 8).
+en las restricciones R8 y R10 del programa lineal (sección 3.8).
 
-## 5.4 Relaciones y multiplicidades
+### 3.5.4 Relaciones y multiplicidades
 
 La mayoría de las relaciones del modelo son simples, de uno a muchos:
 una sede tiene muchas aulas, un ciclo tiene varios cronogramas y
 planes de cursada, una comisión tiene varios horarios semanales y
-cada horario genera muchas clases. Pero, como anticipamos en §2.4.1 y
-en el diagnóstico de §3.4, en la asignación de aulas las relaciones
+cada horario genera muchas clases. Pero, como anticipamos en §3.2.4.1 y
+en el diagnóstico de §3.3.4, en la asignación de aulas las relaciones
 muchos-a-muchos son la norma más que la excepción. Cada una se
 resuelve con una entidad intermedia del dominio de la solución
 (Tabla @tab:relaciones).
@@ -184,26 +184,26 @@ es imprescindible. Cuando no las tiene, como en la compatibilidad
 materia-laboratorio, la mantenemos igual por uniformidad y porque
 facilita las verificaciones.
 
-## 5.5 Reglas de negocio e invariantes
+### 3.5.5 Reglas de negocio e invariantes
 
 Las **reglas de negocio** son afirmaciones sobre el comportamiento de
 las entidades que no se deducen de sus definiciones y que el sistema
 debe garantizar. Muchas son **invariantes** en el sentido de Evans
-[3] (§2.2.2): deben cumplirse en todo momento. Las agrupamos por
+[3] (§3.2.2.2): deben cumplirse en todo momento. Las agrupamos por
 familia.
 
-### 5.5.1 Reglas estructurales
+#### 3.5.5.1 Reglas estructurales
 
 - Todo horario semanal pertenece a exactamente una comisión.
 - Toda comisión pertenece a exactamente una materia y a un plan de
   cursada.
 - Todo dictado pertenece a una materia y se vincula con uno o dos
-  ciclos (§5.5.5).
+  ciclos (§3.5.5.5).
 - Cada ciclo tiene a lo sumo un plan de cursada activo; los demás son
   escenarios de comparación.
 - Toda aula pertenece a exactamente una sede.
 
-### 5.5.2 Regla de virtualidad jerárquica
+#### 3.5.5.2 Regla de virtualidad jerárquica
 
 Un horario *virtual* se dicta a distancia y no consume aula. La
 virtualidad puede declararse en tres niveles: en la **materia** (se
@@ -215,10 +215,10 @@ se toma el del dictado, y si tampoco, el de la materia. La invariante
 asociada es que **los horarios efectivamente virtuales no participan
 de la asignación**: se excluyen antes de armar el programa lineal.
 
-### 5.5.3 Regla de sedes admisibles por grupo de materias
+#### 3.5.5.3 Regla de sedes admisibles por grupo de materias
 
 Cada materia tiene un conjunto de **sedes admisibles** que surge de su
-grupo (§5.3.4) y del criterio con que ese grupo se resuelve:
+grupo (§3.5.3.4) y del criterio con que ese grupo se resuelve:
 
 - con criterio **estricto**, las sedes admisibles son las del
   conjunto duro del grupo; si ese conjunto está vacío (caso reservado
@@ -238,7 +238,7 @@ preocupaciones de la operatoria: las sedes propias de cada carrera
 habituales de las materias comunes (a través de los grupos
 transversales).
 
-### 5.5.4 Regla de recursado
+#### 3.5.5.4 Regla de recursado
 
 Algunas carreras ofrecen materias también en el cuatrimestre opuesto
 al que les corresponde, para facilitar el recursado. La política se
@@ -248,7 +248,7 @@ virtualidad: la **carrera** indica si ofrece recursado y la
 La invariante asociada es que **al generar los dictados de un ciclo
 sólo se crean los que la regla de recursado permite**.
 
-### 5.5.5 Regla de materias anuales
+#### 3.5.5.5 Regla de materias anuales
 
 Una materia anual se dicta a lo largo de los dos cuatrimestres del
 año. En la práctica, su dictado se crea con el primer cuatrimestre y,
@@ -260,16 +260,16 @@ separado. La invariante es que **todo dictado se vincula con tantos
 ciclos como indica la periodicidad de su materia**: uno si es
 cuatrimestral, los dos del mismo año si es anual.
 
-### 5.5.6 Regla de coherencia teoría-laboratorio
+#### 3.5.5.6 Regla de coherencia teoría-laboratorio
 
 En cada comisión, la suma de las duraciones de los horarios de teoría
 debe coincidir con las horas de teoría declaradas por la materia, y
 lo mismo para las de laboratorio. La regla se refleja en la
-restricción R4 del programa lineal (capítulo 8): si el cronograma no
+restricción R4 del programa lineal (sección 3.8): si el cronograma no
 permite un reparto que respete la carga declarada, el problema
 resulta infactible.
 
-### 5.5.7 Reglas de política institucional
+#### 3.5.5.7 Reglas de política institucional
 
 La operatoria de la FCEIA impone además políticas ligadas al
 traslado de los alumnos entre sedes y, en un caso, al de los
@@ -280,13 +280,13 @@ dominio e indicamos dónde se las trata:
   cuatrimestre debe existir al menos una combinación de comisiones,
   una por materia obligatoria, que un alumno pueda cursar sin
   conflictos horarios ni traslados imposibles entre sedes. Se
-  verifica antes de resolver el programa lineal (capítulos 8 y 9).
+  verifica antes de resolver el programa lineal (secciones 3.8 y 3.9).
 - **Continuidad de sede para el alumno.** Dos horarios consecutivos
   de materias distintas de una misma carrera, año y cuatrimestre,
   separados por menos de un margen configurable (30 minutos por
   defecto), deben dictarse en la misma sede, para que el alumno
-  pueda pasar de una clase a la siguiente (restricción R11 del
-  capítulo 8).
+  pueda pasar de una clase a la siguiente (restricción R11 de la
+  sección 3.8).
 - **Misma sede por comisión.** Es la única regla pensada desde el
   punto de vista del docente: opcionalmente, todos los horarios de
   una comisión deben caer en la misma sede, para que quien la dicta
@@ -295,9 +295,9 @@ dominio e indicamos dónde se las trata:
 - **Flexibilidad por calendario de exámenes.** En los períodos de
   exámenes debe poder generarse una variante transitoria de la
   asignación sin perder la de base. Queda fuera del programa lineal y
-  se maneja en la operatoria (§4.6.2).
+  se maneja en la operatoria (§3.4.6.2).
 
-## 5.6 Diagrama UML del dominio
+### 3.5.6 Diagrama UML del dominio
 
 La Figura @fig:clases-plan resume las entidades y sus relaciones en un
 diagrama de clases UML sin atributos. Cada línea es una asociación y
@@ -347,8 +347,8 @@ classDiagram
     HorarioSemanal "*" -- "0..1" Aula : se asigna
 ```
 
-## 5.7 Recapitulación
+### 3.5.7 Recapitulación
 
 Quedan fijadas las entidades, sus relaciones y las reglas de negocio
-como invariantes. El capítulo siguiente traduce este modelo a un
+como invariantes. La sección siguiente traduce este modelo a un
 esquema de datos.

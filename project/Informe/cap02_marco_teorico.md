@@ -1,10 +1,10 @@
-# Capítulo 2. Marco teórico
+## 3.2 Marco teórico
 
 En la introducción se anticiparon tres cuerpos de ideas sobre los que
 se apoya todo el trabajo: un marco para comprender a la organización
 estudiada, un marco para modelar el dominio en software y un marco
 matemático para plantear la asignación de aulas como un problema de
-optimización. Este capítulo los desarrolla en el orden en que se usan
+optimización. Esta sección los desarrolla en el orden en que se usan
 más adelante, de modo que cada definición quede disponible cuando
 llegue el momento de aplicarla.
 
@@ -40,11 +40,11 @@ por el dominio toma ese modelo y le da forma de *modelo operativo
 computacional*: entidades, reglas e invariantes que viven en el
 software. Sobre ese modelo, finalmente, la investigación de
 operaciones y la matemática aplicada permiten **tomar decisiones
-óptimas**. El capítulo sigue ese mismo orden.
+óptimas**. La sección sigue ese mismo orden.
 
-## 2.1 Marco organizacional y de análisis de sistemas
+### 3.2.1 Marco organizacional y de análisis de sistemas
 
-### 2.1.1 El instrumental de la ingeniería industrial
+#### 3.2.1.1 El instrumental de la ingeniería industrial
 
 La ingeniería industrial se distingue de otras ingenierías por su
 objeto de estudio: no un dispositivo físico, sino un *sistema
@@ -61,8 +61,8 @@ este trabajo:
   la notación BPMN (Modelo y Notación de Procesos de Negocio, del
   inglés *Business Process Model and Notation*) y los diagramas SIPOC
   (proveedor, entrada, proceso, salida, cliente) hacen visibles los
-  pasos, responsables, entradas y salidas de cada actividad. En el
-  capítulo 3 se aplican al proceso actual de asignación de aulas.
+  pasos, responsables, entradas y salidas de cada actividad. En la
+  sección 3.3 se aplican al proceso actual de asignación de aulas.
 - **Estudio del trabajo y medición**: descomposición de tareas en
   operaciones elementales, medición de tiempos e identificación de
   cuellos de botella; la base cuantitativa para caracterizar volumen,
@@ -75,7 +75,7 @@ este trabajo:
   entradas, salidas, componentes e interacciones, requisito previo a
   cualquier modelo formal.
 
-### 2.1.2 Chiavenato y Mintzberg aplicados a la FCEIA
+#### 3.2.1.2 Chiavenato y Mintzberg aplicados a la FCEIA
 
 La introducción ya caracterizó a la FCEIA según Chiavenato [1] como
 *organización compleja* y según Mintzberg [7] como *burocracia
@@ -85,7 +85,7 @@ recursos que deben articularse en tiempo y espacio**, y que los
 docentes coordinan su trabajo a partir de su formación previa, gozando
 de una autonomía muy superior a la de un operario industrial típico.
 
-### 2.1.3 Implicancias para el diseño de una solución
+#### 3.2.1.3 Implicancias para el diseño de una solución
 
 Combinadas, ambas caracterizaciones dejan tres implicancias directas
 para el resto del informe:
@@ -114,7 +114,7 @@ sin embargo, todavía es descriptivo: vive en prosa, tablas y
 diagramas. Para que un sistema de software opere sobre él hay que
 darle una forma más rígida, con entidades y reglas explícitas.
 
-## 2.2 Marco metodológico: diseño guiado por el dominio
+### 3.2.2 Marco metodológico: diseño guiado por el dominio
 
 Para traducir la comprensión de la organización a un sistema de
 software fiel al dominio real tomamos como marco el *diseño guiado
@@ -150,7 +150,7 @@ computacional**: entidades, invariantes y vocabulario que viven en el
 software y permiten que las técnicas de optimización actúen sobre un
 modelo integrado, consistente y con sus reglas garantizadas.
 
-## 2.3 Marco técnico: investigación de operaciones
+### 3.2.3 Marco técnico: investigación de operaciones
 
 En la asignación de aulas, la decisión es qué aula asignar a cada
 clase, sujeta a un conjunto de restricciones. Para tomarla de forma
@@ -158,7 +158,7 @@ fundada recurrimos a la *investigación de operaciones*, la rama de la
 matemática aplicada que estudia el uso de modelos matemáticos para la
 toma de decisiones en sistemas complejos.
 
-### 2.3.1 Programación lineal
+#### 3.2.3.1 Programación lineal
 
 Un *problema de programación lineal* consiste en optimizar (maximizar
 o minimizar) una función lineal de un conjunto de variables, sujeta a
@@ -181,7 +181,7 @@ cuenta con algoritmos muy eficientes (el método símplex o los métodos
 de punto interior) que resuelven en la práctica problemas con miles de
 variables y restricciones.
 
-### 2.3.2 Programación lineal entera
+#### 3.2.3.2 Programación lineal entera
 
 Muchos problemas exigen que las variables tomen sólo valores enteros.
 El caso más frecuente es el de las variables **binarias** (que valen
@@ -207,7 +207,7 @@ miles de variables binarias se resuelven en segundos o minutos,
 porque el algoritmo de la sección siguiente evita recorrer casi todas
 esas combinaciones.
 
-### 2.3.3 Ramificación y acotación
+#### 3.2.3.3 Ramificación y acotación
 
 El algoritmo estándar para la programación lineal entera es la
 *ramificación y acotación* (*branch-and-bound*). Primero se resuelve
@@ -234,7 +234,7 @@ explorando, y el óptimo queda probado: es 13.
 
 ![Ramificación y acotación en un problema de minimización pequeño](figuras/ramificacion_acotacion.png){#fig:ramificacion width=13cm}
 
-### 2.3.4 Resolutores
+#### 3.2.3.4 Resolutores
 
 Un *resolutor* (*solver*) es un programa que recibe la descripción de
 un problema de programación lineal entera y devuelve una solución
@@ -247,7 +247,7 @@ biblioteca de modelado como PuLP, que permite escribir la formulación
 de forma declarativa y la traduce al formato que el resolutor espera.
 Esa es la combinación que emplea el sistema desarrollado.
 
-### 2.3.5 Restricciones duras y blandas
+#### 3.2.3.5 Restricciones duras y blandas
 
 Al modelizar problemas reales conviene distinguir dos clases de
 restricciones. Una restricción es *dura* cuando su incumplimiento hace
@@ -259,7 +259,7 @@ cuando puede y la cede cuando no queda alternativa. Codificar
 preferencias como penalizaciones del objetivo es central en el modelo
 de asignación de aulas.
 
-### 2.3.6 Bibliografía
+#### 3.2.3.6 Bibliografía
 
 Como referencia de investigación de operaciones tomamos el material
 de las cátedras de Operativa 1 y Operativa 2 de la Escuela de
@@ -268,7 +268,7 @@ para la programación lineal, la programación entera y la ramificación
 y acotación, complementado por el material *Introducción a la
 Investigación Operativa* del mismo curso.
 
-## 2.4 Herramientas combinatorias y de teoría de grafos
+### 3.2.4 Herramientas combinatorias y de teoría de grafos
 
 Las herramientas anteriores alcanzan para plantear y resolver el
 problema. Pero antes de invocar al resolutor conviene contar con un
@@ -277,7 +277,7 @@ posible** y, sobre todo, que le indique al usuario **por qué**. Para
 eso recurrimos a dos resultados clásicos, el principio del palomar y
 el teorema de Hall, que se apoyan en un vocabulario mínimo de grafos.
 
-### 2.4.1 Grafos, grafos bipartitos y apareamientos
+#### 3.2.4.1 Grafos, grafos bipartitos y apareamientos
 
 La *teoría de grafos* modela **relaciones discretas entre objetos**:
 quién está conectado con quién, sin importar atributos internos. Se la
@@ -310,7 +310,7 @@ una arista `(clase, aula)` cuando el aula es compatible con la clase.
 Preguntar si existe una asignación válida equivale a preguntar si
 existe un apareamiento que sature a `X`.
 
-### 2.4.2 Principio del palomar
+#### 3.2.4.2 Principio del palomar
 
 El *principio del palomar* (*pigeonhole principle*) es uno de los
 resultados más elementales de la matemática discreta:
@@ -331,7 +331,7 @@ terminan en la misma aula.
 
 ![Principio del palomar: cuatro clases simultáneas y tres aulas](figuras/palomar.png){#fig:palomar width=11cm}
 
-### 2.4.3 Teorema de Hall
+#### 3.2.4.3 Teorema de Hall
 
 El criterio más fino lo da el *teorema de Hall* (1935), que
 caracteriza exactamente cuándo existe un apareamiento que sature a
@@ -349,7 +349,7 @@ un testigo interpretable del bloqueo: se lo puede informar al usuario
 como "este grupo de clases no tiene aulas suficientes entre las que le
 son compatibles".
 
-### 2.4.4 Ejemplo comparativo palomar vs Hall
+#### 3.2.4.4 Ejemplo comparativo palomar vs Hall
 
 La Tabla @tab:hall muestra un caso en el que el palomar no alcanza y la
 condición de Hall sí. Tres clases `h₁, h₂, h₃` se dictan a la misma
@@ -369,7 +369,7 @@ condición de Hall falla y no hay asignación posible, porque `h₁` y
 herramientas son complementarias: el palomar detecta los casos
 evidentes mirando totales; Hall, los más sutiles mirando subconjuntos.
 
-### 2.4.5 Aplicación en el sistema
+#### 3.2.4.5 Aplicación en el sistema
 
 Ambos criterios forman parte de la **verificación estructural
 previa** a la resolución: un semáforo que se ejecuta antes de invocar
@@ -379,14 +379,14 @@ horaria se arma el grafo bipartito de compatibilidad clase-aula; se
 aplica primero el conteo global (palomar) como filtro rápido y, si
 cierra, se busca un apareamiento que sature a las clases y, de no
 encontrarlo, un conjunto violador de Hall como testigo. El detalle de
-esta verificación se retoma en el capítulo 8. Los resultados sobre
+esta verificación se retoma en la sección 3.8. Los resultados sobre
 grafos bipartitos, apareamientos y el teorema de Hall se toman de la
 bibliografía estándar de teoría de grafos, detallada al final del
 informe.
 
-## 2.5 Recapitulación
+### 3.2.5 Recapitulación
 
-Este capítulo dejó disponibles tres cuerpos de herramientas: del
+Esta sección dejó disponibles tres cuerpos de herramientas: del
 instrumental de la ingeniería industrial (Mintzberg y Chiavenato), la
 caracterización de la FCEIA como burocracia profesional compleja y el
 modelo conceptual del dominio; de Evans, el diseño guiado por el
@@ -396,8 +396,8 @@ y la teoría de grafos, la programación lineal entera, la ramificación
 y acotación, y los criterios combinatorios de factibilidad (palomar y
 Hall). Cada eslabón habilita al siguiente: sin modelo conceptual no
 hay lenguaje ubicuo, sin modelo operativo no hay sobre qué actuar, y
-sin matemática aplicada no hay forma de decidir con fundamento. El
-capítulo 3 aplica el análisis de procesos a la operatoria actual; el 4
-define formalmente el problema; los capítulos 5 y 6 construyen el
-modelo del dominio y su modelo de datos; el 8 formula el programa
-lineal entero y la verificación estructural.
+sin matemática aplicada no hay forma de decidir con fundamento. La
+sección 3.3 aplica el análisis de procesos a la operatoria actual; la
+3.4 define formalmente el problema; las secciones 3.5 y 3.6 construyen
+el modelo del dominio y su modelo de datos, y la 3.8 formula el
+programa lineal entero y la verificación estructural.

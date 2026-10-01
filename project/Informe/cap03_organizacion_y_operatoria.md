@@ -1,12 +1,12 @@
-# Capítulo 3. La organización y su operatoria
+## 3.3 La organización y su operatoria
 
-Este capítulo describe a la facultad y al proceso por el cual, cada
+Esta sección describe a la facultad y al proceso por el cual, cada
 cuatrimestre, se decide qué clase se dicta en qué aula, de modo que
 el diagnóstico quede fundado en la operatoria concreta.
 
-## 3.1 FCEIA en detalle
+### 3.3.1 FCEIA en detalle
 
-### 3.1.1 Misión, escala y contexto institucional
+#### 3.3.1.1 Misión, escala y contexto institucional
 
 La Facultad de Ciencias Exactas, Ingeniería y Agrimensura (FCEIA)
 es una de las facultades de la Universidad Nacional de Rosario
@@ -21,7 +21,7 @@ La actividad se ordena en **ciclos lectivos** de dos
 planificación: qué materias se dictan, con qué comisiones, en qué
 horarios y en qué aulas. Este trabajo se ocupa de la última.
 
-### 3.1.2 Sedes: Pellegrini y Centro Universitario Rosario
+#### 3.3.1.2 Sedes: Pellegrini y Centro Universitario Rosario
 
 La FCEIA funciona en dos sedes:
 
@@ -43,7 +43,7 @@ una sede a otra entre dos clases del mismo día, y algunos
 laboratorios existen en una sola sede, de modo que el tipo de aula
 que requiere una materia puede determinar dónde se dicta.
 
-### 3.1.3 Tipología de aulas
+#### 3.3.1.3 Tipología de aulas
 
 A los efectos de la asignación, las aulas se agrupan en tres tipos:
 
@@ -64,7 +64,7 @@ alumnos que pueden cursar en ella en condiciones adecuadas) y una
 durante toda la jornada de la facultad; las excepciones puntuales
 quedan fuera del alcance de este trabajo.
 
-### 3.1.4 Los horarios de cursada
+#### 3.3.1.4 Los horarios de cursada
 
 La facultad no tiene una grilla horaria común: cada Escuela propone
 los horarios de sus materias con el criterio que le resulta cómodo, y
@@ -73,24 +73,24 @@ cursadas de duraciones dispares y cortes desfasados entre materias que
 comparten aulas. Esa falta de una unidad común es una de las
 fricciones del proceso actual: dos clases que se pisan por unos pocos
 minutos ya no pueden compartir aula, y el problema se vuelve más
-difícil de lo necesario. El capítulo 4 retoma este punto al definir
+difícil de lo necesario. La sección 3.4 retoma este punto al definir
 el horario semanal.
 
-## 3.2 El proceso actual de asignación de aulas
+### 3.3.2 El proceso actual de asignación de aulas
 
 Con la organización caracterizada, describimos ahora el proceso por
 el cual hoy se decide qué clase se dicta en qué aula.
 
-### 3.2.1 Análisis y modelado de procesos como instrumento
+#### 3.3.2.1 Análisis y modelado de procesos como instrumento
 
 Para describir el proceso usamos el **modelado de procesos**
-presentado en §2.1.1: representar quién hace qué, cuándo, con qué
+presentado en §3.2.1.1: representar quién hace qué, cuándo, con qué
 insumos y con qué resultados. Entre las notaciones disponibles
 (diagramas de flujo, cursogramas, notaciones estandarizadas de procesos) elegimos un diagrama de
 flujo simplificado, suficiente para mostrar la estructura del
 proceso sin recargar al lector con convenciones.
 
-### 3.2.2 Actores intervinientes
+#### 3.3.2.2 Actores intervinientes
 
 ::: revisar
 <!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
@@ -161,7 +161,7 @@ la coordinación central se aplica sobre propuestas ya elaboradas,
 no las produce desde cero.
 :::
 
-### 3.2.3 Momentos y modalidad del proceso
+#### 3.3.2.3 Momentos y modalidad del proceso
 
 El proceso tiene dos momentos:
 
@@ -183,7 +183,7 @@ formales. No hay un sistema de información que reúna restricciones,
 disponibilidades y decisiones: la información está repartida en
 documentos separados que cada área integra mentalmente al decidir.
 
-### 3.2.4 Diagrama del proceso actual
+#### 3.3.2.4 Diagrama del proceso actual
 
 ::: revisar
 <!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
@@ -223,13 +223,13 @@ flowchart TB
 ```
 :::
 
-## 3.3 Problemas operativos observados
+### 3.3.3 Problemas operativos observados
 
 A partir de la observación del proceso y de las conversaciones con
 las áreas de coordinación académica, identificamos tres clases de
 problemas.
 
-### 3.3.1 Problemas visibles al alumnado
+#### 3.3.3.1 Problemas visibles al alumnado
 
 Son los que se perciben directamente en el aula:
 
@@ -244,7 +244,7 @@ Son los que se perciben directamente en el aula:
   resulta inadecuada o no está disponible, la reasignación
   improvisada retrasa el comienzo.
 
-### 3.3.2 Problemas del proceso administrativo
+#### 3.3.3.2 Problemas del proceso administrativo
 
 Son los ligados a cómo se lleva adelante la asignación:
 
@@ -262,7 +262,7 @@ Son los ligados a cómo se lleva adelante la asignación:
   cada aula a cada clase, lo que dificulta revisar decisiones
   pasadas o repetir buenas soluciones.
 
-### 3.3.3 Problemas estructurales
+#### 3.3.3.3 Problemas estructurales
 
 Por último, hay rasgos propios del problema que el proceso manual no
 puede abordar:
@@ -287,7 +287,7 @@ clases se dictan. El problema es que funciona **a un costo alto y con
 resultados mejorables**, y ambas cosas admiten mejora con las
 herramientas adecuadas.
 
-## 3.4 Datos dispersos: cómo viven hoy los datos
+### 3.3.4 Datos dispersos: cómo viven hoy los datos
 
 Muchos de los problemas anteriores se explican por el estado de los
 datos que el proceso consume. En una planta industrial, la
@@ -302,7 +302,7 @@ esos dos documentos no están bien estructurados y consolidados,
 cualquier asignación posterior queda comprometida de raíz: con datos
 de entrada defectuosos, los resultados también lo son.
 
-### 3.4.1 Las tres fuentes principales
+#### 3.3.4.1 Las tres fuentes principales
 
 Las áreas involucradas trabajan con información de tres fuentes:
 
@@ -322,7 +322,7 @@ Las áreas involucradas trabajan con información de tres fuentes:
   según la carrera (*Análisis Matemático* en una, *Cálculo* en otra)
   sin que ningún documento común declare la equivalencia.
 
-### 3.4.2 Codificación no estandarizada de materias
+#### 3.3.4.2 Codificación no estandarizada de materias
 
 Las tres fuentes no comparten un identificador estable. Una misma
 materia puede tener tres o más nombres (el de cada plan, el del SIU
@@ -344,7 +344,7 @@ depurarlos puede equivocarse de forma concreta: asignar dos aulas chicas donde c
 programar una misma clase en dos horarios incompatibles por tomar
 sus dos códigos como materias distintas.
 
-### 3.4.3 Codificación no estandarizada de comisiones
+#### 3.3.4.3 Codificación no estandarizada de comisiones
 
 ::: revisar
 <!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
@@ -373,7 +373,7 @@ automatizado) puede terminar tomando decisiones sobre datos
 implícitamente inconsistentes.
 :::
 
-### 3.4.4 Digitalización parcial de planes y horarios
+#### 3.3.4.4 Digitalización parcial de planes y horarios
 
 Otro foco de fricción es **cómo está publicada la información**. Los
 planes de estudio están en la web de la
@@ -393,7 +393,7 @@ memoria institucional) sin garantía de que coincidan. Una grilla
 armada sobre una versión desactualizada puede violar la
 reglamentación académica vigente sin que nadie lo advierta.
 
-### 3.4.5 Inventario incompleto de aulas
+#### 3.3.4.5 Inventario incompleto de aulas
 
 Del lado del recurso pasa algo análogo: el inventario de aulas tiene
 información **incompleta o desactualizada** sobre capacidades reales
@@ -405,7 +405,7 @@ Si el inventario no está bien relevado, incluso el mejor método de
 asignación produce soluciones correctas en los papeles pero
 inviables en la práctica.
 
-### 3.4.6 Conceptos coloquialmente definidos
+#### 3.3.4.6 Conceptos coloquialmente definidos
 
 Por último, muchos de los conceptos que estructuran el proceso
 tienen definiciones coloquiales pero no formales. Todos saben, en
@@ -419,12 +419,12 @@ distintas sin saberlo.
 
 Esta dispersión conceptual es la contracara de la dispersión de los
 datos. Fijar un **lenguaje ubicuo** sobre estas entidades (en el
-sentido de Evans, §2.2) es condición necesaria para que la
+sentido de Evans, §3.2.2) es condición necesaria para que la
 asignación deje de depender de conciliaciones informales, y es el
-trabajo que encara el capítulo 5.
+trabajo que encara la sección 3.5.
 
-## 3.5 Recapitulación
+### 3.3.5 Recapitulación
 
 La asignación de aulas es hoy manual, costosa de replanificar y se
-apoya en datos dispersos y sin criterio común. El capítulo siguiente
+apoya en datos dispersos y sin criterio común. La sección siguiente
 formaliza esta operatoria como problema.

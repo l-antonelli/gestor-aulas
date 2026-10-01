@@ -1,12 +1,14 @@
-# Capítulo 1. Introducción
+# 3. Desarrollo
 
-## La facultad como organización
+## 3.1 Introducción
+
+### 3.1.1 La facultad como organización
 
 La Facultad de Ciencias Exactas, Ingeniería y Agrimensura (FCEIA) de la Universidad Nacional de Rosario forma profesionales en múltiples carreras de grado, posgrado y tecnicaturas. Para ello, cada cuatrimestre decenas de docentes planifican el dictado de sus materias: se organizan comisiones, se establecen horarios, se asignan aulas, se toman exámenes. Cada actividad demanda recursos distintos: aulas de cierta capacidad, laboratorios con equipamiento específico o, simplemente, un espacio donde un grupo de alumnos pueda sentarse.
 
 Puede que a un ingeniero industrial no le resulte evidente que una facultad sea objeto de su labor profesional. Sin embargo, la Ingeniería Industrial no estudia solamente fábricas o cadenas productivas: estudia *organizaciones*. Chiavenato las define como "unidades sociales (o agrupaciones humanas) intencionalmente construidas y reconstruidas para lograr objetivos específicos" [1, p. 2]. Bajo esta definición, una facultad es un objeto de análisis tan legítimo como cualquier empresa: no un simple lugar al que concurren personas a enseñar y aprender, sino un sistema de elementos que se coordinan para alcanzar un mismo fin.
 
-## Marco organizacional: Mintzberg y Chiavenato
+### 3.1.2 Marco organizacional: Mintzberg y Chiavenato
 
 Antes de proponer cualquier mejora sobre una organización conviene entender cómo funciona: cómo está estructurada, cómo se coordina y qué clase de trabajo realiza. Para eso, la ingeniería industrial cuenta con marcos de referencia ya probados. Uno de los más usados es el de Mintzberg [7], que descompone a toda organización en cinco partes (la cumbre estratégica, la línea media, el núcleo operativo, la tecnoestructura y el personal de apoyo) y distingue cinco mecanismos de coordinación: el ajuste mutuo, la supervisión directa y la normalización de procesos, de resultados y de habilidades.
 
@@ -16,7 +18,7 @@ Chiavenato, por su parte, clasifica a las organizaciones según su complejidad [
 
 Esta caracterización tiene una consecuencia práctica. Saber que estamos ante una burocracia profesional compleja nos permite anticipar que las decisiones operativas están distribuidas entre muchos actores y que los requerimientos son heterogéneos y cambiantes, dos rasgos que van a pesar a la hora de modelizar el problema y diseñar la solución.
 
-## El dominio del problema
+### 3.1.3 El dominio del problema
 
 En la FCEIA, cada cuatrimestre hay que asignar un aula a cada clase que se dicta, respetando horarios, capacidades, tipos de espacio y políticas institucionales. Se trata, en esencia, de un problema de *asignación de recursos bajo restricciones*.
 
@@ -26,7 +28,7 @@ Hoy el proceso se resuelve a mano, partiendo de las asignaciones del cuatrimestr
 
 A diferencia de un sistema productivo clásico, en una organización educativa no es sencillo cuantificar la "producción" ni la "calidad" del servicio: no hay piezas por hora ni tasas de defectos. Sí hay, en cambio, síntomas concretos: alumnos que no entran en el aula, clases que empiezan tarde por falta de previsibilidad, docentes que no pueden dar clase en condiciones adecuadas. Son señales de una operatoria que puede comprenderse, modelizarse y mejorarse con las herramientas de la ingeniería industrial, aunque no existan registros que permitan medir con precisión sus consecuencias.
 
-## Dos disciplinas, una misma premisa
+### 3.1.4 Dos disciplinas, una misma premisa
 
 Las herramientas de la ingeniería industrial para estudiar organizaciones (las tipologías de Mintzberg, los modelos de Chiavenato, el análisis de procesos, la investigación operativa) apuntan a lo mismo: construir un *modelo* de la realidad que permita después intervenir sobre ella con fundamento.
 

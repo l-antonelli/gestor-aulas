@@ -1,10 +1,10 @@
-# Capítulo 8. El problema de asignación como programa lineal entero
+## 3.8 El problema de asignación como programa lineal entero
 
-En los capítulos anteriores definimos el problema como una
-asignación de recursos bajo restricciones (capítulo 4), fijamos
-las entidades y reglas del dominio (capítulo 5) y mostramos cómo
-se organizan los datos y el sistema (capítulos 6 y 7). En este
-capítulo presentamos cómo se resuelve efectivamente el problema:
+En las secciones anteriores definimos el problema como una
+asignación de recursos bajo restricciones (sección 3.4), fijamos
+las entidades y reglas del dominio (sección 3.5) y mostramos cómo
+se organizan los datos y el sistema (secciones 3.6 y 3.7). En esta
+sección presentamos cómo se resuelve efectivamente el problema:
 lo modelamos como un programa lineal entero, explicamos cómo se
 diagnostica cuando no tiene solución y cómo se le comunica el
 resultado al usuario. En el cuerpo damos el modelo con la
@@ -13,9 +13,9 @@ completas, las formulaciones alternativas descartadas y los
 análisis de complejidad están en el **Anexo B, Desarrollo formal
 del programa lineal**.
 
-## 8.1 De la operatoria al modelo
+### 3.8.1 De la operatoria al modelo
 
-En el capítulo 4 el problema quedó planteado de dos maneras
+En la sección 3.4 el problema quedó planteado de dos maneras
 complementarias: en forma coloquial (la Secretaría Técnica tiene
 que decidir, para cada clase, en qué aula se dicta) y en forma
 formal (una asignación de recursos bajo restricciones, con costo
@@ -23,17 +23,17 @@ ajustable). El paso siguiente es expresarlo como un **programa
 lineal entero** que un *resolutor* pueda tratar de manera
 sistemática.
 
-### 8.1.1 Por qué programación lineal entera
+#### 3.8.1.1 Por qué programación lineal entera
 
-En §2.3 presentamos la programación lineal entera como la
+En §3.2.3 presentamos la programación lineal entera como la
 herramienta clásica de la investigación operativa para problemas
 de asignación combinatoria con restricciones estructuradas. Encaja
 con nuestro problema por tres razones:
 
 - **Las decisiones son binarias.** Un horario semanal se asigna a
   un aula (variable 1) o no (variable 0); no hay fracciones.
-- **Las restricciones son lineales.** Todas las reglas del
-  capítulo 5 se expresan como sumas y desigualdades entre
+- **Las restricciones son lineales.** Todas las reglas de la
+  sección 3.5 se expresan como sumas y desigualdades entre
   variables binarias.
 - **El objetivo es lineal.** El costo de una asignación
   (sobreocupación, subocupación, alejamiento de la sede preferida)
@@ -43,7 +43,7 @@ Con estas tres condiciones, el resolutor devuelve o bien la
 solución óptima o bien la constancia de que no existe ninguna
 solución factible.
 
-### 8.1.2 Qué decide el programa lineal y qué queda fuera
+#### 3.8.1.2 Qué decide el programa lineal y qué queda fuera
 
 El programa lineal decide, simultáneamente:
 
@@ -64,29 +64,29 @@ preferencias personales de los docentes. Estos límites son
 deliberados: un modelo acotado se resuelve con garantías y en
 tiempos razonables.
 
-### 8.1.3 De vuelta al planteo del capítulo 4
+#### 3.8.1.3 De vuelta al planteo de la sección 3.4
 
-En §4.2 identificamos los cuatro ingredientes de un problema de
+En §3.4.2 identificamos los cuatro ingredientes de un problema de
 asignación de recursos bajo restricciones. En el programa lineal
 se traducen así:
 
 - **Recursos**: las aulas, con sus tipos y capacidades.
 - **Demanda**: los horarios presenciales del plan, con su
   materia, comisión, inscriptos esperados y tipo declarado.
-- **Restricciones**: las reglas del capítulo 5, escritas como
+- **Restricciones**: las reglas de la sección 3.5, escritas como
   desigualdades lineales.
 - **Criterio**: una función objetivo que combina sobreocupación,
   subocupación y alejamiento de la sede preferida, con pesos
   ajustables.
 
-## 8.2 Formulación matemática resumida
+### 3.8.2 Formulación matemática resumida
 
 Presentamos el programa lineal en su forma habitual: conjuntos,
 parámetros, variables, función objetivo y restricciones. La
-notación sigue los nombres del dominio del capítulo 5 y la
+notación sigue los nombres del dominio de la sección 3.5 y la
 convención usual de la investigación operativa.
 
-### 8.2.1 Conjuntos
+#### 3.8.2.1 Conjuntos
 
 - `H`: horarios del plan que participan del modelo. Se distinguen
   los presenciales y el subconjunto `H_∅` de horarios virtuales,
@@ -102,12 +102,12 @@ convención usual de la investigación operativa.
 - `G`: grupos de materias; cada materia `m` pertenece a un único
   grupo `grupo(m)`.
 - `Sim`: *grupos maximales de simultaneidad*, es decir, conjuntos
-  de horarios que se dictan al mismo tiempo el mismo día (§8.3.3).
+  de horarios que se dictan al mismo tiempo el mismo día (§3.8.3.3).
 - `P_R11`: pares de horarios consecutivos de materias distintas
   de un mismo año y cuatrimestre de una carrera, separados por
   menos tiempo que el margen fijado.
 
-### 8.2.2 Parámetros
+#### 3.8.2.2 Parámetros
 
 - `dur(h)`: duración en horas del horario `h`.
 - `cap(a)`: capacidad del aula `a`.
@@ -130,7 +130,7 @@ convención usual de la investigación operativa.
   `λ_sede_pref`, `tol_sobre`, `tol_sub`, ajustables por el
   usuario.
 
-### 8.2.3 Variables de decisión
+#### 3.8.2.3 Variables de decisión
 
 - `x[h, a] ∈ {0, 1}`: vale 1 si el horario `h` se asigna al aula
   `a`. Sólo existen para pares compatibles; los horarios de `H_∅`
@@ -146,7 +146,7 @@ convención usual de la investigación operativa.
   corresponde a la comisión `k`. Sólo se usa cuando el usuario
   habilita la redistribución (R7).
 
-### 8.2.4 Función objetivo
+#### 3.8.2.4 Función objetivo
 
 Minimizar
 
@@ -169,9 +169,9 @@ que la sobreocupación (los alumnos no entran en el aula) es un
 problema físico más grave que la subocupación (un aula grande
 desaprovechada), que es un problema económico.
 
-### 8.2.5 Restricciones
+#### 3.8.2.5 Restricciones
 
-Cada restricción traduce una regla del capítulo 5. Las numeramos
+Cada restricción traduce una regla de la sección 3.5. Las numeramos
 R*n* y las presentamos en el orden en que se incorporan al
 modelo.
 
@@ -193,7 +193,7 @@ para cada grupo `S ∈ Sim` y cada aula `a`,
 
 $$\sum_{h \in S} x[h, a] \le 1$$
 
-Las ventajas de esta formulación se explican en §8.3.3.
+Las ventajas de esta formulación se explican en §3.8.3.3.
 
 **R4. Reparto entre teoría y laboratorio.** En cada comisión con
 horas de teoría y de laboratorio, la suma de las duraciones de
@@ -240,7 +240,7 @@ de un horario y pidió respetar esas decisiones, se impone
 **R10. Preferencia de sede (modo blando).** Si el grupo está en
 modo BLANDO, todas las sedes son admisibles (R8 no se aplica),
 pero cada horario asignado fuera de la sede preferida suma
-`λ_sede_pref` al objetivo (§8.2.4).
+`λ_sede_pref` al objetivo (§3.8.2.4).
 
 **R11. Continuidad de sede entre horarios consecutivos.** Para
 cada par `(h₁, h₂) ∈ P_R11` y cada par de sedes distintas
@@ -265,7 +265,7 @@ docente. Cuando el usuario la exige, las variables `y[c, s]`
 obligan a que todos los horarios de una comisión se dicten en la
 misma sede.
 
-### 8.2.6 Un ejemplo pequeño
+#### 3.8.2.6 Un ejemplo pequeño
 
 Para ver cómo queda escrito el programa, tomamos un caso mínimo:
 cuatro horarios del lunes por la mañana y tres aulas de una misma
@@ -350,15 +350,15 @@ objetivo en pequeño: se acepta un aula grande a medio llenar antes
 que dejar alumnos sin lugar. En un cuatrimestre real el razonamiento
 es el mismo, pero con cientos de horarios y miles de variables.
 
-## 8.3 Herramientas conceptuales para el diagnóstico
+### 3.8.3 Herramientas conceptuales para el diagnóstico
 
-Los resultados matemáticos presentados en el capítulo 2 se usan
+Los resultados matemáticos presentados en la sección 3.2 se usan
 para diagnosticar el modelo: antes de resolverlo, durante la
 resolución y después de ella.
 
-### 8.3.1 Principio del palomar
+#### 3.8.3.1 Principio del palomar
 
-El *principio del palomar* (§2.4.2) dice que si se reparten
+El *principio del palomar* (§3.2.4.2) dice que si se reparten
 `n + 1` objetos en `n` cajas, alguna recibe al menos dos. En el
 asignador funciona como prueba rápida de infactibilidad: si en un
 mismo momento de la semana hay `k` horarios simultáneos y sólo
@@ -366,12 +366,12 @@ mismo momento de la semana hay `k` horarios simultáneos y sólo
 hace falta resolverlo para saberlo. La prueba se hace primero con
 todas las aulas y luego por tipo (teóricas por un lado,
 laboratorios compatibles por otro), como parte de la verificación
-previa (§8.4).
+previa (§3.8.4).
 
-### 8.3.2 Teorema de Hall y apareamiento bipartito
+#### 3.8.3.2 Teorema de Hall y apareamiento bipartito
 
 Cuando el palomar no detecta nada pero el problema igualmente es
-infactible, recurrimos al *teorema de Hall* (§2.4.3). Se arma un
+infactible, recurrimos al *teorema de Hall* (§3.2.4.3). Se arma un
 grafo bipartito con los horarios de un lado, las aulas del otro y
 una arista por cada par compatible. Existe una asignación que le
 da un aula distinta a cada horario si y sólo si todo subconjunto
@@ -383,7 +383,7 @@ horarios que la viola junto con sus aulas vecinas. La lectura es
 directa: "estas materias compiten por estas aulas y no alcanzan".
 La verificación se hace por momento de simultaneidad y por sede.
 
-### 8.3.3 Grupos de simultaneidad
+#### 3.8.3.3 Grupos de simultaneidad
 
 R3 impide que dos horarios superpuestos compartan aula. Escribirla
 par por par funciona, pero si veinte horarios coinciden a la misma
@@ -393,7 +393,7 @@ Hay una forma más simple: si en un instante hay varios horarios en
 curso, alcanza con decir "de todos ellos, a lo sumo uno ocupa esta
 aula". A ese conjunto de horarios en curso a la vez lo llamamos
 *grupo de simultaneidad*, y es *maximal* cuando no está contenido en
-otro más grande. En el ejemplo de §8.2.6, de 9 a 10 están en curso
+otro más grande. En el ejemplo de §3.8.2.6, de 9 a 10 están en curso
 `h₁`, `h₂` y `h₃`, y una sola desigualdad por aula,
 `x₁ₐ + x₂ₐ + x₃ₐ ≤ 1`, reemplaza a las tres de los pares.
 
@@ -401,12 +401,12 @@ Las dos formas admiten las mismas asignaciones, pero la agrupada
 genera muchas menos restricciones (cuando los horarios son intervalos
 de tiempo, los grupos maximales son a lo sumo tantos como horarios,
 según Golumbic [5]) y le da al resolutor una relajación más ajustada
-(§2.3.3), así que tiene que ramificar menos. En programación lineal
+(§3.2.3.3), así que tiene que ramificar menos. En programación lineal
 entera se las conoce como *desigualdades de clique*, y Wolsey [12]
 muestra que superan a las formuladas por pares. El Anexo B compara
 ambas sobre casos de prueba.
 
-## 8.4 Verificación estructural previa
+### 3.8.4 Verificación estructural previa
 
 Antes de llamar al resolutor, el sistema hace una **verificación
 estructural previa** que detecta situaciones que hacen imposible
@@ -441,7 +441,7 @@ verificación, un plan con problemas estructurales podía ocupar al
 resolutor varios minutos y terminar en un "infactible" sin
 ninguna pista sobre la causa.
 
-## 8.5 Construcción, resolución y aplicación
+### 3.8.5 Construcción, resolución y aplicación
 
 El programa lineal no es fijo: en cada corrida se arma desde cero
 con los datos vigentes y las opciones que eligió el usuario. Los
@@ -460,7 +460,7 @@ pidió respetar no se tocan. La corrida queda registrada con su
 configuración y sus indicadores, de modo que puede reproducirse y
 compararse con otras.
 
-## 8.6 Diagnóstico de la infactibilidad y veredicto
+### 3.8.6 Diagnóstico de la infactibilidad y veredicto
 
 Cuando el resolutor declara el problema infactible y la verificación
 previa no había encontrado bloqueos, el sistema busca la causa
@@ -479,12 +479,12 @@ sin aula y la configuración usada. Así, en lugar de un "infactible"
 opaco, el usuario recibe una recomendación concreta con la que puede
 iterar.
 
-## 8.7 Cierre del capítulo
+### 3.8.7 Cierre de la sección
 
 La asignación queda formulada como un programa lineal entero cuyas
-restricciones R1 a R12 traducen las reglas del capítulo 5. La
+restricciones R1 a R12 traducen las reglas de la sección 3.5. La
 verificación previa evita resolver problemas sin solución, y el
 diagnóstico y el veredicto convierten cada corrida en información
-útil para el usuario. El capítulo siguiente trata las validaciones
+útil para el usuario. La sección siguiente trata las validaciones
 que garantizan que los datos que llegan al modelo cumplen lo que las
 restricciones dan por supuesto.

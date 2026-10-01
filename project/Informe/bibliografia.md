@@ -1,4 +1,4 @@
-# Bibliografía
+# 5. Bibliografía
 
 > **Pautas:** toda la bibliografía consultada, en orden alfabético de
 > autores y numerada para referencias en el texto, con el formato del
@@ -37,10 +37,10 @@
 > **Para completar:**
 >
 > - el libro de Morán de Investigación Operativa usado en Operativa 1
->   y 2 (citado en la sección 2.3.6) y el material *Introducción a la
+>   y 2 (citado en la sección 3.2.3.6) y el material *Introducción a la
 >   Investigación Operativa* de la cátedra;
 > - la referencia del teorema de Hall
->   (sección 2.4);
+>   (sección 3.2.4);
 > - la documentación de las herramientas usadas (PuLP, CBC, SQLModel,
->   Streamlit), si se citan en el capítulo 7;
+>   Streamlit), si se citan en la sección 3.7;
 > - la norma o el marco de gestión de calidad citado en 12.3.

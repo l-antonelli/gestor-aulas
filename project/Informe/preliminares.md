@@ -43,5 +43,4 @@ por parte de la Facultad, la Escuela, las Cátedras o el Director."
 
 # Índice
 
-> **Para completar al final:** en Google Docs, **Insertar → Índice**
-> genera el índice con números de página a partir de los títulos.
+<!-- índice -->

@@ -1,9 +1,9 @@
-# Síntesis inicial
+# 2. Síntesis inicial
 
 > **Pautas:** una página; el problema, los objetivos y una síntesis
 > de las conclusiones. Se escribe al final. El texto de abajo es el
 > del borrador y todavía no incluye la síntesis de conclusiones, que
-> depende de los resultados de los capítulos 10 y 11.
+> depende de los resultados de las secciones 3.10 y 3.11.
 
 El contexto del país y el desarrollo de nuevas tecnologías generan la
 necesidad de evolucionar y, como tal, se deben renovar los planes de
@@ -30,5 +30,5 @@ con técnicas de optimización desarrolladas en la carrera de
 Ingeniería Industrial.
 
 > **Para completar:** síntesis de las conclusiones (tres o cuatro
-> oraciones con los resultados principales del capítulo 11 y el
-> aporte del capítulo 12).
+> oraciones con los resultados principales de la sección 3.11 y el
+> aporte de la sección 4).

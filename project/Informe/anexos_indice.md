@@ -1,4 +1,4 @@
-# Anexos
+# 6. Anexos
 
 Los anexos se entregan como documentos separados (en Drive, en la
 carpeta *Informe / Anexos*). Se rotulan con letras, en el orden en que

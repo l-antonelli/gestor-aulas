@@ -1,11 +1,11 @@
-# Capítulo 7. Arquitectura de la solución
+## 3.7 Arquitectura de la solución
 
-Los capítulos 5 y 6 fijaron qué se modela y cómo se guarda. Este
-capítulo explica sobre qué se construye la solución: qué
+Las secciones 3.5 y 3.6 fijaron qué se modela y cómo se guarda. Esta
+sección explica sobre qué se construye la solución: qué
 tecnologías la sostienen y por qué se eligieron, y cómo se reparten
 las responsabilidades dentro del sistema.
 
-## 7.1 Pila tecnológica
+### 3.7.1 Pila tecnológica
 
 El sistema es una *aplicación web* que se usa desde el navegador,
 escrita íntegramente en Python y con una base de datos local. La
@@ -24,7 +24,7 @@ cada una.
 | Resolutor | CBC | Resuelve el programa lineal entero; es libre y de código abierto. |
 | Visualización | Altair y componentes de Streamlit | Gráficos de saturación, tablas de resultados y calendarios semanales. |
 
-### 7.1.1 Python y Streamlit
+#### 3.7.1.1 Python y Streamlit
 
 Python es la decisión que condiciona al resto de la pila. Lo
 elegimos por dos razones. La primera es que cuenta con un
@@ -47,7 +47,7 @@ velocidad de desarrollo alta. Las alternativas que separan la
 interfaz del procesamiento exigían mantener dos piezas comunicadas
 entre sí, un costo que el proyecto no necesitaba pagar.
 
-### 7.1.2 SQLite y SQLModel para la persistencia
+#### 3.7.1.2 SQLite y SQLModel para la persistencia
 
 SQLite es un motor de base de datos relacional que no necesita un
 servidor aparte: toda la base vive en un archivo que se puede
@@ -67,7 +67,7 @@ del sistema. Además abstrae el motor, de modo que si el sistema
 pasara a un uso multiusuario, cambiar SQLite por PostgreSQL
 requeriría modificaciones acotadas.
 
-### 7.1.3 PuLP y CBC para el programa lineal
+#### 3.7.1.3 PuLP y CBC para el programa lineal
 
 PuLP es una biblioteca para escribir problemas de programación
 lineal entera como una sucesión de variables, restricciones y una
@@ -79,14 +79,14 @@ se quisiera usar otro, el modelo no cambia. Se descartaron
 alternativas con una abstracción propia más alejada del vocabulario
 matemático, porque en un proyecto académico la cercanía con la
 formulación formal facilita la comprensión del modelo que desarrolla
-el capítulo 8.
+la sección 3.8.
 
 Los gráficos se generan con Altair, que se integra de manera
 directa con Streamlit.
 
-### 7.1.4 De las reglas al código
+#### 3.7.1.4 De las reglas al código
 
-Los capítulos anteriores describieron en lenguaje llano las entidades
+Las secciones anteriores describieron en lenguaje llano las entidades
 del dominio y sus reglas. Esta sección muestra, con fragmentos
 abreviados del código del sistema (sin comentarios y con los mensajes
 traducidos), cómo se plasma esa descripción y por qué la pila elegida
@@ -186,10 +186,10 @@ horario_crud = CRUDBase(HorarioDB)
 
 Sobre esta base, los servicios agregan lo propio de cada entidad: que
 una comisión pertenezca a un cronograma o a un plan pero no a ambos
-(§6.4.2), o que al borrar un plan se borren sus comisiones y horarios.
+(§3.6.4.2), o que al borrar un plan se borren sus comisiones y horarios.
 
 **El programa lineal, casi igual que en el papel.** PuLP permite
-escribir las restricciones del capítulo 8 con una notación muy
+escribir las restricciones de la sección 3.8 con una notación muy
 cercana a la matemática. La restricción R1, "cada horario presencial
 va a exactamente un aula", queda así:
 
@@ -200,7 +200,7 @@ for h in horarios_presenciales:
 
 y la función objetivo, como la suma ponderada de sus tres términos
 (en el código, `over` y `under` son la sobreocupación y la
-subocupación que el capítulo 8 llama `sobre` y `sub`):
+subocupación que la sección 3.8 llama `sobre` y `sub`):
 
 ```{.python fuente="src/services/asignacion_aulas_service.py"}
 prob += (
@@ -214,7 +214,7 @@ Esta cercanía entre la formulación y el código es la que permite
 verificar, restricción por restricción, que el sistema resuelve el
 problema que se planteó.
 
-## 7.2 Separación en capas
+### 3.7.2 Separación en capas
 
 Una práctica habitual de la ingeniería de software para organizar
 un sistema es la *arquitectura en capas*: se agrupan las
@@ -249,8 +249,8 @@ flowchart TD
   recursado en cascada, pronosticar inscriptos o correr el
   asignador de aulas.
 - **Entidades del dominio.** Son las clases que representan los
-  conceptos de los capítulos 5 y 6, con sus verificaciones de
-  campo e invariantes (§7.1.4). Los servicios razonan sobre ellas,
+  conceptos de las secciones 3.5 y 3.6, con sus verificaciones de
+  campo e invariantes (§3.7.1.4). Los servicios razonan sobre ellas,
   no sobre tablas.
 - **Persistencia.** Resuelve las operaciones básicas (crear,
   consultar, modificar y borrar) y, mediante SQLModel, traduce cada

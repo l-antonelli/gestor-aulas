@@ -1,18 +1,18 @@
-# Capítulo 12. Conclusiones
+# 4. Conclusiones
 
 > **Estado: estructura con material del borrador.** Las secciones
 > 12.2 a 12.4 traen el texto de las conclusiones del borrador del
 > informe, para revisar e integrar. Falta redactar 12.1 y 12.5.
 
-## 12.1 Síntesis del recorrido
+## 4.1 Síntesis del recorrido
 
 > **Para completar:** cómo se articula la doble mirada del proyecto
 > (ingeniería industrial e ingeniería de software) en el resultado:
-> del análisis de la organización y el problema (capítulos 1 a 4), a
+> del análisis de la organización y el problema (secciones 3.1 a 3.4), a
 > la modelización (5 y 6), la solución (7 a 9) y su validación con
 > datos reales (10 y 11).
 
-## 12.2 El valor de la información en la gestión académica
+## 4.2 El valor de la información en la gestión académica
 
 > **Del borrador, a revisar.** Al pasarlo se corrigieron tildes y
 > erratas evidentes ("cientos de maneras que se dictan" por "cientos
@@ -93,7 +93,7 @@ y robusto posibilita:
   conocimiento tácito de personas específicas y fortalece la
   continuidad operativa de la facultad.
 
-## 12.3 Principios de gestión de calidad
+## 4.3 Principios de gestión de calidad
 
 > **Del borrador, a revisar.**
 
@@ -117,7 +117,7 @@ con los principios rectores de la gestión de calidad:
 > **Para completar:** citar la norma o el marco de referencia (por
 > ejemplo, los principios de ISO 9001) en la bibliografía.
 
-## 12.4 Factores clave para el éxito de la solución
+## 4.4 Factores clave para el éxito de la solución
 
 > **Del borrador, a revisar.**
 
@@ -139,7 +139,7 @@ cultura de rigor organizativo y operativo:
   permisos de edición, para evitar que las modificaciones de un
   usuario sobrescriban el trabajo de otro.
 
-## 12.5 Trabajos futuros
+## 4.5 Trabajos futuros
 
 > **Para completar:** líneas de continuidad, por ejemplo:
 >

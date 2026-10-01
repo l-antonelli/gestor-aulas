@@ -1,4 +1,4 @@
-# Prólogo
+# 1. Prólogo
 
 > **Pautas:** una página; motivaciones, encuadre y agradecimientos.
 > Se escribe al final, con el resto del informe cerrado. El texto de

@@ -1,11 +1,11 @@
-# Capítulo 10. La herramienta en acción
+## 3.10 La herramienta en acción
 
 > **Estado: estructura con marcadores.** El contenido depende de los
 > casos de prueba que elijamos presentar. Cada sección indica qué
 > poner y de dónde sacarlo. Extensión orientativa: 6 a 8 páginas,
 > con el detalle paso a paso derivado al Anexo C (manual de usuario).
 
-## 10.1 Recorrido guiado por la interfaz
+### 3.10.1 Recorrido guiado por la interfaz
 
 Recorremos las pantallas principales en el orden en que se usan
 cada cuatrimestre (cronograma, plan de cursada y asignación de
@@ -41,7 +41,7 @@ solución y tiempo de resolución (Figura @fig:cap-veredicto).
 > **Para completar:** si se quiere, sumar una captura del calendario
 > del cronograma (está en `figuras/capturas/`).
 
-## 10.2 Caso de estudio integral
+### 3.10.2 Caso de estudio integral
 
 > **Para completar:** el caso principal del informe, con datos reales
 > de un cuatrimestre de la FCEIA (por ejemplo, el 1C 2026 con el
@@ -59,7 +59,7 @@ solución y tiempo de resolución (Figura @fig:cap-veredicto).
 >
 > Presentar el resultado con una tabla resumen y la vista semanal.
 
-## 10.3 Escenarios de análisis ("qué pasa si")
+### 3.10.3 Escenarios de análisis ("qué pasa si")
 
 > **Para completar:** dos o tres escenarios que muestren el valor de
 > la herramienta para la toma de decisiones, sobre el mismo caso de
@@ -72,4 +72,4 @@ solución y tiempo de resolución (Figura @fig:cap-veredicto).
 >
 > Para cada uno: qué se cambió, qué hizo el asignador y qué se
 > concluye. Conviene elegirlos en función de lo que se quiera
-> discutir en el capítulo 11.
+> discutir en la sección 3.11.

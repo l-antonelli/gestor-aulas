@@ -1,9 +1,9 @@
-# Capítulo 11. Análisis y discusión
+## 3.11 Análisis y discusión
 
 > **Estado: estructura con marcadores.** Se completa con los
-> resultados del capítulo 10. Extensión orientativa: 5 a 7 páginas.
+> resultados de la sección 3.10. Extensión orientativa: 5 a 7 páginas.
 
-## 11.1 Métricas de la solución sobre datos reales
+### 3.11.1 Métricas de la solución sobre datos reales
 
 > **Para completar:** métricas de la corrida del caso de estudio
 > (10.2), en una tabla numerada:
@@ -21,16 +21,16 @@
 > Fuente: métricas de calidad del asignador y detalle de la corrida
 > (`LPRunDB`).
 
-## 11.2 Comparación con el proceso actual
+### 3.11.2 Comparación con el proceso actual
 
 > **Para completar:** comparación con el proceso manual descrito en
-> el capítulo 3. Si se cuenta con la asignación real de un
+> la sección 3.3. Si se cuenta con la asignación real de un
 > cuatrimestre, comparar cuantitativamente (ocupación, conflictos
 > detectados); si no, comparar de forma cualitativa: tiempos,
 > trazabilidad, detección temprana de conflictos y capacidad de
 > simular escenarios.
 
-## 11.3 Limitaciones del modelo y del sistema
+### 3.11.3 Limitaciones del modelo y del sistema
 
 > **Para completar:** limitaciones conocidas, por ejemplo:
 >
@@ -40,7 +40,7 @@
 > - pronóstico de inscriptos con métodos simples;
 > - uso local, sin gestión de usuarios concurrentes.
 
-## 11.4 Criterios de uso y buenas prácticas
+### 3.11.4 Criterios de uso y buenas prácticas
 
 El sistema descansa sobre algunos supuestos acerca de cómo se cargan
 los datos. Cuando se respetan, las validaciones y el asignador
@@ -113,10 +113,10 @@ principales en forma de directivas de uso.
    plan con el que se trabaja; el que se comunica es siempre el
    activo.
 
-## 11.5 Cumplimiento de los objetivos del anteproyecto
+### 3.11.5 Cumplimiento de los objetivos del anteproyecto
 
 > **Para completar:** recorrer uno por uno los objetivos específicos
-> del anteproyecto y señalar, para cada uno, en qué capítulo o
+> del anteproyecto y señalar, para cada uno, en qué sección o
 > resultado se verifica su cumplimiento (o por qué se cumplió
 > parcialmente). Una tabla objetivo / evidencia / grado de
 > cumplimiento funciona bien.

@@ -23,6 +23,7 @@ Se excluye la carpeta interna _auditoria.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -407,11 +408,54 @@ def _numerar_referencias(texto: str) -> str:
     return REFERENCIA.sub(lambda m: str(numeros[m.group(1)]), texto)
 
 
-def informe(dir_diagramas: Path) -> bool:
-    """Arma dist/informe_docx/Informe.docx con el formato de las pautas."""
+MARCA_INDICE = "<!-- índice -->"
+NIVELES_INDICE = 3
+ARCHIVO_PAGINAS = DIR_SALIDA / "paginas_indice.json"
+
+
+def titulos_del_indice(texto: str) -> list[tuple[int, str]]:
+    """(nivel, título) de los encabezados que van al índice: desde el
+    prólogo en adelante, hasta el nivel NIVELES_INDICE."""
+    titulos = []
+    for m in re.finditer(r"^(#{1,6}) (.+?)\s*$", texto.split("# Índice", 1)[-1], re.MULTILINE):
+        nivel = len(m.group(1))
+        if nivel <= NIVELES_INDICE:
+            titulos.append((nivel, m.group(2)))
+    return titulos
+
+
+def _indice(titulos: list[tuple[int, str]], paginas: dict[str, int] | None) -> str:
+    """Índice estático: un párrafo por título con relleno de puntos hasta
+    el número de página (Google Docs no actualiza los campos TOC de Word).
+    Sin `paginas` deja el mismo largo con números provisorios, para que
+    la primera pasada pagine igual que la definitiva."""
+    def esc(t: str) -> str:
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    parrafos = []
+    for nivel, titulo in titulos:
+        pagina = (paginas or {}).get(titulo, "00")
+        sangria = (nivel - 1) * 400
+        negrita = "<w:b/>" if nivel == 1 else ""
+        parrafos.append(
+            f'<w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9070"/></w:tabs>'
+            f'<w:spacing w:before="{120 if nivel == 1 else 0}" w:after="0"/><w:ind w:left="{sangria}"/>'
+            f'<w:jc w:val="left"/></w:pPr><w:r><w:rPr>{negrita}</w:rPr><w:t xml:space="preserve">{esc(titulo)}</w:t></w:r>'
+            f'<w:r><w:rPr>{negrita}</w:rPr><w:tab/><w:t>{pagina}</w:t></w:r></w:p>')
+    return "```{=openxml}\n" + "".join(parrafos) + "\n```"
+
+
+def informe(dir_diagramas: Path, paginas: dict[str, int] | None = None) -> bool:
+    """Arma dist/informe_docx/Informe.docx con el formato de las pautas.
+    `paginas` (título → página) completa el índice; sin él, el índice
+    lleva números provisorios (primera pasada)."""
     n_formula = [0]
     partes = [_preparar_capitulo(DIR_INFORME / n, dir_diagramas, n_formula) for n in ORDEN_INFORME]
-    partes = [_numerar_referencias("\n\n".join(partes))]
+    texto = _numerar_referencias("\n\n".join(partes))
+    titulos = titulos_del_indice(texto)
+    ARCHIVO_PAGINAS.parent.mkdir(parents=True, exist_ok=True)
+    (DIR_SALIDA / "titulos_indice.json").write_text(json.dumps(titulos, ensure_ascii=False))
+    texto = texto.replace(MARCA_INDICE, _indice(titulos, paginas), 1)
+    partes = [texto]
     destino = DIR_SALIDA / "Informe.docx"
     destino.parent.mkdir(parents=True, exist_ok=True)
     resultado = subprocess.run(
@@ -434,7 +478,10 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--informe":
         dir_diagramas = DIR_SALIDA / "_diagramas"
         dir_diagramas.mkdir(parents=True, exist_ok=True)
-        return 0 if informe(dir_diagramas) else 1
+        paginas = None
+        if "--con-paginas" in sys.argv and ARCHIVO_PAGINAS.exists():
+            paginas = json.loads(ARCHIVO_PAGINAS.read_text())
+        return 0 if informe(dir_diagramas, paginas) else 1
     if len(sys.argv) > 1 and sys.argv[1] == "--consolidado":
         dir_diagramas = DIR_SALIDA / "_diagramas"
         dir_diagramas.mkdir(parents=True, exist_ok=True)

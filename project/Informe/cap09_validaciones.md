@@ -1,6 +1,6 @@
-# Capítulo 9. Validaciones y garantías de consistencia
+## 3.9 Validaciones y garantías de consistencia
 
-El capítulo anterior mostró cómo el asignador resuelve la
+La sección anterior mostró cómo el asignador resuelve la
 asignación de aulas como un programa lineal entero. Esa
 formulación supone que los datos que la alimentan son
 consistentes: que cada horario pertenece a una comisión bien
@@ -11,9 +11,9 @@ correcto sobre datos inconsistentes produce resultados
 inconsistentes. Por eso el sistema rodea al asignador de un
 conjunto de validaciones cuyo propósito es darle al usuario
 garantías concretas sobre el estado de lo que está planificando.
-Este capítulo explica qué se verifica, cuándo y por qué importa.
+Esta sección explica qué se verifica, cuándo y por qué importa.
 
-## 9.1 Por qué las validaciones son parte del diseño
+### 3.9.1 Por qué las validaciones son parte del diseño
 
 Las validaciones no son un agregado defensivo que se suma cuando
 algo falla, sino una parte de la solución. Tres motivos sostienen
@@ -34,7 +34,7 @@ esa decisión:
   necesita conocer el modelo matemático: le alcanza con leer las
   validaciones para saber qué está bien y qué hay que corregir.
 
-## 9.2 Capas de validación
+### 3.9.2 Capas de validación
 
 Las verificaciones se escalonan de lo más elemental a lo más
 global, y cada nivel cubre lo que el anterior no alcanza. En la
@@ -59,7 +59,7 @@ plan, la existencia de un camino de cursada viable entre sedes
 había marcado como ignoradas y que ya no aplican se eliminan
 solas, y se le informa de la limpieza. Finalmente, antes de
 invocar al resolutor, el asignador ejecuta la *verificación
-previa* descripta en §8.4, que detecta sin gastar tiempo de cálculo
+previa* descripta en §3.8.4, que detecta sin gastar tiempo de cálculo
 las combinaciones de datos que hacen imposible el problema: un
 horario sin aula compatible, una franja con más clases que aulas
 según el principio del palomar, la condición de Hall, una fijación
@@ -67,7 +67,7 @@ incompatible o un salto entre sedes inviable. Las reglas que se
 aplican al guardar se detallan en el Anexo A (sección 8, reglas de
 integridad e invariantes).
 
-## 9.3 Severidades y su significado
+### 3.9.3 Severidades y su significado
 
 Cada hallazgo de una validación se clasifica en una de tres
 severidades, y esa distinción ordena el trabajo del usuario:
@@ -79,7 +79,7 @@ severidades, y esa distinción ordena el trabajo del usuario:
   generar un plan.
 - **Advertencia**: señala una situación anómala que conviene
   revisar pero que no impide seguir. Por ejemplo, que haya
-  materias en el grupo "sin clasificar" (§6.4.4): el asignador
+  materias en el grupo "sin clasificar" (§3.6.4.4): el asignador
   puede correr igual, pero la clasificación debería completarse.
 - **Informativa**: comunica algo que ocurrió sin exigir acción,
   como la eliminación automática de una excepción que dejó de
@@ -93,7 +93,7 @@ teóricos pero la materia declara 4", con un enlace directo a la
 entidad afectada. El usuario resuelve primero lo bloqueante;
 las advertencias pueden esperar y lo informativo sólo se lee.
 
-## 9.4 Vigencia de los resultados
+### 3.9.4 Vigencia de los resultados
 
 Cada validación y cada corrida del asignador quedan registradas
 junto con la configuración que se usó (el detalle está en el
@@ -103,7 +103,7 @@ Si después de validar se editaron comisiones, horarios o dictados,
 la interfaz indica que el resultado está desactualizado y ofrece
 volver a ejecutarlo.
 
-## 9.5 Un ejemplo integrado
+### 3.9.5 Un ejemplo integrado
 
 Supongamos que el usuario prepara el plan de cursada del segundo
 cuatrimestre, con el cronograma cargado y el plan recién
@@ -135,9 +135,9 @@ generado.
 Cada problema apareció en el paso en que podía resolverse, con un
 mensaje que indicaba qué corregir.
 
-## 9.6 Recapitulación
+### 3.9.6 Recapitulación
 
 Las validaciones, escalonadas en capas y con tres severidades,
 convierten al asignador en un asistente confiable que avisa cuando un
-resultado deja de describir los datos. El capítulo siguiente muestra
+resultado deja de describir los datos. La sección siguiente muestra
 la herramienta en acción.
