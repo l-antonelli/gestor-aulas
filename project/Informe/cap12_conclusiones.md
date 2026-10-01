@@ -128,7 +128,7 @@ cultura de rigor organizativo y operativo:
 - **Integridad y actualización de los datos de origen.** La precisión
   de las asignaciones depende directamente de la exactitud de los
   datos ingresados. Mantener actualizadas las dimensiones y el
-  equipamiento de las aulas y las mallas curriculares vigentes es un
+  equipamiento de las aulas y los planes de estudio vigentes es un
   requisito innegociable.
 - **Disciplina en el resguardo de la información.** Dado que el
   sistema opera de forma local y sin autenticación centralizada,

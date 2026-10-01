@@ -1,436 +1,258 @@
 # Capítulo 7. Arquitectura de la solución
 
-Los capítulos 5 y 6 dejaron fijado *qué* se modela y *cómo* se
-guarda. Este capítulo se ocupa del **cómo se implementa**: qué
-tecnologías sostienen la solución, cómo se organiza el código y
-cómo fluye una operación de punta a punta, desde una acción del
-operador en la interfaz hasta la persistencia en la base y la
-respuesta de vuelta a la pantalla.
+Los capítulos 5 y 6 fijaron qué se modela y cómo se guarda. Este
+capítulo explica sobre qué se construye la solución: qué
+tecnologías la sostienen y por qué se eligieron, cómo se reparten
+las responsabilidades dentro del sistema y cómo fluye una operación
+de punta a punta, desde la acción del operador en la pantalla hasta
+el resultado que vuelve a ella.
 
-El capítulo cumple tres objetivos:
+## 7.1 Pila tecnológica
 
-- Presentar el **stack tecnológico completo** de una sola vez, con
-  la justificación de cada elección y las alternativas que se
-  descartaron. El capítulo 6 pospuso esa justificación
-  intencionalmente para no mezclar la discusión del modelo de
-  datos con la elección de tecnología.
-- Explicar la **separación en capas** que estructura el código y
-  cómo cada capa se apoya sobre la anterior.
-- Describir el **flujo end-to-end** que atraviesa el sistema, con
-  los hitos operativos que después van a servir para explicar las
-  validaciones (capítulo 9) y la corrida del programa lineal
-  (capítulo 8).
-
-## 7.1 Stack tecnológico
-
-El sistema se implementa como una **aplicación web de una sola
-página** con backend en Python y persistencia local. El stack
-completo se resume en la siguiente pila:
+El sistema es una *aplicación web* que se usa desde el navegador,
+escrita íntegramente en Python y con una base de datos local. La
+tabla de la pila tecnológica resume las tecnologías que la componen y el papel de cada
+una.
 
 <!-- tabla: Pila tecnológica de la solución -->
 | Capa | Tecnología | Rol |
 | --- | --- | --- |
-| Interfaz de usuario | Streamlit | Renderiza la aplicación web, maneja el estado de sesión y expone formularios, tablas y visualizaciones. |
-| Lenguaje base | Python 3.11+ | Corre todo el código: interfaz, servicios, resolutor. |
-| Validación de datos | Pydantic | Valida los objetos que atraviesan las capas y expone anotaciones de tipo consistentes. |
-| Mapeo objeto-relacional | SQLModel | Combina Pydantic con SQLAlchemy: define entidades como clases Python y las materializa como tablas. |
-| Motor de base de datos | SQLite | Guarda todo el estado del sistema en un archivo local (`data/database.db`). |
-| Optimización | PuLP | Biblioteca de programación lineal que expresa el modelo como código Python. |
-| Resolutor | CBC | Resolutor de programación lineal entera libre y open source, invocado a través de PuLP. |
-| Visualización | Altair y componentes nativos de Streamlit | Gráficos de saturación, tablas de resultado, calendarios semanales. |
+| Interfaz de usuario | Streamlit | Presenta la aplicación en el navegador: formularios, tablas y gráficos. |
+| Lenguaje base | Python | Corre todo el sistema: interfaz, reglas del dominio y optimización. |
+| Validación de datos | Pydantic | Verifica que los datos que circulan por el sistema tengan la forma esperada. |
+| Mapeo objeto-relacional | SQLModel | Traduce las entidades del modelo a tablas de la base y viceversa. |
+| Motor de base de datos | SQLite | Guarda todo el estado del sistema en un único archivo local. |
+| Optimización | PuLP | Permite escribir el programa lineal con una notación cercana a la matemática. |
+| Resolutor | CBC | Resuelve el programa lineal entero; es libre y de código abierto. |
+| Visualización | Altair y componentes de Streamlit | Gráficos de saturación, tablas de resultados y calendarios semanales. |
 
-Cada elección se justifica a continuación.
+### 7.1.1 Python y Streamlit
 
-### 7.1.1 Python como lenguaje base
+Python es la decisión que condiciona al resto de la pila. Lo
+elegimos por dos razones. La primera es que cuenta con un
+ecosistema maduro de optimización y análisis de datos, de modo que
+el programa lineal, los pronósticos de inscriptos y los reportes se
+apoyan en herramientas disponibles en el mismo lenguaje. La segunda
+es que permite construir también la interfaz sin cambiar de
+lenguaje, lo que mantiene una única base de código y simplifica su
+mantenimiento. Lenguajes como Java o JavaScript se descartaron: el
+primero tiene un ecosistema de optimización libre más limitado y el
+segundo es fuerte en interfaces pero débil en optimización
+combinatoria.
 
-Elegir Python como lenguaje base es la decisión más consecuente
-del stack, porque condiciona todo lo demás. Los motivos:
+Streamlit es una biblioteca de Python para construir aplicaciones
+web interactivas sin escribir directamente el código propio de los
+navegadores. Cada pantalla se describe como un programa corto que
+se vuelve a ejecutar ante cada interacción, y la biblioteca se
+encarga de dibujar formularios, tablas y gráficos, lo que da una
+velocidad de desarrollo alta. Las alternativas que separan la
+interfaz del procesamiento exigían mantener dos piezas comunicadas
+entre sí, un costo que el proyecto no necesitaba pagar.
 
-- **Ecosistema maduro de optimización y datos.** Bibliotecas como
-  PuLP, OR-Tools, NumPy, Pandas y scikit-learn son de primer
-  nivel en Python. Cualquier extensión futura del proyecto que
-  involucre pronósticos de matrícula, análisis de resultados de
-  corridas o reportes cuantitativos se apoya en herramientas
-  disponibles nativamente.
-- **Interfaz gráfica sin cambio de contexto.** Las bibliotecas
-  actuales de Python permiten construir interfaces web sin salir
-  del lenguaje. Evitar la mezcla Python-backend con
-  JavaScript-frontend reduce la superficie de fricción del
-  desarrollo y facilita mantener una única base de código.
-- **Legibilidad como criterio.** Python favorece código que se lee
-  con facilidad. Para un proyecto académico de mediano plazo,
-  donde la claridad del código sobrevive al desarrollo original,
-  esto pesa.
+### 7.1.2 SQLite y SQLModel para la persistencia
 
-Se descartaron alternativas como Java (más ceremonioso, ecosistema
-de optimización más limitado en el nicho libre) y JavaScript o
-TypeScript (buenos para la interfaz pero flojos para
-optimización combinatoria).
+SQLite es un motor de base de datos relacional que no necesita un
+servidor aparte: toda la base vive en un archivo que se puede
+copiar, respaldar y compartir. No requiere instalación ni
+configuración y alcanza con holgura para el volumen del problema,
+que en el peor caso llega a algunos miles de registros por tabla.
+Se descartó un motor con servidor, como PostgreSQL, por el costo de
+instalación innecesario para un uso local, y una base documental,
+como MongoDB, porque los datos del dominio son fuertemente
+relacionales.
 
-### 7.1.2 Streamlit como interfaz
+Sobre SQLite trabaja SQLModel, una biblioteca de *mapeo
+objeto-relacional*: permite definir cada entidad del modelo una
+sola vez y usar esa misma definición para validar los datos, para
+guardarlos en la base y para pasarlos entre las distintas partes
+del sistema. Además abstrae el motor, de modo que si el sistema
+pasara a un uso multiusuario, cambiar SQLite por PostgreSQL
+requeriría modificaciones acotadas.
 
-Streamlit es una biblioteca de Python que permite construir
-aplicaciones web interactivas escribiendo código Python
-convencional, sin manejar directamente HTML, CSS ni JavaScript. Sus
-características determinantes para este proyecto:
+### 7.1.3 PuLP y CBC para el programa lineal
 
-- **Modelo declarativo simple.** Cada página de la aplicación se
-  escribe como un script Python que se re-ejecuta ante cada
-  interacción. Streamlit se encarga de renderizar los widgets, el
-  layout y el estado. No hay necesidad de plantillas ni endpoints
-  REST.
-- **Widgets ricos con muy poco código.** Formularios, tablas
-  editables, selects, sliders, uploaders de archivo, calendarios,
-  gráficos: todo está disponible como funciones cortas. La
-  velocidad de iteración es alta.
-- **Integración natural con Pandas y Altair.** Los DataFrames de
-  Pandas se renderizan como tablas interactivas con casi cero
-  configuración; los gráficos de Altair aparecen como componentes
-  nativos.
+PuLP es una biblioteca para escribir problemas de programación
+lineal entera como una sucesión de variables, restricciones y una
+función objetivo, con una notación muy cercana a la formulación
+matemática. La resolución la delega en un *resolutor* externo; el
+sistema usa CBC (*Coin-or Branch and Cut*), libre y ampliamente
+probado. PuLP separa la formulación del resolutor: si en el futuro
+se quisiera usar otro, el modelo no cambia. Se descartaron
+alternativas con una abstracción propia más alejada del vocabulario
+matemático, porque en un proyecto académico la cercanía con la
+formulación formal facilita la comprensión del modelo que desarrolla
+el capítulo 8.
 
-Se descartaron alternativas como Flask con plantillas Jinja
-(más código boilerplate para formularios y tablas) y React o Vue
-(overhead innecesario y obliga a mantener una API separada). El
-único costo real de Streamlit es que su modelo de re-ejecución
-completa ante cada interacción exige cuidado con las operaciones
-caras: hay que cachear resultados que no cambian. El sistema lo
-resuelve con el mecanismo estándar `@st.cache_data` de Streamlit
-donde aplica.
-
-### 7.1.3 SQLite como motor de base
-
-SQLite es un motor de base de datos relacional embebido: no requiere
-un servidor separado, guarda toda la base en un archivo del sistema
-de archivos y ofrece un subconjunto muy fiel del SQL estándar. Se
-lo eligió porque:
-
-- **Cero configuración.** No hay que instalar un servidor, abrir un
-  puerto ni configurar credenciales. La base es un archivo que se
-  puede versionar, copiar, respaldar y compartir.
-- **Suficiente para el volumen.** El sistema maneja algunos miles
-  de filas por tabla en el peor caso. SQLite resuelve
-  cómodamente cargas hasta muchos órdenes de magnitud mayores.
-- **Migración eventual sencilla.** SQLModel (ver §7.1.4) abstrae
-  el motor: si el sistema escalara a un contexto multiusuario o
-  distribuido, la migración a PostgreSQL requeriría cambios muy
-  acotados.
-
-Se descartaron alternativas como PostgreSQL (overhead de setup
-para un despliegue local) y MongoDB (los datos son fuertemente
-relacionales; forzarlos a un esquema documental introduce
-duplicación e inconsistencia).
-
-### 7.1.4 SQLModel como ORM
-
-SQLModel es una biblioteca que combina Pydantic (validación de
-datos con anotaciones de tipo) con SQLAlchemy (mapeo
-objeto-relacional maduro y ampliamente usado). Ofrece:
-
-- **Una única definición para varias tareas.** La misma clase
-  Python funciona como esquema de validación, como modelo de la
-  tabla en la base y como estructura que atraviesa las capas del
-  sistema. Sin duplicación entre "el objeto validado en la
-  interfaz" y "la fila que se persiste".
-- **Anotaciones de tipo en todo el código.** Los editores y los
-  chequeadores estáticos pueden razonar sobre las estructuras que
-  circulan por el sistema. La lectura del código gana claridad.
-- **Compatibilidad con el resto del ecosistema.** Los objetos se
-  pueden convertir a DataFrames de Pandas sin ceremonia, lo que
-  simplifica reportes y visualizaciones.
-
-Se descartaron alternativas como SQLAlchemy puro (más verboso, sin
-validación integrada) y Peewee (integración más pobre con
-Pydantic).
-
-### 7.1.5 PuLP y CBC para el programa lineal
-
-PuLP es una biblioteca de Python que expresa problemas de
-programación lineal y entera con una sintaxis expresiva y que
-delega la resolución a un resolutor externo. El resolutor por
-defecto que usa el sistema es **CBC** (*Coin-or Branch and Cut*),
-un resolutor libre, open source y ampliamente probado para
-programación lineal entera.
-
-Se eligió PuLP porque:
-
-- **Sintaxis clara.** Un modelo se escribe como una sucesión de
-  variables, restricciones y una función objetivo. La cercanía
-  entre la formulación matemática y el código lo hace legible.
-- **Compatible con múltiples resolutores.** PuLP separa la
-  formulación del resolutor: si en el futuro se necesitara
-  cambiar de CBC a Gurobi (comercial) o HiGHS (libre, más nuevo),
-  el modelo no cambia; sólo cambia la línea que invoca al
-  resolutor.
-
-Se descartó OR-Tools de Google porque introduce una capa de
-abstracción propia menos alineada con el vocabulario matemático
-estándar; para un proyecto académico, la cercanía al vocabulario
-formal favorece la comprensión del modelo. El capítulo 8 desarrolla
-la formulación del modelo con este vocabulario.
-
-### 7.1.6 Visualización con Altair y componentes nativos
-
-Los gráficos del sistema (saturación por franja, ocupación por
-sede, heatmaps de conflictos) se generan con **Altair**, una
-biblioteca declarativa de visualización basada en el sistema de
-gramática visual de Vega-Lite. Se eligió Altair sobre Matplotlib
-por su modelo declarativo (uno describe el gráfico, no el
-procedimiento de dibujo) y por su integración natural con
-Streamlit y Pandas. Las tablas y calendarios semanales se
-renderizan con componentes nativos de Streamlit y con
-`FullCalendar` embebido para las vistas por aula.
+Los gráficos se generan con Altair, que se integra de manera
+directa con Streamlit.
 
 ## 7.2 Separación en capas
 
-El código del sistema se organiza en cuatro capas con
-responsabilidades bien delimitadas. La regla de dependencia va
-siempre de arriba hacia abajo: cada capa conoce a las que están
-debajo, no al revés.
+Una práctica habitual de la ingeniería de software para organizar
+un sistema es la *arquitectura en capas*: se agrupan las
+responsabilidades en niveles y cada nivel sólo se apoya en los que
+están debajo, nunca al revés. Así, un cambio en la presentación no
+obliga a tocar las reglas del negocio, y las reglas se pueden
+verificar sin pasar por la pantalla. El sistema se organiza en
+cuatro capas, como muestra la figura de la arquitectura en capas.
 
 <!-- figura: Arquitectura en capas del sistema -->
 ```mermaid
 flowchart TD
-    UI["<b>Interfaz</b> (páginas y componentes Streamlit)<br/><code>app/pages/*.py, src/ui/*.py</code>"]
-    SVC["<b>Servicios</b> (lógica de dominio agrupada por área)<br/><code>src/services/*.py</code>"]
-    PER["<b>Persistencia</b> (repositorios y CRUD sobre SQLModel)<br/><code>src/database/*.py</code>"]
-    MOD["<b>Modelo</b> (entidades del ORM)<br/><code>src/database/models.py</code>"]
+    UI["<b>Interfaz</b><br/>pantallas y componentes reutilizables"]
+    SVC["<b>Servicios</b><br/>reglas del dominio agrupadas por área"]
+    PER["<b>Persistencia</b><br/>lectura y escritura en la base"]
+    MOD["<b>Modelo</b><br/>entidades del dominio"]
 
     UI -->|invoca| SVC
     SVC -->|usa| PER
-    PER -->|mapea| MOD
+    PER -->|traduce a| MOD
 ```
 
-### 7.2.1 Capa de modelo
+- **Modelo.** Representa las entidades de los capítulos 5 y 6 tal
+  como se guardan en la base. Es la única capa que conoce el motor
+  relacional.
+- **Persistencia.** Resuelve las operaciones básicas sobre la
+  base: crear, consultar, modificar y borrar registros, respetando
+  los borrados en cascada que define el modelo de datos. No decide
+  qué combinaciones de valores son válidas.
+- **Servicios.** Concentra las reglas del dominio: qué significa
+  crear una comisión, generar un plan de cursada a partir de un
+  cronograma, validar un plan, resolver la virtualidad y el
+  recursado en cascada, pronosticar inscriptos o correr el
+  asignador de aulas.
+- **Interfaz.** Reúne las pantallas de cada área funcional
+  (materias, aulas, carreras, ciclos, cronogramas, planes,
+  inscriptos e historial).
 
-Contiene las **clases del ORM** que representan las entidades del
-capítulo 5 (una a una, salvo los desdoblamientos y agregados
-técnicos justificados en el capítulo 6). Es la única capa que
-conoce el motor relacional y las convenciones de mapeo.
+La regla central es que **sólo la capa de servicios expresa reglas
+del dominio**. La interfaz recolecta lo que ingresa el operador, se
+lo pasa a un servicio y muestra la respuesta; cuando una pantalla
+advierte, por ejemplo, que las horas de teoría más las de
+laboratorio no suman las horas semanales de la materia, esa
+verificación la hace un servicio. Esta disciplina es la que permite
+probar la lógica del sistema de manera automática, sin depender de
+la interfaz.
 
-Las clases del modelo se definen en `src/database/models.py`. Cada
-clase corresponde a una tabla y cada campo, a una columna. Es un
-archivo largo pero completamente descriptivo: leerlo alcanza para
-tener una vista completa del esquema.
+## 7.3 Flujo de punta a punta
 
-### 7.2.2 Capa de persistencia
-
-Encima del modelo hay funciones que atienden operaciones básicas
-de lectura y escritura: crear una fila, actualizar campos, borrar,
-consultar por identificador, listar con filtros. Estas operaciones
-viven en `src/database/crud.py` y en los archivos de
-`src/database/relationship_definitions.py`, que declara las
-cascadas de borrado que el sistema aplica por política aunque el
-motor no las active como constraints estrictas.
-
-La capa de persistencia **no contiene lógica de dominio**: no sabe
-qué combinaciones de valores son válidas ni cuándo hay que
-disparar una validación. Sólo garantiza que las operaciones básicas
-funcionan y que las cascadas de borrado se respetan.
-
-### 7.2.3 Capa de servicios
-
-Concentra la **lógica de dominio**: qué significa crear una
-comisión, generar un plan de cursada a partir de un cronograma,
-correr el asignador de aulas, validar un plan, resolver la
-virtualidad efectiva de un horario. Los servicios se agrupan por
-área en `src/services/`:
-
-- `carrera_sede_service.py`: legado, se conserva sólo para
-  compatibilidad de esquema y no participa del asignador.
-- `grupo_materia_service.py`: gestión de grupos de materias y
-  resolución de sedes admisibles y preferidas por materia.
-- `comision_service.py`: creación y edición de comisiones, con
-  la invariante de anclaje XOR entre cronograma y plan.
-- `dictado_service.py`: generación y sincronización de dictados
-  con la regla de recursado jerárquica.
-- `schedule_service.py` y `cronograma_validation_service.py`:
-  carga y validación de cronogramas.
-- `plan_generation_service.py` y `plan_validation_service.py`:
-  generación y validación de planes de cursada.
-- `asignacion_aulas_service.py`: núcleo del asignador de aulas
-  (armado del programa lineal, ejecución, aplicación de la
-  solución, persistencia de la corrida).
-- `factibilidad_service.py`: chequeo estructural pre-solve del
-  programa lineal (ver capítulo 8).
-- `forecast_service.py`: pronóstico de inscriptos por comisión.
-- `resolucion_jerarquica.py`: funciones puras para virtualidad y
-  recursado en cascada.
-- `change_log_service.py`: registro de auditoría.
-- `validations.py`: chequeos transversales que abarcan varias
-  entidades.
-
-La regla clave de esta capa es que **es la única que expresa
-reglas del dominio**. Ni la interfaz ni la persistencia deciden
-qué es válido: preguntan a un servicio y actúan según su
-respuesta.
-
-### 7.2.4 Capa de interfaz
-
-La interfaz se implementa como un conjunto de **páginas Streamlit**
-en `app/pages/` (una página por área funcional principal:
-materias, aulas, carreras, ciclos, cronogramas, planes, aulas del
-plan, inscriptos, historial) más un conjunto de **componentes
-reutilizables** en `src/ui/` (paneles, editores, validadores en
-línea, calendarios).
-
-La interfaz **no contiene lógica de dominio**: recolecta los datos
-que introduce el operador, se los pasa a los servicios y renderiza
-las respuestas. Cuando aparece una regla de validación en línea
-(por ejemplo, "las horas de teoría más las de laboratorio deben
-cerrar con las horas semanales"), esa regla vive en un servicio de
-validación; la interfaz sólo la invoca y muestra el resultado.
-
-Esta disciplina es la que permite testear la lógica del sistema de
-manera independiente de Streamlit: las pruebas automatizadas
-llaman directamente a los servicios sin instanciar la interfaz.
-
-## 7.3 Flujo end-to-end
-
-Para dar una idea integrada del funcionamiento del sistema
-recorremos el flujo canónico completo: desde la carga de datos
-iniciales hasta la asignación final de aulas. El flujo es lineal
-y refleja el orden natural en que el usuario opera el sistema
-cuatrimestre a cuatrimestre.
+El uso del sistema sigue un recorrido lineal que se repite cada
+cuatrimestre, desde la carga de los datos iniciales hasta la
+asignación final de aulas, con las etapas que resume la figura del flujo canónico de uso.
 
 <!-- figura: Flujo canónico de uso del sistema -->
 ```mermaid
 flowchart TD
-    E0["<b>0. Carga inicial (script CLI)</b><br/>Script CLI que carga materias, carreras, planes,<br/>laboratorios y aulas desde Excel."]
-    E1["<b>1. Ciclo + planes</b><br/>Alta del ciclo lectivo (año + 1C/2C) y asociación de las<br/>versiones de plan que aplican a ese ciclo."]
-    E2["<b>2. Dictados</b><br/>Generación automática de dictados a partir de las materias<br/>del plan, aplicando la regla de recursado jerárquica."]
-    E3["<b>3. Cronograma</b><br/>Carga de un archivo Excel con los horarios del cuatrimestre.<br/>Prevalidación contra los dictados activos del ciclo."]
-    E4["<b>4. Plan de cursada</b><br/>Generación del plan a partir del cronograma:<br/>clonado de comisiones y horarios."]
-    E5["<b>5. Refinado del plan</b><br/>Edición manual de horarios, tipo de clase, comisiones,<br/>override de inscriptos esperados."]
-    E6["<b>6. Validación</b><br/>Chequeo integral: cobertura, conflictos, partición<br/>teoría-laboratorio, excepciones ignoradas. Snapshot persistido."]
-    E7["<b>7. Asignador de aulas</b><br/>Corrida del programa lineal: chequeo estructural pre-solve,<br/>resolución con CBC, aplicación al patrón, snapshot persistido."]
-    E8["<b>8. Análisis</b><br/>Inspección del resultado, resolución de colisiones al editar<br/>manualmente, ajuste de configuración y re-corrida."]
-
-    E0 --> E1 --> E2 --> E3 --> E4 --> E5 --> E6 --> E7 --> E8
+    subgraph F1[" "]
+        direction LR
+        E0["<b>0. Carga inicial</b><br/>del catálogo"] --> E1["<b>1. Ciclo lectivo</b>"] --> E2["<b>2. Dictados</b>"]
+    end
+    subgraph F2[" "]
+        direction LR
+        E3["<b>3. Cronograma</b>"] --> E4["<b>4. Plan de cursada</b>"] --> E5["<b>5. Ajuste del plan</b>"]
+    end
+    subgraph F3[" "]
+        direction LR
+        E6["<b>6. Validación</b>"] --> E7["<b>7. Asignación<br/>de aulas</b>"] --> E8["<b>8. Análisis</b><br/>y nueva corrida"]
+    end
+    E2 --> E3
+    E5 --> E6
+    style F1 fill:none,stroke:none
+    style F2 fill:none,stroke:none
+    style F3 fill:none,stroke:none
 ```
 
-### 7.3.1 Detalle de cada etapa
+**Etapa 0. Carga inicial.** Se inicializa la base a partir de tres
+planillas de entrada: materias, planes de estudio por carrera y
+aulas. Se hace la primera vez o cuando se decide reiniciar el
+estado; el formato de cada planilla se documenta en los anexos.
 
-**Etapa 0. Carga inicial.** Un script de línea de comandos
-(`python -m scripts.load_initial_data --reset`) inicializa la base
-a partir de tres archivos Excel de entrada: materias, plan de
-estudios por carrera y aulas. Es una etapa idempotente que se
-ejecuta al arrancar el sistema por primera vez o cuando se decide
-reiniciar el estado. El anexo del proyecto documenta el formato
-esperado de cada Excel de entrada.
+**Etapa 1. Ciclo lectivo.** El operador crea el ciclo (año,
+cuatrimestre y fechas) y le asocia las versiones de plan de
+estudios vigentes. Con eso el sistema conoce qué materias se dictan
+en el ciclo.
 
-**Etapa 1. Ciclo lectivo.** Desde la interfaz, el operador crea el
-ciclo (año, cuatrimestre, fechas) y asocia las versiones de plan
-que aplican. A partir de esa asociación, el sistema *conoce* qué
-materias se van a dictar en el ciclo.
+**Etapa 2. Dictados.** El sistema genera los dictados del ciclo
+aplicando la regla de recursado jerárquica (§5.5.4): la carrera
+declara si ofrece recursado y la materia puede indicar lo
+contrario. Los dictados que la regla no admite se omiten con una
+advertencia.
 
-**Etapa 2. Dictados.** El sistema genera automáticamente los
-dictados de la etapa 1, aplicando la regla de recursado
-jerárquica (§5.5.4): la carrera declara si ofrece recursado, la
-materia puede sobreescribir con su propio flag. Los dictados que
-la regla no permite se saltean con una advertencia en el reporte
-de generación.
+**Etapa 3. Cronograma.** El operador carga la planilla con los
+horarios del cuatrimestre, que se verifica contra los dictados
+activos: materias esperadas que faltan, materias que no se
+esperaban, particiones teoría-laboratorio que no cierran. El
+reporte permite corregir las filas desde la misma pantalla.
 
-**Etapa 3. Cronograma.** El operador carga un archivo Excel con
-los horarios del cuatrimestre. El archivo se valida contra los
-dictados activos: se detectan materias esperadas pero ausentes,
-materias no esperadas presentes, particiones teoría-laboratorio
-que no cierran, etcétera. La interfaz muestra un reporte
-consolidado y permite editar en línea las filas del cronograma
-para resolver los problemas.
+**Etapa 4. Plan de cursada.** A partir del cronograma, el sistema
+genera el plan con sus comisiones y horarios semanales. Puede haber
+varios planes por ciclo: uno activo y otros como escenarios de
+comparación.
 
-**Etapa 4. Plan de cursada.** A partir del cronograma validado, el
-sistema genera el plan: crea comisiones (clonadas desde las
-comisiones template del cronograma) y horarios semanales. Cada
-plan queda registrado como una entidad separada; puede haber
-varios planes por ciclo (uno activo y los demás como escenarios de
-comparación).
+**Etapa 5. Ajuste del plan.** El operador edita comisiones y
+horarios, indica laboratorios compatibles y, si tiene información
+que la serie histórica no refleja, reemplaza el pronóstico de
+inscriptos.
 
-**Etapa 5. Refinado del plan.** El operador edita el plan en
-línea: ajusta comisiones, edita horarios, marca laboratorios
-compatibles, sobrescribe manualmente pronósticos de inscriptos si
-tiene información no reflejada en la serie histórica.
+**Etapa 6. Validación.** El sistema verifica el plan completo:
+que estén todas las materias esperadas, que no haya superposiciones
+horarias dentro de cada grupo curricular y que la partición
+teoría-laboratorio sea válida. Las excepciones que el operador
+decide aceptar (por ejemplo, materias de años distintos que nunca
+comparten alumnos) se registran como pares ignorados. El resultado
+queda guardado.
 
-**Etapa 6. Validación.** El sistema corre un chequeo integral del
-plan: cobertura de todas las materias esperadas del ciclo, ausencia
-de conflictos horarios dentro de cada grupo curricular, partición
-teoría-laboratorio válida en todas las comisiones. Las excepciones
-que el operador quiere ignorar (materias homónimas de años
-distintos que nunca comparten alumnos, por ejemplo) se declaran
-como pares ignorados. El resultado se persiste como snapshot
-(`PlanValidationDB`).
+**Etapa 7. Asignación de aulas.** El sistema primero hace una
+verificación previa para detectar causas evidentes de
+infactibilidad sin invocar al resolutor; si no las hay, construye
+el programa lineal, lo resuelve con CBC y aplica la solución al
+patrón semanal. La corrida queda registrada con un veredicto en
+lenguaje llano (capítulo 8).
 
-**Etapa 7. Asignador de aulas.** El operador dispara el asignador
-desde el panel de aulas del plan. El sistema primero corre un
-chequeo estructural pre-solve (¿existe alguna causa que hace
-infactible al problema antes de siquiera invocar al resolutor?);
-si el chequeo pasa, se construye el programa lineal, se lo resuelve
-con CBC y se aplica la solución al patrón semanal. Toda la corrida
-se persiste como snapshot (`LPRunDB`), con un veredicto
-humano-legible que la interfaz renderiza (ver capítulo 8).
-
-**Etapa 8. Análisis y ajuste.** Con el resultado en la mano, el
-operador inspecciona la asignación. Puede editar manualmente
-aulas puntuales (con detección automática de colisiones), cambiar
-la configuración del asignador (pesos, tolerancias, modos de
-grupo, margen intersede) y volver a correr.
+**Etapa 8. Análisis y ajuste.** El operador revisa la asignación,
+puede cambiar aulas puntuales (con detección automática de
+colisiones) o modificar la configuración del asignador (pesos,
+tolerancias, margen entre sedes) y volver a correrlo.
 
 ## 7.4 Interacción entre capas: un ejemplo
 
-Para ilustrar cómo se articulan las capas, tomamos un caso
-concreto: el operador hace clic en el botón "Correr asignador de
-aulas" desde el panel del plan.
+La figura de la secuencia de una corrida muestra cómo colaboran las
+capas en un caso concreto:
+el operador pide correr el asignador de aulas desde la pantalla del
+plan.
 
 <!-- figura: Secuencia de una corrida del asignador de aulas -->
 ```mermaid
 sequenceDiagram
-    actor U as Usuario
+    actor U as Operador
     participant I as Interfaz
     participant S as Servicio
 
-    U->>I: Click "Correr asignador"
-    Note over I: Recoge la configuración del formulario<br/>(pesos, modos, toggles).
-    I->>S: asignacion_aulas_service.run_lp(session, plan_id, config)
-    Note over S: 1. Chequeo estructural pre-solve.<br/>2. Construir programa lineal.<br/>3. Resolver con CBC.<br/>4. Aplicar solución al patrón.<br/>5. Persistir snapshot.
-    S-->>I: LPRunDB
-    Note over I: Renderiza el veredicto, la tabla de<br/>horarios y el mapa de saturación.
-    I-->>U: Ve resultado
+    U->>I: Pide correr el asignador
+    Note over I: Recoge la configuración<br/>(pesos y opciones).
+    I->>S: Solicita la corrida del plan
+    Note over S: 1. Verificación previa.<br/>2. Armado del programa lineal.<br/>3. Resolución con CBC.<br/>4. Aplicación de la solución.<br/>5. Registro de la corrida.
+    S-->>I: Resultado de la corrida
+    Note over I: Muestra el veredicto, los horarios<br/>y el mapa de saturación.
+    I-->>U: Ve el resultado
 ```
 
-Cada paso del servicio invoca a la capa de persistencia cuando
-necesita leer o escribir en la base, y a otros servicios cuando
-necesita reglas de dominio auxiliares. Toda la lógica de
-factibilidad, construcción del modelo, resolución y aplicación de
-la solución vive en la capa de servicios; la interfaz se limita a
-recolectar parámetros y a renderizar el resultado. La aplicación
-del snapshot y la propagación al caché técnico (`ClaseDB`) las
-maneja el servicio en una sola transacción.
+Durante esos pasos, el servicio recurre a la capa de persistencia
+para leer y escribir en la base y a otros servicios cuando necesita
+reglas auxiliares. Toda la lógica vive en la capa de servicios; la
+interfaz se limita a recoger los parámetros y a mostrar el
+resultado. La aplicación de la solución se hace como una única
+operación indivisible: o se guarda completa o no se guarda nada.
 
 ## 7.5 Recapitulación
 
-Este capítulo dejó explicitado el andamiaje técnico sobre el que
-descansa la solución. Los puntos que se retoman en los capítulos
-siguientes:
-
-1. **El stack se justificó de una sola vez.** Python como lenguaje
-   base, Streamlit para la interfaz, SQLModel sobre SQLite para
-   persistencia, PuLP con CBC para el programa lineal. Cada
-   elección responde a criterios explícitos (velocidad de
-   desarrollo, ecosistema, cercanía al vocabulario matemático,
-   portabilidad).
-2. **El código se organiza en cuatro capas** con dirección de
-   dependencia unívoca: interfaz sobre servicios sobre
-   persistencia sobre modelo. La lógica de dominio vive
-   íntegramente en la capa de servicios.
-3. **El flujo end-to-end es lineal** en ocho etapas identificables:
-   carga inicial, alta de ciclo, dictados, cronograma, plan,
-   refinado, validación, asignación. Cada etapa es punto de
-   entrada operativo y punto de anclaje para las validaciones
-   del capítulo 9.
-4. **La invocación al programa lineal se apoya en tres momentos
-   discretos**: chequeo estructural pre-solve, resolución con
-   CBC y persistencia del snapshot. El capítulo 8 desarrolla en
-   detalle cada uno.
-
-Con el andamiaje fijado, el capítulo siguiente entra en el corazón
-del sistema: la formulación del problema de asignación de aulas
-como un programa lineal entero.
+La pila tecnológica se eligió por velocidad de desarrollo,
+ecosistema disponible, cercanía al vocabulario matemático y
+portabilidad. El sistema se organiza en cuatro capas con una
+dirección de dependencia única, y las reglas del dominio viven
+íntegramente en la de servicios. El uso sigue un flujo lineal de
+nueve etapas, cada una punto de anclaje para las validaciones del
+capítulo 9. La corrida del asignador tiene tres momentos
+(verificación previa, resolución y registro), que el capítulo
+siguiente desarrolla al formular la asignación como un programa
+lineal entero.

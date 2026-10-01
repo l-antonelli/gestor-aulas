@@ -10,6 +10,21 @@
 
 local nfig, ntab = 0, 0
 
+-- Bloques `::: revisar`: secciones a cargo del compañero, que se dejan tal
+-- cual y salen resaltadas en amarillo (estilo de carácter "Resaltado").
+local function resaltar(bloques)
+  return pandoc.walk_block(pandoc.Div(bloques), {
+    Para = function(p) return pandoc.Para({pandoc.Span(p.content, {["custom-style"] = "Resaltado"})}) end,
+    Plain = function(p) return pandoc.Plain({pandoc.Span(p.content, {["custom-style"] = "Resaltado"})}) end,
+  }).content
+end
+
+function Div(d)
+  if d.classes:includes("revisar") then
+    return resaltar(d.content)
+  end
+end
+
 local function div(bloques, estilo)
   return pandoc.Div(bloques, {["custom-style"] = estilo})
 end

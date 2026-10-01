@@ -2,7 +2,8 @@
 "Proyecto de ingeniería / Consolidado".
 
 Uso:
-    python -m scripts.drive informe          # informe completo (pautas I-32)
+    python -m scripts.drive informe          # informe completo (pautas I-32), actualiza el Doc compartido
+    python -m scripts.drive previa           # lo mismo, pero sólo genera un PDF para revisar
     python -m scripts.drive docs [filtro]    # docs técnicos y anexos (.md -> Google Doc)
     python -m scripts.drive archivos         # archivos crudos e imágenes (Diagramas)
     python -m scripts.drive estructura       # crea las carpetas que falten
@@ -121,9 +122,8 @@ def archivos() -> None:
     print(f"{nuevos} archivo(s) nuevo(s) de {len(plan)}")
 
 
-def informe() -> None:
-    est = _estado()
-    inf = est["informe"]
+def _armar_informe(inf: dict) -> Path:
+    """Regenera el .docx del informe y le pone la portada del borrador."""
     base = DIST / "informe_docx"
     subprocess.run([sys.executable, "-m", "scripts.exportar_informe_docx", "--informe"], cwd=RAIZ, check=True)
     portada = cx.exportar_pestana_docx(inf["portada"]["doc_id"], inf["portada"]["tab_id"],
@@ -132,6 +132,32 @@ def informe() -> None:
     subprocess.run(["uv", "run", "--quiet", "--with", "docxcompose", "python",
                     "scripts/componer_informe.py", str(portada), str(base / "Informe.docx"), str(final)],
                    cwd=RAIZ, check=True)
+    return final
+
+
+def previa() -> None:
+    """Como `informe`, pero sin tocar el Doc compartido: convierte en un
+    Doc temporal de tu Drive personal, exporta el PDF y manda el temporal
+    a la papelera. Para revisar una iteración antes de publicarla."""
+    est = _estado()
+    final = _armar_informe(est["informe"])
+    subido = cx.run("GOOGLEDRIVE_UPLOAD_FILE", {}, file=str(final))
+    doc = cx.run("GOOGLEDRIVE_COPY_FILE_ADVANCED", {
+        "fileId": subido["id"], "name": "PREVIA Informe (temporal)", "mimeType": cx.GDOC, "fields": "id"})
+    pdf = DIST / "informe_docx" / "Informe_previa.pdf"
+    try:
+        cx.exportar_pdf(doc["id"], pdf)
+    finally:
+        for fid in (subido["id"], doc["id"]):
+            cx.a_papelera(fid)
+    print(f"✓ PDF de la vista previa: {pdf.relative_to(RAIZ)}")
+
+
+def informe() -> None:
+    est = _estado()
+    inf = est["informe"]
+    base = DIST / "informe_docx"
+    final = _armar_informe(inf)
     inf["doc_id"] = cx.docx_a_gdoc(final, est["carpetas"]["Informe"], "Informe", inf.get("doc_id"))
     _guardar(est)
     pdf = cx.exportar_pdf(inf["doc_id"], base / "Informe.pdf")
@@ -139,7 +165,7 @@ def informe() -> None:
     print(f"  PDF para revisar: {pdf.relative_to(RAIZ)}")
 
 
-COMANDOS = {"informe": informe, "docs": docs, "archivos": archivos, "estructura": estructura}
+COMANDOS = {"informe": informe, "previa": previa, "docs": docs, "archivos": archivos, "estructura": estructura}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMANDOS:

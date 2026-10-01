@@ -2,36 +2,27 @@
 
 En los capítulos 3 y 4 la operatoria y el problema quedaron descritos
 al nivel de "qué se hace y qué hay que decidir". Este capítulo da el
-próximo paso: identificar y definir de manera explícita las entidades
-del dominio, sus relaciones y las reglas de negocio que las
-gobiernan. Se trabaja acá sobre el primer eslabón de la cadena
-introducida en §2.5.1: el **modelo conceptual del dominio**. La
-traducción a un esquema de datos concreto queda para el capítulo 6, y
-el uso de estas entidades como piezas del programa lineal, para el
-capítulo 8.
+paso siguiente: identificar las entidades del dominio, sus relaciones
+y las reglas de negocio que las gobiernan. Es el primer eslabón de la
+cadena introducida en §2.5.1, el **modelo conceptual del dominio**; su
+traducción a un esquema de datos queda para el capítulo 6, y su uso
+como piezas del programa lineal, para el capítulo 8.
 
-El objetivo es doble. Por un lado, fijar de una vez un **lenguaje
-ubicuo** (en el sentido de Evans, §2.2) que se sostenga después a lo
-largo del informe y del código: los términos que aparezcan en este
-capítulo son los mismos que van a aparecer en la interfaz del sistema,
-en el código y en las próximas secciones. Por otro, hacer explícitas
-las **reglas de negocio** que la operatoria de FCEIA aplica en la
-práctica y que hoy viven mayormente en el criterio de las personas.
+El objetivo es doble. Por un lado, fijar un **lenguaje ubicuo** en el
+sentido de Evans [3] (§2.2): los términos de este capítulo son los
+mismos que aparecen en la interfaz del sistema y en el resto del
+informe. Por otro, hacer explícitas las **reglas de negocio** que la
+FCEIA aplica en la práctica y que hoy viven mayormente en el criterio
+de las personas.
 
 ## 5.1 Enfoque metodológico: modelado en capas
 
-Antes de enumerar entidades conviene explicar cómo las vamos a
-seleccionar. La motivación viene de una observación práctica: una
-facultad como la FCEIA tiene muchas entidades (alumnos, profesores,
-inscripciones, exámenes, actas, calendarios, autoridades, aulas,
-materias, comisiones) pero no todas son igualmente relevantes para
-el problema que este trabajo aborda. Modelizar sin filtrar produce
-diagramas grandes y de baja densidad informativa; filtrar sin
-justificar deja al lector sin poder reconstruir por qué ciertas
-entidades quedaron dentro y otras afuera.
-
-Aplicamos el enfoque de modelado en **tres capas**, tomado del propio
-proceso de diseño de este proyecto:
+Una facultad tiene muchas entidades (alumnos, profesores,
+inscripciones, exámenes, aulas, materias, comisiones), pero no todas
+son relevantes para asignar aulas. Modelizar sin filtrar produce
+diagramas grandes y poco informativos; filtrar sin justificar impide
+reconstruir por qué ciertas entidades quedaron dentro y otras afuera.
+Por eso organizamos el modelo en **tres capas** (Figura 3).
 
 <!-- figura: Enfoque de modelado en tres capas -->
 ```mermaid
@@ -47,857 +38,357 @@ flowchart LR
     class C1,C2,C3 body
 ```
 
-**Capa 1: dominio del problema completo.** Todas las entidades que
-existen realmente en la vida de la facultad. Se listan brevemente
-para reconocerlas y para justificar después su inclusión o exclusión.
-
-**Capa 2: dominio del problema delimitado.** Subconjunto de la capa
-anterior que resulta directamente relevante para el problema de
-asignación de aulas, con las razones de la delimitación explícitas.
-Es el vocabulario mínimo con el que se puede describir el problema
-sin recortarlo.
-
-**Capa 3: dominio de la solución.** Entidades que no existen en la
-realidad de FCEIA como objetos independientes pero que introducimos
-en el modelo para poder resolver el problema de manera limpia. Son
-abstracciones útiles al software, no descripciones adicionales del
-mundo. Su rol es hacer más manejable la complejidad, típicamente
-transformando relaciones muchos-a-muchos entre entidades del dominio
-en dos relaciones uno-a-muchos a través de una entidad intermedia.
-
-Cada sección siguiente identifica claramente en qué capa vive cada
-entidad.
+La primera capa reúne todo lo que existe en la vida de la facultad.
+La segunda es el subconjunto mínimo con el que se puede describir el
+problema sin recortarlo. La tercera agrega entidades que no existen
+en la FCEIA como objetos independientes, pero que introducimos porque
+simplifican la solución; típicamente, convierten una relación
+muchos-a-muchos entre dos entidades del dominio en dos relaciones
+uno-a-muchos a través de una entidad intermedia.
 
 ## 5.2 Entidades del dominio del problema
 
-### 5.2.1 Dominio completo
-
-Un inventario abreviado de la capa 1 alcanza para el contexto de
-este trabajo:
-
-- **Alumno**: estudiante inscripto en la facultad, con legajo y datos
-  personales.
-- **Profesor**: docente de la facultad, responsable de dictar clases.
-- **Carrera**: programa académico de grado que se cursa en la
-  facultad.
-- **Materia**: asignatura académica que forma parte de una o más
-  carreras.
-- **Comisión**: agrupamiento de alumnos que cursan una materia
-  juntos, típicamente en un horario común y con un docente asignado.
-- **Clase**: instancia concreta de dictado, en un día y horario
-  específicos.
-- **Aula**: espacio físico donde se dictan las clases.
-- **Sede**: edificio de la facultad que agrupa aulas.
-- **Inscripción**: vínculo entre un alumno y una comisión que
-  formaliza su intención de cursar.
-- **Asistencia**: registro de la presencia efectiva de un alumno en
-  una clase.
-- **Plan de estudios**: documento que ordena las materias de una
-  carrera con su año y cuatrimestre sugeridos y sus correlativas.
-- **Ciclo lectivo**: cuatrimestre de operación académica.
-- **Cronograma**: publicación cuatrimestral con los horarios de las
-  materias.
-
-### 5.2.2 Delimitación al problema
-
-El problema de asignación de aulas, tal como quedó definido en el
-capítulo 4, se puede formular usando únicamente un subconjunto de
-las entidades anteriores. Recorremos la lista y justificamos qué
-queda dentro y qué queda fuera.
-
-**Entidades que quedan fuera del alcance**:
-
-- **Alumno** e **inscripción**: la asignación decide sobre horarios
-  y aulas, no sobre alumnos individuales. Lo que importa del alumnado
-  es su cantidad esperada por comisión, no cada alumno como entidad.
-- **Profesor**: no afecta capacidad ni disponibilidad de aulas. La
-  asignación de docentes a comisiones es un problema paralelo, con
-  sus propias reglas, y no se aborda en este trabajo.
-- **Asistencia**: es una consecuencia observable del sistema, no una
-  entrada del proceso de asignación.
-
-**Entidades que quedan dentro del alcance**:
-
-- **Materia**, **carrera** y **plan de estudios**: definen qué se
-  dicta y con qué requerimientos. La carrera y el plan importan para
-  las restricciones de sede admisible, la carga horaria y la
-  identificación de materias comunes.
-- **Comisión**: define grupos de dictado. La asignación se aplica a
-  los horarios de comisiones, no a materias sueltas.
-- **Aula** y **sede**: los recursos que se asignan.
-- **Ciclo lectivo**: contextualiza temporalmente el escenario de
-  asignación.
-- **Cronograma**: entrada del proceso; contiene los horarios que hay
-  que asignar.
-- **Clase**: presente en la capa conceptual, aunque en la
-  implementación tiene un rol acotado (ver §5.4).
-
-## 5.3 Definiciones formales de las entidades
-
-Presentamos ahora una a una las entidades del dominio delimitado y
-del dominio de la solución. Para cada una fijamos: nombre, capa,
-definición formal, atributos principales y relaciones con otras
-entidades. La notación es puramente prosa y tablas; el diagrama UML
-que resume el conjunto viene en §5.6.
-
-### 5.3.1 Sede
-
-**Capa**: dominio del problema (completo y delimitado).
-
-**Definición**: espacio edilicio de la facultad en el que se ubican
-aulas. Cada sede está identificada por su nombre.
-
-**Atributos principales**: nombre; marca opcional que la señala como
-*sede predeterminada para materias comunes* (ver §5.5.3).
-
-**Relaciones**: una sede contiene muchas aulas; una sede puede estar
-habilitada por muchas carreras.
-
-### 5.3.2 Aula
-
-**Capa**: dominio del problema (completo y delimitado).
-
-**Definición**: espacio físico habilitado para el dictado de clases,
-perteneciente a una única sede.
-
-**Atributos principales**: identificador, nombre o código
-identificable por el usuario, capacidad, tipo (teórica, laboratorio,
-anfiteatro, práctica), descripción.
-
-**Relaciones**: cada aula pertenece a exactamente una sede.
-
-### 5.3.3 Carrera
-
-**Capa**: dominio del problema (completo y delimitado).
-
-**Definición**: programa académico de grado o tecnicatura que la
-facultad ofrece. Cada carrera está identificada por un código
-institucional.
-
-**Atributos principales**: código, nombre, título otorgado, duración
-en años, cantidad de materias del plan, flag que indica si la carrera
-dicta recursado (ver §5.5.4).
-
-**Relaciones**: cada carrera tiene una o más versiones de plan de
-estudios; cada carrera puede tener habilitadas varias sedes para el
-dictado de sus materias.
-
-### 5.3.4 Materia
-
-**Capa**: dominio del problema (completo y delimitado).
-
-**Definición**: asignatura académica del catálogo de la facultad,
-independiente de la carrera. Una misma materia puede formar parte de
-los planes de varias carreras.
-
-**Atributos principales**: código, nombre, código en SIU Guaraní
-(cuando difiere del código del plan), cupo, horas semanales totales,
-horas de teoría, horas de laboratorio, periodo (cuatrimestral o
-anual), marca de virtualidad, marca de optatividad, override de
-recursado (ver §5.5.4).
-
-**Relaciones**: una materia aparece en uno o más planes de estudios
-mediante la entidad *plan de estudios* (§5.3.6); una materia puede
-declarar compatibilidad con uno o más laboratorios específicos.
-
-### 5.3.5 Plan de estudios (versión)
-
-**Capa**: dominio del problema (delimitado).
-
-**Definición**: versión formal del plan de estudios de una carrera.
-Se modela como entidad separada de la carrera para permitir el
-versionado: una misma carrera puede tener conviviendo varias
-versiones activas del plan (por ejemplo, un "Plan Original" para
-alumnos avanzados y un "Plan 2025" para los ingresantes recientes).
-
-**Atributos principales**: identificador, carrera a la que
-pertenece, nombre de la versión, descripción, fecha de creación.
-
-**Relaciones**: cada versión de plan pertenece a exactamente una
-carrera; una versión contiene muchas entradas de plan de estudios
-(§5.3.6); una versión puede estar asociada a uno o más ciclos
-lectivos.
-
-### 5.3.6 Entrada de plan de estudios
-
-**Capa**: dominio de la solución.
-
-**Definición**: relación entre una versión de plan y una materia,
-que registra la ubicación curricular de esa materia en esa versión.
-Esta entidad resuelve la relación muchos-a-muchos entre carreras (a
-través de versiones) y materias, aportando al vínculo los atributos
-que dependen del plan puntual: año, cuatrimestre y correlativas.
-
-**Atributos principales**: identificador, versión de plan, materia,
-carrera (denormalizada desde la versión), año del plan, cuatrimestre
-del plan, texto de correlativas.
-
-**Relaciones**: cada entrada vincula exactamente una versión de plan
-con exactamente una materia.
-
-### 5.3.7 Correlativa
-
-**Capa**: dominio de la solución.
-
-**Definición**: relación de precedencia entre dos materias dentro de
-una carrera. Si la materia B tiene como correlativa a la materia A,
-entonces A debe haberse cursado (según reglas del plan) antes que B.
-
-**Atributos principales**: carrera, materia, materia correlativa.
-
-**Relaciones**: cada correlativa referencia a una carrera y a dos
-materias.
-
-Cabe notar que las correlativas son parte del modelo pero no
-intervienen directamente en la asignación de aulas; su utilidad
-principal en el sistema es la validación de factibilidad para el
-alumno tipo de una carrera y año.
-
-### 5.3.8 Ciclo lectivo
-
-**Capa**: dominio del problema (delimitado).
-
-**Definición**: período académico operativo. En FCEIA cada año
-lectivo se divide en dos cuatrimestres; cada uno de esos
-cuatrimestres es un ciclo.
-
-**Atributos principales**: identificador (por ejemplo "2025-2C"),
-nombre, fecha de inicio, fecha de fin, descripción.
-
-**Relaciones**: un ciclo se vincula con una o más versiones de plan
-de estudios (indicando qué planes están activos ese cuatrimestre);
-un ciclo alberga uno o más cronogramas cargados y uno o más planes
-de cursada (§5.3.13).
-
-### 5.3.9 Dictado
-
-**Capa**: dominio de la solución.
-
-**Definición**: oferta efectiva de una materia en el marco de un
-ciclo determinado. Vincula una materia con uno o dos ciclos
-(cuatrimestral o anual) y captura la modalidad concreta de dictado
-para ese período: si se ofrece o no, si es virtual sólo para ese
-ciclo, cuándo empieza y cuándo termina.
-
-**Atributos principales**: identificador, materia, código legible
-del dictado (por ejemplo "MAT101-2025-2C"), fecha de inicio, fecha
-de fin, marca de virtualidad puntual (§5.5.2).
-
-**Relaciones**: cada dictado pertenece a una única materia y se
-vincula con uno o más ciclos.
-
-La existencia de la entidad *dictado* obedece a que la relación
-"materia dictándose en un ciclo" no es una simple pertenencia sino
-un objeto con atributos propios (fechas concretas, modalidad,
-virtualidad puntual) que la materia y el ciclo no aportan por
-separado.
-
-### 5.3.10 Comisión
-
-**Capa**: dominio del problema (delimitado).
-
-**Definición**: grupo de estudiantes que cursan una materia con un
-mismo esquema horario semanal. Una materia dictada en un ciclo
-puede tener una o varias comisiones; cada comisión se identifica
-por un número secuencial dentro de la materia.
-
-**Atributos principales**: identificador, número, nombre legible,
-cupo, materia a la que pertenece, plan de cursada al que pertenece,
-carrera asignada (opcional, para override de sede por comisión).
-
-**Relaciones**: cada comisión pertenece a exactamente una materia y
-a un plan de cursada; una comisión agrupa uno o más horarios
-semanales.
-
-### 5.3.11 Horario semanal
-
-**Capa**: dominio de la solución.
-
-**Definición**: franja horaria recurrente en la que se dicta una
-comisión durante un cuatrimestre. Un horario semanal identifica
-día de la semana, hora de inicio y hora de fin, y forma parte de
-una única comisión. Es la unidad sobre la que se decide la
-asignación de aulas (según se justificó en §4.3.1).
-
-**Atributos principales**: identificador, comisión, código de
-materia (denormalizado), día, hora de inicio, hora de fin, tipo de
-clase (teórica o laboratorio), marca de virtualidad puntual
-opcional, aula asignada (nullable).
-
-**Relaciones**: cada horario pertenece a exactamente una comisión.
-Cuando resulta de la asignación, tiene además un aula.
-
-### 5.3.12 Cronograma
-
-**Capa**: dominio del problema (delimitado).
-
-**Definición**: conjunto de horarios de dictado cargado como entrada
-del proceso, típicamente proveniente de un archivo Excel entregado
-por la coordinación cuatrimestre a cuatrimestre. Es el material
-crudo del que se derivan las comisiones y horarios del plan de
-cursada.
-
-**Atributos principales**: identificador, nombre, ciclo, fecha de
-carga, nombre del archivo fuente.
-
-**Relaciones**: un cronograma pertenece a un ciclo y contiene una o
-más entradas de cronograma; cada entrada es una fila normalizada del
-archivo.
-
-### 5.3.13 Plan de cursada
-
-**Capa**: dominio de la solución.
-
-**Definición**: escenario concreto de planificación para un ciclo.
-Incluye la lista completa de comisiones que se van a abrir, sus
-horarios semanales y (una vez corrido el asignador) las aulas
-asignadas. Un ciclo puede tener varios planes de cursada
-(típicamente para comparar escenarios alternativos), pero sólo uno
-activo por vez.
-
-**Atributos principales**: identificador, nombre, descripción,
-ciclo, cronograma del que fue generado, marca de plan activo.
-
-**Relaciones**: un plan de cursada pertenece a un ciclo; contiene
-todas las comisiones y horarios del cuatrimestre planificado; nace
-a partir de un cronograma.
-
-### 5.3.14 Clase
-
-**Capa**: dominio del problema (completo) y dominio de la solución.
-
-**Definición**: instancia concreta de dictado en una fecha
-específica del calendario. Nace por expansión de un horario semanal
-sobre el rango de fechas del ciclo.
-
-**Atributos principales**: identificador, horario del que deriva,
-fecha, hora de inicio, hora de fin, aula (heredada del horario),
-marca de ejecución.
-
-**Relaciones**: cada clase deriva de un horario semanal y pertenece
-por herencia a la misma comisión y al mismo plan.
-
-En la versión actual del sistema, la entidad *clase* tiene un rol
-principalmente informativo: el asignador de aulas decide a nivel
-del horario semanal, no de la clase puntual, y las clases heredan
-la asignación del horario. La entidad se mantiene para preservar la
-posibilidad futura de excepciones por fecha y para reflejar el
-calendario efectivo.
-
-### 5.3.15 Compatibilidad materia-laboratorio
-
-**Capa**: dominio de la solución.
-
-**Definición**: relación que declara cuáles laboratorios (aulas de
-tipo laboratorio) son técnicamente aptos para dictar la parte de
-laboratorio de una materia. Por ejemplo, una materia con contenido
-de electrónica declara compatibles a los laboratorios que cuentan
-con instrumental de electrónica.
-
-**Atributos principales**: materia, aula (con restricción a tipo
-laboratorio).
-
-**Relaciones**: cada entrada vincula una materia con un laboratorio
-compatible. Una materia puede declarar cero, uno o varios
-laboratorios compatibles; a la inversa, un laboratorio puede ser
-compatible con varias materias.
-
-### 5.3.16 Grupo de materias
-
-**Capa**: dominio de la solución.
-
-**Definición**: entidad que agrupa materias que comparten un mismo
-criterio de sedes admisibles. Cada materia pertenece a **exactamente
-un** grupo (partición estricta), y cada grupo declara dos
-configuraciones simultáneas de sedes:
-
-- Un **set duro**: las sedes admisibles cuando el grupo corre en
-  modo *duro* durante una corrida del asignador. En ese modo, sólo
-  las sedes del set son admisibles.
-- Una **lista blanda ordenada**: las sedes preferidas cuando el
-  grupo corre en modo *blando*. La primera es la preferida (paga
-  cero al objetivo del programa lineal) y el resto son alternativas
-  con un costo configurable por horario.
-
-El modo con el que corre cada grupo se elige por corrida desde el
-panel del asignador. Los grupos declaran ambas configuraciones al
-mismo tiempo, y el resolutor elige cuál aplicar en cada iteración.
-Esta separación entre criterio y modo permite, por ejemplo, correr
-un mismo plan una vez con criterio estricto para chequear
-factibilidad estructural y otra vez con criterio flexible para
-minimizar desplazamientos.
-
-**Atributos principales**: nombre, set duro de sedes, lista blanda
-ordenada de sedes, marca de "grupo sin clasificar" (grupo de
-*fallback* al que caen materias que no fueron asignadas
-explícitamente).
-
-**Relaciones**: cada materia pertenece a exactamente un grupo
-(relación uno-a-muchos desde el grupo hacia sus materias, con
-totalidad y disjunción); cada grupo declara cero o más sedes por
-cada tipo de configuración. Opcionalmente, un grupo puede asociarse
-a una o más carreras a los efectos de un chequeo de consistencia
-curatorial (no afecta al asignador).
-
-**Bootstrap institucional**: al inicializar el sistema, se crean
-automáticamente grupos derivados de la operatoria de FCEIA (grupo
-del ciclo básico común a las ingenierías, grupo del bloque troncal
-de ingeniería con sede propia, grupo de las materias comunes a
-licenciaturas y profesorados, y un grupo *específicas de una
-carrera* por cada carrera existente). Las materias se asignan
-inicialmente por convenciones sobre el código de materia, y los
-casos residuales caen al grupo sin clasificar para curación
-posterior.
-
-Este mecanismo interviene en las restricciones R10 (sedes duras
-admisibles) y R12 (preferencia blanda de sede) del programa lineal,
-que se definen formalmente en el capítulo 8.
+Del inventario completo de la facultad, el problema de asignación
+definido en el capítulo 4 sólo necesita una parte. Quedan **fuera del
+alcance**:
+
+- **Alumno** e **inscripción**: la asignación decide sobre horarios y
+  aulas, no sobre personas; del alumnado sólo importa la cantidad
+  esperada por comisión.
+- **Profesor**: no afecta la capacidad ni la disponibilidad de las
+  aulas, y la asignación de docentes es un problema distinto que no
+  abordamos.
+- **Asistencia**: es una consecuencia observable del dictado, no una
+  entrada del proceso.
+
+Quedan **dentro del alcance** la carrera, el plan de estudios y la
+materia (qué se dicta y con qué requerimientos); la comisión (los
+grupos de dictado); el aula y la sede (los recursos que se asignan);
+el ciclo lectivo (el marco temporal); el cronograma (la entrada del
+proceso) y la clase (cada encuentro concreto en el calendario).
+
+## 5.3 Las entidades del modelo
+
+Presentamos las entidades agrupadas según el papel que cumplen. Para
+cada una indicamos qué representa y para qué sirve; los atributos y
+su codificación se tratan en el capítulo 6 y en el anexo A.
+
+### 5.3.1 La oferta académica
+
+La **carrera** es un programa de grado o tecnicatura que ofrece la
+facultad. Su contenido se describe en un **plan de estudios**, que
+modelamos como entidad propia porque una misma carrera puede tener
+varias versiones vigentes a la vez (por ejemplo, un plan anterior
+para alumnos avanzados y uno nuevo para los ingresantes).
+
+La **materia** es una asignatura del catálogo de la facultad,
+independiente de la carrera: una misma materia puede figurar en los
+planes de varias carreras. Lo que la caracteriza para la asignación
+es su carga horaria semanal, dividida en horas de teoría y de
+laboratorio, y si se dicta en forma cuatrimestral o anual.
+
+Entre plan y materia hay una relación muchos-a-muchos que resolvemos
+con una entidad del dominio de la solución, la **entrada de plan de
+estudios**: indica en qué año y cuatrimestre del plan se ubica cada
+materia. Las **correlativas**, a su vez, expresan qué materias deben
+haberse cursado antes que otras dentro de una carrera; no intervienen
+en la asignación de aulas, pero sirven para verificar que el
+cronograma sea cursable por un alumno tipo.
+
+### 5.3.2 Los recursos físicos
+
+La **sede** es un edificio de la facultad que agrupa aulas. El
+**aula** es el espacio físico donde se dicta, pertenece a una única
+sede y se caracteriza por su capacidad y su tipo (teórica,
+laboratorio, anfiteatro, práctica).
+
+No todo laboratorio sirve para cualquier materia: una materia de
+electrónica necesita un laboratorio con instrumental de electrónica.
+La **compatibilidad materia-laboratorio** registra qué laboratorios
+son técnicamente aptos para la parte práctica de cada materia; una
+materia puede tener varios laboratorios compatibles y un laboratorio
+puede servir a varias materias.
+
+### 5.3.3 La planificación del cuatrimestre
+
+El **ciclo lectivo** es cada cuatrimestre de operación académica y
+contextualiza todo lo demás: en él están vigentes ciertas versiones
+de los planes de estudio, se carga el cronograma y se arma la
+planificación.
+
+El **dictado** representa la oferta efectiva de una materia en un
+ciclo. Existe como entidad porque "la materia dictándose en un ciclo"
+tiene características propias que ni la materia ni el ciclo aportan
+por separado: si se ofrece o no, sus fechas de inicio y fin, y si ese
+cuatrimestre se dicta en forma virtual.
+
+El **cronograma** es el conjunto de horarios que entrega la
+coordinación cada cuatrimestre, normalmente como planilla de cálculo.
+Es el material de partida del que se derivan las comisiones y sus
+horarios.
+
+El **plan de cursada** es un escenario concreto de planificación para
+un ciclo: reúne todas las comisiones que se van a abrir, sus horarios
+y, una vez resuelto el problema, las aulas asignadas. Un ciclo puede
+tener varios planes de cursada para comparar alternativas, pero sólo
+uno activo.
+
+La **comisión** es un grupo de estudiantes que cursa una materia con
+un mismo esquema semanal; una materia puede abrir varias comisiones.
+Cada comisión se compone de **horarios semanales**: franjas
+recurrentes con día, hora de inicio, hora de fin y tipo de clase
+(teoría o laboratorio). El horario semanal es la unidad sobre la que
+se decide el aula, según se justificó en §4.3.1. Finalmente, la
+**clase** es cada encuentro concreto en una fecha del calendario; se
+obtiene repitiendo el horario semanal a lo largo del ciclo y hereda
+su aula.
+
+### 5.3.4 El grupo de materias
+
+La pregunta "¿en qué sedes puede dictarse esta materia?" no se
+responde materia por materia, sino por bloques: las materias del
+ciclo básico de las ingenierías comparten un criterio, las del bloque
+troncal de ingeniería otro, las comunes a licenciaturas y
+profesorados otro, y las específicas de cada carrera el suyo. El
+**grupo de materias** captura ese criterio. Cada materia pertenece a
+exactamente un grupo, y cada grupo declara dos configuraciones de
+sedes:
+
+- un **conjunto duro**: las únicas sedes admisibles cuando el grupo
+  se resuelve con criterio estricto;
+- una **lista blanda ordenada**: las sedes preferidas cuando el
+  grupo se resuelve con criterio flexible; la primera no tiene costo
+  y las demás se aceptan con una penalización.
+
+El criterio con que se resuelve cada grupo se elige en cada corrida
+del asignador. Esto permite, por ejemplo, resolver un mismo plan una
+vez con criterio estricto, para verificar su factibilidad, y otra con
+criterio flexible, para reducir traslados. Las materias que todavía
+no se clasificaron caen en un grupo *sin clasificar*, cuya presencia
+el sistema señala como advertencia. El grupo de materias interviene
+en las restricciones R10 y R12 del programa lineal (capítulo 8).
 
 ## 5.4 Relaciones y multiplicidades
 
-La modelización del capítulo se apoya en unas pocas categorías de
-relaciones que conviene explicitar antes de mirar el diagrama
-completo. En §2.4.4 dijimos que los grafos bipartitos son la
-herramienta natural para las relaciones muchos-a-muchos; el
-diagnóstico del modelo ER de partida (§3.4) muestra que en el
-dominio de la asignación de aulas estas relaciones son la norma más
-que la excepción.
-
-### 5.4.1 Relaciones simples
-
-Son relaciones uno-a-uno o uno-a-muchos que no requieren tratamiento
-especial en el modelo:
-
-- Sede tiene muchas aulas; cada aula pertenece a exactamente una
-  sede.
-- Ciclo lectivo tiene uno o más cronogramas cargados; cada cronograma
-  pertenece a un único ciclo.
-- Ciclo lectivo tiene uno o más planes de cursada; cada plan de
-  cursada pertenece a un único ciclo.
-- Comisión tiene uno o más horarios semanales; cada horario semanal
-  pertenece a una única comisión.
-- Horario semanal genera muchas clases (una por semana del ciclo);
-  cada clase deriva de un único horario semanal.
-
-### 5.4.2 Relaciones muchos-a-muchos
-
-En el dominio de la asignación aparecen varias relaciones
-muchos-a-muchos que exigen introducir entidades intermedias del
-dominio de la solución para su representación:
+La mayoría de las relaciones del modelo son simples, de uno a muchos:
+una sede tiene muchas aulas, un ciclo tiene varios cronogramas y
+planes de cursada, una comisión tiene varios horarios semanales y
+cada horario genera muchas clases. Pero, como anticipamos en §2.4.1 y
+en el diagnóstico de §3.4, en la asignación de aulas las relaciones
+muchos-a-muchos son la norma más que la excepción. Cada una se
+resuelve con una entidad intermedia del dominio de la solución
+(Tabla 3).
 
 <!-- tabla: Relaciones muchos a muchos y sus entidades intermedias -->
-| Relación conceptual | Entidad intermedia | Atributos que aporta la intermedia |
+| Relación conceptual | Entidad intermedia | Qué aporta la intermedia |
 | --- | --- | --- |
-| Materia con Carrera | Entrada de plan de estudios | Año, cuatrimestre, correlativas, versión de plan |
-| Materia con Aula (tipo laboratorio) | Compatibilidad materia-laboratorio | Ninguno adicional; sólo la afirmación de compatibilidad |
-| Grupo de materias con Sede | Sede-de-grupo | Tipo de configuración (duro o blando) y orden dentro de la lista |
-| Materia con Ciclo lectivo | Dictado | Modalidad puntual, fechas efectivas, virtualidad del ciclo |
+| Materia con carrera | Entrada de plan de estudios | Año y cuatrimestre dentro de una versión del plan |
+| Materia con laboratorio | Compatibilidad materia-laboratorio | Sólo la afirmación de compatibilidad |
+| Grupo de materias con sede | Sede del grupo | Tipo de configuración (dura o blanda) y orden de preferencia |
+| Materia con ciclo lectivo | Dictado | Fechas efectivas y virtualidad del ciclo |
 
-La razón por la que en cada caso hay una entidad intermedia y no
-una tabla plana de dos claves es la señalada en §5.1: cuando la
-relación tiene *atributos propios* (año del plan, virtualidad del
-ciclo, tipo de configuración de sede), la entidad intermedia es
-imprescindible. Cuando no los tiene (compatibilidad
-materia-laboratorio) la entidad existe igualmente por consistencia
-de representación y por facilitar validaciones.
-
-Notar que la vieja relación *Carrera con Sede* del anteproyecto
-quedó reemplazada por la relación *Grupo de materias con Sede*: la
-preferencia de una carrera se expresa hoy a través del grupo de
-sus materias específicas. Ver §5.3.16 para el detalle del
-razonamiento.
-
-### 5.4.3 El caso especial de las jerarquías
-
-Tres pares de entidades del modelo participan en relaciones
-jerárquicas que se resuelven por herencia con posibilidad de
-override. Son casos particulares y de la lógica de negocio de
-FCEIA. Las tres se detallan en §5.5.
+Cuando la relación tiene características propias (el año del plan, la
+virtualidad del ciclo, el orden de preferencia), la entidad intermedia
+es imprescindible. Cuando no las tiene, como en la compatibilidad
+materia-laboratorio, la mantenemos igual por uniformidad y porque
+facilita las verificaciones.
 
 ## 5.5 Reglas de negocio e invariantes
 
-Con las entidades y las relaciones fijadas, corresponde recorrer las
-**reglas de negocio** del dominio: aquellas afirmaciones sobre
-cómo se comportan las entidades que no se derivan de sus definiciones
-sueltas y que el sistema debe garantizar. En el vocabulario de
-Evans, muchas de estas reglas son **invariantes** (§2.2.2): deben
-cumplirse en todo momento sobre toda instancia.
+Las **reglas de negocio** son afirmaciones sobre el comportamiento de
+las entidades que no se deducen de sus definiciones y que el sistema
+debe garantizar. Muchas son **invariantes** en el sentido de Evans
+[3] (§2.2.2): deben cumplirse en todo momento. Las agrupamos por
+familia.
 
-Presentamos las reglas agrupadas por familia. La numeración interna
-que aparece a continuación es sólo para poder referenciarlas después
-en el informe; el sistema mantiene su propio esquema de identificación
-que documentamos en §6 y en el anexo A.
+### 5.5.1 Reglas estructurales
 
-### 5.5.1 Reglas estructurales sobre entidades
-
-- **Todo horario semanal pertenece a exactamente una comisión.** No
-  hay horarios sueltos ni compartidos entre comisiones.
-- **Toda comisión pertenece a exactamente una materia y a exactamente
-  un plan de cursada.** No hay comisiones "genéricas" ni asignadas a
-  varias materias.
-- **Todo dictado pertenece a exactamente una materia.** La relación
-  con el ciclo lectivo puede ser con uno o dos ciclos (según sea
-  cuatrimestral o anual, ver §5.5.5).
-- **Sólo puede haber un plan de cursada activo por ciclo.** Los
-  demás quedan como escenarios comparativos, no ejecutables.
-- **Toda aula pertenece a exactamente una sede.** No hay aulas
-  compartidas entre sedes.
+- Todo horario semanal pertenece a exactamente una comisión.
+- Toda comisión pertenece a exactamente una materia y a un plan de
+  cursada.
+- Todo dictado pertenece a una materia y se vincula con uno o dos
+  ciclos (§5.5.5).
+- Cada ciclo tiene a lo sumo un plan de cursada activo; los demás son
+  escenarios de comparación.
+- Toda aula pertenece a exactamente una sede.
 
 ### 5.5.2 Regla de virtualidad jerárquica
 
-La modalidad *virtual* (una clase que se dicta a distancia y no
-consume aula) admite ser declarada en tres niveles del modelo:
-
-- A nivel **materia**, indicando que la materia se dicta virtual por
-  diseño (por ejemplo, materias asincrónicas del último tramo de
-  ciertas carreras).
-- A nivel **dictado**, indicando que la materia es virtual sólo en
-  ese ciclo (por ejemplo, un recursado que se ofrece por
-  videoconferencia excepcionalmente).
-- A nivel **horario semanal**, indicando que un horario puntual de
-  una comisión no consume aula (por ejemplo, una comisión híbrida
-  donde algunos encuentros son presenciales y otros virtuales).
-
-La resolución es **jerárquica con override**: la marca más específica
-que tenga un valor definido prevalece. En cada horario se resuelve
-en cascada: si el horario tiene virtualidad definida, gana esa; si
-no, gana la del dictado; si el dictado tampoco tiene, gana la de la
-materia. El sistema expone esta resolución mediante una función
-`resolve_virtual(horario, dictado, materia)` que devuelve el valor
-efectivo.
-
-La invariante asociada es que **los horarios efectivamente virtuales
-no participan del proceso de asignación de aulas**: se filtran antes
-de armar el programa lineal.
+Un horario *virtual* se dicta a distancia y no consume aula. La
+virtualidad puede declararse en tres niveles: en la **materia** (se
+dicta virtual por diseño), en el **dictado** (es virtual sólo ese
+cuatrimestre) o en el **horario semanal** (un encuentro puntual de
+una comisión híbrida). Se resuelve en cascada: prevalece el nivel más
+específico que tenga un valor definido; si el horario no lo define,
+se toma el del dictado, y si tampoco, el de la materia. La invariante
+asociada es que **los horarios efectivamente virtuales no participan
+de la asignación**: se excluyen antes de armar el programa lineal.
 
 ### 5.5.3 Regla de sedes admisibles por grupo de materias
 
-Cada materia tiene un conjunto `Sed(m)` de **sedes admisibles** que
-se resuelve consultando el grupo al que la materia pertenece
-(§5.3.16) y el modo con el que ese grupo corre en la corrida
-actual:
+Cada materia tiene un conjunto de **sedes admisibles** que surge de su
+grupo (§5.3.4) y del criterio con que ese grupo se resuelve:
 
-- Si el grupo corre en modo **duro** con set no vacío, el conjunto
-  `Sed(m)` es exactamente el set duro del grupo.
-- Si el grupo corre en modo **duro** con set vacío, el conjunto se
-  toma como *fallback* permisivo (todas las sedes admisibles). Este
-  caso se reserva para el grupo *sin clasificar*, cuya presencia
-  con materias asignadas se reporta como advertencia curatorial.
-- Si el grupo corre en modo **blando**, todas las sedes son
-  admisibles, pero la primera sede de la lista blanda es la
-  preferida: el resolutor la elige gratis y castiga con un costo
-  configurable la elección de una alternativa.
-- Como **excepción** a lo anterior, si existe un laboratorio
-  compatible con la materia (§5.3.15) cuya sede no pertenece al
-  set del grupo, esa sede también se acepta para esa materia. La
-  compatibilidad física del laboratorio prevalece sobre la
-  preferencia curricular del grupo.
+- con criterio **estricto**, las sedes admisibles son las del
+  conjunto duro del grupo; si ese conjunto está vacío (caso reservado
+  al grupo sin clasificar), se admiten todas;
+- con criterio **flexible**, se admiten todas las sedes, pero elegir
+  otra que no sea la primera de la lista tiene un costo;
+- como **excepción**, si la materia tiene un laboratorio compatible
+  en una sede fuera de su grupo, esa sede también se admite: la
+  aptitud física del laboratorio prevalece sobre la preferencia
+  curricular.
 
-La invariante asociada es que **toda asignación de aula respeta el
-conjunto de sedes admisibles del horario que se está asignando**.
-Formalmente: para un horario `h` con materia `m`, si `a` es el aula
-asignada y la sede de `a` no está en `Sed(m)`, entonces `a` debe ser
-un laboratorio compatible con `m` (de lo contrario la asignación es
-inválida).
-
-Notar que este esquema unifica dos preocupaciones que en el modelo
-del anteproyecto vivían en tablas separadas: la habilitación
-carrera-sede (para materias exclusivas) y la sede default para
-materias comunes. Con grupos, la primera se expresa a través del
-grupo *específicas de una carrera*, y la segunda a través de los
-grupos transversales (ciclo básico, comunes de licenciaturas y
-profesorados, inglés). El comisionamiento con override
-carrera-asignada sobrevive como etiqueta visual a nivel comisión,
-pero ya no interviene en la resolución del asignador.
+La invariante asociada es que **toda aula asignada está en una sede
+admisible para la materia del horario, o bien es un laboratorio
+compatible con ella**. Este esquema reúne en un solo mecanismo dos
+preocupaciones de la operatoria: las sedes propias de cada carrera
+(a través del grupo de sus materias específicas) y las sedes
+habituales de las materias comunes (a través de los grupos
+transversales).
 
 ### 5.5.4 Regla de recursado
 
-En FCEIA, algunas carreras ofrecen materias del cuatrimestre opuesto
-al ciclo en curso, para facilitar el recursado (por ejemplo, una
-materia del segundo cuatrimestre puede dictarse también en el
-primero para alumnos que la deban recuperar). Esta política se
-codifica con una regla jerárquica análoga a la de virtualidad:
-
-- A nivel **carrera**, la carrera declara si ofrece recursado.
-- A nivel **materia**, la materia puede *overridear* el flag de la
-  carrera: forzar que se ofrezca recursado aunque la carrera no lo
-  haga en general, o inversamente.
-
-La resolución vuelve a ser jerárquica: el nivel más específico gana
-cuando tiene un valor definido; en caso contrario se hereda del
-nivel superior.
-
-La invariante asociada es que **al generarse los dictados de un
-ciclo, sólo se instancian aquellos que la regla de recursado permite
-para ese ciclo**. El sistema expone esta lógica en una función
-`resolve_dicta_recursado(materia, carrera)` que devuelve el valor
-efectivo.
+Algunas carreras ofrecen materias también en el cuatrimestre opuesto
+al que les corresponde, para facilitar el recursado. La política se
+declara en dos niveles con la misma lógica de cascada que la
+virtualidad: la **carrera** indica si ofrece recursado y la
+**materia** puede sobrescribir esa indicación en un sentido u otro.
+La invariante asociada es que **al generar los dictados de un ciclo
+sólo se crean los que la regla de recursado permite**.
 
 ### 5.5.5 Regla de materias anuales
 
-Las materias declaradas como anuales se dictan a lo largo de los dos
-cuatrimestres del año lectivo. La regla asociada:
-
-- Un dictado de materia anual se vincula con **dos ciclos** (el 1C
-  y el 2C del mismo año), no con uno solo.
-- Los horarios del dictado anual son los mismos en ambos ciclos.
-- El asignador de aulas se corre por ciclo: cada cuatrimestre
-  resuelve independientemente, pero la coordinación entre
-  cuatrimestres es responsabilidad del proceso operativo, no del
-  modelo.
-
-La invariante asociada es que **todo dictado tiene una cantidad de
-vínculos con ciclos consistente con la periodicidad de su materia**:
-cuatrimestral vincula con exactamente un ciclo, anual con
-exactamente dos ciclos del mismo año lectivo.
+Una materia anual se dicta durante los dos cuatrimestres del año, por
+lo que su dictado se vincula con ambos ciclos y mantiene los mismos
+horarios en los dos. El asignador resuelve cada cuatrimestre por
+separado; la coordinación entre ambos queda a cargo de la operatoria.
+La invariante es que **todo dictado se vincula con tantos ciclos como
+indica la periodicidad de su materia**: uno si es cuatrimestral, los
+dos del mismo año si es anual.
 
 ### 5.5.6 Regla de coherencia teoría-laboratorio
 
-Cada materia declara en su plan de estudios cuántas horas semanales
-son de teoría y cuántas de laboratorio. Al armarse las comisiones y
-sus horarios, se aplica la regla:
+En cada comisión, la suma de las duraciones de los horarios de teoría
+debe coincidir con las horas de teoría declaradas por la materia, y
+lo mismo para las de laboratorio. La regla se refleja en la
+restricción R5 del programa lineal (capítulo 8): si el cronograma no
+permite un reparto que respete la carga declarada, el problema
+resulta infactible.
 
-- La suma de duraciones de los horarios marcados como *teoría* de
-  una comisión debe coincidir con las horas de teoría declaradas
-  por la materia.
-- La suma de duraciones de los horarios marcados como *laboratorio*
-  de una comisión debe coincidir con las horas de laboratorio
-  declaradas por la materia.
+### 5.5.7 Reglas de política institucional
 
-Esta regla es determinante en la definición del programa lineal
-(restricción R5 del capítulo 8): si el cronograma no permite una
-partición teoría-laboratorio que satisfaga la carga declarada, el
-problema resulta infactible.
+La operatoria de la FCEIA impone además políticas ligadas a la
+logística de alumnos y docentes. Las enunciamos acá como reglas del
+dominio e indicamos dónde se las trata:
 
-### 5.5.7 Reglas de política institucional adicionales
-
-Además de las reglas anteriores, la operatoria de FCEIA impone
-políticas ligadas a la logística del alumno y del cronograma
-cuatrimestral. Se enuncian aquí como reglas del dominio para no
-perderlas de vista, indicando su estado de implementación:
-
-- **No superposición dentro del grupo curricular.** Para todo par
-  de materias del mismo (año, cuatrimestre, carrera), debe existir
-  al menos una combinación de comisiones cuyos horarios no se
-  superpongan. La invariante se enuncia sobre el plan de cursada
-  entero: se garantiza el progreso académico posible de un alumno
-  tipo. Implementada como validación en el flujo de generación del
-  plan (ver capítulo 9).
-- **Continuidad de sede entre bloques consecutivos del docente.**
-  Dos horarios de la misma comisión programados en el mismo día
-  con un gap menor a un margen configurable (30 minutos por
-  defecto) deben dictarse en la misma sede. Refleja que un mismo
-  docente no puede trasladarse entre sedes en un intervalo corto.
-  Implementada como restricción del programa lineal (ver
-  capítulo 8, restricción R13 eje docente).
-- **Continuidad de sede entre bloques consecutivos del alumno.**
-  Dos horarios de **materias distintas** del mismo grupo
-  curricular `(carrera, año, cuatrimestre)` programados en el
-  mismo día con un gap menor al mismo margen deben dictarse en la
-  misma sede (o en sedes con compatibilidad física de traslado).
-  Refleja que un alumno tipo del grupo debe poder trasladarse de
-  una clase a la siguiente. Implementada como restricción del
-  programa lineal (ver capítulo 8, restricción R13 eje alumno).
-- **Camino de cursada intersede factible.** Para cada terna
-  `(carrera, año, cuatrimestre)`, debe existir al menos una
-  combinación de comisiones (una por materia obligatoria) que un
-  alumno pueda cursar sin conflictos horarios ni traslados
-  intersede imposibles. Refina la regla clásica de "no
-  superposición dentro del grupo curricular" incorporando la
-  dimensión de sedes admisibles por grupo. Implementada como
-  chequeo estructural pre-solve del programa lineal (ver
-  capítulo 8, R13-camino).
-- **Forzar misma sede por comisión.** Todos los horarios de una
-  misma comisión deben caer en la misma sede. Opcional y activable
-  por corrida; refleja que ciertos docentes no viajan entre sedes
-  a mitad de semana. Implementada como restricción del programa
-  lineal (ver capítulo 8, restricción R14).
-- **Flexibilidad por calendario de exámenes.** Durante los períodos
-  de exámenes debe ser posible generar variantes transitorias de
-  asignación sin descartar la asignación de base. **Fuera del
-  alcance del programa lineal** en la versión actual; se maneja
-  operativamente (ver §4.6.2).
+- **Cursada sin superposiciones.** Para cada carrera, año y
+  cuatrimestre debe existir al menos una combinación de comisiones,
+  una por materia obligatoria, que un alumno pueda cursar sin
+  conflictos horarios ni traslados imposibles entre sedes. Se
+  verifica antes de resolver el programa lineal (capítulos 8 y 9).
+- **Continuidad de sede para el docente.** Dos horarios de la misma
+  comisión en el mismo día, separados por menos de un margen
+  configurable (30 minutos por defecto), deben dictarse en la misma
+  sede (restricción R13 del capítulo 8).
+- **Continuidad de sede para el alumno.** La misma condición se
+  aplica a horarios consecutivos de materias distintas de una misma
+  carrera, año y cuatrimestre, para que el alumno tipo pueda pasar de
+  una clase a la siguiente (restricción R13).
+- **Misma sede por comisión.** Opcionalmente, todos los horarios de
+  una comisión deben caer en la misma sede, porque ciertos docentes
+  no se trasladan entre sedes durante la semana (restricción R14).
+- **Flexibilidad por calendario de exámenes.** En los períodos de
+  exámenes debe poder generarse una variante transitoria de la
+  asignación sin perder la de base. Queda fuera del programa lineal y
+  se maneja en la operatoria (§4.6.2).
 
 ## 5.6 Diagrama UML del dominio
 
-Con las entidades definidas y las reglas explicitadas, se puede
-presentar ahora el diagrama de clases del dominio. El diagrama
-muestra las clases con sus atributos principales, las relaciones
-entre ellas y las multiplicidades. Se han omitido intencionalmente
-los atributos auxiliares (identificadores técnicos, fechas de
-auditoría, marcas de estado) para no recargar la vista; el
-tratamiento completo aparece en el capítulo 6 y en el anexo A.
+Las Figuras 4 y 5 resumen las entidades y sus relaciones en un
+diagrama de clases UML, partido en dos para que se lea con comodidad
+y sin atributos. Cada línea es una asociación y los números indican
+cuántas instancias participan de cada lado (`*` significa "muchas").
+La Figura 4 muestra la oferta académica y los recursos físicos; la
+Figura 5, la planificación del cuatrimestre. Ambas se conectan a
+través de la materia y el aula.
 
-<!-- figura: Diagrama de clases del dominio delimitado -->
+<!-- figura: Diagrama de clases del dominio: oferta académica y recursos -->
 ```mermaid
+---
+config:
+  class:
+    hideEmptyMembersBox: true
+---
 classDiagram
     direction TB
+    class Carrera
+    class PlanDeEstudios["Plan de estudios"]
+    class EntradaDePlan["Entrada de plan"]
+    class Materia
+    class GrupoDeMaterias["Grupo de materias"]
+    class Sede
+    class Aula
 
-    class Carrera {
-        codigo
-        nombre
-        titulo_otorgado
-        duracion_anios
-        dicta_recursado
-    }
-
-    class Materia {
-        codigo
-        nombre
-        horas_teoria
-        horas_laboratorio
-        periodo
-        virtual
-        dicta_recursado
-    }
-
-    class Sede {
-        nombre
-    }
-
-    class GrupoDeMaterias {
-        nombre
-        es_sin_clasificar
-    }
-
-    class SedeDeGrupo {
-        tipo
-        orden
-    }
-
-    class Aula {
-        codigo_aula
-        capacidad
-        tipo
-    }
-
-    class VersionPlanEstudios {
-        nombre
-        fecha_creacion
-    }
-
-    class EntradaPlanEstudios {
-        anio_plan
-        cuatrimestre_plan
-        correlativas
-    }
-
-    class Correlativa
-
-    class CicloLectivo {
-        id
-        fecha_inicio
-        fecha_fin
-    }
-
-    class Dictado {
-        codigo
-        inicio_dictado
-        fin_dictado
-        virtual
-    }
-
-    class Cronograma {
-        nombre
-        fecha_upload
-    }
-
-    class PlanDeCursada {
-        nombre
-        activo
-    }
-
-    class Comision {
-        numero
-        nombre
-        cupo
-        carrera_asignada
-    }
-
-    class HorarioSemanal {
-        dia
-        hora_inicio
-        hora_fin
-        tipo_clase
-        virtual
-    }
-
-    class Clase {
-        fecha
-        executed
-    }
-
-    class CompatibilidadMateriaLaboratorio
-
-    Carrera "1" --> "*" VersionPlanEstudios
-    VersionPlanEstudios "1" --> "*" EntradaPlanEstudios
-    EntradaPlanEstudios "*" --> "1" Materia
-    Carrera "1" --> "*" Correlativa
-    Correlativa "*" --> "2" Materia
-
-    Materia "1" --> "*" Dictado
-    Dictado "*" --> "1..2" CicloLectivo
-    CicloLectivo "1" --> "*" VersionPlanEstudios
-    CicloLectivo "1" --> "*" Cronograma
-    CicloLectivo "1" --> "*" PlanDeCursada
-
-    Cronograma "1" --> "1" PlanDeCursada
-    PlanDeCursada "1" --> "*" Comision
-    Comision "*" --> "1" Materia
-    Comision "1" --> "*" HorarioSemanal
-    HorarioSemanal "1" --> "*" Clase
-
-    HorarioSemanal "*" --> "0..1" Aula
-    Aula "*" --> "1" Sede
-
-    Materia "*" --> "*" Aula
-    CompatibilidadMateriaLaboratorio ..> Materia
-    CompatibilidadMateriaLaboratorio ..> Aula
-
-    Materia "*" --> "1" GrupoDeMaterias
-    GrupoDeMaterias "1" --> "*" SedeDeGrupo
-    SedeDeGrupo "*" --> "1" Sede
-    GrupoDeMaterias "*" --> "*" Carrera : asociaciones opcionales
-
-    Comision "*" --> "0..1" Carrera : carrera_asignada (etiqueta)
+    Carrera "1" -- "*" PlanDeEstudios
+    PlanDeEstudios "1" -- "*" EntradaDePlan
+    EntradaDePlan "*" -- "1" Materia
+    Materia "*" -- "1" GrupoDeMaterias : pertenece a
+    GrupoDeMaterias "*" -- "*" Sede : sedes admisibles
+    Sede "1" -- "*" Aula
+    Materia "*" -- "*" Aula : laboratorios compatibles
 ```
 
-Las clases sin lista de atributos (`Correlativa`,
-`CompatibilidadMateriaLaboratorio`) son entidades intermedias del
-dominio de la solución cuya única función es materializar una
-relación muchos-a-muchos. La entidad `SedeDeGrupo` sí lleva
-atributos propios (tipo y orden), por lo que aparece con recuadro
-completo aunque también materializa una relación muchos-a-muchos.
+<!-- figura: Diagrama de clases del dominio: planificación del cuatrimestre -->
+```mermaid
+---
+config:
+  class:
+    hideEmptyMembersBox: true
+---
+classDiagram
+    direction TB
+    class Materia
+    class Dictado
+    class CicloLectivo["Ciclo lectivo"]
+    class Cronograma
+    class PlanDeCursada["Plan de cursada"]
+    class Comision["Comisión"]
+    class HorarioSemanal["Horario semanal"]
+    class Aula
+
+    Materia "1" -- "*" Dictado
+    Dictado "*" -- "1..2" CicloLectivo
+    CicloLectivo "1" -- "*" Cronograma
+    CicloLectivo "1" -- "*" PlanDeCursada
+    Cronograma "1" -- "*" PlanDeCursada : origina
+    PlanDeCursada "1" -- "*" Comision
+    Materia "1" -- "*" Comision
+    Comision "1" -- "*" HorarioSemanal
+    HorarioSemanal "*" -- "0..1" Aula : se asigna
+```
+
+Las relaciones rotuladas *sedes admisibles* y *laboratorios
+compatibles* se materializan con las entidades intermedias de la
+Tabla 3. Para no recargar las figuras omitimos las correlativas y las
+clases, que se derivan de entidades ya presentes.
 
 ## 5.7 Recapitulación
 
-Este capítulo dejó formalizado el modelo conceptual del dominio de
-asignación de aulas para FCEIA. Los puntos que se retoman en los
-capítulos siguientes:
+El capítulo dejó fijado el modelo conceptual del dominio:
 
-1. **El modelado se organizó en tres capas**: dominio del problema
-   completo, dominio del problema delimitado y dominio de la
-   solución. Cada entidad tiene explícita la capa a la que pertenece
-   y por qué está en el modelo. Esto sostiene la trazabilidad entre
-   la operatoria del capítulo 3 y el diseño técnico de los capítulos
-   siguientes.
-2. **Las entidades del dominio quedaron definidas una a una**, con
-   sus atributos principales y sus relaciones con las demás. Todas
-   las entidades que van a aparecer en el modelo de datos del
-   capítulo 6, en el programa lineal del capítulo 8 y en la interfaz
-   de usuario del capítulo 10 son las mismas de este capítulo.
-3. **Se identificaron y trataron las relaciones muchos-a-muchos**
-   del dominio con entidades intermedias explícitas, coherentes con
-   la observación de §3.4 sobre la prevalencia de estas relaciones
-   en el problema.
-4. **Se enunciaron las reglas de negocio como invariantes**: reglas
-   estructurales, virtualidad jerárquica, sedes admisibles por
-   materia, política de recursado, materias anuales y coherencia
-   teoría-laboratorio. Cada regla queda explícita y con nombre para
-   ser referenciada después, y varias de ellas van a aparecer como
-   restricciones formales del programa lineal en el capítulo 8.
+1. **Tres capas de modelado**: dominio completo, dominio delimitado y
+   dominio de la solución, con la justificación de qué entra y qué
+   queda afuera.
+2. **Las entidades y su papel**, en el mismo vocabulario que usan la
+   interfaz y los capítulos siguientes.
+3. **Las relaciones muchos-a-muchos** resueltas con entidades
+   intermedias explícitas.
+4. **Las reglas de negocio como invariantes**: estructurales,
+   virtualidad, sedes admisibles, recursado, materias anuales,
+   coherencia teoría-laboratorio y políticas institucionales; varias
+   reaparecen como restricciones del programa lineal en el
+   capítulo 8.
 
-Con el modelo conceptual fijado, el capítulo siguiente lo traduce a
-un modelo de datos concreto: cómo se materializa cada entidad como
-tabla, cómo se codifican las relaciones y qué decisiones de diseño
-introduce el mapeo al motor relacional.
+El capítulo siguiente traduce este modelo a un modelo de datos
+concreto.

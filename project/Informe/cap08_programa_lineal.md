@@ -1,181 +1,152 @@
 # Capítulo 8. El problema de asignación como programa lineal entero
 
-Este es el capítulo técnico central del informe. Los cuatro
-capítulos anteriores prepararon el terreno: el capítulo 4 dejó
-formalizada la definición del problema como un problema de
-asignación de recursos bajo restricciones; el capítulo 5 fijó las
-entidades y reglas del dominio; el capítulo 6 las materializó en
-un esquema de datos; el capítulo 7 explicó cómo se organiza el
-código. Ahora corresponde entrar en el corazón del sistema y
-mostrar cómo se resuelve efectivamente el problema.
-
-La estrategia expositiva del capítulo sigue el patrón *cuerpo
-resumido con anexo exhaustivo* fijado en la estructura del informe
-(§2 de `estructura.md`): en el cuerpo se presenta el modelo
-completo con la profundidad suficiente para que la línea
-argumental cierre por sí misma. Los detalles exhaustivos, las
-demostraciones, las alternativas de formulación descartadas y los
-análisis finos de complejidad se remiten al **Anexo E, Desarrollo
-formal del programa lineal**.
+En los capítulos anteriores definimos el problema como una
+asignación de recursos bajo restricciones (capítulo 4), fijamos
+las entidades y reglas del dominio (capítulo 5) y mostramos cómo
+se organizan los datos y el sistema (capítulos 6 y 7). En este
+capítulo presentamos cómo se resuelve efectivamente el problema:
+lo modelamos como un programa lineal entero, explicamos cómo se
+diagnostica cuando no tiene solución y cómo se le comunica el
+resultado al operador. En el cuerpo damos el modelo con la
+profundidad necesaria para seguir el argumento; las derivaciones
+completas, las formulaciones alternativas descartadas y los
+análisis de complejidad están en el **Anexo E, Desarrollo formal
+del programa lineal**.
 
 ## 8.1 De la operatoria al modelo
 
-El problema de asignación de aulas quedó definido en el capítulo 4
-en dos formas complementarias: en su forma coloquial (la
-Secretaría Técnica tiene que decidir, para cada clase, en qué aula
-se dicta) y en su forma formal (un problema de asignación de
-recursos bajo restricciones, con costo ajustable). Este capítulo
-da el paso siguiente: **modelar ese problema como un programa
-lineal entero** que un resolutor pueda resolver de manera
+En el capítulo 4 el problema quedó planteado de dos maneras
+complementarias: en forma coloquial (la Secretaría Técnica tiene
+que decidir, para cada clase, en qué aula se dicta) y en forma
+formal (una asignación de recursos bajo restricciones, con costo
+ajustable). El paso siguiente es expresarlo como un **programa
+lineal entero** que un *resolutor* pueda tratar de manera
 sistemática.
 
 ### 8.1.1 Por qué programación lineal entera
 
-En §2.3 introdujimos la programación lineal entera como
-herramienta canónica de la investigación operativa para modelizar
-problemas de asignación combinatoria con restricciones
-estructuradas. Ese instrumental encaja con nuestro problema por
-tres razones que conviene explicitar antes de meternos en la
-formulación:
+En §2.3 presentamos la programación lineal entera como la
+herramienta clásica de la investigación operativa para problemas
+de asignación combinatoria con restricciones estructuradas. Encaja
+con nuestro problema por tres razones:
 
 - **Las decisiones son binarias.** Un horario semanal se asigna a
-  un aula (variable 1) o no se asigna (variable 0). No hay
-  fracciones ni matices. La variable binaria es la representación
-  natural.
+  un aula (variable 1) o no (variable 0); no hay fracciones.
 - **Las restricciones son lineales.** Todas las reglas del
-  capítulo 5 se pueden expresar como sumas y desigualdades entre
-  variables binarias, sin recurrir a funciones no lineales.
-- **El objetivo es cuantificable y lineal.** El costo asociado a
-  una asignación (sobre-ocupación, sub-ocupación, incumplimiento
-  de la preferencia de sede) se cuantifica horario por horario y
-  se agrega linealmente.
+  capítulo 5 se expresan como sumas y desigualdades entre
+  variables binarias.
+- **El objetivo es lineal.** El costo de una asignación
+  (sobreocupación, subocupación, alejamiento de la sede preferida)
+  se mide horario por horario y se suma.
 
-Estos tres puntos son los que permiten instanciar el problema
-como un programa lineal entero, delegarlo al resolutor y recibir
-o bien la solución óptima o bien un certificado de infactibilidad.
+Con estas tres condiciones, el resolutor devuelve o bien la
+solución óptima o bien la constancia de que no existe ninguna
+solución factible.
 
 ### 8.1.2 Qué decide el programa lineal y qué queda fuera
 
-El programa lineal decide, simultáneamente, tres cosas:
+El programa lineal decide, simultáneamente:
 
-1. **El aula asignada a cada horario semanal presencial.** Es la
-   decisión central: para cada horario `h` que se dicta
-   presencialmente en el ciclo, elegir un aula `a` en la que se
-   dicta.
-2. **El tipo de cada horario semanal cuando el cronograma no lo
-   fijó.** Algunos horarios llegan al asignador sin `tipo_clase`
-   definido (el operador dejó abierta la decisión "teórica o
-   laboratorio"). El programa lineal decide.
-3. **La redistribución opcional de coeficientes de asignación entre
-   comisiones de un mismo dictado.** Es un mecanismo opcional (por
-   defecto desactivado) que permite al resolutor proponer una
-   redistribución de la matrícula esperada entre las comisiones
-   de una materia si eso mejora la utilización de las aulas.
+1. **El aula de cada horario semanal presencial.** Es la decisión
+   central.
+2. **El tipo de los horarios que el cronograma dejó abierto.**
+   Cuando el operador no definió si un horario es de teoría o de
+   laboratorio, lo resuelve el modelo.
+3. **Una redistribución de la matrícula esperada entre las
+   comisiones de un mismo dictado**, si el operador la habilita y
+   si mejora el aprovechamiento de las aulas.
 
-Todo lo demás queda **fuera** del programa lineal. No decide qué
-comisiones se abren, no decide los horarios semanales de las
-clases (eso lo trae el cronograma), no maneja excepciones puntuales
-por fecha, no considera indisponibilidades transitorias de aulas y
-no incorpora preferencias personales de docentes. Estos límites
-son intencionales: mantener el modelo acotado permite resolverlo
-con garantías y en tiempos razonables.
+Todo lo demás queda **fuera**: el modelo no decide qué comisiones
+se abren ni en qué horarios se dictan (eso lo trae el
+cronograma), no trata excepciones puntuales por fecha ni
+indisponibilidades transitorias de aulas y no incorpora
+preferencias personales de los docentes. Estos límites son
+deliberados: un modelo acotado se resuelve con garantías y en
+tiempos razonables.
 
 ### 8.1.3 De vuelta al planteo del capítulo 4
 
-En §4.2 dijimos que un problema de asignación de recursos bajo
-restricciones tiene cuatro ingredientes: recursos, demanda,
-restricciones y criterio de optimalidad. En términos del programa
-lineal:
+En §4.2 identificamos los cuatro ingredientes de un problema de
+asignación de recursos bajo restricciones. En el programa lineal
+se traducen así:
 
-- **Recursos**: las aulas del catálogo, con sus tipos y
-  capacidades.
-- **Demanda**: los horarios presenciales del plan, con sus
-  materias, comisiones, inscriptos esperados y tipos declarados.
-- **Restricciones**: las reglas del capítulo 5 traducidas a
-  desigualdades lineales sobre las variables binarias.
-- **Criterio**: la función objetivo que combina sobre-ocupación,
-  sub-ocupación y desvío de la sede preferida, con pesos
-  configurables.
-
-La formulación matemática que sigue codifica exactamente estos
-cuatro ingredientes.
+- **Recursos**: las aulas, con sus tipos y capacidades.
+- **Demanda**: los horarios presenciales del plan, con su
+  materia, comisión, inscriptos esperados y tipo declarado.
+- **Restricciones**: las reglas del capítulo 5, escritas como
+  desigualdades lineales.
+- **Criterio**: una función objetivo que combina sobreocupación,
+  subocupación y alejamiento de la sede preferida, con pesos
+  ajustables.
 
 ## 8.2 Formulación matemática resumida
 
-Presentamos el programa lineal en su forma canónica: conjuntos,
-parámetros, variables, función objetivo, restricciones. La
-notación busca cercanía con la del capítulo 5 (nombres del
-dominio) y con la formulación estándar de investigación
-operativa. Las derivaciones completas y las decisiones puntuales
-de codificación se remiten al Anexo E.
+Presentamos el programa lineal en su forma habitual: conjuntos,
+parámetros, variables, función objetivo y restricciones. La
+notación sigue los nombres del dominio del capítulo 5 y la
+convención usual de la investigación operativa.
 
 ### 8.2.1 Conjuntos
 
-- `H`: horarios del plan que participan del modelo. Se subdivide
-  en `H` propiamente dicho (horarios presenciales) y `H_∅`
-  (horarios virtuales que participan del balance teoría-lab pero
-  no ocupan aula).
-- `A`: aulas del catálogo, con sus subconjuntos `A_teo` (aulas
-  teóricas y anfiteatros) y `A_lab(m)` (laboratorios compatibles
-  con la materia `m`).
-- `C`: comisiones activas del plan; para cada comisión `c`, `H(c)`
-  son sus horarios.
-- `M`: materias que aparecen en el plan.
-- `S`: sedes; para cada aula `a`, `sede(a) ∈ S` es la sede donde
-  vive el aula.
-- `G`: grupos de materias del catálogo; para cada materia `m`,
-  `grupo(m) ∈ G` es el grupo al que pertenece (partición
-  estricta).
-- `Sim`: grupos maximales de simultaneidad, subconjuntos de
-  horarios que se dictan al mismo tiempo del mismo día. Cada
-  grupo `S ∈ Sim` es candidato a compartir aula.
-- `P_R13`: pares de horarios contiguos con gap menor al margen
-  configurado. Se detectan dos ejes: pares de la misma comisión
-  (traslado del docente) y pares de materias distintas del mismo
-  grupo curricular `(carrera, año, cuatrimestre)` (traslado del
-  alumno).
+- `H`: horarios del plan que participan del modelo. Se distinguen
+  los presenciales y el subconjunto `H_∅` de horarios virtuales,
+  que cuentan para el balance entre teoría y laboratorio pero no
+  ocupan aula.
+- `A`: aulas, con los subconjuntos `A_teo` (aulas teóricas y
+  anfiteatros) y `A_lab(m)` (laboratorios compatibles con la
+  materia `m`).
+- `C`: comisiones activas del plan; `H(c)` son los horarios de la
+  comisión `c`.
+- `M`: materias del plan.
+- `S`: sedes; `sede(a)` es la sede del aula `a`.
+- `G`: grupos de materias; cada materia `m` pertenece a un único
+  grupo `grupo(m)`.
+- `Sim`: *grupos maximales de simultaneidad*, es decir, conjuntos
+  de horarios que se dictan al mismo tiempo el mismo día (§8.3.3).
+- `P_R13`: pares de horarios consecutivos separados por menos
+  tiempo que el margen fijado. Se consideran dos casos: horarios
+  de la misma comisión (traslado del docente) y horarios de
+  materias distintas de un mismo año y cuatrimestre de una
+  carrera (traslado del alumno).
 
 ### 8.2.2 Parámetros
 
 - `dur(h)`: duración en horas del horario `h`.
 - `cap(a)`: capacidad del aula `a`.
-- `tipo(h)`: tipo declarado del horario, o el símbolo `⊥` si
-  el cronograma dejó la decisión al modelo.
+- `tipo(h)`: tipo declarado del horario, o `⊥` si el cronograma
+  dejó la decisión al modelo.
 - `tipo(a)`: tipo del aula.
-- `insc(h)`: inscriptos esperados en el horario, calculados por
-  el servicio de pronósticos.
-- `hteo(m)`, `hlab(m)`: horas de teoría y laboratorio declaradas
-  por la materia.
-- `S_D(g)`, `S_B(g)`: set duro de sedes y lista blanda ordenada
-  de sedes del grupo `g`.
-- `modo(g) ∈ {DURO, BLANDO}`: modo con el que corre el grupo `g`
-  en la corrida actual (configurable por el operador).
+- `insc(h)`: inscriptos esperados en el horario, según el
+  pronóstico de matrícula.
+- `hteo(m)`, `hlab(m)`: horas de teoría y de laboratorio de la
+  materia.
+- `S_D(g)`, `S_B(g)`: conjunto obligatorio de sedes y lista
+  ordenada de sedes preferidas del grupo `g`.
+- `modo(g) ∈ {DURO, BLANDO}`: modo en que se aplica la regla de
+  sedes al grupo `g`, elegido por el operador.
 - `sede_pref(h)`: sede preferida del horario `h`, definida sólo
-  si su grupo corre en modo BLANDO.
-- `pin(h)`: aula fijada manualmente por el operador para el
-  horario `h`, si existe.
+  si su grupo está en modo BLANDO.
+- `pin(h)`: aula fijada manualmente por el operador para `h`, si
+  la hay.
 - Pesos y tolerancias del objetivo: `λ_over`, `λ_under`,
-  `λ_sede_pref`, `tol_over`, `tol_under`. Todos configurables
-  desde la interfaz.
+  `λ_sede_pref`, `tol_over`, `tol_under`, ajustables por el
+  operador.
 
 ### 8.2.3 Variables de decisión
 
 - `x[h, a] ∈ {0, 1}`: vale 1 si el horario `h` se asigna al aula
-  `a`. Se instancian sólo pares compatibles (aulas cuyo tipo
-  puede recibir al horario). Los horarios en `H_∅` no tienen
-  variables `x`.
-- `t[h] ∈ {0, 1}`: vale 1 si el horario `h` (que tenía
-  `tipo(h) = ⊥`) se resuelve como laboratorio, 0 si se resuelve
-  como teoría. Sólo se instancia cuando el tipo del horario
-  estaba indefinido.
-- `y[c, s] ∈ {0, 1}`: vale 1 si la comisión `c` cae en la sede
-  `s`. Sólo se instancia cuando el operador activa el toggle
-  "forzar misma sede por comisión" (restricción R14).
-- `over[h], under[h] ≥ 0`: sobre-ocupación y sub-ocupación
-  linealizadas del horario `h`.
-- `α[k] ∈ [0, 1]`: coeficiente redistribuido de la comisión `k`
-  dentro de su dictado. Sólo se instancia cuando el operador
-  activa el toggle de redistribución.
+  `a`. Sólo existen para pares compatibles; los horarios de `H_∅`
+  no tienen variables `x`.
+- `t[h] ∈ {0, 1}`: para los horarios con `tipo(h) = ⊥`, vale 1 si
+  se resuelven como laboratorio y 0 si se resuelven como teoría.
+- `y[c, s] ∈ {0, 1}`: vale 1 si la comisión `c` se dicta en la
+  sede `s`. Sólo se usa cuando se exige una única sede por
+  comisión (R14).
+- `over[h], under[h] ≥ 0`: sobreocupación y subocupación del
+  horario `h`.
+- `α[k] ∈ [0, 1]`: proporción de la matrícula del dictado que
+  corresponde a la comisión `k`. Sólo se usa cuando el operador
+  habilita la redistribución (R9).
 
 ### 8.2.4 Función objetivo
 
@@ -191,399 +162,294 @@ $$
 x[h, a]
 $$
 
-donde `H_BLANDO` son los horarios cuyo grupo corre en modo BLANDO
-con sede preferida definida.
+donde `H_BLANDO` son los horarios cuyo grupo está en modo BLANDO
+y tienen sede preferida.
 
 Los pesos por defecto son `λ_over = 10`, `λ_under = 1` y
-`λ_sede_pref = 5`. La asimetría `λ_over = 10 · λ_under` codifica
-que la sobre-ocupación (los alumnos no entran al aula) es un
-problema físico más grave que la sub-utilización (aula grande
+`λ_sede_pref = 5`. La asimetría entre los dos primeros expresa
+que la sobreocupación (los alumnos no entran en el aula) es un
+problema físico más grave que la subocupación (un aula grande
 desaprovechada), que es un problema económico.
 
 ### 8.2.5 Restricciones
 
-El modelo tiene once restricciones canónicas. Cada una tiene
-motivación en las reglas del capítulo 5. Las presentamos con su
-sigla estándar (R*n*), en el orden en que se van agregando al
-modelo. Las derivaciones formales y las alternativas de
-formulación descartadas están en el anexo E.
+Cada restricción traduce una regla del capítulo 5. Las numeramos
+R*n* y las presentamos en el orden en que se incorporan al
+modelo.
 
 **R1. Asignación única.** Cada horario presencial se asigna a
 exactamente un aula.
 
 $$\sum_{a \in A} x[h, a] = 1 \qquad \forall h \in H \setminus H_\emptyset$$
 
-**R3. Compatibilidad tipo aula - tipo clase.** Sólo se instancian
-las variables `x[h, a]` para pares compatibles: teóricas van a
-aulas teóricas o anfiteatros; laboratorios van a laboratorios
-compatibles con la materia. Los pares incompatibles quedan
-prohibidos por construcción del modelo.
+**R3. Compatibilidad entre tipo de aula y tipo de clase.** Las
+clases teóricas van a aulas teóricas o anfiteatros; los
+laboratorios, a laboratorios compatibles con la materia. Se
+cumple por construcción: las variables `x[h, a]` de pares
+incompatibles directamente no existen.
 
-**R4. No doble asignación.** Dos horarios que se solapan en el
-tiempo no comparten aula. Se formula por **grupos maximales de
-simultaneidad** en vez de por pares de horarios: para cada grupo
-`S ∈ Sim` y cada aula `a`,
+**R4. Sin superposición en un aula.** Dos horarios que se
+superponen en el tiempo no comparten aula. En lugar de escribirla
+par por par, se formula por grupos maximales de simultaneidad:
+para cada grupo `S ∈ Sim` y cada aula `a`,
 
 $$\sum_{h \in S} x[h, a] \le 1$$
 
-La motivación matemática de esta formulación (menos restricciones
-generadas y relajación lineal más fuerte) está en §2.4.5 y en el
-anexo E.
+Las ventajas de esta formulación se explican en §8.3.3.
 
-**R5. Partición teoría-laboratorio.** Para cada comisión con
-horas de teoría y de laboratorio declaradas, la suma de duraciones
-de horarios de cada tipo debe cerrar exactamente con las horas
-declaradas por la materia. Los horarios virtuales cuentan a los
-efectos del balance sin ocupar aula.
+**R5. Reparto entre teoría y laboratorio.** En cada comisión con
+horas de teoría y de laboratorio, la suma de las duraciones de
+sus horarios de cada tipo debe coincidir con las horas de la
+materia. Los horarios virtuales cuentan para este balance aunque
+no ocupen aula.
 
-**R6. Consistencia tipo-pool para horarios indefinidos.** Si el
-tipo del horario no vino fijado y la variable `t[h]` decide
-"teoría", el aula asignada debe ser teórica; si decide
-"laboratorio", debe ser un laboratorio compatible con la materia.
-El vínculo entre `t[h]` y el pool de aulas se codifica con
-restricciones lineales sobre las sumas de variables `x`.
+**R6. Coherencia de tipo en horarios abiertos.** Si `t[h]` decide
+que un horario sin tipo es de teoría, el aula asignada debe ser
+teórica; si decide laboratorio, debe ser un laboratorio
+compatible con la materia. El vínculo se expresa con
+desigualdades lineales entre `t[h]` y las variables `x`.
 
-**R7. Definición lineal de sobre y sub-ocupación.** Las
-variables `over[h]` y `under[h]` se definen como el exceso o
-faltante del aula asignada frente a los inscriptos esperados,
-con tolerancias configurables:
+**R7. Sobreocupación y subocupación.** Las variables `over[h]` y
+`under[h]` miden el exceso o el faltante de capacidad del aula
+asignada frente a los inscriptos esperados, con tolerancias:
 
 $$
 \text{over}[h] \ge \text{insc}(h) - (1 + \text{tol\_over}) \sum_{a} \text{cap}(a) \cdot x[h, a]
 $$
 
-y análogamente para `under[h]`. Como el objetivo minimiza ambas
-variables, en el óptimo toman exactamente el valor del exceso o
-faltante.
+y análogamente para `under[h]`. Como el objetivo las minimiza, en
+el óptimo toman exactamente el valor del exceso o del faltante.
 
-**R9. Redistribución opcional de coeficientes.** Cuando el toggle
-`α` está activo, los inscriptos esperados dejan de ser constantes
-y pasan a ser el producto de un total por dictado por el
-coeficiente redistribuido `α[k]`. Las restricciones aseguran que
-los coeficientes de cada dictado sumen 1.
+**R9. Redistribución de la matrícula.** Cuando está habilitada,
+los inscriptos esperados de cada comisión dejan de ser un dato y
+pasan a ser el total del dictado multiplicado por `α[k]`; las
+proporciones de cada dictado deben sumar 1.
 
-**R10. Sedes admisibles por grupo de materias (modo duro).**
-Cuando el grupo de la materia corre en modo DURO, sólo se admiten
-aulas cuya sede pertenezca al set duro del grupo, salvo la
-excepción de laboratorio compatible: un aula listada en la
-compatibilidad materia-laboratorio se admite aunque su sede no
-esté en el set. Formalmente:
+**R10. Sedes admitidas por grupo de materias (modo duro).** Si el
+grupo de la materia está en modo DURO, sólo se admiten aulas de
+las sedes de su conjunto obligatorio:
 
 $$x[h, a] = 0 \quad \text{si} \quad \text{sede}(a) \notin S_D(\text{grupo}(m(h)))$$
 
-siempre que el grupo corra en modo DURO con set no vacío y `a`
-no sea un laboratorio compatible con la materia de `h`.
+siempre que el conjunto no esté vacío. La excepción son los
+laboratorios declarados compatibles con la materia, que se
+admiten aunque estén en otra sede.
 
-**R11. Pins manuales.** Cuando el operador fija manualmente el
-aula de un horario y activa el toggle "respetar ediciones
-manuales", la asignación se codifica como una restricción rígida:
+**R11. Aulas fijadas manualmente.** Si el operador fijó el aula
+de un horario y pidió respetar esas decisiones, se impone
 `x[h, pin(h)] = 1`.
 
-**R12. Preferencia blanda de sede.** Cuando el grupo corre en modo
-BLANDO, todas las sedes son admisibles (R10 no filtra), pero cada
-horario que cae en una sede distinta a la preferida suma
-`λ_sede_pref` al objetivo (ver §8.2.4).
+**R12. Preferencia de sede (modo blando).** Si el grupo está en
+modo BLANDO, todas las sedes son admisibles (R10 no se aplica),
+pero cada horario asignado fuera de la sede preferida suma
+`λ_sede_pref` al objetivo (§8.2.4).
 
-**R13. Continuidad de sede en pares en riesgo.** Para cada par
-`(h₁, h₂) ∈ P_R13` (con gap menor al margen configurado) y cada
-par de sedes distintas `(s₁, s₂)`, se impone
+**R13. Continuidad de sede entre horarios consecutivos.** Para
+cada par `(h₁, h₂) ∈ P_R13` y cada par de sedes distintas
+`(s₁, s₂)`,
 
 $$
 \sum_{a \in A: \text{sede}(a) = s_1} x[h_1, a] +
 \sum_{a \in A: \text{sede}(a) = s_2} x[h_2, a] \le 1
 $$
 
-Combinado con R1, la restricción equivale a "si `h₁` cae en `s₁`,
-entonces `h₂` no puede caer en `s₂`". Se aplica tanto al eje
-docente (misma comisión) como al eje alumno (materias distintas
-del mismo grupo curricular).
+Junto con R1, equivale a "si `h₁` se dicta en `s₁`, `h₂` no
+puede dictarse en `s₂`". Se aplica tanto a los traslados del
+docente como a los del alumno.
 
-**R14. Forzar misma sede por comisión (opcional).** Cuando el
-toggle correspondiente está activo, se introducen las variables
-`y[c, s]` con restricciones que aseguran que todas las asignaciones
-de horarios de la misma comisión caigan en la misma sede.
-
-Las once restricciones anteriores son el núcleo del modelo. El
-anexo E documenta la formulación completa restricción por
-restricción, con las decisiones puntuales de codificación
-(cuándo se filtra pre-modelo versus cuándo se agrega como
-restricción explícita, cómo se manejan los casos degenerados,
-etc.).
+**R14. Misma sede por comisión.** Cuando el operador lo exige,
+las variables `y[c, s]` obligan a que todos los horarios de una
+comisión se dicten en la misma sede.
 
 ## 8.3 Herramientas conceptuales para el diagnóstico
 
-Los conceptos matemáticos que el capítulo 2 introdujo como piezas
-teóricas encuentran su aplicación concreta al momento de
-diagnosticar el modelo. Se aplican en tres momentos: antes del
-resolutor, dentro del resolutor y después de él.
+Los resultados matemáticos presentados en el capítulo 2 se usan
+para diagnosticar el modelo: antes de resolverlo, durante la
+resolución y después de ella.
 
-### 8.3.1 Principio del palomar (pigeonhole)
+### 8.3.1 Principio del palomar
 
-El principio del palomar es la afirmación elemental de que si se
-distribuyen `n + 1` objetos en `n` cajas, alguna caja recibe al
-menos dos objetos (§2.4.2). En el asignador se aplica como cota
-inferior de infactibilidad: si en un instante de la semana hay
-`k` horarios simultáneos y sólo `k − 1` aulas compatibles con la
-unión de sus tipos, el problema es infactible. No hace falta
-correr el resolutor para saberlo.
-
-Este chequeo se implementa como parte del **diagnóstico estructural
-pre-solve** (§8.4). Se aplica primero de manera global (todos los
-horarios simultáneos contra todas las aulas compatibles) y luego
-en refinamientos por tipo (teóricas contra teóricas, laboratorios
-contra laboratorios compatibles con las materias involucradas).
+El *principio del palomar* (§2.4.2) dice que si se reparten
+`n + 1` objetos en `n` cajas, alguna recibe al menos dos. En el
+asignador funciona como prueba rápida de infactibilidad: si en un
+mismo momento de la semana hay `k` horarios simultáneos y sólo
+`k − 1` aulas compatibles, el problema no tiene solución, y no
+hace falta resolverlo para saberlo. La prueba se hace primero con
+todas las aulas y luego por tipo (teóricas por un lado,
+laboratorios compatibles por otro), como parte de la verificación
+previa (§8.4).
 
 ### 8.3.2 Teorema de Hall y apareamiento bipartito
 
-Cuando el principio del palomar no alcanza pero igualmente hay
-infactibilidad, la herramienta natural es el teorema de Hall
-(§2.4.3). Se construye un grafo bipartito con horarios de un lado
-y aulas del otro, con una arista por cada par compatible, y se
-verifica si existe apareamiento perfecto que asigne un aula
-distinta a cada horario. La existencia se caracteriza con la
-condición de Hall: para todo subconjunto de horarios, sus aulas
-vecinas alcanzan en cantidad.
+Cuando el palomar no detecta nada pero el problema igualmente es
+infactible, recurrimos al *teorema de Hall* (§2.4.3). Se arma un
+grafo bipartito con los horarios de un lado, las aulas del otro y
+una arista por cada par compatible. Existe una asignación que le
+da un aula distinta a cada horario si y sólo si todo subconjunto
+de horarios tiene, en conjunto, al menos tantas aulas vecinas
+como horarios.
 
-Cuando la condición falla, el sistema reporta el **testigo Hall**:
-el subconjunto mínimo de horarios y su conjunto de aulas vecinas
-más chicas. La lectura del testigo es directa: "estas materias
-compiten por estas aulas y no alcanzan". El chequeo se aplica en
-dos escalas: por instante de simultaneidad y por celda del mapa de
-saturación por sede.
+Cuando la condición falla, el sistema informa el subconjunto de
+horarios que la viola junto con sus aulas vecinas. La lectura es
+directa: "estas materias compiten por estas aulas y no alcanzan".
+La verificación se hace por momento de simultaneidad y por sede.
 
 ### 8.3.3 Grupos de simultaneidad
 
-La restricción R4 se podría formular por pares de horarios que se
-solapan; pero la formulación por **grupos maximales de
-simultaneidad** es equivalente y mejor. Un grupo maximal es un
-subconjunto de horarios activos en un mismo instante que no puede
-agrandarse sin dejar de estar todo simultáneo.
+Un grupo maximal de simultaneidad es un conjunto de horarios que
+están activos en un mismo momento y que no se puede agrandar sin
+incluir un horario que no se superponga con los demás. Formular
+R4 por grupos, en lugar de por pares de horarios, es equivalente
+pero mejor: genera menos restricciones y su relajación lineal es
+más ajustada, lo que reduce el trabajo de ramificación y acotación
+del resolutor (§2.3.3). El Anexo E compara ambas formulaciones
+sobre casos de prueba.
 
-La formulación por grupos genera menos restricciones (una por
-grupo maximal por aula en lugar de una por par) y su relajación
-lineal es más ajustada, lo que se traduce en menos nodos
-explorados durante la ramificación y acotación (§2.3.3). El
-anexo E documenta la comparación cuantitativa entre ambas
-formulaciones sobre casos de prueba.
+## 8.4 Verificación estructural previa
 
-## 8.4 Chequeo estructural pre-solve
+Antes de llamar al resolutor, el sistema hace una **verificación
+estructural previa** que detecta situaciones que hacen imposible
+cualquier asignación. Si encuentra al menos un bloqueo, la
+corrida se detiene y se informa el detalle, sin gastar tiempo en
+resolver un problema que ya sabemos que no tiene solución. Las
+situaciones que verifica son:
 
-Antes de invocar al resolutor, el sistema corre un **chequeo
-estructural pre-solve** que detecta situaciones garantizadas de
-infactibilidad sin necesidad de encender el motor. Si el chequeo
-detecta al menos un bloqueo, la corrida aborta con status
-`infeasible_estructural` y reporta el detalle; no se gasta tiempo
-del resolutor en un problema que ya sabemos que no tiene solución.
+1. **R1. Horarios sin aula posible**, por tipo, por compatibilidad
+   de laboratorio o por sede admitida.
+2. **R3+R4. Falta de aulas de un tipo en una franja.** Versión del
+   principio del palomar por tipo de aula: no basta con que
+   alcancen las aulas en total; tienen que alcanzar las del tipo
+   requerido.
+3. **R5. Reparto imposible entre teoría y laboratorio**, cuando
+   las duraciones de los horarios de una comisión no pueden
+   cerrar con las horas de la materia.
+4. **R11. Aula fijada que ya no es válida**, porque cambió de
+   tipo o su sede quedó fuera de las admitidas para el grupo.
+5. **R13. Horarios consecutivos sin sede común posible.**
+6. **R13 a nivel de recorrido.** Ninguna combinación de comisiones
+   le permite a un alumno de un año y cuatrimestre dados cursar
+   sin traslados imposibles.
+7. **Palomar por sede**, aplicado a cada franja y sede.
+8. **Hall por sede**, sobre la oferta de laboratorios
+   compatibles.
 
-Las familias de bloqueo que el chequeo cubre son:
-
-1. **R1. Horarios sin aula compatible.** Un horario sin ninguna
-   aula que pueda recibirlo por tipo o por compatibilidad de
-   laboratorio o por sede admisible.
-2. **R3+R4. Saturación por tipo dentro de una franja.**
-   Refinamiento del principio del palomar por pool de aulas: no
-   basta con que la unión de aulas alcance; deben alcanzar por
-   tipo requerido.
-3. **R5. Partición teoría-laboratorio infactible.** Cuando las
-   duraciones de los horarios de una comisión no cierran con las
-   horas declaradas por la materia.
-4. **R11. Pin manual apunta a un aula ya no compatible.** Cuando
-   el aula fijada manualmente dejó de ser válida (cambió de tipo,
-   la sede quedó fuera del set del grupo, etcétera).
-5. **R13. Par intersede sin sede común factible.** Cuando dos
-   horarios contiguos con gap menor al margen no tienen ninguna
-   sede común admisible.
-6. **R13-camino. Camino de cursada intersede infactible.** Cuando
-   no existe combinación de comisiones viable para algún grupo
-   curricular. Es la versión curricular de R13: refina la regla
-   asegurando que un alumno concreto pueda cursar sin traslados
-   imposibles.
-7. **Pigeonhole por celda.** Aplicación del principio del palomar
-   sobre celdas del mapa de saturación por sede.
-8. **Hall por celda.** Aplicación del teorema de Hall sobre celdas
-   del mapa de saturación con oferta de laboratorios compatibles.
-
-Cada bloqueo detectado se acompaña de un identificador de regla,
-severidad, título, descripción y lista de entidades involucradas.
-La interfaz los renderiza con acciones sugeridas para resolver el
-problema. Documentamos con nombre propio la razón por la que hacer
-este chequeo antes del solve mejora significativamente la
-experiencia operativa: hasta que se sumó, correr el resolutor con
-un plan estructuralmente roto podía consumir varios minutos de
-tiempo de CBC antes de reportar infactibilidad sin ninguna pista
-concreta.
+Cada bloqueo se informa con la regla involucrada, su gravedad,
+una descripción y las materias, comisiones o aulas afectadas,
+junto con una acción sugerida para resolverlo. Sin esta
+verificación, un plan con problemas estructurales podía ocupar al
+resolutor varios minutos y terminar en un "infactible" sin
+ninguna pista sobre la causa.
 
 ## 8.5 Construcción dinámica del programa lineal
 
-El programa lineal **no está hardcodeado**. Cada corrida arma el
-modelo desde cero a partir del estado actual de la base de datos
-y de la configuración que eligió el operador. Los pasos:
+El programa lineal no es fijo: en cada corrida se arma desde cero
+con los datos vigentes y las opciones que eligió el operador. Los
+pasos son:
 
-1. **Cargar los inputs**. Se leen las tablas involucradas
-   (horarios, aulas, comisiones, laboratorios compatibles, grupos
-   de materias, forecast) y se los normaliza en estructuras
-   internas. Se resuelve la virtualidad efectiva de cada horario
-   con la regla jerárquica del capítulo 5.
-2. **Filtrar horarios virtuales**. Los horarios que resultan
-   virtuales se marcan como pertenecientes a `H_∅`: participan
-   del balance R5 pero no ocupan aula.
-3. **Computar la matriz de compatibilidad**. Se calcula, para
-   cada par `(h, a)`, si el aula es compatible por tipo y por
-   sede admisible (aplicando el modo del grupo). Los pares
-   incompatibles no generan variables `x` (implementa R3 y R10
-   pre-modelo).
-4. **Computar los grupos maximales de simultaneidad**. Se
-   analiza la grilla semanal con un algoritmo de barrido de
-   eventos para producir los subconjuntos `Sim`.
-5. **Computar los pares intersede en riesgo**. Se detectan los
-   pares del eje docente y del eje alumno.
-6. **Instanciar el modelo**. Se declaran variables, se agregan
-   restricciones R1 a R14 (las que apliquen según la
-   configuración de la corrida), se define la función objetivo.
-7. **Resolver con CBC**. El resolutor recibe el modelo, aplica
-   ramificación y acotación (§2.3.3) y devuelve la solución
-   óptima o un certificado de infactibilidad, o un timeout si el
-   tiempo máximo configurado se agota.
+1. **Reunir los datos** de horarios, aulas, comisiones,
+   laboratorios compatibles, grupos de materias y pronósticos de
+   matrícula, y determinar qué horarios son virtuales según la
+   regla jerárquica del capítulo 5.
+2. **Separar los horarios virtuales** en `H_∅`: cuentan para R5
+   pero no ocupan aula.
+3. **Calcular la compatibilidad** de cada par horario-aula por
+   tipo y por sede admitida. Los pares incompatibles no generan
+   variables, con lo que R3 y R10 se cumplen de antemano.
+4. **Calcular los grupos de simultaneidad** recorriendo la grilla
+   semanal en orden cronológico.
+5. **Detectar los pares de horarios consecutivos en riesgo** de
+   traslado, del docente y del alumno.
+6. **Plantear el modelo**: variables, las restricciones que
+   correspondan según las opciones elegidas y la función
+   objetivo.
+7. **Resolver**: el resolutor aplica ramificación y acotación
+   (§2.3.3) y devuelve la solución óptima, la constancia de
+   infactibilidad o el aviso de que se agotó el tiempo máximo.
 
-Cada uno de estos pasos vive en el servicio
-`asignacion_aulas_service`. El anexo E documenta cada función y
-sus contratos con el resto del sistema.
+## 8.6 Aplicación de la solución
 
-## 8.6 Aplicación de la solución y persistencia
+Cuando el resolutor encuentra la solución óptima, el sistema la
+aplica al patrón semanal: cada horario presencial queda con el
+aula asignada y, si su tipo estaba abierto, con el tipo que
+resolvió el modelo. Los horarios virtuales quedan sin aula y las
+aulas fijadas manualmente que el operador pidió respetar no se
+modifican.
 
-Una vez que el resolutor devuelve una solución óptima, el sistema
-la aplica al patrón semanal:
-
-- Cada `HorarioDB` recibe el aula asignada por el modelo. Si el
-  horario tenía tipo indefinido y el modelo resolvió `t[h]`, se
-  persiste también el tipo.
-- Los horarios virtuales que no tomaron aula pero arrastraban un
-  `aula_id` de una corrida anterior (por ejemplo, porque en la
-  corrida previa eran presenciales) se sanean: se les libera el
-  `aula_id` para mantener la invariante "horario virtual sin
-  aula".
-- Los pins manuales que el toggle preserva quedan intactos.
-
-Todo el snapshot de la corrida se persiste como una fila
-`LPRunDB` con:
-
-- Configuración completa aplicada (pesos, tolerancias, modos por
-  grupo, toggles, timeout).
-- Estado final: `optimal`, `infeasible_estructural`, `infeasible`,
-  `timeout`, `error`.
-- Métricas agregadas: cantidad de horarios asignados, cantidad
-  reasignados respecto de la corrida anterior, sobre-ocupaciones,
-  sub-utilizaciones, tiempo del resolutor, valor de la función
-  objetivo.
-- Detalle serializado con la asignación por horario, el
-  diagnóstico estructural, el veredicto humano-legible y (cuando
-  aplica) el diagnóstico por relajación selectiva que se describe
-  a continuación.
+Cada corrida queda registrada con la configuración usada, el
+resultado (óptimo, infactible o tiempo agotado), los indicadores
+principales (horarios asignados y reasignados respecto de la
+corrida anterior, sobreocupaciones, subocupaciones, valor del
+objetivo) y, si corresponde, el diagnóstico de infactibilidad.
 
 ## 8.7 Diagnóstico por relajación selectiva
 
-Cuando el resolutor devuelve `infeasible` y el chequeo estructural
-pre-solve no había detectado bloqueos, el sistema dispara un
-**diagnóstico por relajación selectiva** para identificar la
-causa. La técnica es una aproximación práctica al concepto de
-*subsistema irreducible de infactibilidad* (IIS, del inglés
-*Irreducible Infeasible Subsystem*), que en teoría es el
-subconjunto mínimo de restricciones cuya interacción produce la
-infactibilidad. El anexo E documenta la técnica en detalle; en el
-cuerpo del informe alcanza con la intuición operativa:
+Cuando el resolutor declara el problema infactible y la
+verificación previa no había encontrado bloqueos, el sistema
+busca la causa con un **diagnóstico por relajación selectiva**.
+La técnica aproxima el concepto de *subsistema irreducible de
+infactibilidad*: el menor conjunto de restricciones cuya
+combinación impide toda solución. El detalle está en el Anexo E;
+en criollo, el procedimiento es el siguiente:
 
-1. **Relajación individual.** Se prueba, una a la vez, saltar cada
-   restricción candidata (R4, R5, R6, R10, R13, R14) y volver a
-   correr el modelo. La restricción que rescata la factibilidad
-   es una candidata a culpable.
-2. **Filtrado de falsos positivos.** Algunas relajaciones
-   funcionan por efecto colateral (dar libertad extra al
-   resolutor) sin ser la causa real. El sistema aplica filtros
-   heurísticos para descartar culpables espurios: por ejemplo,
-   R5 sólo cuenta como causa real si al relajarla efectivamente
-   aparecen materias con horas declaradas desalineadas.
-3. **Priorización de la causa principal.** Cuando quedan varios
-   culpables reales, se elige el que corresponde a la acción más
-   directa que puede tomar el operador: primero las restricciones
-   de sede (R10, R14, R13), después las estructurales (R4, R5,
-   R6).
-4. **Refinamiento cuando la causa es R10.** El sistema prueba
-   pasar cada grupo DURO a BLANDO por separado, para poder
-   recomendar al operador qué grupo específico relajar en vez
-   del genérico "hay un problema de sede".
-5. **Análisis de combinaciones.** Cuando ninguna relajación
-   individual rescata al modelo, la infactibilidad es
-   combinada. El sistema prueba pares de relajaciones (por
-   ejemplo, un grupo DURO a BLANDO más desactivar R14) y reporta
-   las combinaciones que funcionan.
+1. **Relajar de a una.** Se quita, de a una por vez, cada
+   restricción candidata (R4, R5, R6, R10, R13, R14) y se vuelve a
+   resolver. Si al quitar una el problema pasa a tener solución,
+   esa restricción es sospechosa.
+2. **Descartar falsos culpables.** Algunas relajaciones funcionan
+   sólo porque le dan holgura al resolutor, sin ser la causa real.
+   Por ejemplo, R5 sólo se considera causa si al relajarla
+   aparecen materias cuyas horas no cierran.
+3. **Priorizar.** Si quedan varias causas, se informa primero la
+   que admite la acción más directa del operador: las de sede
+   (R10, R14, R13) antes que las estructurales (R4, R5, R6).
+4. **Precisar el grupo cuando la causa es R10.** Se prueba pasar
+   cada grupo de modo DURO a BLANDO por separado, para recomendar
+   qué grupo concreto conviene flexibilizar.
+5. **Probar combinaciones.** Si ninguna relajación individual
+   alcanza, la infactibilidad es combinada: se prueban pares de
+   relajaciones (por ejemplo, flexibilizar un grupo y dejar de
+   exigir R14) y se informan los que funcionan.
 
-El resultado del diagnóstico se serializa en el snapshot de la
-corrida y la interfaz lo renderiza como recomendación accionable:
-"la causa probable es tal; para resolverla, hacer tal cosa". Esta
-capacidad de dar diagnósticos accionables es la que convierte al
-sistema, de una herramienta de optimización opaca, en un asistente
-operativo con el que el operador puede iterar.
+El resultado se presenta como una recomendación concreta: "la
+causa probable es tal; para resolverla, conviene hacer tal cosa".
+Esta capacidad es la que hace del sistema, más que una
+herramienta de optimización opaca, un asistente con el que el
+operador puede iterar.
 
 ## 8.8 Veredicto y transparencia
 
-Cada corrida del asignador termina con un **veredicto
-estructurado** que se persiste en el snapshot de la corrida. El
-veredicto tiene siempre los mismos campos, independientemente del
-resultado:
-
-- `status`: `optimal`, `infeasible_estructural`, `infeasible`,
-  `timeout` o `error`.
-- `resumen`: una descripción humana del resultado en una o dos
-  oraciones.
-- `causa_infactibilidad`: cuando aplica, la razón identificada
-  por el diagnóstico.
-- `bloqueos_diagnosticados`: la lista de bloqueos estructurales
-  detectados, con sus reglas asociadas.
-- `horarios_sin_asignar`: los horarios que quedaron sin aula
-  (en general vacío en corridas óptimas).
-- `restricciones_activas`: el dump completo de la configuración
-  usada en la corrida (todos los pesos, tolerancias, modos y
-  toggles).
-
-La interfaz muestra el veredicto siempre, en la cabecera del panel
-de resultado, con expanders opcionales para ver el detalle. La
-persistencia completa de la configuración permite reproducir
-cualquier corrida vieja con exactitud y comparar dos corridas con
-configuraciones distintas para entender qué cambió.
+Toda corrida termina con un **veredicto** de estructura fija,
+cualquiera sea el resultado: el estado final, un resumen en una o
+dos oraciones, la causa de infactibilidad si la hay, los bloqueos
+detectados con sus reglas, los horarios que quedaron sin aula y la
+configuración completa usada (pesos, tolerancias, modos y
+opciones). La interfaz muestra siempre el veredicto, con la
+posibilidad de desplegar el detalle. Como la configuración queda
+registrada, cualquier corrida puede reproducirse con exactitud y
+dos corridas pueden compararse para entender qué cambió.
 
 ## 8.9 Cierre del capítulo
 
-Este capítulo dejó formalizado el corazón algorítmico del sistema.
-Los puntos que se retoman después:
+En este capítulo formalizamos el núcleo del sistema:
 
-1. **El problema de asignación de aulas se modela como un
-   programa lineal entero** con variables binarias `x[h, a]` para
-   la asignación, variables auxiliares `t[h]`, `y[c, s]` y `α[k]`
-   para decisiones internas, y variables continuas `over[h]` y
-   `under[h]` para el objetivo. La formulación es equivalente al
-   problema del capítulo 4 y compatible con la operatoria del
-   capítulo 3.
-2. **Las once restricciones canónicas (R1-R14)** codifican las
-   reglas de negocio del capítulo 5: asignación única,
-   compatibilidad, no doble asignación, partición
-   teoría-laboratorio, sedes admisibles, pins, preferencia
-   blanda, continuidad intersede (docente y alumno), misma sede
-   por comisión opcional. Cada regla del dominio tiene su
-   traducción explícita.
-3. **El chequeo estructural pre-solve** (§8.4) evita gastar tiempo
-   del resolutor en problemas garantizados de infactibilidad y
-   aplica las herramientas conceptuales de §2.4 (palomar, Hall,
-   grupos de simultaneidad).
-4. **El diagnóstico por relajación selectiva** (§8.7) convierte
-   una respuesta "infactible" del resolutor en una recomendación
-   accionable: qué relajación individual o combinada rescata al
-   modelo, con priorización por accionabilidad.
-5. **El veredicto estructurado** (§8.8) garantiza transparencia
-   completa: toda la información de la corrida se persiste y se
-   puede consultar, reproducir y comparar.
+1. **El problema se modela como un programa lineal entero**, con
+   variables binarias `x[h, a]` para la asignación, variables
+   auxiliares `t[h]`, `y[c, s]` y `α[k]` para decisiones internas
+   y variables continuas `over[h]` y `under[h]` para el objetivo.
+2. **Las restricciones R1 a R14** traducen las reglas del
+   capítulo 5: asignación única, compatibilidad, ausencia de
+   superposiciones, reparto entre teoría y laboratorio, sedes
+   admitidas, aulas fijadas, preferencia de sede, continuidad de
+   sede para docentes y alumnos y, opcionalmente, una sede por
+   comisión.
+3. **La verificación estructural previa** (§8.4) evita resolver
+   problemas que no tienen solución, apoyándose en el principio
+   del palomar, el teorema de Hall y los grupos de simultaneidad.
+4. **El diagnóstico por relajación selectiva** (§8.7) convierte un
+   "infactible" en una recomendación concreta.
+5. **El veredicto** (§8.8) hace transparente cada corrida y
+   permite reproducirla y compararla.
 
-Con el modelo formalizado y las herramientas de diagnóstico
-disponibles, el capítulo siguiente cubre el conjunto de
-validaciones que envuelven al asignador para garantizar que los
-datos que llegan al modelo cumplen los invariantes que hacen
-falta para que las restricciones tengan sentido.
+El capítulo siguiente trata las validaciones que rodean al
+asignador y garantizan que los datos que llegan al modelo cumplen
+las condiciones que las restricciones dan por supuestas.

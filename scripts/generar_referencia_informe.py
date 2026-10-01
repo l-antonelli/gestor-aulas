@@ -187,6 +187,12 @@ def main():
     tcb.append(b); tcpr.append(tcb); fila.append(tcpr)
     tabla.element.append(fila)
 
+    # Resaltado amarillo para las secciones a revisar por el compañero
+    # (bloques `::: revisar` del fuente, ver scripts/informe_apa.lua).
+    res = estilos.add_style("Resaltado", WD_STYLE_TYPE.CHARACTER)
+    rpr = res.element.get_or_add_rPr()
+    hl = OxmlElement("w:highlight"); hl.set(qn("w:val"), "yellow"); rpr.append(hl)
+
     # Sin guiones separadores de sílabas.
     settings = doc.settings.element
     for el in settings.findall(qn("w:autoHyphenation")):

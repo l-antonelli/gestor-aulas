@@ -60,13 +60,14 @@ BLOQUE_MERMAID = re.compile(r"^```mermaid\s*\n(.*?)^```\s*$", re.MULTILINE | re.
 # Los diagramas más chicos conservan su tamaño natural para no verse estirados.
 ANCHO_MAXIMO_CM = 16.0
 ALTO_MAXIMO_CM = 24.0
+ALTO_FIGURA_INFORME_CM = 19.0
 
 # Config de mermaid: sin esto los nodos de flowchart envuelven el texto a 200 px
 # y los diagramas con descripciones largas quedan angostos y kilométricos.
 CONFIG_MERMAID = '{"flowchart": {"wrappingWidth": 450}}'
 
 
-def _ancho_diagrama(svg: Path) -> str:
+def _ancho_diagrama(svg: Path, alto_maximo_cm: float = ALTO_MAXIMO_CM) -> str:
     """Devuelve el ancho a usar en el docx.
 
     Parte del tamaño natural del diagrama y lo reduce proporcionalmente si
@@ -76,7 +77,7 @@ def _ancho_diagrama(svg: Path) -> str:
     if match:
         ancho_cm = float(match.group(1)) / 96 * 2.54
         alto_cm = float(match.group(2)) / 96 * 2.54
-        escala = min(1.0, ANCHO_MAXIMO_CM / ancho_cm, ALTO_MAXIMO_CM / alto_cm)
+        escala = min(1.0, ANCHO_MAXIMO_CM / ancho_cm, alto_maximo_cm / alto_cm)
         return f"{ancho_cm * escala:.1f}cm"
     return f"{ANCHO_MAXIMO_CM:.0f}cm"
 
@@ -326,7 +327,10 @@ def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> s
         png, svg = base.with_suffix(".png"), base.with_suffix(".svg")
         if not _renderizar_mermaid(m.group(2), png, svg):
             return f"```\n{m.group(2)}```"
-        return f"\n![{m.group(1)}]({png}){{width={_ancho_diagrama(svg)}}}\n"
+        # En el informe la figura lleva rótulo, título y nota: con más de
+        # 19 cm de alto no entran juntos en una página A4 y Google Docs
+        # la parte en tres páginas.
+        return f"\n![{m.group(1)}]({png}){{width={_ancho_diagrama(svg, ALTO_FIGURA_INFORME_CM)}}}\n"
 
     texto = FIGURA_CON_TITULO.sub(figura, texto)
     if BLOQUE_MERMAID.search(texto):
