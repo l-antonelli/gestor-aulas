@@ -1,0 +1,23 @@
+erDiagram
+    ciclos ||--o{ ciclo_plan_version : "activa"
+    plan_carrera_version ||--o{ ciclo_plan_version : "se activa en"
+    materias ||--o{ dictados : "se dicta como"
+    dictados ||--o{ dictado_ciclo : "se ofrece en"
+    ciclos ||--o{ dictado_ciclo : "ofrece"
+    ciclos |o--o{ schedules : "tiene"
+    schedules |o--o{ schedules : "se copia en"
+    schedules ||--o{ schedule_entries : "contiene"
+    materias ||--o{ schedule_entries : "referencia"
+    schedules ||--o{ schedule_validations : "instantáneas"
+    ciclos ||--o{ schedule_validations : "del ciclo"
+    schedules ||--o{ schedule_ignored_conflicts : "ignora pares"
+    ciclos { string id PK }
+    ciclo_plan_version { string ciclo_id PK }
+    plan_carrera_version { string id PK }
+    dictados { string id PK }
+    dictado_ciclo { string dictado_id PK }
+    schedules { string id PK }
+    schedule_entries { string id PK }
+    schedule_validations { string id PK }
+    schedule_ignored_conflicts { string schedule_id PK }
+    materias { string codigo PK }

@@ -15,27 +15,31 @@
 4. Facultad de Ciencias Exactas, Ingeniería y Agrimensura, *Sedes*,
    Rosario: Universidad Nacional de Rosario, s. f.
    https://web.fceia.unr.edu.ar/es/institucional/la-facultad/17-sedes.html
-5. Mattion, Aldo B., *El Proyecto de Ingeniería*, Buenos Aires: El
+5. Golumbic, Martin Charles, *Algorithmic Graph Theory and Perfect
+   Graphs*, Nueva York: Academic Press, 1980.
+6. Mattion, Aldo B., *El Proyecto de Ingeniería*, Buenos Aires: El
    Ateneo, 1992.
-6. Mintzberg, Henry, *La estructuración de las organizaciones*,
+7. Mintzberg, Henry, *La estructuración de las organizaciones*,
    Barcelona: Ariel, 2012 (ed. original: *The Structuring of
    Organizations*, Prentice-Hall, 1979).
-7. Mintzberg, Henry, *Diseño de organizaciones eficientes*, Buenos
+8. Mintzberg, Henry, *Diseño de organizaciones eficientes*, Buenos
    Aires: El Ateneo, 2000.
-8. Miró Julià, José, *Cómo escribir un texto académico*, Palma de
+9. Miró Julià, José, *Cómo escribir un texto académico*, Palma de
    Mallorca: Universidad de las Islas Baleares, 2011.
-9. Miró Julià, José, *Manual de escritura técnica*, Palma de Mallorca:
+10. Miró Julià, José, *Manual de escritura técnica*, Palma de Mallorca:
    Universidad de las Islas Baleares, 2010.
-10. Morán, Rogelio A. A., *Pautas metodológicas para la realización de
+11. Morán, Rogelio A. A., *Pautas metodológicas para la realización de
    Trabajos Finales*, Rosario: Departamento de Optimización y Control,
    FCEIA-UNR, 2000.
+12. Wolsey, Laurence A., *Integer Programming*, Nueva York: John Wiley
+   & Sons, 1998.
 
 > **Para completar:**
 >
 > - el libro de Morán de Investigación Operativa usado en Operativa 1
 >   y 2 (citado en la sección 2.3.6) y el material *Introducción a la
 >   Investigación Operativa* de la cátedra;
-> - las referencias de teoría de grafos y del teorema de Hall
+> - la referencia del teorema de Hall
 >   (sección 2.4);
 > - la documentación de las herramientas usadas (PuLP, CBC, SQLModel,
 >   Streamlit), si se citan en el capítulo 7;

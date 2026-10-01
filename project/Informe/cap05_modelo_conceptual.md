@@ -22,9 +22,9 @@ inscripciones, exámenes, aulas, materias, comisiones), pero no todas
 son relevantes para asignar aulas. Modelizar sin filtrar produce
 diagramas grandes y poco informativos; filtrar sin justificar impide
 reconstruir por qué ciertas entidades quedaron dentro y otras afuera.
-Por eso organizamos el modelo en **tres capas** (Figura 3).
+Por eso organizamos el modelo en **tres capas** (Figura @fig:capas).
 
-<!-- figura: Enfoque de modelado en tres capas -->
+<!-- figura: Enfoque de modelado en tres capas {#fig:capas} -->
 ```mermaid
 flowchart LR
     C1["<b>Dominio del problema<br/>(completo)</b><br/><br/>Todas las entidades reales<br/>que existen en la FCEIA"]
@@ -177,9 +177,9 @@ cada horario genera muchas clases. Pero, como anticipamos en §2.4.1 y
 en el diagnóstico de §3.4, en la asignación de aulas las relaciones
 muchos-a-muchos son la norma más que la excepción. Cada una se
 resuelve con una entidad intermedia del dominio de la solución
-(Tabla 3).
+(Tabla @tab:relaciones).
 
-<!-- tabla: Relaciones muchos a muchos y sus entidades intermedias -->
+<!-- tabla: Relaciones muchos a muchos y sus entidades intermedias {#tab:relaciones} -->
 | Relación conceptual | Entidad intermedia | Qué aporta la intermedia |
 | --- | --- | --- |
 | Materia con carrera | Entrada de plan de estudios | Año y cuatrimestre dentro de una versión del plan |
@@ -259,13 +259,15 @@ sólo se crean los que la regla de recursado permite**.
 
 ### 5.5.5 Regla de materias anuales
 
-Una materia anual se dicta durante los dos cuatrimestres del año, por
-lo que su dictado se vincula con ambos ciclos y mantiene los mismos
-horarios en los dos. El asignador resuelve cada cuatrimestre por
-separado; la coordinación entre ambos queda a cargo de la operatoria.
-La invariante es que **todo dictado se vincula con tantos ciclos como
-indica la periodicidad de su materia**: uno si es cuatrimestral, los
-dos del mismo año si es anual.
+Una materia anual se dicta a lo largo de los dos cuatrimestres del
+año. En la práctica, su dictado se crea con el primer cuatrimestre y,
+al generar los dictados del segundo, el sistema reutiliza ese mismo
+dictado en lugar de crear otro: la materia queda activa en los dos
+cuatrimestres, con los mismos horarios, sin que haya que cargarla
+dos veces. El asignador, en cambio, resuelve cada cuatrimestre por
+separado. La invariante es que **todo dictado se vincula con tantos
+ciclos como indica la periodicidad de su materia**: uno si es
+cuatrimestral, los dos del mismo año si es anual.
 
 ### 5.5.6 Regla de coherencia teoría-laboratorio
 
@@ -309,11 +311,11 @@ Las Figuras 4 y 5 resumen las entidades y sus relaciones en un
 diagrama de clases UML, partido en dos para que se lea con comodidad
 y sin atributos. Cada línea es una asociación y los números indican
 cuántas instancias participan de cada lado (`*` significa "muchas").
-La Figura 4 muestra la oferta académica y los recursos físicos; la
-Figura 5, la planificación del cuatrimestre. Ambas se conectan a
+La Figura @fig:clases-oferta muestra la oferta académica y los recursos físicos; la
+Figura @fig:clases-plan, la planificación del cuatrimestre. Ambas se conectan a
 través de la materia y el aula.
 
-<!-- figura: Diagrama de clases del dominio: oferta académica y recursos -->
+<!-- figura: Diagrama de clases del dominio: oferta académica y recursos {#fig:clases-oferta} -->
 ```mermaid
 ---
 config:
@@ -339,7 +341,7 @@ classDiagram
     Materia "*" -- "*" Aula : laboratorios compatibles
 ```
 
-<!-- figura: Diagrama de clases del dominio: planificación del cuatrimestre -->
+<!-- figura: Diagrama de clases del dominio: planificación del cuatrimestre {#fig:clases-plan} -->
 ```mermaid
 ---
 config:
@@ -370,7 +372,7 @@ classDiagram
 
 Las relaciones rotuladas *sedes admisibles* y *laboratorios
 compatibles* se materializan con las entidades intermedias de la
-Tabla 3. Para no recargar las figuras omitimos las correlativas y las
+Tabla @tab:relaciones. Para no recargar las figuras omitimos las correlativas y las
 clases, que se derivan de entidades ya presentes.
 
 ## 5.7 Recapitulación

@@ -11,9 +11,9 @@ llegue el momento de aplicarla.
 Los tres cuerpos provienen de disciplinas distintas (teoría de la
 organización, ingeniería de software y matemática aplicada), pero se
 articulan porque cada uno produce el insumo que necesita el siguiente,
-como muestra la Figura 1.
+como muestra la Figura @fig:cadena.
 
-<!-- figura: Cadena de disciplinas que articula el proyecto -->
+<!-- figura: Cadena de disciplinas que articula el proyecto {#fig:cadena} -->
 ```mermaid
 flowchart LR
     C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>estudio del trabajo, BPMN"]
@@ -80,7 +80,7 @@ este trabajo:
 La introducción ya caracterizó a la FCEIA con las dos tipologías:
 según Chiavenato [1], es una *organización compleja* (diferenciación
 horizontal alta, vertical moderada y dispersión espacial en dos
-sedes); según Mintzberg [6], es una *burocracia profesional*, cuya
+sedes); según Mintzberg [7], es una *burocracia profesional*, cuya
 parte clave es el núcleo operativo (los docentes) y cuyo mecanismo de
 coordinación principal es la normalización de habilidades. No
 repetimos aquí esas definiciones; sólo conviene remarcar dos
@@ -339,6 +339,13 @@ modelo natural de los problemas de asignación: si `X` son tareas e `Y`
 recursos, una arista entre `x` e `y` indica que la tarea `x` es
 compatible con el recurso `y`.
 
+La Figura @fig:bipartito ilustra estas ideas con cuatro clases
+simultáneas y cuatro aulas: cada línea une una clase con un aula
+compatible, y las líneas resaltadas forman un apareamiento que le da
+un aula distinta a cada clase.
+
+![Grafo bipartito de compatibilidad entre clases y aulas, con un apareamiento que satura a las clases](figuras/grafo_bipartito.png){#fig:bipartito width=9cm}
+
 Un *apareamiento* (*matching*) es un subconjunto de aristas en el que
 ningún vértice aparece más de una vez. Un apareamiento **satura** a
 `X` si cubre a todos sus vértices; si además `X` e `Y` tienen el mismo
@@ -372,6 +379,12 @@ es entonces una **condición necesaria** de factibilidad: si falla, el
 problema es infactible; si se cumple, todavía no hay garantía de que
 exista solución.
 
+La Figura @fig:palomar lo muestra con cuatro clases
+simultáneas y tres aulas: por más que se las reparta, dos clases
+terminan en la misma aula.
+
+![Principio del palomar: cuatro clases simultáneas y tres aulas](figuras/palomar.png){#fig:palomar width=11cm}
+
 ### 2.4.3 Teorema de Hall
 
 El criterio más fino lo da el *teorema de Hall* (1935), que
@@ -392,11 +405,11 @@ son compatibles".
 
 ### 2.4.4 Ejemplo comparativo palomar vs Hall
 
-La Tabla 1 muestra un caso en el que el palomar no alcanza y la
+La Tabla @tab:hall muestra un caso en el que el palomar no alcanza y la
 condición de Hall sí. Tres clases `h₁, h₂, h₃` se dictan a la misma
 hora y hay tres aulas disponibles `a, b, c`:
 
-<!-- tabla: Ejemplo de compatibilidades entre clases y aulas -->
+<!-- tabla: Ejemplo de compatibilidades entre clases y aulas {#tab:hall} -->
 | clase | aulas compatibles |
 | --- | --- |
 | `h₁` | `{a}` |
@@ -450,7 +463,7 @@ resto del informe:
 
 ### 2.5.1 Cómo se articulan las piezas
 
-Cada eslabón de la cadena de la Figura 1 habilita al siguiente. Sin
+Cada eslabón de la cadena de la Figura @fig:cadena habilita al siguiente. Sin
 modelo conceptual no hay lenguaje ubicuo, y cualquier estructura de
 datos sería una interpretación arbitraria. Sin modelo operativo
 computacional no hay sobre qué actuar: las reglas pueden estar claras

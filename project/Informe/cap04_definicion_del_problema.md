@@ -77,10 +77,10 @@ en lugar de inventarlos desde cero.
 
 ### 4.2.2 Ubicación del problema de asignación de aulas dentro de la familia
 
-La Tabla 2 muestra cómo se instancia cada elemento del marco en
+La Tabla @tab:familia muestra cómo se instancia cada elemento del marco en
 nuestro problema.
 
-<!-- tabla: Ubicación del problema dentro de la familia de problemas de asignación -->
+<!-- tabla: Ubicación del problema dentro de la familia de problemas de asignación {#tab:familia} -->
 | Elemento del marco | Instancia en nuestro problema |
 | --- | --- |
 | Entidades demandantes | **Horarios semanales de clase**: cada franja recurrente de dictado de una comisión, en un día y un rango horario, necesita un aula. |
@@ -297,15 +297,18 @@ una.
 
 El segundo rasgo, ligado a lo observado en el capítulo 3, es el
 **efecto cascada**: un cambio local puede obligar a reajustar
-muchas asignaciones en apariencia independientes. Supongamos que la
-comisión A está en el aula X y a mitad de cuatrimestre se abre una
-comisión B en la misma franja. Una de las dos debe moverse; si la
-única aula compatible libre estaba comprometida con otra comisión C
-en un horario contiguo, el reajuste se propaga hasta encontrar un
-nuevo equilibrio. Cuanto menos holgura de aulas libres haya en cada
-franja, más larga puede ser la cadena.
+muchas asignaciones en apariencia independientes. Supongamos que un
+aula deja de estar disponible, por ejemplo porque entra en
+mantenimiento, y que el horario que tenía asignado sólo entra en
+aulas que ya están ocupadas en esa franja. Para ubicarlo hay que
+desplazar a otro horario, que a su vez necesita un aula libre, y así
+sucesivamente, como muestra la Figura @fig:cascada. Cuanto
+menos holgura de aulas libres haya en cada franja, más larga puede
+ser la cadena.
 
-Por eso replanificar no es sólo atender el nuevo pedido: hay que
+![Efecto cascada: un aula en mantenimiento obliga a reacomodar tres horarios](figuras/efecto_cascada.png){#fig:cascada width=13cm}
+
+Por eso replanificar no es sólo atender el cambio puntual: hay que
 verificar que todo el resto siga siendo consistente. Un sistema con
 un modelo formal recalcula la cascada completa en segundos, mientras
 que una persona la resuelve por aproximaciones sucesivas y con

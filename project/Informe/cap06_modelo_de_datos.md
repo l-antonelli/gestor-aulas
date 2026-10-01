@@ -47,10 +47,10 @@ y cada línea, una relación entre dos tablas. Usamos la notación de
 *pata de gallo* (*crow's foot*): el extremo que se abre en tres
 trazos indica el lado *muchos* de la relación; la doble barra
 indica *exactamente uno*, y el círculo, que la relación es
-opcional. La Figura 6 presenta el modelo implementado, sin los
+opcional. La Figura @fig:er presenta el modelo implementado, sin los
 atributos de cada tabla, que se detallan en el anexo A.
 
-<!-- figura: Diagrama entidad-relación del modelo implementado -->
+<!-- figura: Diagrama entidad-relación del modelo implementado {#fig:er} -->
 ```mermaid
 erDiagram
     CARRERA ||--o{ VERSION_DE_PLAN : "tiene"
@@ -119,16 +119,36 @@ prometió a una cohorte aunque luego haya cambiado.
 
 ### 6.4.2 Comisión con dos posibles pertenencias
 
-La comisión es una entidad con tabla propia, porque el operador
+La comisión es una entidad con tabla propia, porque el usuario
 necesita editar sus atributos (nombre, cupo, carrera a la que se
-destina). Cada comisión pertenece **o bien** a un cronograma,
-donde funciona como modelo en construcción, **o bien** a un plan
-de cursada, donde ya es un compromiso operativo, pero nunca a
-ambos. Al generar un plan de cursada a partir de un cronograma,
-sus comisiones se copian, de modo que editar una no altera la
-otra. La regla "o bien una cosa o bien la otra" no se puede
-declarar en el motor, por lo que la garantiza el propio sistema al
-crear y modificar comisiones.
+destina). Cada comisión pertenece **o bien** a un cronograma **o
+bien** a un plan de cursada, pero nunca a ambos, y la separación
+responde a que cumplen papeles distintos.
+
+El cronograma es la propuesta horaria del cuatrimestre: un borrador
+que se carga, se corrige y se valida contra la oferta del ciclo
+(que estén todas las materias, que la partición entre teoría y
+laboratorio cierre, que no haya superposiciones dentro de cada grupo
+curricular y que exista un camino de cursada viable entre sedes).
+Sobre esa base se pueden generar uno o varios planes
+de cursada. El plan, en cambio, es el escenario con el que se
+trabaja la asignación, y suma lo que el cronograma no tiene:
+
+- **los inscriptos esperados** de cada comisión, a partir del
+  pronóstico de matrícula o de un valor que fija el usuario;
+- **su propia validación**, sobre las comisiones ya ajustadas y con
+  las excepciones que el usuario acepta para ese escenario;
+- **la corrida del asignador de aulas** y, con ella, las aulas
+  asignadas y las que el usuario fija a mano;
+- **las clases por fecha**, que repiten el patrón semanal a lo largo
+  del ciclo.
+
+Al generar un plan a partir de un cronograma, sus comisiones se
+copian, de modo que se puede ajustar o descartar un escenario sin
+alterar el cronograma ni los otros planes que salieron de él. La
+regla "o bien una cosa o bien la otra" no se puede declarar en el
+motor, por lo que la garantiza el propio sistema al crear y
+modificar comisiones.
 
 ### 6.4.3 Grupo de materias como partición
 
@@ -139,7 +159,7 @@ conjunto de materias, es decir, lo cubren por completo y sin
 superposiciones. Para que esa regla se cumpla incluso con materias
 recién cargadas, existe un grupo especial *sin clasificar* que las
 recibe por defecto; la interfaz lo señala con una advertencia para
-que el operador las ubique en su grupo curricular.
+que el usuario las ubique en su grupo curricular.
 
 Cada grupo guarda su lista de sedes junto con un indicador que
 distingue las dos configuraciones definidas en el capítulo 5: la
@@ -149,12 +169,12 @@ corrida del asignador se elige cuál aplicar.
 
 ### 6.4.4 Excepciones a la verificación de conflictos
 
-El operador puede marcar pares de materias cuyo solapamiento
+El usuario puede marcar pares de materias cuyo solapamiento
 horario se acepta deliberadamente, por ejemplo porque en la
 práctica no comparten alumnos. Cada excepción se guarda asociada a
 un cronograma o a un plan de cursada. Cuando las materias del par
 dejan de coincidir, la excepción pierde sentido y el sistema la
-descarta en la siguiente validación, informándolo al operador.
+descarta en la siguiente validación, informándolo al usuario.
 
 Conviene notar que la excepción sólo alcanza a la verificación de
 solapamiento. La verificación de traslado entre sedes la ignora a

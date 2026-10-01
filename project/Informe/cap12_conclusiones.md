@@ -134,10 +134,10 @@ cultura de rigor organizativo y operativo:
   sistema opera de forma local y sin autenticación centralizada,
   resulta crucial instituir rutinas periódicas de copia de seguridad
   de la base de datos.
-- **Coordinación del equipo operador.** Es indispensable formalizar
+- **Coordinación del equipo de usuarios.** Es indispensable formalizar
   acuerdos y protocolos internos que delimiten roles, momentos y
   permisos de edición, para evitar que las modificaciones de un
-  operador sobrescriban el trabajo de otro.
+  usuario sobrescriban el trabajo de otro.
 
 ## 12.5 Trabajos futuros
 

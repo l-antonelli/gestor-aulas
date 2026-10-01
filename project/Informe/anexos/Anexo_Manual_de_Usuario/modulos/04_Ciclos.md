@@ -75,20 +75,24 @@ tener varias versiones de su plan de estudios (Plan Original, Plan
 cuatrimestre dado.
 
 Por eso, al crear un ciclo nuevo, el sistema te obliga a **elegir
-como mínimo una versión de plan**. Por default marca la última de
-cada carrera, pero podés cambiar la selección.
+como mínimo una versión de plan**. Por defecto preselecciona la
+versión marcada como *activa* de cada carrera (si una carrera no
+tiene ninguna activa, toma la más reciente), pero podés cambiar la
+selección. Como hoy cada carrera tiene una sola versión, en la
+práctica quedan todas preseleccionadas. Los ciclos ya creados
+conservan las versiones con las que se armaron, aunque después se
+marque otra como activa.
 
 ### Un dictado es "esta materia se dicta en este ciclo"
 
 Un **dictado** es la afirmación: "la materia X se dicta efectivamente
-en el ciclo Y". Antes del sistema esto se manejaba con listas de
-Word o Excel; acá se modela como una fila en la base de datos.
+en el ciclo Y". En el sistema se modela como una fila en la base de datos.
 
 Regla clave a entender:
 
 > **Si el dictado existe, la materia se dicta ese ciclo. Si no
 > existe, no se dicta.** No hay un botón de "activar" o
-> "desactivar" — la existencia del dictado *es* la activación.
+> "desactivar": la existencia del dictado *es* la activación.
 
 Esto tiene una consecuencia práctica muy importante: **para dejar de
 dictar una materia en un ciclo, tenés que borrar el dictado**. No
@@ -118,7 +122,7 @@ materia.
 En el módulo de Ciclos vas a ver un selector de tres estados por
 cada dictado:
 
-- **Heredar** (default): usa lo que dice la materia del catálogo.
+- **Heredar** (por defecto): usa lo que dice la materia del catálogo.
 - **Virtual**: fuerza que ese dictado sea virtual este ciclo.
 - **Presencial**: fuerza que ese dictado sea presencial este ciclo,
   aunque la materia sea virtual de catálogo.
@@ -134,9 +138,13 @@ Se usa para **crear, listar y borrar ciclos**. Tiene tres bloques:
 1. **Ciclos registrados**: tabla con todos los ciclos creados. Ves
    ID, año, cuatrimestre, fechas y descripción.
 2. **Eliminar ciclo**: selector + botón. Ver la sección de tareas
-   más abajo — es una operación en cascada muy fuerte.
+   más abajo: es una operación en cascada muy fuerte.
 3. **Nuevo ciclo**: formulario para dar de alta un ciclo con sus
    fechas, cuatrimestre y las versiones de plan que le aplican.
+
+![Tabla de ciclos registrados y bloque para eliminar un ciclo](../capturas/ciclos/ciclos_registrados_y_eliminar.png)
+
+En la tabla de arriba se ve cada ciclo con sus fechas y, debajo de la línea divisoria, el selector con el botón **Eliminar**.
 
 ### Pestaña "📚 Dictados"
 
@@ -145,25 +153,52 @@ parte del tiempo. Se apoya en un selector de ciclo arriba de todo.
 Los bloques principales son:
 
 1. **Métricas resumen** del ciclo elegido: cantidad de carreras,
-   planes, materias, optativas.
-2. **Botones de operación**: "Crear Dictados" (bulk) y "Sincronizar
-   según reglas" (recalcula ante cambios).
+   planes, materias, optativas y materias con el recursado
+   configurado a mano. Más abajo, después del panel de
+   divergencias, hay una segunda fila con los dictados existentes,
+   los marcados como virtuales y las optativas.
+2. **Botones de operación**: **➕ Crear Dictados** (en bloque) y
+   **🔄 Sincronizar según reglas** (recalcula ante cambios), con un
+   aviso al lado que resume si hay divergencias.
 3. **Panel de divergencias**: muestra en un lugar centralizado
    cualquier desalineación entre lo que dicen las reglas y lo que
    está cargado como dictado. Es tu principal herramienta de
    verificación.
-4. **Cambios pendientes**: si estás editando toggles de virtual o
-   recursado, los cambios se acumulan acá y los aplicás en lote con
-   un solo botón.
-5. **Filtros**: por texto, estado (con/sin dictado), modalidad, año
-   del plan, cuatrimestre, optativas.
-6. **Grilla de dictados por carrera**: expander por carrera con las
-   materias exclusivas de esa carrera, separadas entre obligatorias
-   y optativas. Cada fila tiene los toggles de recursado y
-   modalidad, más los botones de crear o borrar dictado.
-7. **Expander "🔗 Comunes"**: al final, una única entrada por cada
-   materia que se comparte entre dos o más carreras (por ejemplo,
-   Análisis I).
+4. **Filtros de la lista**: por texto, estado (con/sin dictado),
+   modalidad virtual, año del plan, cuatrimestre del plan y
+   optativas, más los botones **📖 Abrir todas** y **📕 Cerrar
+   todas** para desplegar o contraer los desplegables.
+5. **Cambios pendientes**: si estás editando los selectores de
+   virtual o recursado, los cambios se acumulan en un bloque que
+   aparece arriba de la grilla y los aplicás en lote con un solo
+   botón.
+6. **Grilla de dictados por carrera**: desplegable por carrera con
+   su configuración (recursado y versión de plan) y las materias
+   exclusivas de esa carrera, separadas entre obligatorias y
+   optativas. Cada fila tiene los selectores de recursado y
+   modalidad, más el botón de crear o borrar dictado.
+7. **Desplegable "🔗 Comunes"**: al final, una única entrada por
+   cada materia que se comparte entre dos o más carreras (por
+   ejemplo, Análisis I), con un filtro propio por carrera.
+
+También hay un desplegable **ℹ️ Cómo funciona esta página** con un
+resumen de estas mismas reglas.
+
+![Pestaña Dictados: selector de ciclo, métricas y botones de operación](../capturas/ciclos/dictados_selector_metricas_y_botones.png)
+
+Arriba de todo se elige el ciclo; debajo están las métricas, los botones **Crear Dictados** y **Sincronizar según reglas**, y el aviso amarillo con el resumen de divergencias.
+
+![Filtros de la lista de dictados](../capturas/ciclos/dictados_filtros.png)
+
+Los filtros se combinan: una materia tiene que cumplirlos todos para aparecer en la lista.
+
+![Grilla de dictados de una carrera](../capturas/ciclos/dictados_grilla_por_carrera.png)
+
+Cada carrera tiene su desplegable con el bloque **Configuración** (el interruptor **Carrera dicta recursado** y la versión de plan) y, en cada fila, los selectores **Recursado** y **Virtual** y el botón **Borrar**.
+
+![Desplegable de materias comunes a varias carreras](../capturas/ciclos/dictados_expander_comunes.png)
+
+Las materias compartidas aparecen una sola vez, con las carreras que las comparten listadas debajo del nombre. Arriba hay un filtro para quedarte sólo con las comunes de ciertas carreras.
 
 ## Tareas comunes
 
@@ -177,18 +212,25 @@ una sola vez por cuatrimestre.
 1. Entrá a la página **📆 Ciclos** y quedate en la pestaña
    **📋 Ciclos**.
 2. Bajá hasta el bloque **Nuevo Ciclo**.
-3. Elegí el año (entre 2020 y 2100) y el cuatrimestre (1C o 2C). El
-   sistema arma el ID solo, con formato `{año}-{cuatri}C` (por
-   ejemplo, `2026-1C`).
-4. Cargá la fecha de inicio y la fecha de fin. La de fin tiene que
-   ser posterior a la de inicio.
-5. Escribí una descripción libre (opcional, pero conviene poner
-   algo tipo "Primer cuatrimestre 2026").
-6. En **Versiones de plan a asignar**, revisá el multiselect. Por
-   default el sistema marca la última versión de cada carrera. Si
-   una carrera tiene que usar una versión anterior, cambiá la
-   selección acá.
-7. Apretá **Crear ciclo**.
+3. Elegí el **Anio** (entre 2020 y 2100; por defecto, el año en
+   curso) y el **Cuatrimestre** (1C o 2C). El sistema arma el ID
+   solo, con formato `{año}-{cuatri}C` (por ejemplo, `2026-1C`).
+4. Cargá la **Fecha de inicio** y la **Fecha de fin**. La de fin
+   tiene que ser posterior a la de inicio.
+5. Escribí una **Descripcion (opcional)** libre; conviene poner
+   algo tipo "Primer cuatrimestre 2026".
+6. En **Versiones de plan a asignar**, revisá la lista de
+   selección múltiple. Por defecto el sistema preselecciona la
+   versión activa de cada carrera (o la más reciente, si ninguna
+   está marcada como activa). Si una carrera tiene que usar otra
+   versión, cambiá la selección acá. Si todavía no hay versiones
+   de plan cargadas, el formulario te avisa que primero hay que
+   crear los planes de estudio.
+7. Apretá **Guardar**.
+
+![Formulario para crear un ciclo nuevo](../capturas/ciclos/ciclos_formulario_nuevo_ciclo.png)
+
+El formulario completo, con el año, el cuatrimestre, las fechas y las versiones de plan a asignar.
 
 **Verificación**: el ciclo aparece en la tabla de "Ciclos
 Registrados" con las fechas y descripción que cargaste. Deberías
@@ -215,23 +257,28 @@ si una carrera cambió de versión de plan a mitad de camino.
 Ya lo cubrimos en la tarea anterior: el multiselect **Versiones de
 plan a asignar** te lo pide sí o sí.
 
-**Paso a paso (cambio posterior — swap de versión)**:
+**Paso a paso (cambio posterior de versión)**:
 
 Si una carrera empieza el cuatrimestre con una versión de plan y a
 mitad del cuatri (raro, pero puede pasar) hay que cambiarla:
 
 1. Andá a la pestaña **📚 Dictados**.
 2. Elegí el ciclo en el selector de arriba.
-3. Bajá hasta el expander de la carrera que corresponde.
-4. Adentro del expander, en el sub-bloque **⚙️ Configuración**,
+3. Bajá hasta el desplegable de la carrera que corresponde.
+4. Adentro del desplegable, en el bloque **⚙️ Configuración**,
    buscá el selector **Plan asignado al ciclo**. Sólo aparece si esa
-   carrera tiene más de una versión de plan disponible.
-5. Elegí la versión nueva.
-6. Vas a ver un aviso que dice
+   carrera tiene más de una versión de plan disponible; si tiene una
+   sola, ves en su lugar el texto `Plan: … (única versión
+   disponible)`.
+5. Elegí la versión nueva. El cambio se guarda en el acto, sin
+   botón de confirmación.
+6. Vas a ver un aviso emergente que dice
    `Plan de {carrera} cambiado. Apretá 🔄 Recalcular arriba.`
-7. Apretá el botón **🔄 Sincronizar según reglas** para que el
-   sistema alinee los dictados con la versión nueva. Después
-   aplicá los cambios que te muestre.
+   (el botón al que se refiere es **🔄 Sincronizar según
+   reglas**).
+7. Apretá **🔄 Sincronizar según reglas** para que el sistema
+   alinee los dictados con la versión nueva. Después aplicá los
+   cambios que te muestre.
 
 **Notas importantes**:
 
@@ -250,11 +297,12 @@ cuatrimestre.
 1. Andá a la pestaña **📚 Dictados**.
 2. Elegí el ciclo recién creado en el selector de arriba.
 3. Si el ciclo no tiene versiones de plan asignadas, vas a ver un
-   cartel amarillo que te lo advierte. Volvé a la pestaña 📋 Ciclos
-   y borrá/recreá el ciclo con versiones.
+   cartel amarillo que te lo advierte y el resto de la pestaña no
+   se muestra. Volvé a la pestaña 📋 Ciclos y borrá/recreá el ciclo
+   con versiones.
 4. Apretá el botón **➕ Crear Dictados**.
-5. El sistema recorre todas las materias del plan asignado y crea
-   un dictado por cada una que la regla de recursado autorice.
+5. El sistema recorre todas las materias de los planes asignados y
+   crea un dictado por cada una que la regla de recursado autorice.
 6. Al final ves un cartel verde tipo:
    `Dictados: 40 creados, 3 vinculados (anuales), 0 ya existentes,
    2 omitidos por recursado`.
@@ -263,7 +311,7 @@ cuatrimestre.
 
 - **Creados**: dictados nuevos, materias cuatrimestrales típicas.
 - **Vinculados (anuales)**: dictados anuales que ya existían del
-  cuatrimestre anterior y ahora se enganchan también al ciclo
+  cuatrimestre anterior y se enganchan también al ciclo
   actual.
 - **Ya existentes**: dictados que ya estaban (por ejemplo, si
   volvés a apretar el botón).
@@ -275,9 +323,9 @@ cuatrimestre.
 
 - La operación es **idempotente**: si apretás el botón dos veces
   seguidas, la segunda vez no crea nada nuevo.
-- Si tenés **cambios pendientes** (toggles de virtual o recursado
-  sin aplicar), el botón queda bloqueado con un cartel rojo. Aplicá
-  o descartá los cambios primero.
+- Si tenés **cambios pendientes** (selectores de virtual o recursado
+  sin aplicar), al apretar el botón no se hace nada y aparece un
+  cartel rojo. Aplicá o descartá los cambios primero.
 
 ### Resolver divergencias entre plan y dictados
 
@@ -293,7 +341,10 @@ El panel de divergencias compara **tres cosas**:
 2. Lo que dicen las reglas de recursado (cuáles saltearse).
 3. Lo que efectivamente está cargado como dictado en la base.
 
-Cuando hay desalineación, el panel te la muestra en tres bloques:
+Cuando hay desalineación, el panel (encabezado `⚠️ Divergencias: N
+a crear · N a borrar · N existen pero la regla dice que no`) te la
+muestra en tres bloques desplegables. Si no hay ninguna, en su lugar
+ves un cartel verde `✅ No hay divergencias`:
 
 - **➕ Materias del plan sin dictado**: el plan dice que la materia
   se dicta, la regla lo permite, pero el dictado no existe.
@@ -304,9 +355,13 @@ Cuando hay desalineación, el panel te la muestra en tres bloques:
   la regla actual dice que no debería. **No se borra
   automáticamente**: es una decisión explícita tuya.
 
-**Paso a paso — resolver individualmente**:
+![Panel de divergencias con las materias del plan sin dictado](../capturas/ciclos/dictados_panel_divergencias.png)
 
-1. Abrí el expander de la sección que corresponda.
+Cada fila ofrece sus propias acciones, y el botón **Aplicar todo** resuelve de una vez las que se pueden resolver en bloque.
+
+**Paso a paso (resolver individualmente)**:
+
+1. Abrí el desplegable de la sección que corresponda.
 2. Para cada fila, tenés estas acciones:
    - **➕ Materias sin dictado**:
      - **✅ Crear**: crea el dictado ahora. Es una decisión
@@ -315,6 +370,8 @@ Cuando hay desalineación, el panel te la muestra en tres bloques:
      - **⏭️ Omitir en regla**: cambia la regla de recursado de la
        materia para que en adelante se omita. **No crea nada en
        este ciclo**; sólo afecta ciclos futuros.
+     - **⏭️ Omitir TODAS en regla (N)**: lo mismo, para todas las
+       materias de la lista a la vez.
    - **🗑️ Dictados huérfanos**:
      - **🗑️ Borrar**: elimina el dictado.
    - **⚠️ Existen pero la regla dice que no**:
@@ -323,23 +380,33 @@ Cuando hay desalineación, el panel te la muestra en tres bloques:
        está mal, cambiala para que la materia se dicte siempre. No
        cambia el dictado actual (ya existe), pero regulariza la
        situación.
+     - **⬆️ Promover TODAS a regla (N)**: lo mismo, para todas las
+       materias de la lista a la vez.
 
-**Paso a paso — resolver todo en bloque**:
+![Dictados que existen aunque la regla dice que no](../capturas/ciclos/dictados_divergencias_existen_pero_regla_no.png)
+
+En este bloque cada fila se resuelve a mano, con **Borrar** o **Promover a regla**.
+
+**Paso a paso (resolver todo en bloque)**:
 
 Si las divergencias son muchas y son todas para crear o borrar:
 
 1. En la parte de arriba del panel vas a ver el botón
-   **⚡ Aplicar todo (N cambios)**.
+   **⚡ Aplicar todo (N cambios)** (N suma las materias sin dictado
+   y los huérfanos).
 2. Apretándolo, el sistema crea todos los dictados faltantes y
    borra todos los huérfanos en un solo paso.
-3. **No toca** la sección "Existen pero la regla dice que no" —
+3. **No toca** la sección "Existen pero la regla dice que no":
    esa la tenés que resolver manualmente.
 
 **Notas importantes**:
 
-- **Promover o omitir en regla afecta a todos los ciclos futuros**,
-  no sólo al actual. El sistema te muestra un cartel de
-  advertencia grande antes de aplicar.
+- **Promover u omitir en regla afecta a todos los ciclos futuros**,
+  no sólo al actual. Las variantes en bloque (**Omitir TODAS en
+  regla** y **Promover TODAS a regla**) piden confirmación: muestran
+  un cartel de advertencia con los botones **✅ Confirmar (N)** y
+  **🚫 Cancelar**. Las acciones fila por fila se aplican de
+  inmediato.
 - Estas acciones **quedan registradas en el historial** con el
   origen `ui:ciclos`, así que después podés rastrear quién cambió
   qué y cuándo.
@@ -354,15 +421,22 @@ completa se pasa a Zoom por refacciones en el aula).
 
 1. En la pestaña **📚 Dictados**, buscá la materia (usá los filtros
    por texto o por año del plan si son muchas).
-2. En la fila de la materia, mirá el selector **Virtual** al final
-   de la fila. Tiene tres opciones:
+2. En la fila de la materia (que ya tiene dictado), mirá el
+   selector **Virtual** al final de la fila. Las materias sin
+   dictado no lo muestran. Tiene tres opciones:
    - **Heredar**: usa lo que diga el catálogo de la materia.
    - **Virtual**: fuerza virtual este ciclo.
    - **Presencial**: fuerza presencial este ciclo.
 3. Cambiá el valor al que corresponda.
 4. Fijate que apareció un bloque **⏳ Cambios pendientes (N)** más
-   arriba. Ahí ves la tabla de todo lo que estás por cambiar.
+   arriba. Ahí ves una tabla (Materia, Atributo, Actual, Nuevo) con
+   todo lo que estás por cambiar, y la fila queda marcada con
+   `⏳ pendiente`.
 5. Apretá **💾 Aplicar N cambio(s)**.
+
+![Bloque de cambios pendientes de Virtual y Recursado](../capturas/ciclos/dictados_cambios_pendientes.png)
+
+La tabla resume el valor actual y el nuevo de cada cambio; las filas afectadas quedan marcadas como pendientes hasta que se apliquen o se descarten.
 
 **Verificación**: la fila muestra el nuevo estado y el bloque de
 cambios pendientes desaparece.
@@ -372,14 +446,15 @@ cambios pendientes desaparece.
 - Los cambios **no se aplican al instante**: se acumulan en el
   bloque "Cambios pendientes" y los aplicás en lote. Esto es a
   propósito, para que no se pierdan cambios si hacés varios
-  toggles rápidos seguidos.
+  cambios rápidos seguidos.
 - Si hay cambios pendientes, los botones **Crear Dictados** y
-  **Sincronizar según reglas** quedan bloqueados hasta que
-  apliques o descartes.
+  **Sincronizar según reglas** no operan (muestran un cartel rojo)
+  hasta que apliques o descartes.
 - Si querés descartar los cambios pendientes, apretá
   **🚫 Descartar cambios**.
-- La materia también aparece marcada como virtual cuando se genere
-  el plan de cursada y el cronograma la muestre.
+- Las filas de materias virtuales llevan la marca `🌐 virtual`.
+  Los horarios individuales pueden marcarse como virtuales desde la
+  grilla del plan de cursada.
 
 ### Corregir la regla de recursado
 
@@ -393,21 +468,23 @@ dos niveles:
 2. **A nivel carrera**: si la carrera entera no dicta recursado, se
    define en el catálogo de la carrera.
 
-**Paso a paso — corregir a nivel materia (por dictado)**:
+**Paso a paso (corregir a nivel materia, por dictado)**:
 
 1. En la pestaña **📚 Dictados**, buscá la materia.
 2. En la fila, mirá el selector **Recursado**. Es un selector de
-   tres estados: `Heredar`, `Sí`, `No`.
+   tres estados: `Según Carrera`, `Sí`, `No`.
 3. Cambiá el valor.
-4. Apretá **💾 Aplicar cambios** en el bloque de "Cambios
+4. Apretá **💾 Aplicar N cambio(s)** en el bloque de "Cambios
    pendientes" cuando termines.
 
-**Paso a paso — corregir a nivel carrera**:
+**Paso a paso (corregir a nivel carrera)**:
 
-1. Abrí el expander de la carrera dentro de la pestaña de dictados.
-2. En el sub-bloque **⚙️ Configuración**, cambiá el toggle
-   **Carrera dicta recursado**.
-3. Aplicá los cambios pendientes.
+1. Abrí el desplegable de la carrera dentro de la pestaña de
+   dictados.
+2. En el bloque **⚙️ Configuración**, cambiá el interruptor
+   **Carrera dicta recursado**. Este cambio se guarda en el acto
+   (no pasa por "Cambios pendientes") y muestra un aviso emergente.
+3. Apretá **🔄 Sincronizar según reglas** para alinear los dictados.
 
 **Notas importantes**:
 
@@ -417,14 +494,18 @@ dos niveles:
   la regla apretá **🔄 Sincronizar según reglas** y aplicá el
   preview.
 
-### Borrar un ciclo (con cascada — advertencia grande)
+![Vista previa de la sincronización según reglas](../capturas/ciclos/dictados_vista_previa_sincronizacion.png)
 
-> ⚠️ **Atención — operación destructiva e irreversible**
+La vista previa lista lo que se va a crear o borrar (y, aparte, lo que existe aunque la regla diga que no, que se deja como está); recién al apretar **Aplicar sincronización** se modifica la base. **Cancelar** cierra la vista previa.
+
+### Borrar un ciclo (con cascada: advertencia grande)
+
+> ⚠️ **Atención: operación destructiva e irreversible**
 >
 > Borrar un ciclo elimina **absolutamente todo lo que cuelga de él**:
 > los dictados, el o los cronogramas asociados, los planes de
 > cursada derivados, las comisiones del plan, los horarios y las
-> clases generadas. No hay confirmación en cascada ni preview: si
+> clases generadas. No hay confirmación ni vista previa: si
 > apretás Eliminar, todo se va.
 >
 > **No borres un ciclo sin backup previo de la base**.
@@ -438,7 +519,9 @@ demo o un cuatrimestre viejo que ya no necesitás).
 1. Andá a la pestaña **📋 Ciclos**.
 2. En el bloque **Eliminar Ciclo**, elegí el ciclo del selector.
 3. Apretá **Eliminar**.
-4. Confirmá si el sistema te pregunta.
+
+El sistema **no pide confirmación**: el ciclo se elimina en el
+acto.
 
 **Verificación**: el ciclo desaparece de la tabla. Vas a ver el
 cartel `Ciclo {ciclo_id} eliminado`.
@@ -447,9 +530,14 @@ cartel `Ciclo {ciclo_id} eliminado`.
 
 - Planes de cursada del ciclo → sus clases, comisiones y horarios.
 - Cronogramas asociados al ciclo → sus filas.
-- Los vínculos entre dictados y el ciclo. Si el dictado no queda
-  vinculado a ningún otro ciclo (típico en materias
-  cuatrimestrales), la fila del dictado también se borra.
+- Los cronogramas del ciclo, con sus filas y los conflictos
+  ignorados, incluidos los auxiliares de importación.
+- Los vínculos entre los dictados y el ciclo.
+
+> **Para verificar:** la eliminación de ciclo sólo borra los
+> vínculos dictado-ciclo; el código no borra la fila del dictado
+> aunque no quede vinculada a otro ciclo (sí lo hace el botón
+> **Borrar** de un dictado individual).
 - La configuración de versiones de plan asignadas.
 - El ciclo en sí.
 
@@ -474,14 +562,14 @@ correspondan.
 
 ### "Tenés cambios pendientes sin aplicar"
 
-**Síntoma**: los botones **Crear Dictados** y **Sincronizar según
-reglas** aparecen deshabilitados con un cartel rojo.
+**Síntoma**: al apretar **Crear Dictados** o **Sincronizar según
+reglas** no pasa nada y aparece un cartel rojo.
 
-**Causa**: cambiaste toggles de virtual o recursado y no
+**Causa**: cambiaste selectores de virtual o recursado y no
 confirmaste esos cambios todavía.
 
 **Solución**: subí al bloque **⏳ Cambios pendientes** y apretá
-**💾 Aplicar** o **🚫 Descartar**.
+**💾 Aplicar N cambio(s)** o **🚫 Descartar cambios**.
 
 ### "No se pudo crear el dictado"
 
@@ -499,8 +587,11 @@ materia esté efectivamente cargada en esa versión de plan.
 
 **Síntoma**: al crear un ciclo, no te deja guardar.
 
-**Solución**: obvio, pero fácil de pasar por alto: revisá las
-fechas.
+**Solución**: revisá las fechas y corregilas.
+
+![Mensaje de error por fecha de fin anterior a la de inicio](../capturas/ciclos/ciclos_error_fecha_fin.png)
+
+El mensaje aparece en rojo debajo del botón **Guardar**.
 
 ### El botón "Sincronizar según reglas" muestra un preview vacío
 
@@ -509,8 +600,9 @@ fechas.
 **Causa**: los dictados ya están perfectamente alineados con las
 reglas actuales.
 
-**Solución**: no hacés nada — la alineación es correcta. Podés
-cerrar el preview con **Cancelar**.
+**Solución**: no hacés nada: la alineación es correcta. En lugar
+de la vista previa ves el aviso `Los dictados del ciclo ya están
+alineados.`
 
 ### Un dictado que borré vuelve a aparecer al `Crear Dictados`
 
@@ -530,7 +622,7 @@ apretar `Crear Dictados`.
 
 ### ¿Puedo tener más de un ciclo activo a la vez?
 
-Sí — es normal tener el 1C y el 2C del mismo año cargados
+Sí, es normal tener el 1C y el 2C del mismo año cargados
 simultáneamente. Cada ciclo maneja sus propios dictados,
 cronogramas y planes de cursada.
 
@@ -553,13 +645,13 @@ inequívoco: no hay filas fantasma marcadas como inactivas.
 ### ¿Cuál es la diferencia entre "materia común" y "materia exclusiva"?
 
 - **Exclusiva**: la materia se dicta en una sola carrera. Aparece
-  en el expander de esa carrera.
+  en el desplegable de esa carrera.
 - **Común**: la materia se comparte entre dos o más carreras (por
-  ejemplo, Análisis I). Aparece en un solo lugar: el expander
+  ejemplo, Análisis I). Aparece en un solo lugar: el desplegable
   **🔗 Comunes** al final de la página.
 
 En las materias comunes hay **un solo dictado** para todas las
-carreras que la comparten. Si tocás el toggle Virtual o Recursado
+carreras que la comparten. Si cambiás el selector Virtual o Recursado
 en Comunes, el cambio afecta a todas las carreras donde esa
 materia aparece.
 
@@ -567,7 +659,7 @@ materia aparece.
 
 Sí, pero **sólo desde línea de comandos** (no desde la interfaz).
 Hay un script llamado `clonar_ciclo_para_demo.py` que se corre
-desde la terminal. Este flujo lo maneja el equipo técnico —
+desde la terminal. Este flujo lo maneja el equipo técnico:
 generalmente no lo necesita un usuario final.
 
 ### ¿Qué es la "regla de recursado"?
@@ -619,7 +711,7 @@ filtro "Optativas" (Incluir / Solo / Excluir).
 - **Sincronizar según reglas**: operación que recalcula qué
   dictados deberían existir y te muestra el diff antes de
   aplicarlo.
-- **Cambios pendientes**: bloque que acumula toggles de
+- **Cambios pendientes**: bloque que acumula selectores de
   Virtual/Recursado antes de aplicarlos en lote.
 - **Promover a regla**: operación que cambia la regla de recursado
   a nivel materia. Afecta ciclos futuros, no el actual.

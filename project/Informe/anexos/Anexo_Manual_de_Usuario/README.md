@@ -1,4 +1,4 @@
-# Manual de Usuario — Sistema de Asignación de Aulas
+# Manual de Usuario: Sistema de Asignación de Aulas
 
 Bienvenido al manual de usuario del sistema **Gestor de Aulas** de FCEIA
 (UNR). Este manual está pensado como material de consulta rápida y como
@@ -14,10 +14,10 @@ conocer detalles técnicos: hablamos de "el asignador de aulas", no de
 
 Si es tu primera vez con el sistema, seguí este orden:
 
-1. **[00 — Introducción](00_Introduccion.md)** — qué es el sistema, qué
+1. **[00: Introducción](00_Introduccion.md)**: qué es el sistema, qué
    podés hacer con él, para quién está pensado, y un glosario de los
    términos que más se repiten.
-2. **[01 — Primeros pasos](01_Primeros_pasos.md)** — cómo abrir la
+2. **[01: Primeros pasos](01_Primeros_pasos.md)**: cómo abrir la
    aplicación, orientarte en la interfaz y verificar que los datos
    base estén cargados.
 3. Después, según lo que necesites hacer, consultá el flujo o el módulo
@@ -34,20 +34,23 @@ Módulos) o al **flujo** que estás ejecutando (sección Flujos).
 Cada flujo describe una tarea end-to-end que atraviesa varios módulos.
 Usalos cuando querés hacer algo "de la cuna a la tumba":
 
-- **[Flujo 1 — Setup inicial de la base](flujos/01_Setup_inicial.md)**:
+- **[Flujo 1: Setup inicial de la base](flujos/01_Setup_inicial.md)**:
   primera instalación, cargar los Excel maestros, ajustar el catálogo
   antes de empezar a trabajar.
-- **[Flujo 2 — Armar un cuatrimestre nuevo](flujos/02_Armar_un_ciclo_lectivo.md)**:
-  el flujo troncal — crear el ciclo, cargar el cronograma, generar el
-  plan de cursada, correr el asignador. Este es el flujo que más vas
+- **[Flujo 2: Armar un cuatrimestre nuevo](flujos/02_Armar_un_ciclo_lectivo.md)**:
+  el flujo troncal: crear el ciclo, cargar el cronograma, generar el
+  plan de cursada y correr el asignador. Este es el flujo que más vas
   a usar.
-- **[Flujo 3 — Reasignar aulas tras cambios](flujos/03_Reasignacion_de_aulas.md)**:
+- **[Flujo 3: Reasignar aulas tras cambios](flujos/03_Reasignacion_de_aulas.md)**:
   qué hacer cuando ya corrió el asignador pero después hubo cambios
   (una comisión nueva, un aula que se dio de baja, un horario que se
   mueve, etc.).
-- **[Flujo 4 — Verificación pre-inicio de cuatrimestre](flujos/04_Verificacion_pre_inicio.md)**:
+- **[Flujo 4: Verificación pre-inicio de cuatrimestre](flujos/04_Verificacion_pre_inicio.md)**:
   checklist consolidado para dar por cerrado el plan antes del arranque
   del cuatrimestre.
+- **[Flujo 5: Reasignar un aula manualmente](flujos/05_Reasignar_un_aula_manualmente.md)**:
+  cambiar a mano el aula de un horario, resolver los cambios en cascada
+  cuando el aula está ocupada y proteger la decisión frente al asignador.
 
 ---
 
@@ -56,23 +59,23 @@ Usalos cuando querés hacer algo "de la cuna a la tumba":
 Uno por cada solapa del menú lateral. Cada módulo incluye tareas
 comunes, errores frecuentes y preguntas frecuentes específicas:
 
-- **[01 — Materias](modulos/01_Materias.md)** — catálogo maestro de
+- **[01: Materias](modulos/01_Materias.md)**: catálogo maestro de
   asignaturas.
-- **[02 — Aulas y Sedes](modulos/02_Aulas_y_Sedes.md)** — recursos
+- **[02: Aulas y Sedes](modulos/02_Aulas_y_Sedes.md)**: recursos
   físicos y su organización por sede.
-- **[03 — Carreras](modulos/03_Carreras.md)** — carreras y planes de
+- **[03: Carreras](modulos/03_Carreras.md)**: carreras y planes de
   estudio.
-- **[04 — Ciclos](modulos/04_Ciclos.md)** — períodos lectivos y
+- **[04: Ciclos](modulos/04_Ciclos.md)**: períodos lectivos y
   dictados.
-- **[05 — Cursada: planes y asignación de aulas](modulos/05_Planes_y_Asignacion_de_Aulas.md)**
-  — plan de cursada, asignador de aulas, diagnóstico. Es el módulo más
+- **[05: Cursada, planes y asignación de aulas](modulos/05_Planes_y_Asignacion_de_Aulas.md)**:
+  plan de cursada, asignador de aulas, diagnóstico. Es el módulo más
   denso; conviene leer primero la sección "Modelo mental" antes de
   meterse en las tareas.
-- **[06 — Cronogramas](modulos/06_Cronogramas.md)** — cronogramas de
+- **[06: Cronogramas](modulos/06_Cronogramas.md)**: cronogramas de
   horarios que alimentan a los planes.
-- **[07 — Inscriptos](modulos/07_Inscriptos.md)** — serie histórica de
+- **[07: Inscriptos](modulos/07_Inscriptos.md)**: serie histórica de
   inscriptos y proyecciones para el forecast.
-- **[08 — Historial](modulos/08_Historial.md)** — registro de cambios
+- **[08: Historial](modulos/08_Historial.md)**: registro de cambios
   del sistema.
 
 ---
@@ -143,21 +146,21 @@ Si algún paso no funciona como el manual dice, hay tres posibilidades:
 1. **Es un bug conocido**: los bugs identificados durante la auditoría
    están consolidados en
    `project/2. Desarrollo/HALLAZGOS_AUDITORIA.md` (uso interno del
-   equipo). Chequealo antes de reportar.
+   equipo). Verificalo antes de reportar.
 2. **Cambió el código**: el manual se generó a partir del estado del
    código en 2026-07-30. Es posible que un cambio posterior desalinee
    una instrucción.
 3. **Hueco en el manual**: si es algo que directamente no se cubre,
-   avisale al equipo — se puede completar en una revisión posterior.
+   avisale al equipo para completarlo en una revisión posterior.
 
 ---
 
 ## Para el equipo técnico
 
 El documento **[`project/2. Desarrollo/WORKFLOW.md`](../2.%20Desarrollo/WORKFLOW.md)**
-sigue siendo la referencia técnica interna con nombres de tablas,
+es la referencia técnica interna con nombres de tablas,
 servicios y detalles de implementación. Este manual de usuario **no**
-lo reemplaza — son complementarios.
+lo reemplaza: son complementarios.
 
 El registro de hallazgos de la auditoría está en
 **[`project/2. Desarrollo/HALLAZGOS_AUDITORIA.md`](../2.%20Desarrollo/HALLAZGOS_AUDITORIA.md)**.

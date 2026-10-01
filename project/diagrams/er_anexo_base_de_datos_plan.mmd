@@ -1,0 +1,29 @@
+erDiagram
+    ciclos ||--o{ planificaciones_cursada : "tiene"
+    schedules |o--o{ planificaciones_cursada : "origina"
+    planificaciones_cursada ||--o{ comisiones : "contiene"
+    schedules |o--o{ comisiones : "plantillas"
+    dictados |o--o{ comisiones : "instancia"
+    materias ||--o{ comisiones : "de la materia"
+    carreras |o--o{ comisiones : "carrera"
+    comisiones ||--o{ horarios : "agenda"
+    aulas |o--o{ horarios : "aula asignada"
+    materias ||--o{ horarios : "de la materia"
+    planificaciones_cursada ||--o{ plan_validations : "instantáneas"
+    planificaciones_cursada ||--o{ lp_runs : "corridas"
+    planificaciones_cursada ||--o{ ignored_conflicts : "ignora pares"
+    planificaciones_cursada ||--o{ materia_forecast_config : "configura"
+    materias ||--o{ materia_forecast_config : "pronóstico de"
+    planificaciones_cursada { string id PK }
+    comisiones { string id PK }
+    horarios { string id PK }
+    plan_validations { string id PK }
+    lp_runs { string id PK }
+    ignored_conflicts { string plan_cursada_id PK }
+    materia_forecast_config { string plan_cursada_id PK }
+    ciclos { string id PK }
+    schedules { string id PK }
+    dictados { string id PK }
+    materias { string codigo PK }
+    carreras { string codigo PK }
+    aulas { string id PK }

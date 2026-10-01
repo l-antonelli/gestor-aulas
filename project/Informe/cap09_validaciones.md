@@ -9,7 +9,7 @@ cubre todos los dictados esperados del ciclo y que los pares de
 materias en conflicto son realmente incompatibles. Un asignador
 correcto sobre datos inconsistentes produce resultados
 inconsistentes. Por eso el sistema rodea al asignador de un
-conjunto de validaciones cuyo propósito es darle al operador
+conjunto de validaciones cuyo propósito es darle al usuario
 garantías concretas sobre el estado de lo que está planificando.
 Este capítulo explica qué se verifica, cuándo y por qué importa.
 
@@ -27,10 +27,10 @@ esa decisión:
 - **Los errores más caros son los silenciosos.** Si a un
   cronograma le falta una materia y eso se descubre recién cuando
   el asignador responde que el problema no tiene solución, el
-  operador pierde tiempo buscando la causa en el lugar
+  usuario pierde tiempo buscando la causa en el lugar
   equivocado. Detectar el problema en el momento y el lugar
   correctos, con un mensaje explícito, es mucho más barato.
-- **La confianza se construye con transparencia.** El operador no
+- **La confianza se construye con transparencia.** El usuario no
   necesita conocer el modelo matemático: le alcanza con leer las
   validaciones para saber qué está bien y qué hay que corregir.
 
@@ -43,34 +43,34 @@ negocio que se aplican al guardar cada cambio impiden registrar
 datos imposibles: un aula sin sede, dos aulas con el mismo
 código, una comisión que pertenezca a la vez a un cronograma y a
 un plan, o un dictado cuyos coeficientes de asignación no sumen
-uno. Mientras el operador edita, la interfaz le avisa en el
+uno. Mientras el usuario edita, la interfaz le avisa en el
 momento si, por ejemplo, las horas de teoría y de laboratorio de
 una materia no cierran con sus horas semanales o si el aula que
 elige a mano ya está ocupada en esa franja.
 
-Por encima de esos controles puntuales, el operador puede pedir
+Por encima de esos controles puntuales, el usuario puede pedir
 la *validación integral* de un cronograma o de un plan de
 cursada completo. Esta verificación revisa la cobertura (que
 estén todas las materias esperadas y ninguna de más), la
 partición entre teoría y laboratorio de cada comisión, los
 conflictos horarios dentro de cada grupo curricular y, en el
 plan, la existencia de un camino de cursada viable entre sedes
-(R11-camino). Como parte de ella, las excepciones que el operador
+(R11-camino). Como parte de ella, las excepciones que el usuario
 había marcado como ignoradas y que ya no aplican se eliminan
 solas, y se le informa de la limpieza. Finalmente, antes de
 invocar al resolutor, el asignador ejecuta la *verificación
-previa* descripta en §8.4, que detecta combinaciones de datos que
-hacen imposible el problema —un horario sin aula compatible, una
-franja con más clases que aulas según el principio del palomar,
-la condición de Hall, una fijación incompatible o un salto entre
-sedes inviable— sin gastar tiempo de cálculo. Las reglas que se
+previa* descripta en §8.4, que detecta sin gastar tiempo de cálculo
+las combinaciones de datos que hacen imposible el problema: un
+horario sin aula compatible, una franja con más clases que aulas
+según el principio del palomar, la condición de Hall, una fijación
+incompatible o un salto entre sedes inviable. Las reglas que se
 aplican al guardar se detallan en el Anexo A (sección 8, reglas de
 integridad e invariantes).
 
 ## 9.3 Severidades y su significado
 
 Cada hallazgo de una validación se clasifica en una de tres
-severidades, y esa distinción ordena el trabajo del operador:
+severidades, y esa distinción ordena el trabajo del usuario:
 
 - **Bloqueante**: impide avanzar al paso siguiente. Por ejemplo,
   un plan con conflictos horarios no ignorados dentro de un grupo
@@ -90,14 +90,14 @@ azul) y las lista en ese orden. Los mensajes son específicos y
 accionables: no dicen "hay un problema", sino, por ejemplo, "la
 comisión C de Análisis Matemático I tiene 3 horas de horarios
 teóricos pero la materia declara 4", con un enlace directo a la
-entidad afectada. El operador resuelve primero lo bloqueante;
+entidad afectada. El usuario resuelve primero lo bloqueante;
 las advertencias pueden esperar y lo informativo sólo se lee.
 
 ## 9.4 Vigencia de los resultados
 
 Cada validación y cada corrida del asignador quedan registradas
 junto con la configuración que se usó (el detalle está en el
-Anexo A). Para el operador, la garantía que importa es otra: el
+Anexo A). Para el usuario, la garantía que importa es otra: el
 sistema advierte cuando un resultado dejó de describir los datos.
 Si después de validar se editaron comisiones, horarios o dictados,
 la interfaz indica que el resultado está desactualizado y ofrece
@@ -105,7 +105,7 @@ volver a ejecutarlo.
 
 ## 9.5 Un ejemplo integrado
 
-Supongamos que el operador prepara el plan de cursada del segundo
+Supongamos que el usuario prepara el plan de cursada del segundo
 cuatrimestre, con el cronograma cargado y el plan recién
 generado.
 
@@ -116,13 +116,13 @@ generado.
    laboratorio de una comisión no cierra), una advertencia (dos
    materias del grupo "sin clasificar" tienen comisiones en el
    plan) y uno informativo (se eliminó una excepción que ya no
-   aplicaba). El operador corrige las horas que causaban el
+   aplicaba). El usuario corrige las horas que causaban el
    bloqueo y deja la advertencia para más tarde.
 3. **Ejecuta el asignador.** La verificación previa detecta que,
    para tercer año de Ingeniería Electrónica, no existe una
    combinación de comisiones viable porque dos materias
    contiguas se dictan en sedes distintas sin margen suficiente
-   (R11-camino). El operador amplía el margen entre sedes o mueve
+   (R11-camino). El usuario amplía el margen entre sedes o mueve
    una comisión.
 4. **Vuelve a ejecutar el asignador.** El resolutor encuentra la
    solución óptima, que se aplica al plan y queda guardada junto

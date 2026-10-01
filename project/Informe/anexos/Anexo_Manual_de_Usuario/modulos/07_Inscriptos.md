@@ -2,7 +2,7 @@
 
 ## ¿Para qué sirve?
 
-La página **📈 Inscriptos Históricos** te permite ver y mantener la serie
+La página **📈 Inscriptos históricos** te permite ver y mantener la serie
 histórica de inscriptos por materia. Cada fila representa un dato del
 tipo *"en la materia X, en el año Y, cuatrimestre Z, hubo N inscriptos"*.
 
@@ -25,7 +25,7 @@ En resumen, este módulo te sirve para:
 > Importante: esta página no ejecuta la estimación por sí sola ni la
 > aplica al asignador. Sólo administra los datos históricos y muestra las
 > proyecciones a modo informativo. La estimación efectiva que usa el
-> asignador se elige desde **📊 Cursada → Detalle** de cada plan.
+> asignador se elige desde **📊 Cursada → 🔍 Detalle del Plan** de cada plan.
 
 ---
 
@@ -67,7 +67,7 @@ el asignador de aulas. La cadena de dependencias es la siguiente:
 4. El asignador usa esos esperados por comisión para elegir aulas con
    capacidad adecuada.
 
-> **Atajo importante**: si en la página **📊 Cursada → Detalle** de una
+> **Atajo importante**: si en la página **📊 Cursada → 🔍 Detalle del Plan** de una
 > materia setés un "Total esperado (manual)", ese valor **le gana a la
 > estimación calculada desde acá**. Es decir: si viste que el forecast
 > automático da un número raro, podés pisarlo desde el plan, y los
@@ -93,28 +93,35 @@ A partir de la serie, el sistema calcula una **estimación** para años
 futuros. Se ofrecen **tres métodos** distintos, cada uno con su propia
 lógica:
 
-- **Media móvil**: promedia los últimos años para estimar el próximo. Es
-  el método más conservador. Sirve bien cuando la matrícula es estable
-  año contra año.
-- **Drift (lineal)**: ajusta una tendencia lineal a los datos. Si la
-  materia viene creciendo o cayendo, este método captura esa pendiente.
-- **SES (suavizado exponencial simple)**: le da más peso a los años
-  recientes que a los viejos. Sirve cuando la matrícula está cambiando
-  y querés seguir la tendencia reciente sin ser demasiado volátil.
+- **Media móvil**: promedia los valores de la serie (por defecto, todos
+  los años disponibles) para estimar el próximo. Es el método más
+  conservador. Sirve bien cuando la matrícula es estable año contra año.
+- **Drift (lineal)**: extrapola una tendencia lineal entre el primer y el
+  último dato. Si la materia viene creciendo o cayendo, este método
+  captura esa pendiente.
+- **SES (α auto)** (suavizado exponencial simple): le da más peso a los
+  años recientes que a los viejos; el peso de suavizado (α) se calibra
+  solo contra los datos históricos. Sirve cuando la matrícula está
+  cambiando y querés seguir la tendencia reciente sin ser demasiado
+  volátil.
 
-En el gráfico de cada materia vas a ver los tres métodos superpuestos.
-Debajo del gráfico aparecen las **métricas** de cada método: el valor
-proyectado, el parámetro relevante (peso de suavizado para SES,
-pendiente para drift, ventana para media móvil) y el error interno.
+La estimación se calcula por separado para cada cuatrimestre (`1C`, `2C`,
+`Anual`). En el gráfico de cada materia vas a ver, para cada
+cuatrimestre, la línea histórica y las tres proyecciones superpuestas.
+Debajo del gráfico aparecen, por cuatrimestre, las **métricas** de cada
+método: el valor proyectado y, entre paréntesis, el parámetro relevante
+(`w` para la ventana de la media móvil, `m` para la pendiente del drift,
+`α` para el peso de suavizado de SES). Al pasar el cursor por el signo de
+pregunta se ve el error cuadrático sobre los datos históricos.
 
-> Si la materia tiene menos de dos puntos en la historia, sólo se
+> Si un cuatrimestre tiene menos de dos puntos en la historia, sólo se
 > muestra la media móvil. Los otros métodos necesitan al menos dos años
 > para tener sentido.
 
 ### Override manual del esperado
 
 Hay una tercera forma de decidir el esperado de una materia: **pisar la
-estimación con un valor fijo**. Eso se hace desde **📊 Cursada → Detalle**
+estimación con un valor fijo**. Eso se hace desde **📊 Cursada → 🔍 Detalle del Plan**
 (no desde acá) y **le gana a los tres métodos**. Cuando hay override
 manual, el sistema muestra "Total esperado (manual)" en el detalle del
 plan, y los cambios que hagas en la serie histórica quedan sin efecto
@@ -124,43 +131,69 @@ hasta que saques el override.
 
 ## Recorrido rápido de la página
 
-La página se divide en tres bloques principales, todos gobernados por
-los filtros del sidebar.
+La página no tiene barra lateral: todo está en el cuerpo, en este orden:
+el importador masivo, el recuadro de filtros, el recuadro de secciones a
+mostrar, la cobertura por período y las listas de materias.
 
-**Sidebar (filtros)**:
+**Recuadro «🔎 Filtros de la lista de materias»** (los filtros se
+combinan: la materia tiene que cumplirlos todos):
 
-- **Buscar**: por código o nombre de materia.
-- **Cuatrimestre**: `Todos`, `1C` o `2C`. **Cuidado**: no incluye
-  "Anual"; si necesitás filtrar sólo las anuales, dejalo en `Todos` y
-  usá la búsqueda por nombre.
-- **Año target del forecast**: hasta qué año se extienden las líneas de
-  estimación en el gráfico (default: 2026).
-- **Carrera**: multiselect para filtrar materias por carrera.
-- **Año del plan**: filtro por el año en el plan de estudios.
+- **Buscar por código o nombre**.
+- **Cuatrimestre a mostrar**: `Todos`, `1C`, `2C` o `Anual`. Con `Todos`
+  se ven todos los registros, incluidos los anuales; con `Anual` se
+  muestran sólo los registros anuales.
+- **Año a proyectar**: hasta qué año se extienden las líneas de
+  estimación en el gráfico (por defecto 2026; va de 2020 a 2040).
+- **Carrera**: selección múltiple para filtrar materias por carrera.
+- **Año dentro del plan**: filtro por el año (1°, 2°, …) en el plan de
+  estudios.
 - **Optativas**: `Incluir`, `Solo` o `Excluir`.
-- **Período**: `cuatrimestral` o `anual`.
-- **Modalidad**: `Presencial` o `Virtual` (según el catálogo de
+- **Período de la materia**: `cuatrimestral` y/o `anual`.
+- **Virtual**: `Presencial` y/o `Virtual` (según el catálogo de
   materia).
 
-**Importador masivo** (arriba de todo): el bloque "📥 Cargar masivo
-desde plantilla Excel", con la descarga de la plantilla y la subida
-del archivo completado, con vista previa antes de confirmar.
+![Encabezado de la página de inscriptos históricos, con el importador plegado y el recuadro de filtros](../capturas/inscriptos/vista_general.png)
+
+En la captura, los filtros aparecen en el recuadro «Filtros de la lista de materias», debajo del bloque plegado del importador; por defecto todas las carreras, años, períodos y modalidades vienen seleccionados.
+
+**Importador masivo** (arriba de todo): el bloque plegado "📥 Cargar
+masivo desde plantilla Excel", con la descarga de la plantilla (paso 1)
+y la subida del archivo completado (paso 2), con vista previa antes de
+confirmar.
+
+![Importador masivo desplegado, con el paso 1 (plantilla) y el paso 2 (subida del archivo)](../capturas/inscriptos/importador_plantilla.png)
+
+A la izquierda está el paso 1, con el botón «Generar plantilla» y, una vez generada, el de descarga («Descargar plantilla_inscriptos.xlsx»); a la derecha, el paso 2, con la zona para subir el archivo (CSV o Excel) y el botón «Ver vista previa».
 
 **Cobertura por período**: un desplegable con una tabla de materias
-por período (año + cuatrimestre) que marca con ✓ o — qué materias
+por período (año + cuatrimestre) que marca con ✓ o con un guion qué materias
 tienen datos para qué períodos, con una columna "Faltan" que cuenta
 los huecos. Sirve para ver de un vistazo qué falta cargar.
 
-**Toggles de visibilidad**: te permiten mostrar u ocultar las dos
-secciones de materias.
+![Desplegable de cobertura por período, con la columna Faltan y una columna por período](../capturas/inscriptos/cobertura_por_periodo.png)
 
-**Sección 1 — Materias con datos**: lista las materias que ya tienen
+Arriba se eligen los períodos a revisar y, a la derecha, la casilla «Sólo materias con huecos»; cada guion de la tabla marca un período sin datos.
+
+**Recuadro «👁 Secciones a mostrar»**: dos casillas que te permiten
+mostrar u ocultar las dos secciones de materias. «Con datos» viene
+tildada y «Sin datos» destildada.
+
+**Sección 1 (📊 Materias con datos)**: lista las materias que ya tienen
 serie histórica cargada. Cada materia aparece como un desplegable
-(expander) con la tabla editable de años/cuatris/inscriptos y el
-gráfico con las tres estimaciones.
+(expander) titulado con el código, el nombre y el total de inscriptos
+(por ejemplo, «A4 - Lab. de Electromagnetismo (401 inscriptos
+totales)»), con la tabla editable de años/cuatris/inscriptos y el
+gráfico con las tres estimaciones. La lista está paginada: un selector
+permite mostrar 10, 25 (por defecto), 50 o 100 materias por página, con
+botones para ir a la primera página, a la anterior y a la siguiente.
 
-**Sección 2 — Materias sin datos**: lista las materias del catálogo que
-todavía no tienen ninguna fila cargada. Podés agregar filas a mano acá.
+![Casillas para elegir qué secciones mostrar y comienzo de la lista de materias con datos](../capturas/inscriptos/secciones_y_lista_de_materias.png)
+
+Las casillas «Con datos» y «Sin datos» muestran entre paréntesis cuántas materias hay en cada grupo; debajo, la lista paginada de materias, cada una como un desplegable.
+
+**Sección 2 (📭 Materias sin datos de inscriptos)**: lista las materias
+del catálogo que todavía no tienen ninguna fila cargada, con el mismo
+paginador. Podés agregar filas a mano acá.
 
 ---
 
@@ -183,13 +216,22 @@ facultad).
    subí el archivo.
 3. Apretá **🔍 Ver vista previa**. El sistema muestra cuántas filas
    son nuevas, cuántas pisan valores existentes y cuáles tienen
-   errores (que no se importan).
+   errores (que no se importan). Si el Excel tiene varias hojas,
+   antes aparece un selector «Hoja del Excel a importar» (arranca en
+   la hoja «Inscriptos», si existe). El botón 🗑 cancela la vista
+   previa.
+
+   ![Resumen de la vista previa de importación: filas correctas, nuevas, que pisan valor y con errores](../capturas/inscriptos/vista_previa_importacion.png)
+
+   Las cuatro cifras de arriba («Filas OK», «Nuevas», «Pisan valor» y «Con errores») resumen el archivo; debajo, una nota indica cuántas filas traen un valor idéntico al previo (no cambian nada) y el desplegable «Filas con errores» detalla cada fila que no se va a importar y por qué. Si hay avisos, aparecen en otro desplegable, «Avisos». Más abajo se ve la tabla de filas correctas, con el valor previo, el valor nuevo y el tipo de cambio (nuevo, actualiza o igual).
 4. Si el archivo trae **códigos que el sistema no reconoce**, la
    vista previa te ofrece asociarlos: elegís la materia destino,
    apretás **Asociar**, y la vista previa se regenera con esas filas
    ya resueltas. La asociación queda recordada para futuras
    importaciones.
-5. Confirmá. La semántica es de sobreescritura: si la combinación
+5. Apretá **✅ Confirmar importación**. Un aviso emergente informa
+   cuántos registros se insertaron, cuántos se actualizaron y cuántos
+   quedaron sin cambio. La semántica es de sobreescritura: si la combinación
    (materia, año, cuatri) ya existía, el valor del archivo la pisa.
 
 ### Cargar la serie histórica desde el Excel maestro (script)
@@ -236,43 +278,60 @@ asociar a mano desde la vista previa del importador de la página
 
 ### Ver la proyección de inscriptos para una materia
 
-1. Entrá a la página **📈 Inscriptos Históricos**.
-2. Buscá la materia por código o nombre.
+1. Entrá a la página **📈 Inscriptos históricos**.
+2. Buscá la materia por código o nombre en el recuadro de filtros.
 3. Expandí el desplegable de la materia.
 4. Vas a ver:
    - La **tabla histórica** con año, cuatri e inscriptos.
-   - El **gráfico** con la serie histórica y las tres estimaciones
-     superpuestas hasta el año target elegido en el sidebar.
-   - Las **métricas** debajo del gráfico, una por método, con el valor
-     proyectado y el parámetro relevante.
+   - El **gráfico** con la serie histórica de cada cuatrimestre y las
+     tres estimaciones superpuestas hasta el año elegido en «Año a
+     proyectar».
+   - Las **métricas** debajo del gráfico, una por método y por
+     cuatrimestre, con el valor proyectado y el parámetro relevante.
+
+![Desplegable de una materia con su serie histórica, el gráfico con las tres proyecciones y las métricas](../capturas/inscriptos/materia_con_serie_y_proyeccion.png)
+
+A la izquierda está la tabla editable de la serie; a la derecha, el gráfico con una línea histórica por cuatrimestre y las tres proyecciones, y debajo las métricas de cada método para el año a proyectar. Al pie del desplegable, una nota recuerda que el método que se aplica en la asignación se configura en la página de Cursada.
 
 ### Ver los tres métodos de forecast comparados
 
 Cada expander de materia con datos muestra en su gráfico tres líneas de
-proyección superpuestas (una por método): media móvil, drift lineal y
-SES. Debajo del gráfico, tres cajitas con el valor proyectado de cada
-método, para que puedas compararlos rápidamente.
+proyección superpuestas por cuatrimestre (una por método): media móvil,
+drift lineal y SES. Debajo del gráfico, tres cajitas por cuatrimestre
+con el valor proyectado de cada método, para que puedas compararlos
+rápidamente.
 
 Los tres métodos se calculan siempre. La elección de **cuál se usa en
-la asignación** se hace más adelante, desde **📊 Cursada → Detalle** del
-plan del ciclo que corresponda.
+la asignación** se hace más adelante, desde **📊 Cursada**: el método por
+defecto del plan está en «✏️ Editar metadata» y la excepción por materia
+en **🔍 Detalle del Plan** («Método de forecast (override)»).
 
 ### Editar o corregir un dato histórico
 
-1. En **"Materias con datos"**, expandí la materia.
+1. En **"📊 Materias con datos"**, expandí la materia.
 2. Editá el valor de inscriptos directamente en la tabla del editor.
-3. Podés cambiar el año, el cuatri o la cantidad.
+3. Podés cambiar el año (entre 2020 y 2035), el cuatri (`1C`, `2C` o
+   `Anual`) o la cantidad, y también agregar o borrar filas.
 4. Apretá **Guardar**. Los cuatrimestres que el filtro esconde quedan
    intactos: el guardado sólo toca lo visible en el editor.
 
+![Tabla de una materia con un valor editado y el botón Guardar debajo](../capturas/inscriptos/editar_dato_historico.png)
+
+El botón «Guardar» aparece debajo de la tabla recién cuando se modificó algún valor.
+
 ### Agregar datos manualmente a una materia sin serie histórica
 
-1. En la sección **"Materias sin datos de inscriptos"**, buscá la
-   materia.
+1. Tildá la casilla «Sin datos» en «Secciones a mostrar» y, en la
+   sección **"📭 Materias sin datos de inscriptos"**, buscá la materia y
+   expandila.
 2. En el editor vacío, agregá una o más filas con año, cuatri e
    inscriptos.
 3. Apretá **Guardar**. La materia va a pasar automáticamente a la
    sección "Materias con datos" en el próximo refresco.
+
+![Sección de materias sin datos, con una fila nueva cargada en el editor vacío](../capturas/inscriptos/materia_sin_datos.png)
+
+Para que esta sección aparezca hay que tildar la casilla «Sin datos» en «Secciones a mostrar»; el botón «Guardar» aparece al cargar la primera fila.
 
 ### Asociar un código externo que el sistema no reconoce
 
@@ -281,12 +340,20 @@ Cuando un archivo trae códigos que no matchean con ninguna materia
 previa), la **vista previa de importación** rechaza esas filas y
 muestra el bloque **🔗 Asociar códigos sin match**:
 
-1. Elegí el código del archivo y la **materia destino**.
+1. Elegí el **Código del archivo** y la **Materia del sistema** (destino).
+
+   ![Bloque para asociar un código sin coincidencia a una materia del sistema](../capturas/inscriptos/asociar_codigos_sin_match.png)
+
+   A la izquierda se elige el código del archivo y en el centro la materia destino; el botón «Asociar» queda habilitado recién cuando hay una materia elegida.
 2. Apretá **Asociar**. La asociación queda guardada como alias: en
    esta y en todas las importaciones futuras, ese código resuelve
    solo.
 3. La vista previa se regenera al instante con esas filas ya
    resueltas; confirmá cuando te cierre.
+
+![Vista previa regenerada después de asociar el código, sin filas con errores](../capturas/inscriptos/vista_previa_tras_asociar.png)
+
+Después de asociar, las filas del código pasan a la tabla con la materia elegida y el contador «Con errores» baja a cero.
 
 Si la materia destino ya tenía datos para un (año, cuatri), el valor
 del archivo **pisa** al existente (la vista previa te muestra qué
@@ -295,29 +362,34 @@ filas pisan valores antes de confirmar).
 ### Ver qué materias no tienen datos para qué períodos
 
 1. Abrí el desplegable **🧩 Cobertura por período**.
-2. Elegí los períodos que te interesan (por defecto están todos) y
-   dejá tildado "Sólo materias con huecos".
-3. La tabla muestra una fila por materia, con ✓ o — por período y la
+2. En «Períodos a revisar» elegí los períodos que te interesan (por
+   defecto están todos) y dejá tildado "Sólo materias con huecos" (viene
+   tildado por defecto).
+3. La tabla muestra una fila por materia, con ✓ o un guion por período y la
    columna **Faltan** con la cantidad de huecos, ordenada por los
-   huecos más grandes. Respeta los filtros de búsqueda y carrera del
-   sidebar.
+   huecos más grandes. Respeta los filtros de la lista de materias
+   (búsqueda, carrera, año del plan, etc.).
 
 ### Filtrar por carrera / año / cuatri / modalidad
 
-Todos los filtros están en el sidebar izquierdo:
+Todos los filtros están en el recuadro «Filtros de la lista de
+materias»:
 
-- **Buscar**: por código o parte del nombre.
-- **Cuatrimestre**: `Todos`, `1C` o `2C`.
+- **Buscar por código o nombre**: por código o parte del nombre.
+- **Cuatrimestre a mostrar**: `Todos`, `1C`, `2C` o `Anual`.
 - **Carrera**: multiselect. Materias que no pertenecen a ningún plan
   ("huérfanas") sólo aparecen si el filtro incluye todas las carreras.
-- **Año del plan**: filtra materias por año en el plan de estudios.
+- **Año dentro del plan**: filtra materias por año en el plan de
+  estudios.
 - **Optativas**: `Incluir`, `Solo` o `Excluir`.
-- **Período**: `cuatrimestral` o `anual` (del catálogo de la materia).
-- **Modalidad**: `Presencial` o `Virtual` (del catálogo, no del dictado
+- **Período de la materia**: `cuatrimestral` o `anual` (del catálogo de
+  la materia).
+- **Virtual**: `Presencial` o `Virtual` (del catálogo, no del dictado
   del ciclo).
 
-Los filtros se aplican en cascada: primero se filtran las materias
-visibles, después las tres secciones se recalculan sobre ese subconjunto.
+Los filtros se combinan: primero se filtran las materias visibles,
+después la cobertura y las secciones se recalculan sobre ese
+subconjunto.
 
 ---
 
@@ -338,17 +410,17 @@ asociación queda recordada y la vista previa se regenera sola.
 ### El gráfico dice "Sin datos para graficar"
 
 Significa que la materia no tiene serie histórica (aunque el catálogo
-la reconozca). Chequeá:
+la reconozca). Verificá:
 
 - Que hayas corrido `python -m scripts.load_inscriptos` alguna vez.
-- Que el filtro superior no esté escondiendo las filas (por ejemplo,
-  si la materia sólo tiene datos "Anuales" y filtraste por `1C`, no vas
-  a ver nada porque el filtro no ofrece "Anual" explícitamente).
+- Que el filtro «Cuatrimestre a mostrar» no esté escondiendo las filas
+  (por ejemplo, si la materia sólo tiene datos "Anuales" y filtraste por
+  `1C`, no vas a ver nada).
 
 ### El asignador dice esperados raros aunque cambié los datos acá
 
 Muy probablemente hay un **override manual** activo en el plan.
-Verificá en **📊 Cursada → Detalle → [materia] → Total esperado
+Verificá en **📊 Cursada → 🔍 Detalle del Plan → [materia] → Total esperado
 (manual)**. Si hay un número puesto ahí, el asignador lo usa y los
 cambios en la serie histórica no le llegan. Sacá el override o
 actualizá el valor manual.
@@ -382,13 +454,13 @@ Depende del comportamiento de la matrícula de la materia:
   rápido. Requiere al menos dos años.
 
 La elección efectiva del método que usa el asignador se hace desde
-**📊 Cursada → Detalle** del plan del ciclo, no desde acá. Podés dejar
+**📊 Cursada → 🔍 Detalle del Plan** del plan del ciclo, no desde acá. Podés dejar
 un default por plan y sobreescribirlo por materia si hay excepciones.
 
 ### ¿Cómo hago para pisar la estimación con un valor manual?
 
 No se hace desde esta página. El override manual (**"Total esperado
-(manual)"**) se setea desde **📊 Cursada → Detalle** → seleccionar la
+(manual)"**) se setea desde **📊 Cursada → 🔍 Detalle del Plan** → seleccionar la
 materia → cargar el valor. Ese número le gana a los tres métodos de
 estimación y le gana a lo que haya en la serie histórica.
 
@@ -397,7 +469,7 @@ estimación y le gana a lo que haya en la serie histórica.
 Casi seguro hay un **override manual** puesto en el plan. Cuando el
 plan tiene un "Total esperado (manual)" para una materia, la estimación
 calculada desde esta página se ignora completamente. Sacá el override
-desde **📊 Cursada → Detalle** para que vuelva a mandar la serie
+desde **📊 Cursada → 🔍 Detalle del Plan** para que vuelva a mandar la serie
 histórica.
 
 ### Los datos de esta página, ¿quedan en el historial?
@@ -410,10 +482,10 @@ histórica.
 
 ### ¿Puedo ver sólo las materias "anuales"?
 
-El filtro superior de cuatrimestre sólo ofrece `Todos`, `1C` y `2C`. No
-tiene una opción explícita para "Anual". Como workaround, dejá el filtro
-en `Todos` y usá la búsqueda por nombre o filtrá por período =
-`anual`.
+Sí. Hay dos formas: poner «Cuatrimestre a mostrar» en `Anual` (muestra
+sólo los registros cargados como anuales) o dejar «Período de la
+materia» sólo en `anual` (filtra por lo que dice el catálogo de la
+materia).
 
 ### ¿Puedo cargar un Excel nuevo desde la UI?
 
@@ -443,6 +515,5 @@ comandos queda para la carga inicial del sistema.
   importaciones; los valores del archivo pisan a los existentes para
   el mismo (año, cuatri).
 - **Cuatrimestre "Anual"**: valor válido en la serie histórica para
-  materias que se dictan durante todo el año. El filtro superior no
-  lo incluye explícitamente; dejar el filtro en "Todos" para que
-  aparezcan.
+  materias que se dictan durante todo el año. Se puede filtrar con
+  «Cuatrimestre a mostrar» en `Anual`; con `Todos` también aparecen.

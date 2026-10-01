@@ -4,17 +4,17 @@ Los capítulos 5 y 6 fijaron qué se modela y cómo se guarda. Este
 capítulo explica sobre qué se construye la solución: qué
 tecnologías la sostienen y por qué se eligieron, cómo se reparten
 las responsabilidades dentro del sistema y cómo fluye una operación
-de punta a punta, desde la acción del operador en la pantalla hasta
+de punta a punta, desde la acción del usuario en la pantalla hasta
 el resultado que vuelve a ella.
 
 ## 7.1 Pila tecnológica
 
 El sistema es una *aplicación web* que se usa desde el navegador,
 escrita íntegramente en Python y con una base de datos local. La
-tabla de la pila tecnológica resume las tecnologías que la componen y el papel de cada
-una.
+Tabla @tab:pila resume las tecnologías que la componen y el papel de
+cada una.
 
-<!-- tabla: Pila tecnológica de la solución -->
+<!-- tabla: Pila tecnológica de la solución {#tab:pila} -->
 | Capa | Tecnología | Rol |
 | --- | --- | --- |
 | Interfaz de usuario | Streamlit | Presenta la aplicación en el navegador: formularios, tablas y gráficos. |
@@ -86,6 +86,134 @@ el capítulo 8.
 Los gráficos se generan con Altair, que se integra de manera
 directa con Streamlit.
 
+### 7.1.4 De las reglas al código
+
+Los capítulos anteriores describieron en lenguaje llano las entidades
+del dominio y sus reglas. Esta sección muestra, con fragmentos
+abreviados del código del sistema (sin comentarios y con los mensajes
+traducidos), cómo se plasma esa descripción y por qué la pila elegida
+ahorra trabajo. Intervienen cuatro mecanismos.
+
+**Una sola declaración por entidad.** Con SQLModel, cada entidad se
+declara una vez como una clase de Python. Esa misma declaración define
+la tabla de la base, las verificaciones de cada campo y las relaciones
+con otras entidades:
+
+```python
+class MateriaDB(SQLModel, table=True):
+    __tablename__ = "materias"
+
+    codigo: str = Field(primary_key=True, min_length=1)
+    nombre: str = Field(min_length=1)
+    horas_semanales: Optional[float] = Field(default=None, gt=0)
+    horas_teoria: Optional[float] = Field(default=None, ge=0)
+    horas_laboratorio: Optional[float] = Field(default=None, ge=0)
+    periodo: str = Field(default="cuatrimestral")  # o "anual"
+    virtual: bool = Field(default=False)
+    grupo_id: Optional[str] = Field(
+        default=None, foreign_key="grupo_materia.id")
+
+    comisiones: list["ComisionDB"] = Relationship(back_populates="materia")
+```
+
+Cada línea traduce una afirmación del modelo conceptual: el código
+identifica a la materia y no puede estar vacío, las horas semanales
+son positivas, la materia pertenece a un grupo de materias y tiene
+comisiones. No hace falta escribir a mano la sentencia que crea la
+tabla ni las consultas para recorrer la relación: `materia.comisiones`
+devuelve las comisiones de la materia.
+
+**Invariantes que combinan varios campos.** Las reglas que no se
+pueden expresar campo por campo se escriben como validadores de
+Pydantic, que se ejecutan cada vez que se construye la entidad. Así,
+un horario con un día inexistente o que termina antes de empezar no
+llega a existir en el sistema:
+
+```python
+class Horario(Entity):
+    comision_id: str
+    dia: DiaSemana
+    hora_inicio: time
+    hora_fin: time
+
+    @field_validator("dia")
+    @classmethod
+    def validar_dia(cls, v):
+        if v not in DIAS_SEMANA:
+            raise ValueError(f"el día debe ser uno de {DIAS_SEMANA}")
+        return v
+
+    @model_validator(mode="after")
+    def validar_rango(self):
+        if self.hora_fin <= self.hora_inicio:
+            raise ValueError("la hora de fin debe ser posterior a la de inicio")
+        return self
+```
+
+Algunas invariantes se refuerzan además en la propia base, como
+restricciones del motor. Por ejemplo, la regla "un horario virtual es
+siempre de teoría", porque un laboratorio exige presencialidad, se
+declara junto a la tabla de horarios:
+
+```python
+CheckConstraint(
+    "NOT (virtual = 1 AND (tipo_clase IS NULL OR tipo_clase <> 'teorica'))",
+    name="ck_horarios_virtual_teorica",
+)
+```
+
+**Altas, bajas y modificaciones genéricas.** Como todas las entidades
+se declaran de la misma manera, las operaciones básicas sobre la base
+se escriben una sola vez, en una clase genérica, y se reutilizan para
+cada entidad con una línea:
+
+```python
+class CRUDBase(Generic[T]):
+    def __init__(self, model: type[T]):
+        self.model = model
+
+    def get(self, session, id):
+        return session.get(self.model, id)
+
+    def create(self, session, obj):
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj
+
+materia_crud = CRUDBase(MateriaDB)
+aula_crud = CRUDBase(AulaDB)
+horario_crud = CRUDBase(HorarioDB)
+```
+
+Sobre esta base, los servicios agregan lo propio de cada entidad: que
+una comisión pertenezca a un cronograma o a un plan pero no a ambos
+(§6.4.2), o que al borrar un plan se borren sus comisiones y horarios.
+
+**El programa lineal, casi igual que en el papel.** PuLP permite
+escribir las restricciones del capítulo 8 con una notación muy
+cercana a la matemática. La restricción R1, "cada horario presencial
+va a exactamente un aula", queda así:
+
+```python
+for h in horarios_presenciales:
+    prob += pulp.lpSum(x[h.id, a] for a in compatibles[h.id]) == 1
+```
+
+y la función objetivo, como la suma ponderada de sus tres términos:
+
+```python
+prob += (
+    config.lambda_over * pulp.lpSum(over.values())
+    + config.lambda_under * pulp.lpSum(under.values())
+    + config.lambda_sede_pref * pulp.lpSum(fuera_de_sede_preferida)
+)
+```
+
+Esta cercanía entre la formulación y el código es la que permite
+verificar, restricción por restricción, que el sistema resuelve el
+problema que se planteó.
+
 ## 7.2 Separación en capas
 
 Una práctica habitual de la ingeniería de software para organizar
@@ -94,9 +222,9 @@ responsabilidades en niveles y cada nivel sólo se apoya en los que
 están debajo, nunca al revés. Así, un cambio en la presentación no
 obliga a tocar las reglas del negocio, y las reglas se pueden
 verificar sin pasar por la pantalla. El sistema se organiza en
-cuatro capas, como muestra la figura de la arquitectura en capas.
+cuatro capas, como muestra la Figura @fig:arquitectura.
 
-<!-- figura: Arquitectura en capas del sistema -->
+<!-- figura: Arquitectura en capas del sistema {#fig:arquitectura} -->
 ```mermaid
 flowchart TD
     UI["<b>Interfaz</b><br/>pantallas y componentes reutilizables"]
@@ -126,7 +254,7 @@ flowchart TD
   inscriptos e historial).
 
 La regla central es que **sólo la capa de servicios expresa reglas
-del dominio**. La interfaz recolecta lo que ingresa el operador, se
+del dominio**. La interfaz recolecta lo que ingresa el usuario, se
 lo pasa a un servicio y muestra la respuesta; cuando una pantalla
 advierte, por ejemplo, que las horas de teoría más las de
 laboratorio no suman las horas semanales de la materia, esa
@@ -138,9 +266,9 @@ la interfaz.
 
 El uso del sistema sigue un recorrido lineal que se repite cada
 cuatrimestre, desde la carga de los datos iniciales hasta la
-asignación final de aulas, con las etapas que resume la figura del flujo canónico de uso.
+asignación final de aulas, con las etapas que resume la Figura @fig:flujo.
 
-<!-- figura: Flujo canónico de uso del sistema -->
+<!-- figura: Flujo canónico de uso del sistema {#fig:flujo} -->
 ```mermaid
 flowchart TD
     subgraph F1[" "]
@@ -167,7 +295,7 @@ planillas de entrada: materias, planes de estudio por carrera y
 aulas. Se hace la primera vez o cuando se decide reiniciar el
 estado; el formato de cada planilla se documenta en los anexos.
 
-**Etapa 1. Ciclo lectivo.** El operador crea el ciclo (año,
+**Etapa 1. Ciclo lectivo.** El usuario crea el ciclo (año,
 cuatrimestre y fechas) y le asocia las versiones de plan de
 estudios vigentes. Con eso el sistema conoce qué materias se dictan
 en el ciclo.
@@ -178,7 +306,7 @@ declara si ofrece recursado y la materia puede indicar lo
 contrario. Los dictados que la regla no admite se omiten con una
 advertencia.
 
-**Etapa 3. Cronograma.** El operador carga la planilla con los
+**Etapa 3. Cronograma.** El usuario carga la planilla con los
 horarios del cuatrimestre, que se verifica contra los dictados
 activos: materias esperadas que faltan, materias que no se
 esperaban, particiones teoría-laboratorio que no cierran. El
@@ -189,7 +317,7 @@ genera el plan con sus comisiones y horarios semanales. Puede haber
 varios planes por ciclo: uno activo y otros como escenarios de
 comparación.
 
-**Etapa 5. Ajuste del plan.** El operador edita comisiones y
+**Etapa 5. Ajuste del plan.** El usuario edita comisiones y
 horarios, indica laboratorios compatibles y, si tiene información
 que la serie histórica no refleja, reemplaza el pronóstico de
 inscriptos.
@@ -197,7 +325,7 @@ inscriptos.
 **Etapa 6. Validación.** El sistema verifica el plan completo:
 que estén todas las materias esperadas, que no haya superposiciones
 horarias dentro de cada grupo curricular y que la partición
-teoría-laboratorio sea válida. Las excepciones que el operador
+teoría-laboratorio sea válida. Las excepciones que el usuario
 decide aceptar (por ejemplo, materias de años distintos que nunca
 comparten alumnos) se registran como pares ignorados. El resultado
 queda guardado.
@@ -209,22 +337,21 @@ el programa lineal, lo resuelve con CBC y aplica la solución al
 patrón semanal. La corrida queda registrada con un veredicto en
 lenguaje llano (capítulo 8).
 
-**Etapa 8. Análisis y ajuste.** El operador revisa la asignación,
+**Etapa 8. Análisis y ajuste.** El usuario revisa la asignación,
 puede cambiar aulas puntuales (con detección automática de
 colisiones) o modificar la configuración del asignador (pesos,
 tolerancias, margen entre sedes) y volver a correrlo.
 
 ## 7.4 Interacción entre capas: un ejemplo
 
-La figura de la secuencia de una corrida muestra cómo colaboran las
-capas en un caso concreto:
-el operador pide correr el asignador de aulas desde la pantalla del
+La Figura @fig:secuencia muestra cómo colaboran las capas en un
+caso concreto: el usuario pide correr el asignador de aulas desde la pantalla del
 plan.
 
-<!-- figura: Secuencia de una corrida del asignador de aulas -->
+<!-- figura: Secuencia de una corrida del asignador de aulas {#fig:secuencia} -->
 ```mermaid
 sequenceDiagram
-    actor U as Operador
+    actor U as Usuario
     participant I as Interfaz
     participant S as Servicio
 

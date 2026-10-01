@@ -67,7 +67,8 @@
   "Modulos/05_Planes_y_Asignacion_de_Aulas": "1eItchupTVWwGgxRR9d1OhzkYCqkXIPLp-ZT7Csx7o4Q",
   "Modulos/06_Cronogramas": "1dlVT2YwfxxpbI3rvRSCIBHDUX5jJk5PsuxqNzG__M3I",
   "Modulos/07_Inscriptos": "1R2X2n5o73mdZ9Wjbiu70R_Z8MMUoIaaDSigV0PD5KRA",
-  "Modulos/08_Historial": "1zPIlyvtgKzGsc5eLQr27gZdlgsH8ZbC9_mPzY1jm0OQ"
+  "Modulos/08_Historial": "1zPIlyvtgKzGsc5eLQr27gZdlgsH8ZbC9_mPzY1jm0OQ",
+  "Flujos/05_Reasignar_un_aula_manualmente": "19abmJB--2xaFTPpxfgCWdPbmV4Yda0H_p-nURvsjU0c"
  },
  "informe": {
   "doc_id": "1OWTnQUVUpzNZyotDqB1V1NM5KdSuDl0tvtC57hbQ1uw",
@@ -75,6 +76,6 @@
    "doc_id": "1hv0wt6oU1xjolsZYcTPeUHISwGQ-qWPtxqWsJjD17VA",
    "tab_id": "t.bnr5sejeug33"
   },
-  "huella_publicada": "d4998413eec3ba796cc11108118a45b309c3e87797a0644cd9dab4db59f6bbe5"
+  "huella_publicada": "e2e8d0a2a13c595e4f1f62e1e8cb1abbf23287a2dda8731fc67a95babdfb5cde"
  }
 }

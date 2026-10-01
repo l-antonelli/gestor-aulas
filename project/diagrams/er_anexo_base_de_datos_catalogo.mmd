@@ -1,0 +1,32 @@
+erDiagram
+    carreras ||--o{ plan_carrera_version : "tiene versiones"
+    plan_carrera_version ||--o{ plan_estudio : "contiene"
+    materias ||--o{ plan_estudio : "aparece en"
+    carreras ||--o{ plan_estudio : "pertenece a"
+    materias ||--o{ correlativas : "requiere"
+    materias ||--o{ correlativas : "es correlativa de"
+    carreras ||--o{ correlativas : "en la carrera"
+    sedes ||--o{ aulas : "tiene"
+    materias ||--o{ materia_laboratorio : "usa"
+    aulas ||--o{ materia_laboratorio : "es laboratorio de"
+    grupo_materia |o--o{ materias : "agrupa"
+    grupo_materia ||--o{ grupo_materia_sede : "admite"
+    sedes ||--o{ grupo_materia_sede : "se asigna a"
+    grupo_materia ||--o{ grupo_materia_carrera : "asocia"
+    carreras ||--o{ grupo_materia_carrera : "se asocia a"
+    materias ||--o{ inscripciones_historicas : "registra"
+    materias ||--o{ codigo_alias : "resuelve"
+    materias { string codigo PK }
+    carreras { string codigo PK }
+    sedes { string id PK }
+    aulas { string id PK }
+    plan_carrera_version { string id PK }
+    plan_estudio { string id PK }
+    correlativas { string carrera_codigo PK }
+    materia_laboratorio { string materia_codigo PK }
+    grupo_materia { string id PK }
+    grupo_materia_sede { string grupo_id PK }
+    grupo_materia_carrera { string grupo_id PK }
+    inscripciones_historicas { string materia_codigo PK }
+    codigo_alias { string codigo_externo PK }
+    configuracion_horaria { int id PK }

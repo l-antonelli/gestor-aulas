@@ -11,8 +11,8 @@ que su catálogo condiciona directamente qué asignaciones son posibles.
 ## ¿Cuándo vas a usar este módulo?
 
 - **Setup inicial**: después de la carga masiva, para completar aulas
-  fuera de la sede default, crear sedes adicionales (Zeballos, Beltrán,
-  Siberia, etc.) y marcar la sede default para materias comunes.
+  fuera de la sede por defecto, y crear sedes adicionales (Zeballos,
+  Beltrán, Siberia, etc.).
 - **Alta de una sede nueva**: cuando la facultad habilita un edificio
   o anexo que antes no se usaba.
 - **Alta de un aula nueva**: cuando se acondiciona un espacio nuevo o
@@ -26,8 +26,8 @@ que su catálogo condiciona directamente qué asignaciones son posibles.
 - **Consolidación**: fusionar dos sedes cuando alguien creó una con el
   nombre mal escrito y hay que unificar.
 - **Antes de correr el asignador de aulas por primera vez**: revisar
-  que las sedes habilitadas por carrera y la sede default de comunes
-  estén configuradas correctamente.
+  que las sedes existan y que las sedes admisibles de cada grupo de
+  materias (Materias → 📦 Grupos de materias) estén bien configuradas.
 
 ## Cómo se relaciona con el resto
 
@@ -36,9 +36,8 @@ que su catálogo condiciona directamente qué asignaciones son posibles.
   por default, pero otras sedes hay que crearlas a mano.
 - **Alimenta Materias**: las aulas de tipo laboratorio son las que se
   pueden asociar como "laboratorios compatibles" de una materia.
-- **Alimenta Carreras**: cada carrera puede tener una lista de sedes
-  habilitadas (donde el asignador puede colocar sus materias
-  exclusivas).
+- **Alimenta Grupos de materias**: las sedes admisibles de cada grupo
+  (modo DURO o BLANDO) se eligen entre las sedes que se dan de alta acá.
 - **Alimenta el asignador de aulas**: las aulas son el recurso que el
   asignador distribuye. Su capacidad, tipo y sede determinan qué
   asignaciones son factibles.
@@ -56,8 +55,17 @@ Cuatro solapas:
   inline, más la opción de borrarla y (si es laboratorio) la
   asociación con materias.
 - **📍 Sedes**: catálogo de sedes de la facultad, con opciones para
-  crear, renombrar, borrar y fusionar sedes, más la marca de "sede
-  default para materias comunes".
+  crear, renombrar, borrar y fusionar sedes.
+
+![Solapa de listado de aulas con el filtro por sede](../capturas/aulas/listado_de_aulas.png)
+
+![Solapa de sedes con la tabla de sedes y sus acciones](../capturas/aulas/sedes_listado.png)
+
+En la solapa de sedes, la tabla muestra cada sede con su cantidad de
+aulas. Debajo hay un aviso que remite a **Materias → 📦 Grupos de
+materias**, que es donde se configuran las sedes admisibles de cada
+materia, y después los desplegables para crear, renombrar o borrar y
+fusionar sedes.
 
 ## Tareas comunes
 
@@ -65,9 +73,13 @@ Cuatro solapas:
 
 1. Andá a la solapa **📍 Sedes**.
 2. Desplegá el expander **"➕ Crear sede"**.
-3. Escribí un **nombre único** para la sede (por ejemplo, "Zeballos" o
+3. Escribí un **Nombre** único para la sede (por ejemplo, "Zeballos" o
    "Siberia"). El nombre no puede repetirse con otra sede existente.
-4. Confirmá.
+
+   ![Desplegable para crear una sede](../capturas/aulas/crear_sede.png)
+
+4. Apretá **Crear** (el botón está deshabilitado mientras el nombre
+   esté vacío).
 5. Verificación: la sede aparece en la tabla superior de la solapa con
    conteo de aulas en cero.
 
@@ -79,54 +91,49 @@ a avisar.
 
 1. En la solapa **📍 Sedes**, desplegá el expander **"✏️ Renombrar /
    borrar sede"**.
-2. Elegí la sede que querés renombrar.
-3. Escribí el nombre nuevo.
-4. Apretá **Renombrar**.
+2. Elegí la sede en el selector **Sede**.
+3. Escribí el nombre nuevo en **Nuevo nombre**.
+4. Apretá **Renombrar** (queda deshabilitado mientras el nombre no
+   cambie).
+
+   ![Desplegable para renombrar o borrar una sede](../capturas/aulas/renombrar_borrar_sede.png)
+
 5. Verificación: la tabla de sedes muestra el nombre nuevo. Todas las
    aulas asociadas siguen apuntando a la misma sede (con nombre
    actualizado).
+
+Si el nombre nuevo ya lo usa otra sede, el sistema muestra un error
+debajo de los botones:
+
+![Error al renombrar una sede con un nombre ya usado](../capturas/aulas/error_sede_con_nombre_repetido.png)
 
 **Ojo con el código autogenerado**: si algún aula tiene el nombre viejo
 de la sede embebido en su código (porque se creó dejando el campo
 Código vacío y se autogeneró), ese código se queda con el nombre viejo
 pegado. Renombrar la sede no reescribe los códigos autogenerados de sus
-aulas — hay que editarlas una por una si molesta.
+aulas: hay que editarlas una por una si molesta.
 
 ### Borrar una sede
 
 1. Desplegá el expander **"✏️ Renombrar / borrar sede"** y elegí la
    sede.
-2. Apretá **Borrar**.
-3. Confirmá.
-4. Verificación: la sede desaparece de la tabla.
+2. Apretá **Borrar**. No pide confirmación adicional: la sede se borra
+   en el acto.
+3. Verificación: la sede desaparece de la tabla.
 
 **Restricción importante**: no se puede borrar una sede que tenga aulas
-asociadas. El botón queda deshabilitado y muestra el motivo. Si
+asociadas. El botón queda deshabilitado y, al pasar el cursor, muestra el motivo
+("No se puede borrar: tiene N aula(s) asociada(s)."). Si
 necesitás borrarla igual, la forma correcta es **fusionarla** con otra
 sede (ver más abajo), que reasigna las aulas al destino y borra la
 origen.
 
-### Marcar la sede default para materias comunes
+### Definir en qué sedes puede ir cada materia
 
-Esta configuración es clave para el asignador de aulas: las materias
-"comunes" (las que aparecen en dos o más carreras distintas) se asignan
-únicamente a la sede que esté marcada como default de comunes.
-
-1. En la solapa **📍 Sedes**, desplegá el expander **"🏛️ Sede por
-   defecto para materias comunes"**.
-2. En el selector, elegí la sede que querés marcar como default. Solo
-   una sede puede tener este rol a la vez — si activás una nueva, la
-   anterior se desmarca automáticamente sin aviso.
-3. También podés elegir "— ninguna —" para no tener default. En ese
-   caso, el asignador considera "todas las sedes" para las materias
-   comunes.
-4. Guardá.
-5. Verificación: en la tabla superior de sedes, la columna "Default
-   comunes" muestra el ícono 🏛️ en la sede marcada.
-
-**Gotcha**: si nunca marcaste ninguna, no falla nada, pero el asignador
-va a tener libertad total para poner las materias comunes en cualquier
-sede — lo cual puede no ser lo que querés.
+Las sedes admisibles de cada materia se definen por **grupo de materias**, en **Materias → 📦
+Grupos de materias**: cada grupo tiene su modo (DURO o BLANDO) y su lista
+de sedes, y cada materia pertenece a exactamente un grupo. Lo único que
+tenés que hacer en esta página es que las sedes existan antes de armar esas listas.
 
 ### Fusionar dos sedes
 
@@ -135,9 +142,12 @@ escrito ("Pelegrini" vs "Pellegrini") y hay que unificar.
 
 1. En la solapa **📍 Sedes**, desplegá el expander **"🔗 Fusionar
    sedes"**.
-2. Elegí la **sede origen** (la que va a desaparecer) y la **sede
-   destino** (la que absorbe todas las aulas).
-3. Confirmá.
+2. Elegí la **Sede origen (se borra)** y la **Sede destino (recibe las
+   aulas)**; cada opción muestra entre paréntesis cuántas aulas tiene.
+
+   ![Desplegable para fusionar dos sedes](../capturas/aulas/fusionar_sedes.png)
+
+3. Apretá **Fusionar**. El sistema informa cuántas aulas se reasignaron.
 4. Verificación: todas las aulas de la sede origen ahora aparecen bajo
    la sede destino. La sede origen desaparece de la tabla.
 
@@ -157,52 +167,75 @@ escrito ("Pelegrini" vs "Pellegrini") y hay que unificar.
      "Laboratorio 3".
    - **Sede** (obligatorio): elegí la sede a la que pertenece. Si no
      hay sedes, primero creá una desde la solapa 📍 Sedes.
-   - **Código** (opcional): identificador visible del aula. Si lo
+   - **Código para mostrar** (opcional): identificador visible del aula. Si lo
      dejás vacío, se autogenera como
      `{nombre de la sede}-{nombre del aula}` con guiones en lugar de
      espacios. Ejemplo: sede "Pellegrini" + aula "AULA 01" da como
      código `Pellegrini-AULA-01`. Un placeholder te muestra en tiempo
      real cómo va a quedar.
-   - **Capacidad**: mínimo 1, default 30. Cantidad máxima de personas
+   - **Capacidad (cantidad de alumnos)**: mínimo 1, valor inicial 30. Cantidad máxima de personas
      que entran en el aula.
-   - **Tipo**: elegí entre teorica, practica, laboratorio o anfiteatro.
-     El default es teorica. Este campo condiciona qué materias
+   - **Tipo de aula**: elegí entre teorica, practica, laboratorio o anfiteatro.
+     El valor inicial es teorica. Este campo condiciona qué materias
      pueden usar el aula (por ejemplo, las clases de tipo laboratorio
      solo van a aulas laboratorio).
    - **Descripción** (opcional): notas libres sobre el aula.
-3. Apretá **Crear aula**.
+
+   ![Formulario para crear un aula nueva](../capturas/aulas/crear_aula_formulario.png)
+
+   En la captura, el campo **Código para mostrar** quedó vacío y
+   muestra en gris el código que se va a autogenerar.
+
+3. Apretá **Crear aula** (hasta que no completes nombre y sede, la
+   página muestra "Completá nombre y sede para poder crear el aula.").
 4. Verificación: el aula aparece en el listado (solapa 📋 Listado) con
    los datos que le cargaste.
 
 **Gotcha**: el código del aula tiene que ser único a nivel sistema, no
 solo dentro de la sede. Si el autogenerado choca con uno existente,
-vas a ver el error "Ya existe un aula con código '{codigo}'. Editalo
-manualmente para usar otro." — en ese caso, escribí un código
-manualmente.
+vas a ver el aviso "Ya existe un aula con código '{codigo}'. Cambiá el
+nombre o el código y volvé a intentar.", en cuyo caso cambiá el nombre
+o escribí un código manualmente.
+
+![Aviso de código de aula repetido](../capturas/aulas/aviso_codigo_de_aula_repetido.png)
+
+El aviso es un mensaje flotante que aparece arriba a la derecha de la
+pantalla y se cierra solo al cabo de unos segundos. Cuando el alta sale
+bien, otro mensaje flotante confirma "Aula '{codigo}' creada." y el
+formulario se limpia (la sede y el tipo quedan elegidos, para cargar
+varias aulas seguidas).
 
 ### Editar un aula existente
 
 1. Andá a la solapa **👁️ Ver detalle**.
-2. En el selector, elegí el aula que querés editar (formato: `código —
-   nombre (sede)`).
-3. Modificá los campos que necesites: Nombre, Sede, Código, Capacidad,
-   Tipo o Descripción.
+2. En el selector, elegí el aula que querés editar (formato: `código - nombre (sede)`).
+3. Modificá los campos que necesites: Nombre, Sede, Código para mostrar,
+   Capacidad (cantidad de alumnos), Tipo de aula o Descripción.
 4. Apretá **Guardar cambios**.
+
+   ![Edición de un aula en la solapa Ver detalle](../capturas/aulas/editar_aula.png)
+
+   El botón **Guardar cambios** aparece recién cuando se modificó algún
+   campo; en la captura se cambió la capacidad.
+
 5. Verificación: el aula se refresca con los nuevos datos.
 
-Si no hiciste ningún cambio, el sistema muestra "Sin cambios" y el
-botón de guardar no dispara nada.
+Si no hiciste ningún cambio, el sistema muestra "Sin cambios." y no
+aparece el botón de guardar. Al guardar, un mensaje flotante confirma
+"Aula '{codigo}' actualizada."; si el código nuevo lo usa otra aula, se
+muestra "Ya existe otra aula con código '{codigo}'.".
 
 **Cambio de sede**: si cambiás la sede de un aula, se mueve al nuevo
 edificio en el sistema. Los códigos autogenerados no se actualizan
 solos.
 
-**Cambio de tipo a/desde laboratorio**: el sistema te avisa
-explícitamente en un mensaje al costado que **no** se borran las
-asociaciones con materias que la tenían como laboratorio compatible.
-Estas relaciones quedan "colgando" — probablemente inofensivas porque
-las consultas filtran por tipo antes de mostrarlas, pero conviene
-revisarlas manualmente si el cambio es definitivo.
+**Cambio de tipo a/desde laboratorio**: al guardar el cambio no se
+muestra ningún aviso, y las asociaciones con materias que tenían al aula
+como laboratorio compatible **no** se borran. Solamente el texto de
+ayuda del campo **Tipo de aula** (el ícono de interrogación) recuerda
+que esa lista se conserva. Si el aula deja de ser laboratorio, la
+sección de materias desaparece de la pantalla, pero las relaciones
+quedan guardadas; conviene revisarlas si el cambio es definitivo.
 
 ### Cargar materias que usan un laboratorio
 
@@ -210,10 +243,15 @@ Cuando el aula es tipo laboratorio, en la solapa **👁️ Ver detalle**
 aparece una sección adicional debajo del formulario, llamada
 **"Materias que usan este laboratorio"**.
 
-1. En esa sección hay un multiselect con todas las materias del
-   catálogo.
-2. Elegí las materias que se pueden dictar en este laboratorio.
-3. Guardá los cambios.
+![Sección de materias que usan un laboratorio](../capturas/aulas/materias_que_usan_el_laboratorio.png)
+
+1. En esa sección hay un selector múltiple, **Materias compatibles**,
+   con todas las materias activas del catálogo (formato `código - nombre`).
+2. Elegí las materias que se pueden dictar en este laboratorio. Mientras
+   no cambies nada, la sección indica cuántas materias hay asociadas
+   ("N materia(s) asociada(s). Sin cambios.").
+3. Cuando hay cambios, un aviso informa cuántas materias se agregan y
+   cuántas se quitan; apretá **Guardar** para aplicarlos.
 4. Verificación: al volver a la página de Materias y ver la sub-solapa
    Laboratorios de esas materias, el aula que acabás de configurar
    aparece asociada.
@@ -224,15 +262,19 @@ aula a un patrón semanal de tipo laboratorio.
 ### Eliminar un aula
 
 1. Andá a **👁️ Ver detalle**, elegí el aula.
-2. Bajá al expander **"🗑️ Borrar aula"**.
-3. Confirmá.
+2. Bajá al expander **"🗑️ Borrar aula"**, que advierte que la acción
+   es irreversible.
+
+   ![Desplegable para borrar un aula](../capturas/aulas/borrar_aula.png)
+
+3. Apretá **Borrar definitivamente**.
 4. Verificación: el aula desaparece del listado.
 
 **Restricción**: no se puede borrar un aula que tenga clases asignadas
-en un plan activo. El sistema muestra el error "No se puede borrar: el
-aula tiene clases asignadas. Reasignalas primero." — en ese caso, hay
+en algún plan. El sistema muestra el error "No se puede borrar: el
+aula tiene clases asignadas en algún plan. Reasignalas primero.". En ese caso, hay
 que primero reasignar esas clases a otras aulas (desde el panel de
-asignación del plan) o desactivar el plan que las contiene.
+asignación del plan) o eliminar el plan que las contiene.
 
 **Nota**: los cambios en aulas **no quedan registrados en el
 Historial**. Si necesitás llevar rastro de "quién cambió la capacidad de
@@ -243,9 +285,9 @@ tal aula", tenés que anotarlo en otro lado.
 | Mensaje | ¿Qué significa? | Cómo lo resolvés |
 |---|---|---|
 | "No hay sedes cargadas. Creá al menos una sede en la pestaña '📍 Sedes' antes de crear un aula." | Estás intentando crear un aula pero el catálogo de sedes está vacío | Andá a la solapa Sedes y creá al menos una |
-| "Ya existe un aula con código '{codigo}'. Editalo manualmente para usar otro." | El código autogenerado choca con uno existente | Escribí un código manualmente en el campo Código |
+| "Ya existe un aula con código '{codigo}'. Cambiá el nombre o el código y volvé a intentar." (mensaje flotante) | El código, autogenerado o escrito, choca con uno existente | Cambiá el nombre o escribí otro código en el campo Código para mostrar |
 | "Ya existe otra aula con código '{codigo}'." | Al editar cambiaste el código a uno que ya usa otra aula | Elegí un código distinto |
-| "No se puede borrar: el aula tiene clases asignadas. Reasignalas primero." | El aula está siendo usada por un plan activo | Reasigná esas clases desde el panel de asignación del plan, o desactivá el plan |
+| "No se puede borrar: el aula tiene clases asignadas en algún plan. Reasignalas primero." | El aula está siendo usada por un plan activo | Reasigná esas clases desde el panel de asignación del plan, o desactivá el plan |
 | "Ya existe la sede '{nombre}'." | Estás intentando crear o renombrar una sede con un nombre ya en uso | Elegí otro nombre |
 | "No se puede borrar la sede '...': tiene aulas asociadas. Reasignalas primero o usá 'fusionar' para moverlas a otra sede." | Estás intentando borrar una sede que aún tiene aulas | Fusionala con otra sede, o cambiale la sede a cada aula manualmente |
 | "La sede origen y la destino son la misma." | Al fusionar elegiste la misma sede en ambos campos | Elegí sedes distintas |
@@ -262,11 +304,12 @@ Zeballos generan códigos distintos (`Pellegrini-AULA-01` y
 No. El código es único a nivel sistema (no por sede).
 
 **¿Qué pasa si cambio el tipo de un aula de "laboratorio" a "teórica"?**
-El aula deja de aparecer como candidata en las asociaciones "laboratorios
-compatibles" de las materias. Las asociaciones existentes con esa aula
-**no se borran automáticamente**, pero como el sistema filtra por tipo,
-en la práctica dejan de tener efecto. Si preferís limpiarlas
-manualmente, andá a las materias afectadas y desasocialas.
+Se guarda sin ningún aviso. La sección "Materias que usan este
+laboratorio" deja de mostrarse para esa aula, pero las asociaciones
+existentes **no se borran automáticamente**. Si querés limpiarlas, antes
+de cambiar el tipo quitá las materias desde esa sección.
+> **Para verificar:** cómo trata el asignador las asociaciones que quedan
+> guardadas en un aula que ya no es laboratorio.
 
 **¿Qué diferencia hay entre las cuatro categorías de tipo (teorica,
 practica, laboratorio, anfiteatro)?**
@@ -280,23 +323,20 @@ practica, laboratorio, anfiteatro)?**
 
 El asignador respeta la compatibilidad de tipo entre aula y clase.
 
-**¿Qué es la "sede default de comunes"?**
-Es la sede a la que el asignador manda por default las materias que
-aparecen en más de una carrera. Sirve para concentrar las materias
-compartidas en un solo edificio y evitar duplicación entre sedes.
-Solo una sede puede tener este rol a la vez.
-
-**¿Y si no hay sede default de comunes?**
-El asignador asume "todas las sedes" para las materias comunes. Podés
-querer esto si tu facultad no separa las comunes por edificio.
+**¿Dónde se configuran las sedes en las que puede ir una materia?**
+En **Materias → 📦 Grupos de materias**. Cada grupo define su modo (DURO
+o BLANDO) y su lista de sedes admisibles, y cada materia pertenece a
+exactamente un grupo. Esta página sólo administra el catálogo de sedes y
+aulas.
 
 **¿Puedo tener un aula sin sede?**
 No. La sede es obligatoria. Hay que crear al menos una sede antes de
 crear la primera aula.
 
 **¿Los cambios en un aula quedan registrados en el Historial?**
-No. Aulas no se auditan. Los cambios en sedes tampoco, salvo la marca
-de "sede default para comunes" que sí queda registrada.
+No. Aulas y sedes no se auditan.
+> **Para verificar:** que el Historial no registre ningún cambio de aulas
+> o sedes.
 
 **¿Puedo fusionar tres sedes en una?**
 Sí, pero de a dos por vez. Fusionás sede A → sede C, después sede B →
@@ -325,17 +365,9 @@ comisiones chicas o aulas chicas para comisiones grandes generan un
 - **Código del aula**: identificador único a nivel sistema, generalmente
   autogenerado con el formato `{sede}-{nombre}` si no se completa a
   mano.
-- **Sede default para materias comunes**: sede que el asignador prefiere
-  para las materias que se dictan en más de una carrera. Solo puede
-  haber una activa a la vez.
-- **Sedes habilitadas por carrera**: lista de sedes donde una carrera
-  puede dictar sus materias exclusivas. Se configura desde la página
-  de Carreras. Si una carrera no tiene ninguna configurada, el sistema
-  asume "todas las sedes".
-- **Materia común**: materia que aparece en dos o más carreras. Se
-  asigna a la sede default de comunes.
-- **Materia exclusiva**: materia que aparece en una sola carrera. Se
-  asigna a las sedes habilitadas de esa carrera.
+- **Sedes admisibles**: sedes donde puede ir una materia. Se definen por
+  grupo de materias (Materias → 📦 Grupos de materias), con modo DURO o
+  BLANDO.
 - **Laboratorio compatible**: relación entre un aula tipo laboratorio y
   una materia que puede usarlo para su parte práctica.
 - **Fusión de sedes**: operación que reasigna todas las aulas de una

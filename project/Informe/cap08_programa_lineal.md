@@ -7,10 +7,10 @@ se organizan los datos y el sistema (capítulos 6 y 7). En este
 capítulo presentamos cómo se resuelve efectivamente el problema:
 lo modelamos como un programa lineal entero, explicamos cómo se
 diagnostica cuando no tiene solución y cómo se le comunica el
-resultado al operador. En el cuerpo damos el modelo con la
+resultado al usuario. En el cuerpo damos el modelo con la
 profundidad necesaria para seguir el argumento; las derivaciones
 completas, las formulaciones alternativas descartadas y los
-análisis de complejidad están en el **Anexo E, Desarrollo formal
+análisis de complejidad están en el **Anexo B, Desarrollo formal
 del programa lineal**.
 
 ## 8.1 De la operatoria al modelo
@@ -50,10 +50,10 @@ El programa lineal decide, simultáneamente:
 1. **El aula de cada horario semanal presencial.** Es la decisión
    central.
 2. **El tipo de los horarios que el cronograma dejó abierto.**
-   Cuando el operador no definió si un horario es de teoría o de
+   Cuando el usuario no definió si un horario es de teoría o de
    laboratorio, lo resuelve el modelo.
 3. **Una redistribución de la matrícula esperada entre las
-   comisiones de un mismo dictado**, si el operador la habilita y
+   comisiones de un mismo dictado**, si el usuario la habilita y
    si mejora el aprovechamiento de las aulas.
 
 Todo lo demás queda **fuera**: el modelo no decide qué comisiones
@@ -123,14 +123,14 @@ convención usual de la investigación operativa.
 - `S_D(g)`, `S_B(g)`: conjunto obligatorio de sedes y lista
   ordenada de sedes preferidas del grupo `g`.
 - `modo(g) ∈ {DURO, BLANDO}`: modo en que se aplica la regla de
-  sedes al grupo `g`, elegido por el operador.
+  sedes al grupo `g`, elegido por el usuario.
 - `sede_pref(h)`: sede preferida del horario `h`, definida sólo
   si su grupo está en modo BLANDO.
-- `pin(h)`: aula fijada manualmente por el operador para `h`, si
+- `pin(h)`: aula fijada manualmente por el usuario para `h`, si
   la hay.
 - Pesos y tolerancias del objetivo: `λ_over`, `λ_under`,
   `λ_sede_pref`, `tol_over`, `tol_under`, ajustables por el
-  operador.
+  usuario.
 
 ### 8.2.3 Variables de decisión
 
@@ -145,7 +145,7 @@ convención usual de la investigación operativa.
 - `over[h], under[h] ≥ 0`: sobreocupación y subocupación del
   horario `h`.
 - `α[k] ∈ [0, 1]`: proporción de la matrícula del dictado que
-  corresponde a la comisión `k`. Sólo se usa cuando el operador
+  corresponde a la comisión `k`. Sólo se usa cuando el usuario
   habilita la redistribución (R7).
 
 ### 8.2.4 Función objetivo
@@ -235,7 +235,7 @@ siempre que el conjunto no esté vacío. La excepción son los
 laboratorios declarados compatibles con la materia, que se
 admiten aunque estén en otra sede.
 
-**R9. Aulas fijadas manualmente.** Si el operador fijó el aula
+**R9. Aulas fijadas manualmente.** Si el usuario fijó el aula
 de un horario y pidió respetar esas decisiones, se impone
 `x[h, pin(h)] = 1`.
 
@@ -257,9 +257,94 @@ Junto con R1, equivale a "si `h₁` se dicta en `s₁`, `h₂` no
 puede dictarse en `s₂`". Se aplica tanto a los traslados del
 docente como a los del alumno.
 
-**R12. Misma sede por comisión.** Cuando el operador lo exige,
+**R12. Misma sede por comisión.** Cuando el usuario lo exige,
 las variables `y[c, s]` obligan a que todos los horarios de una
 comisión se dicten en la misma sede.
+
+### 8.2.6 Un ejemplo pequeño
+
+Para ver cómo queda escrito el programa, tomamos un caso mínimo:
+cuatro horarios del lunes por la mañana y tres aulas de una misma
+sede. Las Tablas @tab:ej-horarios y @tab:ej-aulas resumen los datos, y la
+Figura @fig:ej-lp los muestra sobre la línea de tiempo.
+
+<!-- tabla: Horarios del ejemplo {#tab:ej-horarios} -->
+| Horario | Materia | Tipo | Lunes | Inscriptos esperados |
+| :---: | --- | --- | :---: | :---: |
+| `h₁` | Análisis Matemático I | teoría | 08:00 a 10:00 | 70 |
+| `h₂` | Física I | teoría | 09:00 a 11:00 | 35 |
+| `h₃` | Física I | laboratorio | 08:00 a 10:00 | 25 |
+| `h₄` | Álgebra y Geometría | teoría | 10:00 a 12:00 | 45 |
+
+<!-- tabla: Aulas del ejemplo {#tab:ej-aulas} -->
+| Aula | Tipo | Capacidad |
+| :---: | --- | :---: |
+| `a₁` | teórica | 40 |
+| `a₂` | teórica | 80 |
+| `a₃` | laboratorio de Física | 30 |
+
+![Ejemplo del programa lineal: horarios, grupos de simultaneidad y asignación óptima](figuras/ejemplo_lp.png){#fig:ej-lp width=15cm}
+
+Escribimos `x_ij` en lugar de `x[h_i, a_j]`. Como las clases de teoría
+sólo admiten aulas teóricas y el laboratorio sólo admite `a₃`, la
+compatibilidad (R2) deja siete variables de las doce posibles:
+`x₁₁, x₁₂, x₂₁, x₂₂, x₃₃, x₄₁` y `x₄₂`. Se usan los pesos por defecto
+(`λ_over = 10`, `λ_under = 1`), sin tolerancia para la sobreocupación
+y con una tolerancia del 20 % para la subocupación: un aula recién
+cuenta como subocupada cuando sobra más de una quinta parte de su
+capacidad.
+
+**Función objetivo.**
+
+$$\min \; 10 \,(\text{over}_1 + \text{over}_2 + \text{over}_3 + \text{over}_4) \;+\; (\text{under}_1 + \text{under}_2 + \text{under}_3 + \text{under}_4)$$
+
+**R1. Cada horario en exactamente un aula.**
+
+$$x_{11} + x_{12} = 1, \qquad x_{21} + x_{22} = 1, \qquad x_{33} = 1, \qquad x_{41} + x_{42} = 1$$
+
+**R3. Sin superposición.** Entre las 9 y las 10 se dictan a la vez
+`h₁`, `h₂` y `h₃`; entre las 10 y las 11, `h₂` y `h₄` (`h₁` termina
+justo cuando empieza `h₄`, por lo que no se superponen). Para cada
+grupo y cada aula teórica:
+
+$$x_{11} + x_{21} \le 1, \qquad x_{12} + x_{22} \le 1, \qquad x_{21} + x_{41} \le 1, \qquad x_{22} + x_{42} \le 1$$
+
+En `a₃` sólo puede ir `h₃`, así que su restricción se cumple sola.
+
+**R6. Sobreocupación y subocupación.** Para cada horario, el exceso
+de inscriptos sobre la capacidad del aula asignada y la capacidad
+sobrante más allá de la tolerancia, una fórmula por horario:
+
+$$\text{over}_1 \ge 70 - 40\,x_{11} - 80\,x_{12}, \qquad \text{under}_1 \ge 32\,x_{11} + 64\,x_{12} - 70$$
+
+$$\text{over}_2 \ge 35 - 40\,x_{21} - 80\,x_{22}, \qquad \text{under}_2 \ge 32\,x_{21} + 64\,x_{22} - 35$$
+
+$$\text{over}_3 \ge 25 - 30\,x_{33}, \qquad \text{under}_3 \ge 24\,x_{33} - 25$$
+
+$$\text{over}_4 \ge 45 - 40\,x_{41} - 80\,x_{42}, \qquad \text{under}_4 \ge 32\,x_{41} + 64\,x_{42} - 45$$
+
+con todas las `x` binarias y `over`, `under` no negativas. El resto
+de las restricciones no interviene: los tipos de clase están
+declarados (R4 y R5 se cumplen con los datos), hay una sola sede (R8,
+R10, R11 y R12) y no hay aulas fijadas ni redistribución de
+matrícula (R7 y R9).
+
+**La solución.** Como `h₂` se superpone con `h₁` y con `h₄`, tiene
+que ir a un aula distinta de la de ambos; `h₁` y `h₄` pueden
+compartir aula porque no se superponen. Quedan entonces dos
+alternativas:
+
+- `h₂` en `a₁` y `h₁`, `h₄` en `a₂`. Nadie queda sin lugar; sólo `h₄`
+  queda holgado (45 inscriptos en un aula de 80, `under₄ = 64 − 45 =
+  19`). Costo: **19**.
+- `h₂` en `a₂` y `h₁`, `h₄` en `a₁`. Faltan 30 lugares para `h₁` y 5
+  para `h₄`, y `h₂` queda holgado (`under₂ = 29`). Costo:
+  10 · (30 + 5) + 29 = **379**.
+
+El resolutor elige la primera. El ejemplo muestra el criterio del
+objetivo en pequeño: se acepta un aula grande a medio llenar antes
+que dejar alumnos sin lugar. En un cuatrimestre real el razonamiento
+es el mismo, pero con cientos de horarios y miles de variables.
 
 ## 8.3 Herramientas conceptuales para el diagnóstico
 
@@ -296,14 +381,39 @@ La verificación se hace por momento de simultaneidad y por sede.
 
 ### 8.3.3 Grupos de simultaneidad
 
-Un grupo maximal de simultaneidad es un conjunto de horarios que
-están activos en un mismo momento y que no se puede agrandar sin
-incluir un horario que no se superponga con los demás. Formular
-R3 por grupos, en lugar de por pares de horarios, es equivalente
-pero mejor: genera menos restricciones y su relajación lineal es
-más ajustada, lo que reduce el trabajo de ramificación y acotación
-del resolutor (§2.3.3). El Anexo E compara ambas formulaciones
-sobre casos de prueba.
+La restricción R3 impide que dos horarios que se superponen compartan
+aula. La forma más directa de escribirla es *par por par*: para cada
+par de horarios superpuestos y cada aula, a lo sumo uno de los dos la
+ocupa. Funciona, pero cuando muchos horarios coinciden a la misma hora
+la cantidad de pares crece muy rápido (veinte horarios simultáneos
+forman 190 pares) y cada par aporta una restricción por aula.
+
+La alternativa es agrupar. Si en un instante dado hay varios horarios
+en curso, todos se superponen entre sí, y alcanza con una sola
+restricción que diga "de todos ellos, a lo sumo uno ocupa esta aula".
+Llamamos *grupo de simultaneidad* al conjunto de horarios en curso en
+un mismo instante, y *grupo maximal* al que no queda contenido dentro
+de otro grupo más grande. En el ejemplo de §8.2.6, entre las 9 y las 10
+están en curso `h₁`, `h₂` y `h₃`: ese grupo es maximal. Entre las 8 y
+las 9 sólo están `h₁` y `h₃`, pero ese grupo ya está incluido en el
+anterior y no hace falta escribirlo aparte. Una sola desigualdad por
+aula, `x₁ₐ + x₂ₐ + x₃ₐ ≤ 1`, reemplaza a las tres de los pares
+`(h₁, h₂)`, `(h₁, h₃)` y `(h₂, h₃)`.
+
+Las dos formulaciones admiten exactamente las mismas asignaciones,
+pero la agrupada es mejor por dos motivos. Genera muchas menos
+restricciones: cuando los horarios son intervalos de tiempo, los
+grupos maximales son a lo sumo tantos como horarios hay, y se
+encuentran recorriendo la semana en orden de hora de inicio, como
+enseña la teoría de *grafos de intervalos* desarrollada por Golumbic
+[5]. Además, su relajación lineal (§2.3.3) es más ajustada: con la
+formulación por pares, la relajación admite soluciones fraccionarias
+que la agrupada descarta (por ejemplo, poner cada uno de tres horarios
+simultáneos "medio" en la misma aula), de modo que el resolutor
+necesita ramificar menos. En la programación lineal entera, estas
+desigualdades se conocen como *desigualdades de clique*, y Wolsey [12]
+muestra que dominan a las formuladas por pares. El Anexo B compara
+ambas formulaciones sobre casos de prueba.
 
 ## 8.4 Verificación estructural previa
 
@@ -343,7 +453,7 @@ ninguna pista sobre la causa.
 ## 8.5 Construcción dinámica del programa lineal
 
 El programa lineal no es fijo: en cada corrida se arma desde cero
-con los datos vigentes y las opciones que eligió el operador. Los
+con los datos vigentes y las opciones que eligió el usuario. Los
 pasos son:
 
 1. **Reunir los datos** de horarios, aulas, comisiones,
@@ -372,7 +482,7 @@ Cuando el resolutor encuentra la solución óptima, el sistema la
 aplica al patrón semanal: cada horario presencial queda con el
 aula asignada y, si su tipo estaba abierto, con el tipo que
 resolvió el modelo. Los horarios virtuales quedan sin aula y las
-aulas fijadas manualmente que el operador pidió respetar no se
+aulas fijadas manualmente que el usuario pidió respetar no se
 modifican.
 
 Cada corrida queda registrada con la configuración usada, el
@@ -388,7 +498,7 @@ verificación previa no había encontrado bloqueos, el sistema
 busca la causa con un **diagnóstico por relajación selectiva**.
 La técnica aproxima el concepto de *subsistema irreducible de
 infactibilidad*: el menor conjunto de restricciones cuya
-combinación impide toda solución. El detalle está en el Anexo E;
+combinación impide toda solución. El detalle está en el Anexo B;
 en criollo, el procedimiento es el siguiente:
 
 1. **Relajar de a una.** Se quita, de a una por vez, cada
@@ -400,7 +510,7 @@ en criollo, el procedimiento es el siguiente:
    Por ejemplo, R4 sólo se considera causa si al relajarla
    aparecen materias cuyas horas no cierran.
 3. **Priorizar.** Si quedan varias causas, se informa primero la
-   que admite la acción más directa del operador: las de sede
+   que admite la acción más directa del usuario: las de sede
    (R8, R12, R11) antes que las estructurales (R3, R4, R5).
 4. **Precisar el grupo cuando la causa es R8.** Se prueba pasar
    cada grupo de modo DURO a BLANDO por separado, para recomendar
@@ -414,7 +524,7 @@ El resultado se presenta como una recomendación concreta: "la
 causa probable es tal; para resolverla, conviene hacer tal cosa".
 Esta capacidad es la que hace del sistema, más que una
 herramienta de optimización opaca, un asistente con el que el
-operador puede iterar.
+usuario puede iterar.
 
 ## 8.8 Veredicto y transparencia
 

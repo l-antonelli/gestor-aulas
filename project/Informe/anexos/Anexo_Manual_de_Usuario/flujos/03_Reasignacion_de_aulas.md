@@ -1,4 +1,4 @@
-# Flujo 3 — Reasignar aulas tras cambios
+# Flujo 3: Reasignar aulas tras cambios
 
 ## ¿Cuándo usar este flujo?
 
@@ -11,160 +11,182 @@ apareció algún cambio que hace que la asignación quede desactualizada:
 - **Se mueve un horario** (día u hora distintos a los originales).
 - **Se cambia la modalidad** de una materia (pasa de presencial a
   virtual, o al revés).
-- **Se cambia la carrera asignada** de una comisión (por overlap
+- **Se cambia la carrera asignada** de una comisión (por superposición
   entre carreras).
-- **Se ajustan las sedes habilitadas** de una carrera.
+- **Se ajustan las sedes de un grupo de materias** (modo DURO o
+  BLANDO).
 - **Se cambian los cupos o pesos** de las comisiones.
 
-En cualquiera de estos casos, la asignación anterior ya no
+En cualquiera de estos casos, la asignación anterior no
 necesariamente es la mejor (ni siquiera válida). Este flujo te
 guía para reflejar los cambios sin romper el trabajo previo.
 
 ## Estado esperado antes de arrancar
 
-- Plan activo con al menos una corrida del asignador previa.
+- Un plan de cursada con al menos una corrida del asignador previa,
+  seleccionado como **Plan activo** en la barra lateral de
+  📊 Cursada.
 - Sabés qué cambio hay que reflejar.
 
 ## Pasos
 
-### Paso 1 — Aplicar los cambios estructurales
+### Paso 1: Aplicar los cambios estructurales
 
 Dependiendo de qué cambió, andá a la página correspondiente:
 
 - **Comisión nueva o cerrada, o cambio de cupo/peso/carrera
-  asignada**: 📊 Cursada → 🔍 Detalle del Plan (o 📋 Grilla Horaria) →
-  editar la materia y ajustar comisiones.
-- **Horario movido o agregado**: 📊 Cursada → 📋 Grilla Horaria →
-  drag/click/select en el calendario.
-- **Modalidad virtual de una materia**: 📆 Ciclos → 📚 Dictados →
-  toggle virtual → aplicar cambios.
-- **Modalidad virtual de un horario específico**: 📊 Cursada → 📋
-  Grilla Horaria → editar horario → cambiar virtual.
-- **Aula nueva o baja de aula**: 🏛️ Aulas y Sedes.
-- **Sedes admisibles de una carrera**: 🎓 Carreras → editar carrera →
-  sección "Sedes habilitadas".
+  asignada**: 📊 Cursada → **📋 Horarios** → modo **Por materia** →
+  tabla **Comisiones del plan para esta materia**.
+- **Horario movido o agregado**: 📊 Cursada → **📋 Horarios** →
+  arrastrar, hacer click o seleccionar un rango en el calendario
+  (o usar **✏️ Editar día/hora** desde el inspector de franja de la
+  solapa 🏛️ Aulas).
+- **Modalidad virtual de una materia en el ciclo**: 📆 Ciclos →
+  📚 Dictados → selector **Virtual** → **💾 Aplicar N cambio(s)**.
+- **Modalidad virtual de un horario específico**: 📊 Cursada →
+  📋 Horarios → editar horario → cambiar **Virtual**.
+- **Aula nueva o baja de aula**: 🏛️ Aulas (solapas **➕ Crear** y
+  **👁️ Ver detalle**).
+- **Sedes admisibles**: 📚 Materias → 📦 Grupos de materias → editar
+  el grupo (sedes del modo DURO o lista del modo BLANDO). El modo de
+  cada grupo se elige al correr el asignador.
 - **Laboratorios compatibles**: 📚 Materias → editar materia →
-  solapa "Laboratorios".
+  sub-solapa **Laboratorios**.
 
-Verificá siempre que el cambio se haya persistido (buscá un toast de
-confirmación).
+Verificá siempre que el cambio se haya persistido (buscá el mensaje
+de confirmación).
 
-> **Cuidado**: si moviste un horario a otro día u hora, el sistema
-> guarda el aula que tenía asignada previamente. Esa aula puede
-> quedar en conflicto con otras clases del nuevo horario. **La única
-> forma de reconciliarlo es volver a correr el asignador**. Al
-> hacerlo, el asignador va a reevaluar todo y asignar de nuevo.
+![Pestaña Horarios, modo Por grupo: calendario semanal editable](../capturas/planes/horarios_por_grupo_calendario.png)
 
-### Paso 2 — Volver a validar (si el cambio fue estructural)
+> **Cuidado**: si moviste un horario a otro día u hora, el aula que
+> tenía asignada queda pegada al horario. Esa aula puede quedar en
+> conflicto con otras clases del nuevo horario y el panel de aulas lo
+> marca como colisión. Hay dos formas de reconciliarlo: liberar el
+> aula del horario (botón **🧹 Liberar aula de …** en la sección de
+> colisiones de **🛠️ Gestión de asignaciones**) o volver a correr el
+> asignador, que reevalúa todo.
 
-Si el cambio afectó al cronograma origen (por ejemplo, se movió un
-horario que ya estaba en el cronograma), volvé a 📅 Cronogramas → ✅
-Validar y corré la validación de nuevo. El badge del cronograma tiene
-que quedar 🟢.
+### Paso 2: Volver a validar (si el cambio fue estructural)
+
+Si el cambio afectó al cronograma origen (por ejemplo, se corrigió un
+horario que ya estaba en el cronograma), volvé a 📅 Cronogramas →
+**✅ Validar** y corré la validación de nuevo. Para que el cambio
+llegue al plan tenés que generar un plan nuevo a partir del cronograma
+(flujo 2, paso 7): el plan existente no se actualiza solo.
 
 Si el cambio fue sólo en el plan (no en el cronograma), no hace falta
-revalidar el cronograma.
+revalidar el cronograma. En ese caso, podés revisar el panel de
+validaciones del plan (📊 Cursada → **🔍 Detalle del Plan** →
+**Validar plan**).
 
-### Paso 3 — Correr el asignador de nuevo
+### Paso 3: Correr el asignador de nuevo
 
 **Página**: 📊 Cursada, solapa **🏛️ Aulas**.
 
-1. Revisá la configuración. Probablemente ya está OK del run
-   anterior, pero fijate especialmente en:
-   - **Aplicar desde la fecha**: define desde qué fecha las clases
-     se pisan con la asignación nueva. Las clases anteriores a esa
-     fecha se mantienen intactas.
-2. Apretá **🚀 Asignar aulas**.
+1. Abrí **🏛️ Asignador de aulas** → **🚀 Correr la asignación**.
+   El formulario se precarga con los parámetros de la última corrida;
+   fijate especialmente en:
+   - **Respetar ediciones manuales** (activado por defecto): el
+     asignador no toca las aulas que fijaste a mano con la casilla
+     **🔒 Marcar como manual**. Si querés que las vuelva a decidir,
+     desactivalo o liberalas desde **🔒 Asignaciones manuales
+     protegidas**.
+   - **Aplicar desde la fecha**.
+2. Si querés, probá antes **▶️ Chequear factibilidad**: es una
+   verificación previa que detecta bloqueos sin correr el asignador.
+3. Apretá **🚀 Asignar aulas**.
 
-El sistema corre otra vez y guarda una nueva corrida. La anterior
-queda como histórico (podés compararla revisando las corridas
-anteriores, aunque hoy no hay una pantalla directa que las liste).
+![Configuración avanzada y botón «Asignar aulas»](../capturas/planes/aulas_correr_avanzada_y_boton.png)
 
-### Paso 4 — Revisar diferencias
+El sistema corre otra vez y guarda una nueva corrida en el historial
+de corridas del plan. La última es la que se muestra por defecto.
 
-En el mismo panel, comparación implícita:
+### Paso 4: Revisar diferencias
 
-- Mirá el **mapa de saturación por sede** — ¿mejoró respecto al
-  problema que te llevó a re-correr?
-- Mirá la **tabla de resultados** — ¿los horarios afectados quedaron
+En el mismo panel:
+
+- Mirá el veredicto y la métrica **Horarios reasignados**: cuántos
+  horarios cambiaron de aula respecto de la corrida anterior.
+- Mirá el **mapa térmico por sede**: ¿mejoró respecto al problema
+  que te llevó a volver a correr?
+- Mirá la **tabla por horario**: ¿los horarios afectados quedaron
   con las aulas esperadas?
-- Mirá el **cronograma por aula** — ¿no se generaron choques?
+- Mirá las métricas de **Colisiones** (debería ser 0) y
+  **Desactualizados**.
 
-### Paso 5 — (Opcional) Redistribución de pesos
+![Métricas del estado de asignaciones: asignados, sobre-ocupados y colisiones](../capturas/planes/aulas_estado_metricas.png)
 
-Si activaste el toggle **Redistribuir pesos entre comisiones**, el
-asignador puede haber propuesto una redistribución de los pesos que
-mejora la asignación. Vas a ver una tabla con pesos actuales vs.
-propuestos y dos botones:
+![Mapa térmico por sede con sus controles](../capturas/planes/aulas_mapa_termico_controles.png)
 
-- **Aplicar nuevos pesos**: guarda la propuesta como el nuevo peso
-  de cada comisión.
-- **Descartar**: deja los pesos como estaban.
+### Paso 5: (Opcional) Redistribución de pesos
+
+Si activaste el interruptor **Redistribuir pesos entre comisiones
+(experimental)**, el asignador puede haber propuesto una
+redistribución de los pesos que mejora la asignación. Vas a ver la
+tabla **🔄 Pesos propuestos para redistribuir capacidad** (pesos
+actuales vs. propuestos) y dos botones:
+
+- **Aplicar nuevos pesos**: guarda la propuesta como el nuevo peso de
+  cada comisión.
+- **Descartar propuesta**: deja los pesos como estaban.
 
 Ojo: si descartás, las aulas que asignó el asignador quedan pero los
 pesos NO reflejan la asignación efectiva. Es recomendable **aplicar**
 si aceptás la propuesta.
 
-## Sobre la fecha desde
+## Sobre «Aplicar desde la fecha»
 
-El parámetro **"Aplicar desde la fecha"** merece una mención aparte
-porque tiene consecuencias que a veces sorprenden:
-
-- Las **clases con fecha anterior** a "Aplicar desde" se **preservan
-  intactas**. Si ya se dictaron o están por dictarse esta semana con
-  aulas asignadas, no las tocás.
-- Las **clases con fecha igual o posterior** se **actualizan** con la
-  nueva asignación.
-
-Casos típicos:
-
-| Caso | Recomendación |
-|---|---|
-| Recién arrancó el cuatri, aparece cambio | Poné fecha = hoy. Las clases pasadas quedan como se dictaron. |
-| Estás preparando el cuatri antes del arranque | Poné fecha = inicio del ciclo. Todas las clases se asignan. |
-| Cambio que afecta sólo desde mitad de cuatri | Poné fecha del día donde arranca el cambio. |
-| Querés pisar todo, incluso lo pasado | Poné una fecha muy anterior al inicio del ciclo. Ojo: reescribís el histórico. |
+> **Para verificar:** el efecto exacto de **Aplicar desde la fecha**
+> en la versión actual. La ayuda del campo dice que las clases
+> anteriores a esa fecha quedan intactas, pero el entregable de la
+> aplicación es el patrón semanal con sus aulas, no clases fechadas.
+> Hasta confirmarlo, dejá el valor por defecto.
 
 ## Verificación final
 
 Después de la reasignación:
 
-- La corrida más reciente está en **✅ resuelta** (o feasible).
-- Las métricas de over/under están dentro de tolerancias.
-- El cambio que motivó la reasignación se ve reflejado en la tabla
-  de resultados.
-- El cronograma por aula del aula afectada muestra el estado nuevo
-  correcto.
+- La corrida más reciente está en **✅ resuelta**.
+- Las métricas de sobre-ocupados y sub-utilizados están dentro de lo
+  tolerable.
+- El cambio que motivó la reasignación se ve reflejado en la **tabla
+  por horario**.
+- No hay colisiones de aula.
 
-## Rollback
+![Tabla por horario con el estado de cada asignación](../capturas/planes/aulas_tabla_por_horario.png)
 
-Los resultados del asignador quedan como histórico automáticamente.
-Si querés "volver atrás" a una asignación anterior:
+## Cómo volver atrás
 
-- Opción A: correr el asignador con la configuración anterior (si
-  te acordás cuál era).
+Cada corrida queda guardada en el historial de corridas del plan, pero
+no hay un botón "revertir a la corrida anterior". Si querés volver
+atrás:
+
+- Opción A: correr el asignador con la configuración anterior (los
+  parámetros de cada corrida se ven en **⚙️ Parámetros usados en esta
+  corrida**).
 - Opción B: editar a mano las aulas de los horarios afectados desde
-  el cronograma por aula del panel de asignación.
-- No hay un botón "revertir a la corrida N-1".
+  **🛠️ Gestión de asignaciones**.
 
-## Puntos de fricción típicos
+## Puntos de dificultad típicos
 
-- **Moviste horarios y el cronograma por aula muestra choques**:
-  es porque el sistema todavía tiene las aulas viejas asignadas.
-  Corré el asignador de nuevo y se resuelve.
+- **Moviste horarios y aparecen colisiones de aula**: es porque el
+  horario conserva el aula vieja. Liberá el aula o corré el asignador
+  de nuevo y se resuelve.
 - **La corrida da infactible después de un cambio que "no debería"
   romper nada**: revisá si al cambio le agregaste alguna
-  restricción sin querer (por ejemplo, marcar una comisión con
-  carrera asignada que reduce las sedes admisibles).
-- **Cambiaste sedes admisibles de una carrera y no se reflejó**:
-  las sedes admisibles se leen fresco en cada corrida del
-  asignador. Corré de nuevo y va a tomarlas.
-- **Toggle "Respetar ediciones manuales"**: por ahora no hace nada
-  visible. Si editaste un aula a mano antes de re-correr, el
-  asignador probablemente la pise. Podés volver a hacer la edición
-  manual después.
+  restricción sin querer (por ejemplo, asignar una carrera a una
+  comisión o pasar un grupo a modo DURO con pocas sedes).
+- **Cambiaste las sedes de un grupo y no se reflejó**: las sedes se
+  leen de nuevo en cada corrida del asignador. Corré de nuevo y va a
+  tomarlas.
+- **Editaste un aula a mano y el asignador la cambió**: verificá que
+  **Respetar ediciones manuales** esté activado y que la aula haya
+  quedado marcada como manual (🔒) al confirmar el cambio.
 
 ## Próximo paso
 
+- Para cambiar a mano el aula de un horario puntual (incluido el flujo de
+  cambios en cascada), seguí con el
+  **[Flujo 5: Reasignar un aula manualmente](05_Reasignar_un_aula_manualmente.md)**.
 - Si el cambio fue justo antes del arranque del cuatri, seguí con la
   **[Verificación pre-inicio](04_Verificacion_pre_inicio.md)**.

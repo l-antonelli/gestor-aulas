@@ -26,18 +26,20 @@ Por eso conviven en la misma página.
 
 - **Después de validar un cronograma** como vigente para el ciclo:
   ese es el momento para generar el plan de cursada.
-- **Al ajustar comisiones**: cambiar cupos, agregar o cerrar
-  comisiones, marcar una comisión para una carrera específica.
+- **Al ajustar comisiones**: cambiar cupos, pesos, agregar o quitar
+  horarios, asignar una carrera a una comisión específica.
 - **Para correr el asignador de aulas**: siempre que quieras que el
   sistema resuelva qué aula usa cada horario.
-- **Para revisar el resultado del asignador**: interpretar los mapas
-  de calor, la tabla de resultados y, si hay problemas, el
+- **Para revisar el resultado del asignador**: interpretar el mapa
+  térmico por sede, la tabla por horario y, si hay problemas, el
   diagnóstico.
 - **Para hacer ajustes finos post-asignación**: cambiar un aula a
   mano, marcar un horario como virtual, redistribuir pesos entre
   comisiones.
-- **Para activar oficialmente el plan** del ciclo, generar las clases
-  y dar por cerrada la planificación.
+- **Para elegir el plan de trabajo** del ciclo: el plan que
+  seleccionás en la barra lateral es el que muestran las demás
+  pestañas.
+
 
 ## Cómo se relaciona con el resto
 
@@ -59,10 +61,10 @@ flowchart TD
   habilitadas (las restricciones de sede), Inscriptos (para forecast
   de esperados).
 - **Alimenta**: nada más. Es el módulo final del flujo. Todo lo que
-  se produce acá (aulas asignadas, clases generadas) es el
+  se produce acá (aulas asignadas, horarios ajustados) es el
   entregable operativo del cuatrimestre.
 
-## Modelo mental (importante — leer antes de las tareas)
+## Modelo mental (importante: leer antes de las tareas)
 
 Este es el módulo más denso del sistema. Antes de meterte en las
 pantallas, tomate unos minutos para entender estos conceptos clave.
@@ -98,20 +100,16 @@ del cronograma como comisiones del plan. **Modificar una comisión
 del plan no afecta al cronograma origen** (y viceversa). Son ciclos
 de vida independientes.
 
-### Patrón semanal vs Clases
+### Patrón semanal
 
-- El **patrón semanal** es lo que ves en la grilla horaria del plan:
-  "los lunes de 8 a 10 hay Análisis I comisión 1". Es la fuente de
-  verdad de la planificación y **es lo que el asignador de aulas
-  mira**.
-- Las **clases** son las instancias concretas de cada horario en cada
-  fecha del ciclo. Si un cuatrimestre tiene 15 semanas y el patrón
-  dice "los lunes de 8 a 10", entonces se generan 15 clases
-  concretas (una por lunes) al activar el plan.
+El **patrón semanal** es lo que ves en la pestaña **📋 Horarios**:
+"los lunes de 8 a 10 hay Análisis I comisión 1". Es la fuente de
+verdad de la planificación y **es lo que el asignador de aulas
+mira**: el aula se guarda directamente en cada horario del patrón.
 
-Vos trabajás siempre sobre el patrón semanal. Las clases se generan
-automáticamente cuando activás el plan y heredan el aula del patrón.
-En la práctica no necesitás editar clases una por una.
+Vos trabajás siempre sobre el patrón semanal: todo lo que hacés acá
+(horarios, aulas, virtualidad) se edita sobre ese patrón.
+
 
 ### Qué es el asignador de aulas
 
@@ -151,29 +149,49 @@ declarar en tres niveles:
 La regla es simple: **el nivel más específico manda**. Si el
 horario tiene una virtualidad seteada, se usa esa. Si no, se busca
 en el dictado. Si tampoco, se cae en la materia. Un horario marcado
-como virtual **queda excluido del asignador**: no consume aula.
+como virtual **no consume aula**: el asignador no le busca ninguna (igual cuenta para
+las horas de teoría y laboratorio de la materia cuando «R4 estricta»
+está activa).
 
 ## Recorrido rápido de la página
 
-La página de Cursada se organiza en 6 tabs:
+La barra lateral tiene, debajo del menú de páginas, el bloque
+**📊 Contexto de Planes** con dos selectores:
 
-1. **📥 Generar Plan**: wizard de 2 pasos para crear un plan nuevo a
-   partir de un cronograma validado y vigente.
-2. **📋 Vista General**: listado de todos los planes existentes del
-   ciclo, con acciones rápidas (activar, eliminar).
-3. **🔍 Detalle del Plan**: editor central del plan seleccionado.
-   Metadata, validaciones, ajustes por materia.
-4. **📋 Grilla Horaria**: vista global del plan como calendario
-   semanal, con dos modos ("por grupo curricular" y "por materia").
-5. **🏛️ Aulas**: entrada del asignador de aulas. Acá lo configurás,
-   lo corrés, y ves el resultado.
-6. **⚙️ Configuración**: parámetros globales de la grilla temporal
+- **Ciclo activo**: el ciclo con el que trabajás. Mientras no elijas
+  uno, la página sólo te pide que lo hagas.
+- **Plan activo**: el plan del ciclo sobre el que trabajan las
+  pestañas de edición. Es simplemente el plan que tenés seleccionado
+  en este momento; no es un estado que se guarde en el plan.
+
+La página de Cursada se organiza en 5 pestañas:
+
+1. **📋 Planes del ciclo**: listado de los planes del ciclo elegido,
+   con acciones rápidas (seleccionar, eliminar, editar metadata). Al
+   pie tiene el desplegable **➕ Generar plan nuevo desde un
+   cronograma**.
+2. **🔍 Detalle del Plan**: estadísticas, calidad del resultado,
+   acciones del plan y panel de validaciones.
+3. **📋 Horarios**: el patrón semanal del plan como calendario
+   editable, con dos modos ("Por grupo" y "Por materia").
+4. **🏛️ Aulas**: entrada del asignador de aulas. Acá lo configurás,
+   lo corrés, y ves y ajustás el resultado.
+5. **⚙️ Configuración**: parámetros globales de la grilla temporal
    (granularidad en minutos, hora de inicio operativo, días
    operativos).
 
-Cada tab se puede navegar independientemente. Si estás editando un
-plan, tenés que seleccionarlo primero desde el selector superior de
-la mayoría de los tabs.
+Las pestañas **Detalle del Plan**, **Horarios** y **Aulas** sólo
+aparecen cuando hay un plan elegido en **Plan activo**. Sin plan
+seleccionado quedan únicamente **Planes del ciclo** y
+**Configuración**.
+
+![Página Cursada: barra lateral con el contexto de planes y pestañas de la página](../capturas/planes/navegacion_contexto_y_pestanas.png)
+
+En la barra lateral se eligen el ciclo activo y el plan activo; las pestañas de la parte superior recorren las secciones de la página.
+
+
+Cada pestaña se puede navegar independientemente, pero todas leen el
+ciclo y el plan elegidos en la barra lateral.
 
 ## Tareas comunes
 
@@ -183,115 +201,205 @@ El plan nace de un cronograma que ya está en estado **🟢 Validado y
 vigente**. Si el cronograma no tiene ese estado, no lo vas a poder
 elegir.
 
-**Paso 1 — Selección**:
+La generación está al pie de la pestaña **📋 Planes del ciclo**, en
+el desplegable **➕ Generar plan nuevo desde un cronograma**. Si el
+ciclo todavía no tiene planes, el desplegable aparece abierto. Trabaja
+sobre el ciclo elegido en la barra lateral.
 
-1. Andá al tab **📥 Generar Plan**.
-2. Elegí el ciclo desde el selector.
-3. Elegí el cronograma. Sólo aparecen los cronogramas validados y
-   vigentes. Los cronogramas "sin validar" o "validados pero
-   desactualizados" quedan listados en un expander informativo pero
-   no se pueden seleccionar.
-4. Poné un nombre al plan (por default el sistema te sugiere algo
-   tipo "Plan 2026-1C (Nombre del cronograma)").
-5. Descripción opcional.
-6. Elegí el método de forecast default: `media_movil`, `drift` o
-   `ses`. Si no tenés preferencia, dejá `media_movil`.
-7. Apretá **"Crear borrador y continuar →"**.
+**Paso 1: Selección y creación del borrador**:
+
+1. Abrí el desplegable **➕ Generar plan nuevo desde un cronograma**.
+2. Elegí el cronograma en el selector **"Cronograma (solo validados y
+   vigentes)"**. Los cronogramas que no están validados y vigentes
+   no se pueden elegir: quedan listados, con su estado, en el
+   desplegable **"Cronogramas no disponibles (N)"**. Si ninguno
+   cumple, en lugar del selector ves el aviso **"Ningún cronograma
+   del ciclo está validado y vigente. Andá a 📅 Cronogramas → ✅
+   Validar para habilitar uno."** junto con la lista de los
+   cronogramas y su estado. Si el ciclo no tiene cronogramas, el aviso
+   es **"No hay cronogramas cargados para este ciclo. Cargá uno desde
+   📅 Cronogramas."**
+3. Poné un nombre al plan (el campo **"Nombre del plan"** viene
+   sugerido como "Plan 2026-1C (Nombre del cronograma)"; no puede
+   quedar vacío).
+4. **"Descripción (opcional)"**.
+5. Elegí el **"Método de forecast por defecto"** (método de
+   pronóstico): "Media móvil", "Drift (lineal)" o "SES (α auto)".
+   Si no tenés preferencia, dejá "Media móvil". Después se puede
+   cambiar por plan o por materia.
+6. Apretá **"Crear borrador y continuar →"**.
+
+![Formulario «Generar plan nuevo desde un cronograma», paso 1](../capturas/planes/generar_plan_formulario.png)
+
+La captura muestra el caso en que ningún cronograma está validado y vigente: el formulario avisa que hay que validar uno antes de continuar.
 
 El sistema clona en cascada todas las comisiones y horarios del
-cronograma. Cuando termina, vas a ver un toast del estilo `"Borrador
-creado: 47 comision(es), 82 horario(s)."` y automáticamente pasás al
+cronograma. Cuando termina, vas a ver un aviso del estilo `"Borrador
+creado: 47 comision(es), 82 horario(s)."` y el desplegable pasa al
 paso 2.
 
-**Paso 2 — Edición inicial**:
+**Paso 2: Edición inicial**:
 
-En este paso, el wizard embebe el mismo editor que después vas a
-usar en el tab "Detalle del Plan". Podés revisar validaciones,
+En este paso, el desplegable embebe el mismo editor que después vas
+a usar en la pestaña **Detalle del Plan**, con el título "Editando:
+*nombre del plan* (borrador inactivo)". Podés revisar validaciones,
 ajustar comisiones o pesos que hayan quedado raros. Cuando estés
-conforme, apretá **"✅ Confirmar y salir del wizard"**.
-
-Al confirmar, el plan queda como borrador (no activo) y el sistema
-te lleva al tab Detalle con ese plan pre-seleccionado.
+conforme, apretá **"✅ Confirmar y salir del wizard"** (así se llama el
+botón en pantalla). Al confirmar, el plan queda
+seleccionado como **Plan activo** en la barra lateral y un aviso te
+invita a seguir desde **🔍 Detalle del Plan**.
 
 > ⚠️ **Cuidado con "Cancelar"**: el botón **"🗑️ Cancelar (borra el
-> plan)"** del paso 2 borra el plan **sin pedir confirmación
-> intermedia**. Un click y se va. Si lo apretaste sin querer, no hay
-> forma de recuperarlo — hay que volver a generar el plan desde
-> cero.
+> plan)"** del paso 2 borra el plan borrador, con todas sus
+> comisiones y horarios, **sin pedir confirmación intermedia**. Un
+> click y se va. Si lo apretaste sin querer, no hay forma de
+> recuperarlo: hay que volver a generar el plan desde cero.
 
-Si cerrás la pestaña del wizard sin apretar nada, el borrador queda
-persistido y lo vas a ver aparecer en la Vista General.
+Si cerrás la página sin apretar nada, el borrador queda persistido y
+lo vas a ver aparecer en la lista de **Planes del ciclo**.
 
 ### Ver los planes existentes de un ciclo
 
-Andá al tab **📋 Vista General** y elegí el ciclo. Vas a ver una
-tarjeta por cada plan del ciclo, con:
+Andá a la pestaña **📋 Planes del ciclo** (el ciclo es el elegido en
+la barra lateral). Vas a ver una tarjeta por cada plan del ciclo,
+con:
 
-- **Nombre del plan** y **badge** (🟢 ACTIVO o ⚪ inactivo).
-- **Descripción** y nombre del cronograma origen.
-- **Métricas**: Materias distintas, Comisiones, Horarios.
-- **Acciones**: Activar (si está inactivo) o Eliminar.
+- **Nombre del plan**, con la marca **✅ Activo** si es el plan
+  seleccionado en la barra lateral.
+- **Descripción** (o "Sin descripción") y nombre del cronograma
+  origen.
+- **Métricas**: Materias, Comisiones, Horarios.
+- **Acciones**: **Seleccionar** (sólo en los planes que no están
+  seleccionados; lo deja como Plan activo) y **🗑️ Eliminar**. En el
+  plan ya seleccionado, en lugar del botón "Seleccionar" ves un texto
+  que te remite a Detalle, Horarios y Aulas.
+- Un desplegable **✏️ Editar metadata (nombre / descripción / método
+  de forecast)**.
 
-Podés tener varios planes por ciclo, pero **sólo uno puede estar
-activo a la vez**. Al activar un plan, el sistema desactiva
-automáticamente cualquier otro plan activo del mismo ciclo.
+Al pie de la lista figura el total: "Total: N plan(es) en este
+ciclo."
 
-> ⚠️ **Eliminar borra sin confirmación**: el botón **"Eliminar"** de
-> cada tarjeta borra el plan y todo lo asociado (comisiones,
-> horarios, clases) sin pedir confirmación intermedia. Es
-> destructivo. Antes de apretarlo, verificá dos veces cuál es el
-> plan que estás por borrar.
+![Pestaña «Planes del ciclo»: tarjeta del plan con sus métricas y acciones](../capturas/planes/planes_del_ciclo_tarjeta.png)
+
+La tarjeta resume la cantidad de materias, comisiones y horarios del plan e indica si es el plan activo.
+
+
+![Formulario para editar el nombre, la descripción y el método de pronóstico del plan](../capturas/planes/planes_editar_metadata.png)
+
+
+El formulario de edición tiene los campos **Nombre**, **Descripción** y
+**"Método de forecast (default del plan)"**, y se confirma con
+**Guardar**.
+
+Podés tener varios planes por ciclo (útiles para comparar
+escenarios). "Activo" significa sólo "el plan que estás mirando":
+cambiarlo con **Seleccionar** no modifica los planes ni genera nada.
+
+> ⚠️ **Eliminar borra sin confirmación**: el botón **"🗑️ Eliminar"**
+> de cada tarjeta borra el plan y todo lo asociado (comisiones,
+> horarios) sin pedir confirmación intermedia. Es destructivo. Antes
+> de apretarlo, verificá dos veces cuál es el plan que estás por
+> borrar.
 
 ### Editar los detalles de un plan
 
-Andá al tab **🔍 Detalle del Plan**, elegí el ciclo y el plan. Vas a
-ver:
+Elegí el plan en **Plan activo** (barra lateral) y andá a la pestaña
+**🔍 Detalle del Plan**. Vas a ver, de arriba hacia abajo:
 
-- **Metadata**: nombre, descripción, método de forecast default. Se
-  edita en un formulario con botón "Guardar".
+- **Cabecera**: nombre y descripción del plan, con una nota que indica
+  que para renombrar o cambiar el método de pronóstico hay que ir a
+  **📋 Planes del ciclo → ✏️ Editar metadata**; la metadata no se
+  edita en esta pestaña.
 - **Estadísticas**: 4 métricas rápidas (Materias, Comisiones,
   Horarios, Horarios con aula).
-- **🔧 Acciones del plan**: expander con acciones puntuales
+- **📊 Calidad del resultado**: un panel para evaluar de un vistazo
+  qué tan bien resuelto está el plan, en cuatro bloques: **🎯
+  Cobertura** (Asignados, Sin aula, En sede preferida, En sede
+  alternativa), **⚖️ Ajuste al forecast de inscriptos**
+  (Sobreocupados, Sobrecupo total, Subutilizados, Subutilización
+  total, Ratio promedio, Mediana (P50), P90), **🏛️ Uso del catálogo
+  de aulas** (Aulas usadas, Aulas ociosas, Con carga alta) y **🧮
+  Estado del asignador y traslados intersede** (Última corrida, Valor
+  del objetivo, Tiempo del solve, Traslados intersede).
+- **🔧 Acciones del plan**: desplegable con acciones puntuales
   (auto-completar tipo de horarios, ver más abajo).
-- **Validaciones**: panel unificado con cobertura contra dictados,
-  conflictos de horarios, editor inline por materia, forecast por
-  materia, particiones teoría/lab, y el botón de activación con su
-  gate.
+- **Validaciones**: panel con el interruptor **"Excluir optativas del
+  cómputo"**, el interruptor **"Auto-revalidar al cambiar"** y el
+  botón **"Validar plan"**. Debajo muestra el **Resumen de
+  cobertura** (Materias, Clases, Horas plan, Esperadas, Cubiertas,
+  Faltantes), la verificación de particiones teoría/laboratorio, el
+  detalle por carrera y por materia, los conflictos de horarios y el
+  camino de cursada. Cuando un conflicto es un falso positivo (por
+  ejemplo, dos códigos de la misma materia según el año del plan),
+  cada conflicto ofrece el botón **"🙈 Ignorar par … en este plan"**,
+  con una razón opcional.
+
+![Pestaña «Detalle del Plan»: estadísticas y calidad del resultado](../capturas/planes/detalle_estadisticas_y_calidad.png)
+
+
+![Panel de validaciones: botón «Validar plan» y resumen de cobertura](../capturas/planes/detalle_validaciones_resumen.png)
+
 
 El panel de validaciones es donde vas a pasar la mayor parte del
 tiempo cuando estés cerrando un plan.
 
-### Ver la grilla horaria completa del plan
+### Ver y editar los horarios del plan (pestaña Horarios)
 
-Andá al tab **📋 Grilla Horaria**. La grilla te ofrece dos modos de
-trabajo:
+Andá a la pestaña **📋 Horarios**. En el bloque **🎛️ Modo de edición**
+elegís entre dos modos de trabajo:
 
-- **Por grupo curricular**: filtrás por Carrera, Año y Cuatrimestre.
-  Ves un calendario semanal editable con todas las comisiones del
-  grupo, coloreadas por comisión. Podés arrastrar, redimensionar,
-  hacer click para editar, o seleccionar un rango vacío para crear
-  un horario nuevo. Los cambios se guardan al momento.
-- **Por materia**: buscás por código o nombre y ves esa materia
+- **Por grupo**: filtrás por **Carrera**, **Año de cursada** y
+  **Cuatrimestre** (los tres actúan como una combinación exacta del
+  plan de estudio). Ves un calendario semanal editable con las
+  comisiones del grupo, coloreadas por comisión. Podés arrastrar,
+  redimensionar, hacer click sobre un bloque para editarlo, o
+  seleccionar un rango vacío para crear un horario nuevo (antes hay
+  que elegir la materia en **➕ Agregar horario a la grilla**). Los
+  cambios se guardan al momento. Un multiselector **📋 Materias
+  visibles en la grilla** permite sacar materias para reducir el
+  ruido.
+- **Por materia**: buscás una materia por código o nombre y la ves
   aislada, con:
   - Un calendario semanal con sus horarios.
-  - Una tabla editable de horarios (día, hora, tipo).
-  - Una tabla editable de comisiones (nombre, cupo, peso, carrera
-    asignada, descripción).
+  - La tabla editable **Entradas y comisiones** (horarios): columnas
+    Día, Inicio, Fin, Comisión, Tipo y Virtual.
+  - La tabla editable **Comisiones del plan para esta materia**:
+    columnas N°, Nombre, Cupo, Coef, Carrera asignada y Descripción.
+
+Además, un desplegable **📥 Exportar a Excel** genera un archivo con
+lo que se ve en la grilla (hojas Metadata, Cronograma y Detalle).
+
+![Modo «Por grupo»: filtros de carrera, año de cursada y cuatrimestre](../capturas/planes/horarios_por_grupo_filtros.png)
+
+
+![Modo «Por grupo»: calendario semanal con las comisiones del grupo](../capturas/planes/horarios_por_grupo_calendario.png)
+
+
+![Modo «Por materia»: calendario semanal de una sola materia, con color por comisión](../capturas/planes/horarios_por_materia_calendario.png)
+
+
+![Modo «Por materia»: tablas editables de horarios y de comisiones](../capturas/planes/horarios_por_materia_tablas.png)
+
+
+![Diálogo «Editar horario» abierto desde el calendario](../capturas/planes/horarios_dialogo_editar_horario.png)
+
+Al hacer clic en un bloque se abre este diálogo, donde se cambian el día, el horario de inicio y de fin, la comisión y el tipo de clase. Los botones son **Guardar**, **Eliminar** (borra el horario, sin pedir confirmación) y **Cancelar**.
+
 
 Los dos modos comparten el mismo motor. En "Por grupo" trabajás
 transversalmente; en "Por materia" te enfocás en una sola.
 
 ### Ajustar comisiones (cupo, carrera asignada, peso)
 
-Las comisiones se editan desde el tab **Detalle del Plan → por
-materia** o desde **📋 Grilla Horaria → modo Por materia**. En
-ambos vas a encontrar la tabla de comisiones con estas columnas:
+Las comisiones se editan desde la pestaña **📋 Horarios → modo Por
+materia**, en la tabla **Comisiones del plan para esta materia**, con
+estas columnas:
 
-- **Número** y **Nombre**: identificadores administrativos.
+- **N°** y **Nombre**: identificadores administrativos.
 - **Cupo**: el cupo declarado de la comisión. Es un número
   administrativo que **no** entra al asignador (el asignador usa
   capacidades de aulas e inscriptos esperados).
-- **Peso** (columna llamada "coef" o similar): cuánto de la
+- **Coef** (el peso de la comisión): cuánto de la
   demanda total de la materia le corresponde a esta comisión. Los
   pesos de todas las comisiones de una materia deberían sumar 1.0.
 - **Carrera asignada**: opcional, ver más abajo.
@@ -331,17 +439,31 @@ de pesos** (ver más abajo).
 
 ### Marcar horarios como virtuales (sin aula)
 
-Un horario marcado como virtual queda excluido del asignador: no
-consume aula y no aparece en los mapas de calor de saturación.
+Un horario marcado como virtual no consume aula: el asignador no le
+busca ninguna y no cuenta como demanda en el mapa térmico.
 
 Hay dos formas de marcarlo:
 
-1. **Desde la grilla horaria**: hacé click en el bloque del
-   horario → se abre el dialog "Editar horario" → tildá **"Virtual"**
-   → confirmar.
-2. **Desde el inspector de franja del asignador**: cuando estás
-   inspeccionando una franja saturada, cada horario listado tiene un
-   botón "✏️ Editar" que abre el mismo dialog.
+1. **Desde la pestaña 📋 Horarios, modo "Por materia"**: en la tabla
+   editable de horarios, cambiá la columna **Virtual** del horario a
+   **Sí** (fuerza virtual), **No** (fuerza presencial) o **Heredar**
+   (usa lo que diga el dictado o la materia). El diálogo "Editar
+   horario" que se abre al hacer click en el calendario **no** tiene
+   este campo.
+2. **Desde el inspector de franja del asignador** (pestaña 🏛️ Aulas):
+   cuando estás inspeccionando una franja saturada, cada horario
+   listado tiene un botón **"✏️ Editar día/hora"** que abre el
+   diálogo "Editar horario" con el desplegable **Virtual** (opciones
+   Heredar, Sí, No).
+
+![Diálogo «Editar horario» abierto desde el inspector de franja, con el campo «Virtual»](../capturas/planes/aulas_dialogo_editar_horario_virtual.png)
+
+El diálogo muestra la materia, la comisión, el horario actual y el
+valor de "Virtual actual", y permite cambiar **Nuevo día**, **Inicio**,
+**Fin** y **Virtual**. Si cambiás el día o la hora, se muestra una vista
+previa de las validaciones y de la saturación de la franja destino.
+Los botones son **Sin cambios** (deshabilitado hasta que modifiques
+algo), **Confirmar y aplicar** y **Cancelar**.
 
 La segunda vía es especialmente útil cuando el asignador te dice
 "no se pudo resolver" por saturación: marcás como virtual un
@@ -356,87 +478,203 @@ la materia.
 
 Los pasos concretos:
 
-1. Andá al tab **🏛️ Aulas** del plan seleccionado.
+1. Elegí el plan en **Plan activo** y andá a la pestaña **🏛️ Aulas**
+   (título "Asignación de aulas").
 2. Verificá que el plan tiene al menos un horario cargado. Si no,
    vas a ver el mensaje **"El plan no tiene horarios cargados.
-   Agregá horarios desde el tab 📋 Grilla Horaria."**
-3. Ajustá los parámetros del asignador (ver detalle abajo):
-   - **Aplicar desde la fecha**: default hoy (o fecha de inicio del
-     ciclo si es futura). Las clases previas a esta fecha quedan
-     intactas.
-   - **Peso de sobre-ocupación** (default 10.0): cuánto castiga
-     poner una materia grande en un aula chica.
-   - **Peso de sub-utilización** (default 1.0): cuánto castiga poner
-     un grupo chico en un aula gigante.
-   - **Tolerancia de sobre-ocupación** (default 0.0): margen antes
-     de empezar a castigar.
-   - **Tolerancia de sub-utilización** (default 0.20): 20% de vacío
-     "gratis".
-   - **Respetar ediciones manuales** (default ON): ver aclaración
-     abajo.
-   - **Tiempo máximo** (default 300 segundos): corte del asignador.
-   - **Redistribuir pesos entre comisiones (avanzado)**: ver más
-     abajo.
-4. Apretá **"🚀 Asignar aulas"**.
-5. Aparece un spinner mientras el asignador corre. Al terminar, vas
-   a ver el resultado con status y métricas.
+   Agregá horarios desde el tab 📋 Grilla Horaria."** (la pestaña se
+   llama hoy **📋 Horarios**). Si hay horarios con el tipo todavía sin
+   determinar, aparece además una sugerencia (no bloquea) para usar
+   **🔧 Acciones del plan → Auto-completar tipo de horarios**.
+3. Abrí el desplegable **🏛️ Asignador de aulas** y, dentro, el
+   desplegable **🚀 Correr la asignación (config + botón)**. Arriba
+   del formulario tenés dos paneles opcionales:
+   - **🔒 Asignaciones manuales protegidas (N)**: lista las aulas
+     fijadas a mano (ver más abajo) y permite liberarlas. Sólo
+     aparece con **"Respetar ediciones manuales"** activo.
+   - **🚦 Chequeo de factibilidad estructural**: botón **"▶️ Chequear
+     factibilidad"**. Es una verificación previa, antes de correr el
+     asignador: detecta horarios sin aula compatible, franjas
+     saturadas, particiones teoría/laboratorio imposibles, pares de
+     laboratorios conflictivos y otros bloqueos. Muestra un semáforo
+     (✅ sin bloqueos, o ❌ con la cantidad de bloqueos y un detalle
+     por regla) y advertencias que no bloquean. Si el resultado es
+     rojo, corregí los datos antes de correr el asignador: ya se sabe
+     que no va a resolver.
+4. Ajustá los parámetros de la **⚙️ Configuración del asignador**.
+   Un desplegable **"¿Qué son las restricciones duras y las
+   preferencias blandas?"** explica qué regla gobierna cada
+   parámetro. Los parámetros están agrupados así:
+   - **📅 Alcance temporal y ediciones manuales**:
+     - **Aplicar desde la fecha**: por defecto hoy (o la fecha de
+       inicio del ciclo si es futura).
+     - **Respetar ediciones manuales** (por defecto activado): el
+       asignador no pisa las aulas fijadas a mano.
+   - **⚖️ Ajuste de capacidad al forecast**:
+     - **Peso de sobre-ocupación (λ over)**: cuánto castiga poner una
+       materia grande en un aula chica.
+     - **Peso de sub-utilización (λ under)**: cuánto castiga poner un
+       grupo chico en un aula gigante.
+     - **Tolerancia de sobre-ocupación** y **Tolerancia de
+       sub-utilización** (deslizadores): margen relativo antes de
+       empezar a castigar.
+   - **🏛️ Preferencias y restricciones de sede**:
+     - **🧭 Modo por grupo**: para cada grupo de materias, elegís
+       **DURO** (el asignador sólo admite las sedes del conjunto duro
+       del grupo) o **BLANDO** (no filtra; prefiere la primera sede de
+       la lista blanda del grupo). Los conjuntos se definen en
+       **Materias → 📦 Grupos**.
+     - **Peso de preferencia de sede blanda (λ sede)**: cuánto se
+       respeta la sede preferida en los grupos en modo BLANDO.
+     - **Margen mínimo entre sedes (minutos)**: si dos horarios
+       contiguos de una comisión tienen un intervalo menor, quedan en
+       la misma sede (0 desactiva la restricción).
+     - **Forzar misma sede por comisión**: todos los horarios de una
+       comisión caen en la misma sede.
+   - **🛠 Configuración avanzada**:
+     - **Tiempo máximo de resolución (segundos)**.
+     - **R4 estricta (valida horas de teoría y de laboratorio)**:
+       exige que las sumas de horarios de teoría y de laboratorio
+       igualen las horas declaradas de la materia; los horarios
+       virtuales cuentan para esas sumas aunque no ocupen aula.
+       Apagada, sólo se valida el laboratorio (modo heredado).
+     - **Peso de intersede blando (λ intersede)**: penalización extra
+       por cada par de horarios contiguos de una comisión en sedes
+       distintas; complementa al margen (que es una regla dura).
+     - **Redistribuir pesos entre comisiones (experimental)**: ver
+       más abajo.
+5. Apretá **"🚀 Asignar aulas"**.
+6. Aparece un indicador de progreso ("Asignando aulas…") mientras el
+   asignador corre. Al terminar, la página se recarga con el
+   resultado.
 
-> ℹ️ **Sobre el toggle "Respetar ediciones manuales"**: hoy por hoy,
-> este toggle **no cambia nada visible en el resultado**. La
-> capacidad de editar aulas puntualmente por clase (una clase
-> puntual) fue removida del sistema en 2026, y desde entonces el
-> flag que este toggle usaba quedó sin ninguna forma de activarse
-> desde la interfaz. Queda expuesto por si en el futuro se
-> reintroduce la edición puntual — no lo apagues sin razón, pero
-> tampoco esperes que cambie el comportamiento hoy.
+**Valores por defecto.** Un formulario sin corridas previas arranca con:
+λ over 10, λ under 1, tolerancia de sobre-ocupación 0,00, tolerancia
+de sub-utilización 0,20, λ sede 5, margen entre sedes 30 minutos,
+"Forzar misma sede por comisión" apagado, tiempo máximo 300 segundos,
+"R4 estricta" encendida, λ intersede 0 y "Redistribuir pesos" apagado.
+**Cuando el plan ya tiene una corrida, el formulario se precarga con
+los valores de la última corrida**, así que lo que ves puede ser
+distinto (en las capturas, λ over 25, tolerancia de sobre-ocupación
+0,10, de sub-utilización 0,35 y λ intersede 7).
 
-Cada corrida crea una entrada en el historial de corridas del plan.
-Podés correrlo tantas veces como quieras: la última corrida es la
-que se muestra por default, pero las anteriores quedan guardadas.
+![Configuración del asignador: alcance temporal y ajuste de capacidad](../capturas/planes/aulas_correr_parametros.png)
+
+
+![Configuración avanzada y botón «Asignar aulas»](../capturas/planes/aulas_correr_avanzada_y_boton.png)
+
+
+> ℹ️ **Sobre «Respetar ediciones manuales»**: cuando cambiás el aula
+> de un horario a mano (ver "Cambiar manualmente el aula de un
+> horario"), el diálogo de confirmación tiene una casilla **🔒
+> Marcar como manual** (tildada por defecto). Las aulas marcadas así
+> quedan protegidas: con este interruptor activado, el asignador no
+> las modifica en las corridas siguientes. Se listan en **🔒
+> Asignaciones manuales protegidas** y en la métrica **Manuales
+> respetadas** del resultado. Si lo desactivás, el asignador vuelve a
+> decidir todas las aulas desde cero.
+
+> **Para verificar:** el efecto exacto de **Aplicar desde la fecha**
+> (la ayuda del campo dice que lo anterior a esa fecha queda
+> intacto, pero el plan se trabaja sobre el patrón semanal).
+
+Cada corrida se guarda en el historial de corridas del plan (ver la
+página **Historial**). La última corrida es la que se muestra por
+defecto en la pestaña Aulas, y los parámetros de la última corrida
+precargan el formulario.
 
 ### Interpretar un resultado "resuelto"
 
 Cuando el asignador termina exitosamente vas a ver:
 
-- Un toast: **"Asignación resuelta en X.Xs. Y clases actualizadas."**
-- El status humano en el resumen: **✅ resuelta**.
+- Un aviso: **"Asignación resuelta en X.XXs. N horario(s)
+  reasignado(s)."**
+- Arriba, dentro del desplegable **🏛️ Asignador de aulas**, el estado
+  **✅ resuelta** con la fecha de la corrida y un bloque **📋
+  Veredicto de la corrida** (por ejemplo: "Plan resuelto. Se asignó
+  aula a los 546 horarios presenciales (de 634 horarios totales, 88
+  son virtuales y no toman aula)"), con el desplegable **⚙️
+  Parámetros usados en esta corrida**.
 - Un bloque de **métricas**:
-  - **Horarios totales / Asignados**: idealmente iguales.
-  - **Clases actualizadas**: cuántas clases del ciclo recibieron el
-    aula del patrón.
+  - **Horarios totales / Asignados**: los asignados corresponden a los
+    horarios presenciales; los virtuales no toman aula.
+  - **Horarios reasignados**: cuántos horarios cambiaron de aula en
+    esta corrida.
   - **Sobre-ocupados**: horarios que quedaron con aula más chica que
     los esperados.
   - **Sub-utilizados**: horarios con aula demasiado grande.
   - **Costo total**: la suma ponderada que el asignador minimizó.
-  - **Tiempo de resolución**.
+  - **Tiempo de resolución (s)**.
+  - **Manuales respetadas**: aulas fijadas a mano que la corrida no
+    modificó.
+- Un desplegable **⚙️ Configuración aplicada** con los parámetros
+  usados.
 
-**Herramientas de análisis** que aparecen debajo del resumen:
+![Resultado de una corrida resuelta: veredicto y métricas](../capturas/planes/aulas_veredicto_corrida.png)
 
-- **📊 Mapa de calor de simultaneidad** (día × franja): matriz que
-  te muestra cuántas clases están activas simultáneamente en cada
-  franja horaria. Podés filtrar por tipo (teóricas, laboratorios,
-  todas).
-- **🔥 Mapa de saturación por sede**: para cada sede con demanda,
-  mostrás qué tan cargada está en relación a las aulas disponibles.
-  Escala:
-  - 🟢 verde: ≤80% de ocupación
-  - 🟡 amarillo: 80–100%
-  - 🔴 rojo: >100% (saturación segura, hay más horarios que aulas)
-  Este mapa se recalcula en vivo en cada rerun, así que si marcás
-  un horario como virtual desde el inspector, el mapa se actualiza
-  sin necesidad de correr el asignador de nuevo.
-- **🔍 Inspeccionar franja**: elegís sede, tipo de aula, día y
-  franja, y ves en un mini calendario todos los horarios que
-  compiten por esa franja, coloreados por carrera. Cada bloque tiene
-  un botón "✏️ Editar".
-- **📅 Cronograma por aula**: vista final por aula. Elegís el aula
-  desde el selector y ves todos los horarios que le quedaron
-  asignados a lo largo de la semana. Esta es la vista que le vas a
-  querer mostrar al usuario final.
 
-También aparece una **tabla por horario** con las columnas Materia,
-Comisión, Día, Inicio, Fin, Aula, Sede, Capacidad, Esperados, Δ y
-Estado. La columna Estado usa semáforos:
+Más abajo, el desplegable **📊 Estado de asignaciones y mapa de
+saturación** reúne las herramientas de análisis. Funciona en dos
+momentos: antes de correr el asignador sirve para analizar si el plan
+es factible, y después de correrlo suma el detalle del resultado.
+Arriba tiene cinco métricas en vivo: **Asignados**, **Sobre-ocupados**,
+**Colisiones** (aulas pisadas), **Manuales protegidos** y
+**Desactualizados** (horarios cuya aula ya no es admisible según las
+reglas vigentes; si hay, un aviso lo detalla). Después:
+
+- **🔥 Mapa térmico por sede**: para cada sede, una grilla día × franja
+  de 15 minutos que muestra qué tan cargada está. Los controles son:
+  - **Modo**: **🎯 Saturación (demanda proyectada por reglas)**, para
+    planificar la corrida, u **📊 Ocupación (estado actual del
+    plan)**, que muestra cómo está ocupado el plan hoy.
+  - **Vista** (sólo en modo Saturación): **🔒 Dura** (horarios cuya
+    única sede admisible es esa; si supera la oferta, la sede es
+    infactible), **🎯 Preferida** (horarios cuya sede preferida es
+    esa; el "plan feliz"), **📈 Máxima** (todo horario que podría caer
+    en esa sede) y **🌐 Total sin sede** (simultáneos ignorando la
+    sede: una cota global).
+  - **Categoría**: **Peor caso (T o L)**, **Teóricas / anfiteatros** o
+    **Laboratorios**.
+  - **Oferta de labs a considerar** (al mirar laboratorios): **🌐
+    Todo el catálogo** o **🧪 Sólo compatibles (labs)**, que detecta
+    faltantes estructurales de laboratorios compatibles.
+  - Cada sede se despliega con un resumen (por ejemplo, "Pellegrini ·
+    25 teórica(s) · 5 laboratorio(s) · peor 22/25 (0.88)") y un
+    semáforo:
+    - 🟢 verde: ≤80% de ocupación
+    - 🟡 amarillo: 80–100%
+    - 🔴 rojo: >100% (saturación segura, hay más horarios que aulas)
+  El mapa se recalcula en vivo, así que si marcás un horario como
+  virtual, se actualiza sin correr el asignador de nuevo.
+- **🔍 Ver detalle de una franja** (inspector de franja, en modo
+  Saturación): elegís **Sede**, **Tipo de aula**, **Día** y el rango
+  de franjas (**Desde** / **Hasta**, de 15 minutos), y ves en un
+  calendario los horarios que compiten por esa franja, coloreados por
+  carrera. Un interruptor **📋 Detalle de horarios (N)** lista cada
+  horario, paginado, con el botón **"✏️ Editar día/hora"**. En modo
+  Ocupación, el interruptor equivalente es **🏛 Ver aulas libres en
+  una franja**.
+
+![Panel «Estado de asignaciones y mapa de saturación» con los controles del mapa térmico](../capturas/planes/aulas_estado_y_mapa_controles.png)
+
+
+![Mapa de saturación de la sede Pellegrini, por día y franja de 15 minutos](../capturas/planes/aulas_mapa_saturacion_pellegrini.png)
+
+
+![Inspector de franja: filtros de sede, tipo de aula, día y franjas](../capturas/planes/aulas_inspector_franja_filtros.png)
+
+
+![Inspector de franja: horarios que compiten por la franja, coloreados por carrera](../capturas/planes/aulas_inspector_franja_cronograma.png)
+
+
+![Inspector de franja: detalle de un horario con el botón «Editar día/hora»](../capturas/planes/aulas_inspector_horario_desplegado.png)
+
+
+Con el interruptor **📋 Ver detalle por horario** aparece una **tabla
+por horario** con las columnas Materia, Comisión, Día, Inicio, Fin,
+Aula, Sede, Manual (🔒 si el aula está protegida), Cap, Esperados, Δ y
+Estado. Refleja la asignación vigente, incluidos los cambios manuales
+posteriores a la corrida. La columna Estado usa colores:
 
 - 🟢 **ok**: el aula alcanza cómodamente.
 - 🟡 **sub** (sub-utilizado): aula demasiado grande respecto a los
@@ -444,9 +682,16 @@ Estado. La columna Estado usa semáforos:
 - 🔴 **sobre** (sobre-ocupado): aula chica, los esperados exceden
   la capacidad.
 
-Y una sección **🪓 Candidatas a partir comisión**: te sugiere qué
-materias podrían beneficiarse de dividir una comisión en dos
-(cuando el sobre está concentrado en pocas comisiones grandes).
+![Tabla por horario con el estado de cada asignación (ok, sub, sobre)](../capturas/planes/aulas_tabla_por_horario.png)
+
+
+Y el interruptor **🪓 Ver candidatas a partir comisión** muestra una
+tabla (columnas Materia, Comisiones_sobreocupadas, Total_exceso) con
+las materias que podrían beneficiarse de tener más comisiones (cuando
+el exceso se concentra en pocas comisiones grandes).
+
+![Sección «Candidatas a partir comisión»](../capturas/planes/aulas_candidatas_partir_comision.png)
+
 
 ### Interpretar un resultado "no se pudo resolver"
 
@@ -460,7 +705,7 @@ necesita el usuario. Vas a ver:
 
 Debajo aparece el **diagnóstico**, que puede tener hasta cinco
 secciones, presentadas en orden de utilidad para el usuario. Leelas
-en orden — la primera que muestre contenido suele ser suficiente
+en orden: la primera que muestre contenido suele ser suficiente
 para entender el problema.
 
 #### 1. Horarios sin aula compatible
@@ -541,85 +786,105 @@ el problema es un recursado por Zoom compitiendo por aula.
 
 ### Cambiar manualmente el aula de un horario
 
-Hay dos formas de intervenir a mano después de una corrida del
-asignador:
+> Guía paso a paso, con capturas y el detalle de la cascada: [Flujo 5: Reasignar un aula manualmente](../flujos/05_Reasignar_un_aula_manualmente.md).
 
-1. **Desde el Cronograma por aula** (tab 🏛️ Aulas, expander al
-   final): elegís el aula, ves su semana, y cada horario tiene un
-   botón "Editar aula" que abre un diálogo para cambiarla. El
-   sistema chequea compatibilidad de tipo, sede admisible y choques
-   con otros horarios del plan antes de dejarte confirmar.
-2. **Desde la Grilla Horaria** o desde el editor por materia: si
-   movés un horario a otro día u hora, el aula previamente asignada
-   queda atada al horario pero puede volverse inconsistente.
+Las aulas se cambian a mano desde el desplegable **🛠️ Gestión de
+asignaciones** de la pestaña **🏛️ Aulas**, sección **📅 Aulas
+asignadas por horario**:
 
-#### El diálogo "Editar aula del horario"
+1. Si hay aulas pisadas, arriba aparece el aviso **"🚨 N colisión(es)
+   de aula"**, con un botón **"🧹 Liberar aula de …"** por cada
+   horario involucrado. Liberar deja el horario sin aula para que la
+   próxima corrida lo reasigne.
+2. Un desplegable **🎛️ Filtros** permite acotar la lista por sede y
+   aula, carrera / año del plan / cuatrimestre del plan, tipo de clase,
+   día, materias compartidas entre carreras y búsqueda por código o
+   nombre; además las casillas **Sólo sin asignar**, **Excluir
+   virtuales** y **Mostrar cronograma** (calendario de los horarios
+   filtrados). Los filtros se aplican con **✅ Aplicar filtros** y se
+   restablecen con **🔄 Limpiar**.
+3. La lista de horarios está paginada (**Por página**, **Página**).
+   Cada horario es un desplegable; adentro ves sus datos y los
+   controles de edición: **Tipo de clase**, **Aulas a mostrar** y
+   **Aula asignada**. El selector de aula lista las aulas compatibles.
+4. Cuando cambiás algo aparece el botón **"Ver cambio propuesto"**, que
+   abre el diálogo **Confirmar cambio de aula** con el **Resumen del
+   cambio** y la **Vista antes / después por aula**. El sistema
+   verifica compatibilidad de tipo, sede admisible y choques con otros
+   horarios del plan antes de dejarte confirmar.
 
-El diálogo tiene un selector arriba: **"Aulas a mostrar"** con dos
-opciones:
+Otra vía para mover un horario de día u hora es la pestaña
+**📋 Horarios** o el botón **"✏️ Editar día/hora"** del inspector de
+franja.
 
-- **Sólo aulas libres en esta franja** (default): comportamiento
-  clásico. En el desplegable ves únicamente las aulas compatibles
-  que no están usadas por otro horario del plan en la misma franja.
+#### Elegir el aula: "Aulas a mostrar"
+
+El selector **"Aulas a mostrar"** tiene dos opciones:
+
+- **Sólo aulas libres en esta franja** (por defecto): el desplegable
+  **Aula asignada** muestra únicamente las aulas compatibles que no
+  están usadas por otro horario del plan en la misma franja. También
+  podés elegir **Sin asignar**.
 - **Todas las aulas (incluidas las ocupadas)**: además de las
   libres, incluye las que están ocupadas por otro horario del plan,
-  con una etiqueta clara según cuántos horarios están afectados.
-  Ejemplos:
-  - `[LIBRE] Pellegrini · A-101 (cap. 30, teórica)`
-  - `[1 horario afectado] Pellegrini · A-102 (cap. 40, teórica) — MAT 101`
-  - `[2 horarios afectados] Pellegrini · A-103 (cap. 35, teórica) — FIS 201, QUI 101`
+  con una etiqueta según cuántos horarios están afectados.
 
-Si elegís un aula libre, el flujo es directo: apretás Confirmar y
-el aula queda asignada.
+Si elegís un aula libre, el flujo es directo: **Ver cambio propuesto**
+y después **Confirmar**.
 
-**Si elegís un aula ocupada** — sin importar si hay 1 ó N horarios
+**Si elegís un aula ocupada** (sin importar si hay 1 ó N horarios
 afectados y sin importar si sus franjas coinciden exactamente o
-sólo se solapan parcialmente — se despliega un **flujo de cascada**:
+sólo se solapan parcialmente), se despliega un **flujo de cascada**:
 
 - Debajo del selector principal aparece un **bloque por cada
   horario afectado**, indicando materia, comisión, día/hora y el
-  rango en común con el horario editado (por ejemplo, "solapa en
-  09:00–10:00" o "misma franja").
+  rango en común con el horario editado.
 - Cada bloque tiene su **propio selector de aula**. Podés elegir:
   - Una aula libre para ese horario desplazado.
   - Otra aula ocupada (la cascada se profundiza: aparecen los
     bloques de los nuevos afectados).
-  - Dejar sin aula (opción "— Sin asignar —").
+  - Dejar sin aula.
 - Si querés simplemente **intercambiar aulas**, elegí para el
   horario desplazado el aula que tenía originalmente el editado.
-  El sistema lo trata como una reasignación más — no hay una
+  El sistema lo trata como una reasignación más, sin una
   opción "swap" separada.
 
 **Ejemplo de cascada de 2 niveles**: editás MAT que estaba en A-101 y
 elegís A-102. En A-102 hay FIS. Para FIS elegís A-103, pero en A-103
 hay QUI. Aparece un nuevo bloque para QUI, donde podés dejarlo sin
 aula o buscarle otra. Cuando todos los bloques tienen decisión
-tomada y las validaciones dan verde, apretás Confirmar y se aplica
-todo en una única operación atómica.
+tomada y las validaciones dan verde, abrís el diálogo de confirmación
+y se aplica todo en una única operación atómica.
 
 #### Solapamientos parciales
 
 Si un horario afectado tiene una franja que se solapa **parcialmente**
 con el horario editado (no la misma franja completa), aparece un
-**warning** en el preview indicando que sólo parte del horario queda
+**aviso** en el resumen indicando que sólo parte del horario queda
 cubierta. El sistema no bloquea el cambio pero te avisa para que
 verifiques manualmente si es aceptable.
 
-#### Preview global del cambio
+#### Resumen del cambio y casilla "Marcar como manual"
 
-Debajo de todos los bloques aparece un **resumen** con la lista
-completa de horarios afectados en orden — el editado primero, después
-sus desplazados directos, después los desplazados de los desplazados,
-y así. Cada línea muestra:
+El diálogo **Confirmar cambio de aula** muestra la lista completa de
+horarios afectados en orden: el editado primero, después sus
+desplazados directos, después los desplazados de los desplazados, y
+así. Cada tarjeta muestra:
 
 - ✅ si todo cierra.
-- ⚠️ si hay warnings (típicamente solapamientos parciales).
+- ⚠️ si hay avisos (típicamente solapamientos parciales).
 - ❌ si hay incompatibilidades duras (aula de tipo distinto, sede no
   admisible, laboratorio no compatible).
+- "Antes" y "Después" del aula, y la casilla **🔒 Marcar como
+  manual**, tildada por defecto: si queda tildada, el asignador
+  respeta esa aula en corridas futuras mientras **"Respetar ediciones
+  manuales"** esté activo. Destildala si querés que el asignador
+  pueda volver a decidirla.
 
 El botón **Confirmar** queda deshabilitado si algún horario tiene ❌.
 Corregí las elecciones antes de continuar. Si sólo hay ⚠️, podés
-confirmar igual — el sistema respeta tu criterio.
+confirmar igual: el sistema respeta tu criterio. **Cancelar** descarta
+el cambio.
 
 #### Detección de ciclos
 
@@ -633,101 +898,78 @@ Cambiá alguna decisión para romper el ciclo.
 
 Cuando apretás Confirmar, todos los cambios se aplican en una **única
 transacción**. Si alguno falla en el proceso, se revierte todo lo
-aplicado hasta ese punto — el plan queda exactamente como estaba
+aplicado hasta ese punto: el plan queda exactamente como estaba
 antes de abrir el diálogo. Nunca vas a quedar en un estado a mitad
 de camino.
 
-> ⚠️ **Después de mover horarios en la grilla**: el aula que el
-> asignador había puesto queda pegada al horario, y si el nuevo
+En el mismo panel, un desplegable lista los horarios asignados **fuera
+de la sede preferida** de su grupo (sólo para grupos que se corrieron
+en modo BLANDO).
+
+> ⚠️ **Después de mover horarios en la pestaña Horarios**: el aula que
+> el asignador había puesto queda pegada al horario, y si el nuevo
 > día/hora ya tenía otra clase con esa misma aula, quedan dos
-> horarios pisándose. La política correcta es **volver a correr el
-> asignador** después de mover slots. El asignador re-arma todo desde
-> cero y detecta cualquier inconsistencia. Si hay choques residuales,
-> te lo va a decir con un diagnóstico claro.
+> horarios pisándose (el panel de aulas lo marca como colisión). La
+> política correcta es **liberar el aula o volver a correr el
+> asignador** después de mover horarios. El asignador re-arma todo y
+> detecta cualquier inconsistencia. Si hay choques residuales, te lo
+> va a decir con un diagnóstico claro.
 
 ### Redistribuir los pesos entre comisiones (redistribución de
 pesos)
 
 Los pesos de las comisiones se cargan al armar el cronograma y se
-copian al plan. A veces es difícil elegir bien esos pesos a mano —
-por ejemplo, cuando querés que el asignador reparta los inscriptos
-de forma que las aulas queden más balanceadas.
+copian al plan (columna **Coef**). A veces es difícil elegir bien esos
+pesos a mano, por ejemplo cuando querés que el asignador reparta
+los inscriptos de forma que las aulas queden más balanceadas.
 
-Para eso existe el toggle **"Redistribuir pesos entre comisiones
-(avanzado)"** en la configuración del asignador. Cuando lo
-activás, el asignador propone **nuevos pesos** para cada comisión
-además de asignar aulas.
+Para eso existe el interruptor **"Redistribuir pesos entre comisiones
+(experimental)"** en la **🛠 Configuración avanzada** del asignador.
+Cuando lo activás, el asignador propone **nuevos pesos** para cada
+comisión además de asignar aulas.
 
 Cómo funciona en la práctica:
 
-1. Activás el toggle antes de correr el asignador.
+1. Activás el interruptor antes de correr el asignador.
 2. Corrés el asignador normalmente.
-3. Si resuelve, el resultado incluye una tabla con los **pesos
-   propuestos** (uno nuevo por cada comisión) además de la
-   asignación de aulas.
-4. Tenés dos botones: **"Aplicar nuevos pesos"** o **"Descartar"**.
+3. Si resuelve, el resultado incluye, dentro del análisis del
+   resultado, la tabla **🔄 Pesos propuestos para redistribuir
+   capacidad** (columnas Materia, Comisión, Peso actual, Peso
+   propuesto y Δ) además de la asignación de aulas.
+4. Tenés dos botones: **"Aplicar nuevos pesos"** o **"Descartar
+   propuesta"**.
    - Si aplicás: los pesos nuevos se guardan en las comisiones y la
      asignación de aulas queda como está.
-   - Si descartás: se conservan los pesos viejos, pero el asignador
-     te avisa que la asignación de aulas que estás viendo está
-     calculada con los pesos nuevos, así que puede no ser
-     consistente con lo que se persistió.
+   - Si descartás: se conservan los pesos viejos, pero las aulas que
+     estás viendo se calcularon con los pesos nuevos, así que pueden
+     no ser óptimas para los pesos que quedaron. Si querés coherencia,
+     volvé a correr el asignador con la redistribución desactivada.
 
-Es una función avanzada. Recomendable sólo si tenés experiencia
-con la asignación y querés experimentar con distintas
-redistribuciones.
+Es una función experimental. Recomendable sólo si tenés experiencia
+con la asignación y querés probar distintas redistribuciones.
 
-### Activar el plan
+### Seleccionar el plan de trabajo
 
-El sistema tiene **dos botones distintos con la palabra "Activar"**,
-y hacen cosas diferentes. Es importante entender la diferencia.
+Lo que la interfaz llama **Plan activo** es simplemente el plan que
+elegiste para trabajar:
 
-**Opción A — "Activar" desde la Vista General (rápido)**
+- Desde la barra lateral, con el selector **Plan activo**.
+- Desde la pestaña **📋 Planes del ciclo**, con el botón
+  **Seleccionar** de la tarjeta.
+- Automáticamente, al confirmar la generación de un plan nuevo.
 
-En el tab **📋 Vista General**, cada tarjeta de plan inactivo tiene
-un botón **"Activar"**. Lo que hace este botón:
-
-- Marca el plan como activo (`activo = true`).
-- Desactiva cualquier otro plan activo del mismo ciclo (invariante:
-  sólo un plan activo por ciclo).
-- **No genera las clases del cuatrimestre**.
-
-Es una activación de "atajo" pensada para cambiar rápido cuál plan
-del ciclo se considera vigente, sin necesariamente materializar el
-cuatrimestre.
-
-**Opción B — "Activar plan" desde el panel de validación del Detalle
-(completo)**
-
-En el tab **🔍 Detalle del Plan**, dentro del panel de validaciones,
-hay un botón **"Activar plan"** (a veces "Activar y generar
-clases"). Este:
-
-- Chequea que no haya conflictos no ignorados (gate).
-- Marca el plan como activo.
-- Desactiva los otros planes del ciclo.
-- **Genera todas las clases del cuatrimestre**: una por cada horario
-  del patrón, replicada por cada fecha del ciclo cuyo día coincida.
-
-Esta es la activación **oficial**, la que corresponde hacer cuando
-el plan está listo para arrancar el cuatrimestre.
-
-> ⚠️ **Elegí bien cuál usás**: si activás desde Vista General y no
-> pasás después por el panel de validación, el plan va a quedar
-> "activo" pero **sin clases materializadas**. Al operativo del
-> cuatrimestre le van a faltar esas clases. Si te pasó, andá al
-> panel de validación del Detalle y volvé a apretar "Activar plan"
-> desde ahí para forzar la generación de clases.
+Seleccionar un plan no cambia nada en los datos: sólo determina sobre
+cuál plan trabajan **Detalle del Plan**, **Horarios** y **Aulas**.
+El entregable del cuatrimestre es el patrón semanal del plan con sus
+aulas asignadas.
 
 ### Borrar un plan
 
-Desde la **Vista General**, cada tarjeta de plan tiene un botón
-**"Eliminar"**. El borrado es en cascada:
-
-1. Se borran las clases materializadas.
-2. Se borran los horarios del plan.
-3. Se borran las comisiones del plan.
-4. Se borra el plan en sí.
+Desde la pestaña **📋 Planes del ciclo**, cada tarjeta de plan tiene un
+botón **"🗑️ Eliminar"**. El borrado es en cascada: se borran los
+horarios del plan, las comisiones del plan y
+el plan en sí. Si borrás el plan seleccionado, el selector **Plan
+activo** queda sin plan.
 
 El cronograma origen **no se toca**. Podés generar un plan nuevo a
 partir del mismo cronograma cuando quieras.
@@ -751,22 +993,28 @@ la materia lo permite:
 - Si tiene ambas, no se puede auto-completar (se necesita decisión
   humana).
 
-Andá al tab **🔍 Detalle del Plan → 🔧 Acciones del plan →
-Auto-completar tipo de horarios**. Vas a ver un preview live que te
-dice cuántos horarios cambiarían y a qué tipo. Si te convence,
-apretá **"✅ Aplicar auto-completado"**.
+Andá a la pestaña **🔍 Detalle del Plan → 🔧 Acciones del plan → ✏️
+Auto-completar tipo de horarios por materia**. Vas a ver una vista
+previa que te dice cuántos horarios cambiarían y a qué tipo (con el
+detalle desplegable). Si te convence, apretá **"✅ Aplicar
+auto-completado (N cambios)"**.
 
-No es una acción crítica — el asignador aplica esta misma inferencia
+![Acción «Auto-completar tipo de horarios por materia»](../capturas/planes/detalle_autocompletar_tipos.png)
+
+
+No es una acción crítica: el asignador aplica esta misma inferencia
 en memoria de todas formas antes de correr. Aplicarla en firme
-sirve para que **otras vistas** (mapa de calor filtrado, editor por
+sirve para que **otras vistas** (mapa térmico filtrado, editor por
 materia, validaciones) muestren el tipo correcto en vez de "sin
 determinar".
 
 ## Errores frecuentes y qué hacer
 
-**"No hay ciclos registrados. Crea uno en la página de Ciclos."**
+**"Seleccioná un ciclo activo en el panel lateral para empezar."**
 
-Todavía no creaste ningún ciclo. Andá a **📆 Ciclos** y creá uno.
+No elegiste ciclo en la barra lateral. Si no hay ciclos, creá uno
+desde **📆 Ciclos** (en la barra lateral: "No hay ciclos registrados.
+Creá uno desde la página de Ciclos.").
 
 **"No hay cronogramas cargados para este ciclo. Cargá uno desde 📅
 Cronogramas."**
@@ -780,18 +1028,24 @@ Cronogramas → ✅ Validar para habilitar uno."**
 Hay cronogramas pero ninguno está en estado 🟢. Andá a validarlo
 desde el módulo de Cronogramas.
 
+**"No hay planes cargados en este ciclo. Generá uno desde ➕ Generar
+plan nuevo al final de la página."**
+
+El ciclo no tiene planes todavía. Usá el desplegable de generación al
+pie de **Planes del ciclo**.
+
 **"El plan no tiene horarios cargados. Agregá horarios desde el tab
 📋 Grilla Horaria."**
 
 Generaste el plan pero está vacío (raro, salvo que hayas borrado
-todos los horarios manualmente). Agregá horarios desde la grilla o
-volvé a generar el plan desde el cronograma.
+todos los horarios manualmente). Agregá horarios desde la pestaña
+**📋 Horarios** o volvé a generar el plan desde el cronograma.
 
 **"El plan borrador ya no existe. Empezá de nuevo."**
 
-Estabas en el paso 2 del wizard y en el medio se borró el plan
-(por ejemplo, alguien lo eliminó desde Vista General). Volvé al
-paso 1 y regenerálo.
+Estabas en el paso 2 de la generación y en el medio se borró el plan
+(por ejemplo, alguien lo eliminó desde la lista). Volvé al paso 1 y
+regenerálo.
 
 **"El aula 'X' no es laboratorio compatible con la materia MAT."**
 
@@ -829,20 +1083,20 @@ o reasignalos primero.
 **Asignador devuelve "no se pudo resolver" sin datos claros en las
 primeras 4 secciones del diagnóstico**
 
-Espera a que corra el diagnóstico cruzado (sección 5). Si tampoco
+Esperá a que corra el diagnóstico cruzado (sección 5). Si tampoco
 te aporta, el problema puede ser una combinación de restricciones.
-Revisá el mapa de saturación por sede — las celdas rojas te dicen
-dónde mirar primero.
+Revisá el mapa térmico por sede: las celdas rojas te dicen dónde
+mirar primero.
 
 ## Preguntas frecuentes
 
-**¿Por qué no aparece mi cronograma en el wizard de generación?**
+**¿Por qué no aparece mi cronograma al generar un plan?**
 
 Porque para generar un plan, el cronograma tiene que estar en estado
 **🟢 Validado y vigente** para el ciclo elegido. Andá a **📅
 Cronogramas → ✅ Validar**, corré la validación y marcá el
-cronograma como vigente. Después va a aparecer en el selector del
-wizard.
+cronograma como vigente. Después va a aparecer en el selector
+**"Cronograma (solo validados y vigentes)"**.
 
 **¿Cuál es la diferencia entre "Cupo" y "Esperados" de una
 comisión?**
@@ -851,7 +1105,7 @@ comisión?**
   Representa "hasta cuántos alumnos permitimos anotarse en esta
   comisión". El asignador **no lo usa**.
 - **Esperados** es un número **calculado**: total esperado de
-  inscriptos de la materia (según forecast) multiplicado por el
+  inscriptos de la materia (según el pronóstico) multiplicado por el
   peso de la comisión. Este número es el que el asignador compara
   contra la capacidad del aula al decidir sobre-ocupación o
   sub-utilización.
@@ -862,105 +1116,85 @@ demanda real estimada.
 **¿El asignador respeta las aulas que edité a mano después de una
 corrida previa?**
 
-Hoy no de manera visible. El toggle **"Respetar ediciones
-manuales"** existe pero está huérfano: la capacidad que se apoyaba
-en él (editar aulas puntualmente por clase) fue removida en 2026, y
-el flag que marca "esta aula fue editada a mano" no se puede setear
-desde ninguna parte de la interfaz actual. Consecuencia: si volvés a
-correr el asignador, va a re-asignar todo desde cero sin conservar
-tus ediciones manuales.
+Sí, siempre que el aula haya quedado marcada como manual (la casilla
+**🔒 Marcar como manual** del diálogo de confirmación viene tildada
+por defecto) y el interruptor **"Respetar ediciones manuales"** esté
+activo. Esas aulas aparecen en **🔒 Asignaciones manuales protegidas**,
+donde podés liberarlas, y se cuentan en la métrica **Manuales
+respetadas**. Si desactivás el interruptor, el asignador re-asigna
+todo desde cero.
 
-Si querés preservar una asignación manual, la única forma hoy es
-**no volver a correr el asignador** después de haber editado el aula
-a mano. En versiones futuras se piensa reintroducir esta capacidad.
+**¿Puedo tener varios planes en un ciclo?**
 
-**¿Puedo tener dos planes activos en el mismo ciclo?**
-
-No. El sistema garantiza que **sólo un plan puede estar activo por
-ciclo**. Cuando activás un plan, cualquier otro plan activo del
-mismo ciclo se desactiva automáticamente. Sí podés tener varios
-planes en borrador (inactivos) conviviendo, útiles para comparar
-escenarios.
+Sí. No hay un límite ni un estado "activo" exclusivo: tenés todos los
+planes que quieras, útiles para comparar escenarios, y elegís con
+qué plan trabajar en el selector **Plan activo**.
 
 **¿Qué pasa si edito un horario después de correr el asignador?**
 
 El aula que el asignador había asignado queda **pegada al horario**
 aunque el día/hora hayan cambiado. Puede quedar inconsistente: por
 ejemplo, un aula que ahora choca con otro horario en la misma
-franja. La forma limpia de resolverlo es **volver a correr el
-asignador** — re-arma todo y detecta cualquier choque residual.
+franja (el panel de aulas lo marca como colisión). La forma limpia
+de resolverlo es liberar el aula de uno de los horarios y **volver a
+correr el asignador**.
 
-**¿Puedo borrar un plan activo?**
+**¿Puedo borrar el plan que estoy usando?**
 
-Sí, técnicamente el botón "Eliminar" te lo deja hacer. Pero es
-recomendable **desactivarlo primero** (activando otro plan del
-ciclo) para que no queden "vacíos operativos" durante el borrado en
-cascada.
-
-**¿Cuál es la diferencia entre "Activar" en Vista General y
-"Activar plan" en el Detalle?**
-
-Es importante:
-
-- **"Activar" en Vista General** sólo cambia el flag: el plan pasa a
-  ser el activo del ciclo, pero **no se generan las clases**.
-- **"Activar plan" en el panel de validación del Detalle** hace lo
-  mismo Y ADEMÁS **genera todas las clases** del cuatrimestre.
-
-Si querés dejar el plan realmente listo para operar, usá la segunda.
-La primera está pensada para cambios rápidos cuando ya activaste
-antes.
+Sí, el botón "🗑️ Eliminar" te lo deja hacer; el selector **Plan
+activo** queda sin plan y las pestañas de edición se ocultan.
 
 **¿Qué es la "redistribución de pesos" y cuándo tiene sentido
 activarla?**
 
-Es una función avanzada del asignador que, además de asignar aulas,
-propone nuevos pesos para las comisiones (cómo se reparten los
-inscriptos entre ellas). Tiene sentido activarla cuando sospechás
+Es una función experimental del asignador que, además de asignar
+aulas, propone nuevos pesos para las comisiones (cómo se reparten
+los inscriptos entre ellas). Tiene sentido activarla cuando sospechás
 que los pesos actuales no son los más balanceados y querés que el
 sistema te sugiera una redistribución. Después ves la propuesta y
 decidís si aplicarla o descartarla.
 
-**¿Puedo correr el asignador de aulas antes de activar el plan?**
+**¿Puedo correr el asignador de aulas antes de validar el plan?**
 
 Sí. De hecho, es el flujo típico: generás el plan borrador, corrés
-el asignador, revisás el resultado, hacés ajustes, y recién ahí
-activás. La asignación de aulas se guarda en el patrón semanal
-independientemente del estado activo/borrador del plan.
+la verificación de factibilidad y el asignador, revisás el
+resultado, hacés ajustes y validás. La asignación de aulas se guarda
+en el patrón semanal.
 
-**¿Por qué el mapa de saturación por sede se actualiza en vivo pero
-la tabla de resultados no?**
+**¿Por qué el mapa térmico se actualiza en vivo pero las métricas
+de la corrida no?**
 
-Porque el mapa de saturación se calcula sobre el estado actual de
-la base de datos, mientras que la tabla de resultados es una foto
+Porque el mapa térmico y la tabla por horario se calculan sobre el
+estado actual de la base de datos, mientras que las métricas del
+veredicto (costo, sobre-ocupados de la corrida, etc.) son una foto
 del momento en que corriste el asignador. Si hacés un cambio (por
 ejemplo, marcar un horario como virtual) entre corridas, el mapa
-refleja el cambio inmediatamente pero la tabla no — para eso hay
+refleja el cambio inmediatamente pero el veredicto no; para eso hay
 que volver a correr el asignador.
 
-**¿Qué significan los pesos por default (10, 1) del asignador?**
+**¿Qué significan los pesos del asignador (λ over, λ under)?**
 
 Son los coeficientes que el asignador usa para decidir qué es peor:
-poner una materia grande en un aula chica (sobre-ocupación, peso
-10) o poner un grupo chico en un aula gigante (sub-utilización,
-peso 1). Como el peso de sobre es 10 veces mayor, el asignador
-prefiere aulas grandes con vacío antes que aulas chicas con
-alumnos parados. Si querés balancear más, podés subir el peso de
-sub o bajar el de sobre — pero los defaults suelen funcionar bien.
+poner una materia grande en un aula chica (sobre-ocupación, λ over)
+o poner un grupo chico en un aula gigante (sub-utilización, λ under).
+Con los valores por defecto (10 y 1) el asignador prefiere aulas
+grandes con vacío antes que aulas chicas con alumnos parados. Si
+querés balancear más, podés subir λ under o bajar λ over, pero los
+valores por defecto suelen funcionar bien. Recordá que el formulario
+se precarga con los valores de la última corrida del plan.
 
-**¿Qué pasa con las clases anteriores a la "fecha desde" al correr
-el asignador?**
+**¿Cómo se eligen las sedes?**
 
-Quedan **intactas**. La fecha desde funciona como un corte: las
-clases con fecha anterior no se tocan, se preserva la asignación
-histórica. Las clases desde esa fecha en adelante reciben la
-asignación nueva. Esto sirve, por ejemplo, para no pisar la
-asignación de clases que ya se dictaron a mitad de cuatrimestre.
+Cada grupo de materias (Materias → 📦 Grupos) declara un conjunto de
+sedes duras y una lista ordenada de sedes blandas. En la
+configuración del asignador elegís, por grupo, si se usa el modo
+**DURO** (sólo esas sedes) o **BLANDO** (cualquier sede, pagando λ
+sede por cada horario fuera de la sede preferida).
 
 **¿Por qué a veces el asignador tarda mucho?**
 
 Depende del tamaño del problema (cantidad de horarios, aulas,
-restricciones) y del **tiempo máximo** que le pusiste. Por default
+restricciones) y del **tiempo máximo** que le pusiste. Por defecto
 son 300 segundos (5 minutos). Si el asignador no encuentra la
 solución óptima en ese tiempo, corta y te dice **"se agotó el
 tiempo"**. En problemas grandes podés subir el tiempo, pero
@@ -973,42 +1207,41 @@ conviene revisar si hay cuellos de botella evitables.
 
 1. Leé la primera sección del diagnóstico que tenga contenido.
    Suele ser suficiente.
-2. Mirá el **mapa de saturación por sede**: las celdas rojas
-   apuntan a las franjas y sedes conflictivas.
-3. Usá el **inspector de franja** sobre una celda roja: ves los
+2. Corré la **🚦 verificación de factibilidad estructural**
+   (botón "▶️ Chequear factibilidad"): te dice qué reglas bloquean.
+3. Mirá el **mapa térmico por sede**: las celdas rojas apuntan a las
+   franjas y sedes conflictivas.
+4. Usá **🔍 Ver detalle de una franja** sobre una celda roja: ves los
    horarios exactos que compiten.
-4. Decidí: ¿faltan aulas, hay horarios mal tipeados, algún
+5. Decidí: ¿faltan aulas, hay horarios mal tipeados, algún
    recursado debería ser virtual?
 
-**La tabla de resultados no muestra un aula que esperaba**
+**La tabla por horario no muestra un aula que esperaba**
 
 - Verificá **sedes admisibles**: la carrera de la materia (o la
   "carrera asignada" de la comisión si está seteada) puede no tener
-  esa sede habilitada. Andá a **🎓 Carreras** y revisá las sedes
-  habilitadas.
+  esa sede habilitada, o el grupo de la materia está en modo DURO con
+  otro conjunto de sedes. Andá a **🎓 Carreras** y revisá las sedes
+  habilitadas, y a **Materias → 📦 Grupos**.
 - Verificá **tipo de aula**: un horario teórico no puede usar un
   aula de laboratorio, y viceversa.
 - Verificá **compatibilidad de lab**: si es un horario de
   laboratorio, el aula tiene que estar en los laboratorios
   compatibles de la materia (módulo de Materias).
 
-**El plan quedó "activo" pero al arrancar el cuatri faltan clases**
-
-Activaste el plan desde Vista General en vez de desde el panel de
-validación del Detalle. Andá a **🔍 Detalle del Plan → Validaciones
-→ Activar plan** y volvé a apretar activar desde ahí. Eso fuerza la
-generación de clases.
-
-**Moví un horario en la grilla y el asignador dice que hay choques**
+**Moví un horario en la pestaña Horarios y el panel de aulas marca colisiones**
 
 Esperable. Al mover el horario, el aula previa quedó pegada y ahora
-choca. Volvé a correr el asignador para que re-asigne todo.
+choca. Liberá el aula de uno de los dos horarios (botón "🧹 Liberar
+aula de …") y volvé a correr el asignador.
 
-**El mapa de calor está vacío o incompleto**
+**El mapa térmico está vacío o incompleto**
 
-Suele significar que todavía no corriste el asignador (los mapas
-que dependen del snapshot vienen vacíos). O bien filtraste por un
-tipo que no tiene horarios. Sacá filtros y volvé a mirar.
+Suele significar que el plan no tiene horarios cargados, o que
+elegiste una categoría (Teóricas / Laboratorios) sin horarios. Probá
+con la categoría **Peor caso (T o L)**. Si estás en modo Saturación
+con la vista **Dura** y ningún horario tiene una única sede
+admisible, también sale vacío: cambiá a **Preferida** o **Máxima**.
 
 **Cambié la carrera asignada de una comisión pero el asignador no
 cambia de sede**
@@ -1028,37 +1261,42 @@ de sedes.
 - **Patrón semanal**: el conjunto de horarios recurrentes del plan
   ("los lunes de 8 a 10 hay tal materia"). Es la fuente de verdad
   de la planificación.
-- **Clase**: la instancia concreta de un horario en una fecha
-  específica del ciclo. Las clases se generan automáticamente al
-  activar el plan.
-- **Plan activo (vigente)**: el plan del ciclo marcado como
-  `activo = true`. Sólo puede haber uno por ciclo.
-- **Borrador**: un plan inactivo, en edición.
+- **Plan activo**: el plan que tenés seleccionado en la barra lateral
+  (y marcado con ✅ Activo en la lista). No es un estado guardado.
+- **Borrador**: un plan recién generado desde un cronograma, en
+  edición.
 - **Asignador de aulas**: el motor que decide qué aula usa cada
   horario del plan.
 - **Corrida del asignador**: cada ejecución del asignador. Se guarda
   en el historial de corridas del plan.
-- **Peso de una comisión**: cuánto de la demanda total de la
-  materia le corresponde a esa comisión. Los pesos de una materia
-  deberían sumar 1.
-- **Redistribución de pesos**: función avanzada del asignador que
+- **Verificación de factibilidad estructural**: análisis previo a la
+  corrida ("🚦 Chequeo de factibilidad estructural") que detecta
+  bloqueos conocidos antes de resolver.
+- **Peso de una comisión** (columna Coef): cuánto de la demanda total
+  de la materia le corresponde a esa comisión. Los pesos de una
+  materia deberían sumar 1.
+- **Redistribución de pesos**: función experimental del asignador que
   propone nuevos pesos para balancear mejor las comisiones.
 - **Carrera asignada** (de una comisión): opcional; fuerza a la
   comisión a resolver sus sedes admisibles según esa carrera en
   lugar de la materia.
+- **Modo DURO / BLANDO** (por grupo de materias): DURO restringe a las
+  sedes del conjunto duro del grupo; BLANDO no filtra y prefiere la
+  primera sede de la lista blanda.
 - **Sobre-ocupación**: cuando el aula asignada es más chica que los
   inscriptos esperados.
 - **Sub-utilización**: cuando el aula asignada es demasiado grande
   respecto a los inscriptos esperados.
 - **Tolerancia**: margen porcentual antes de castigar sobre o sub.
-- **Mapa de calor de simultaneidad**: matriz día × franja que
-  muestra cuántas clases están activas al mismo tiempo.
-- **Mapa de saturación por sede**: para cada sede, cuán cargada
-  está en relación a las aulas disponibles.
+- **Mapa térmico por sede**: para cada sede, grilla día × franja que
+  muestra cuán cargada está en relación a las aulas disponibles
+  (modos Saturación y Ocupación).
 - **Inspector de franja**: herramienta para ver, en detalle, todos
-  los horarios que compiten por una franja concreta.
-- **Cronograma por aula**: vista final por aula que muestra qué
-  clases le quedaron asignadas a lo largo de la semana.
+  los horarios que compiten por una franja concreta ("🔍 Ver detalle
+  de una franja").
+- **Aula manual (protegida)**: aula fijada a mano con la casilla "🔒
+  Marcar como manual"; el asignador la respeta mientras "Respetar
+  ediciones manuales" esté activo.
 - **Diagnóstico** (de infactibilidad): el análisis que el sistema
   produce cuando el asignador no puede resolver. Incluye horarios
   sin aula compatible, franjas con faltantes, cuellos de botella,
@@ -1074,6 +1312,5 @@ de sedes.
 - **Virtualidad jerárquica**: la modalidad virtual se puede declarar
   en tres niveles (horario, dictado, materia) y el nivel más
   específico manda.
-- **Fecha desde**: el corte temporal a partir del cual la corrida
-  del asignador aplica sus cambios a las clases; las clases
-  anteriores quedan intactas.
+- **Aplicar desde la fecha**: campo de la configuración del
+  asignador que delimita desde cuándo se aplican sus cambios.

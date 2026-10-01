@@ -302,6 +302,13 @@ FIGURA_CON_TITULO = re.compile(
     r"^<!-- figura: (.+?) -->\s*\n```mermaid\s*\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL,
 )
 TITULO_TABLA = re.compile(r"^<!-- tabla: (.+?) -->\s*$", re.MULTILINE)
+# Referencias cruzadas: la figura o la tabla se rotula con `{#fig:clave}`
+# o `{#tab:clave}` (en el comentario del título o en los atributos de la
+# imagen) y el texto la cita como "Figura @fig:clave". Al armar el
+# informe, @fig:clave pasa a ser el número que le da el filtro.
+ID_REFERENCIA = re.compile(r"\s*\{#((?:fig|tab):[\w-]+)\}\s*$")
+REFERENCIA = re.compile(r"@((?:fig|tab):[\w-]+)")
+LINEA_FIGURA = re.compile(r"^\s*!\[[^\]]+\]\([^)]+\)(\{[^}]*\})?\s*$")
 FORMULA_BLOQUE = re.compile(r"^\$\$(.*?)\$\$[ \t]*$", re.MULTILINE | re.DOTALL)
 # Fin de la sección sin numerar (carátula, dedicatoria y advertencia):
 # una sección sin cabecera ni pie, A4 con márgenes de 2,5 cm. La sección
@@ -330,7 +337,11 @@ def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> s
         # En el informe la figura lleva rótulo, título y nota: con más de
         # 19 cm de alto no entran juntos en una página A4 y Google Docs
         # la parte en tres páginas.
-        return f"\n![{m.group(1)}]({png}){{width={_ancho_diagrama(svg, ALTO_FIGURA_INFORME_CM)}}}\n"
+        titulo, clave = m.group(1), ""
+        rotulo = ID_REFERENCIA.search(titulo)
+        if rotulo:
+            titulo, clave = titulo[:rotulo.start()], f"#{rotulo.group(1)} "
+        return f"\n![{titulo}]({png}){{{clave}width={_ancho_diagrama(svg, ALTO_FIGURA_INFORME_CM)}}}\n"
 
     texto = FIGURA_CON_TITULO.sub(figura, texto)
     if BLOQUE_MERMAID.search(texto):
@@ -340,17 +351,22 @@ def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> s
         )
 
     # Tablas: el título declarado antes de la tabla pasa a "Table: …"
-    # después de ella (sintaxis de pandoc).
+    # después de ella (sintaxis de pandoc). Cada tabla con título va en
+    # su propio bloque `::: tabla`: si no, con dos tablas seguidas pandoc
+    # le asigna el título de la primera a la segunda.
     lineas, salida, pendiente = texto.split("\n"), [], None
     for i, linea in enumerate(lineas):
         m = TITULO_TABLA.match(linea)
         if m:
             pendiente = m.group(1)
             continue
+        anterior = lineas[i - 1] if i > 0 else ""
+        if pendiente and linea.lstrip().startswith("|") and not anterior.lstrip().startswith("|"):
+            salida += ["::: tabla", ""]
         salida.append(linea)
         siguiente = lineas[i + 1] if i + 1 < len(lineas) else ""
         if pendiente and linea.lstrip().startswith("|") and not siguiente.lstrip().startswith("|"):
-            salida += ["", f"Table: {pendiente}"]
+            salida += ["", f"Table: {pendiente}", "", ":::"]
             pendiente = None
     texto = "\n".join(salida)
 
@@ -365,10 +381,37 @@ def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> s
     return texto
 
 
+def _numerar_referencias(texto: str) -> str:
+    """Reemplaza @fig:clave y @tab:clave por el número de la figura o la
+    tabla, contadas en el mismo orden que el filtro (informe_apa.lua):
+    toda imagen con título sola en su párrafo es una figura y toda línea
+    "Table:" cierra una tabla."""
+    numeros: dict[str, int] = {}
+    n_fig = n_tab = 0
+    for linea in texto.split("\n"):
+        m = LINEA_FIGURA.match(linea)
+        if m:
+            n_fig += 1
+            clave = re.search(r"#(fig:[\w-]+)", m.group(1) or "")
+            if clave:
+                numeros[clave.group(1)] = n_fig
+        elif linea.startswith("Table: "):
+            n_tab += 1
+            clave = ID_REFERENCIA.search(linea)
+            if clave:
+                numeros[clave.group(1)] = n_tab
+    faltan = sorted(set(REFERENCIA.findall(texto)) - numeros.keys())
+    if faltan:
+        raise ValueError(f"referencias a figuras o tablas inexistentes: {', '.join(faltan)}")
+    texto = re.sub(r"^(Table: .*?)\s*\{#tab:[\w-]+\}\s*$", r"\1", texto, flags=re.MULTILINE)
+    return REFERENCIA.sub(lambda m: str(numeros[m.group(1)]), texto)
+
+
 def informe(dir_diagramas: Path) -> bool:
     """Arma dist/informe_docx/Informe.docx con el formato de las pautas."""
     n_formula = [0]
     partes = [_preparar_capitulo(DIR_INFORME / n, dir_diagramas, n_formula) for n in ORDEN_INFORME]
+    partes = [_numerar_referencias("\n\n".join(partes))]
     destino = DIR_SALIDA / "Informe.docx"
     destino.parent.mkdir(parents=True, exist_ok=True)
     resultado = subprocess.run(

@@ -49,7 +49,7 @@ Para que las expectativas estén claras desde el arranque:
   materia y cuatrimestre (útiles para estimar demanda), no listas
   nominales.
 - **No coordina docentes**. No hay agenda de profesores ni asignación
-  de titularidades — sólo horarios y aulas.
+  de titularidades, sólo horarios y aulas.
 - **No tiene sistema de login**. Cualquiera que abra la aplicación
   accede a todo. El historial de cambios registra desde qué pantalla
   se hizo cada cambio, pero no quién.
@@ -96,18 +96,23 @@ claros desde el principio.
   dice "día X, de hora A a hora B, materia M, comisión C". Es la
   unidad que el asignador asigna a un aula.
 - **Clase**: cada ocurrencia concreta de un horario en una fecha
-  específica del ciclo. Las clases se generan automáticamente a
-  partir del patrón semanal cuando se activa el plan.
+  específica del ciclo. Las clases se derivan del patrón semanal
+  y heredan el aula que el asignador le dio al horario.
 
 ### Términos operativos del sistema
 
 - **Asignador de aulas**: la herramienta que decide qué aula usa cada
   horario del plan. Toma en cuenta capacidad, tipo de aula, sedes
   admisibles por carrera y choques temporales. En el manual siempre
-  se lo llama "el asignador" — nunca "el LP" ni "el solver".
+  se lo llama "el asignador" (nunca "el LP" ni "el solver").
 - **Corrida** (del asignador): cada vez que se aprieta "Asignar
   aulas", el sistema hace una corrida completa y guarda el
   resultado. Podés tener varias corridas históricas por plan.
+- **Grupo de materias**: conjunto de materias que comparten el mismo
+  criterio de sedes admisibles. Cada materia pertenece a un único
+  grupo; las que todavía no se clasificaron quedan en el grupo "Sin
+  clasificar". Se administra desde la página 📚 Materias → solapa
+  "Grupos de materias".
 - **Peso** (de una comisión): número que indica cuánto de los
   inscriptos esperados de la materia se atribuyen a esa comisión. Si
   hay dos comisiones con peso 0.5 y 0.5, se dividen la demanda por
@@ -116,11 +121,11 @@ claros desde el principio.
   permite proponer una redistribución distinta a la actual si eso
   ayuda a resolver.
 - **Cupo**: cantidad máxima de inscriptos esperada para la comisión.
-  Es un dato administrativo — no se usa como restricción dura del
+  Es un dato administrativo: no se usa como restricción dura del
   asignador (que sí mira la capacidad real del aula).
 - **Modalidad virtual**: cuando una materia, dictado u horario se
   dicta por Zoom (o similar) y no consume aula. Es una decisión que
-  se toma **por ciclo** — la misma materia puede ser presencial un
+  se toma **por ciclo**: la misma materia puede ser presencial un
   cuatrimestre y virtual otro.
 - **Regla de recursado**: la política que decide, para cada materia,
   si se dicta en el cuatrimestre "opuesto" a su ubicación en el plan
@@ -183,7 +188,7 @@ lista todas las páginas. Cada página cubre un módulo:
 
 ```
 📚 Materias
-🏛️ Aulas y Sedes
+🏛️ Aulas
 🎓 Carreras
 📆 Ciclos
 📊 Cursada
@@ -192,14 +197,21 @@ lista todas las páginas. Cada página cubre un módulo:
 📜 Historial
 ```
 
-Dentro de cada página hay **solapas** (tabs) que agrupan tareas. Por
-ejemplo, la página 📚 Materias tiene solapas para "Lista", "Crear" y
-"Buscar".
+Dentro de cada página hay **solapas** que agrupan tareas. Por
+ejemplo, la página 📚 Materias tiene las solapas "Lista de materias",
+"Nueva materia" y "Grupos de materias".
+
+![Menú lateral y solapas de una página](capturas/primeros_pasos/organizacion_menu_y_solapas.png)
+
+En la captura, a la izquierda está el menú lateral con todas las
+páginas (la página abierta aparece resaltada; el primer renglón, "main",
+es la página de inicio) y, debajo del título de la página, la fila de
+solapas.
 
 En este manual, cada módulo del menú tiene su propio archivo:
 `modulos/01_Materias.md`, `modulos/02_Aulas_y_Sedes.md`, etc.
 
 ## Próximo paso
 
-Andá a **[01 — Primeros pasos](01_Primeros_pasos.md)** para arrancar
+Andá a **[01: Primeros pasos](01_Primeros_pasos.md)** para arrancar
 la aplicación y darle una recorrida.

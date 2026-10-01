@@ -4,9 +4,10 @@
 
 La página **📜 Historial** te muestra un registro de cambios de las
 decisiones importantes que se tomaron en el sistema. Cada vez que
-alguien modifica una materia, un dictado, una carrera o una sede (entre
-otras cosas), queda una fila con el "antes" y el "después", cuándo se
-hizo y desde qué página.
+alguien modifica una materia, un dictado, una carrera, una sede, un plan
+de cursada, una comisión, un horario o un cronograma (entre otras cosas),
+queda una fila con el "antes" y el "después", cuándo se hizo y desde qué
+página.
 
 Es una vista de solo lectura: sirve para consultar, no para modificar.
 No permite deshacer cambios, ni editarlos, ni exportarlos a un archivo.
@@ -28,9 +29,9 @@ Vas a entrar a **Historial** en estos escenarios típicos:
   materia figura como virtual?" o "¿desde cuándo esta carrera dicta
   recursado?".
 - **Auditar la etapa previa al cierre del cuatrimestre**: antes de
-  activar el plan definitivo, revisar el feed reciente para detectar
+  dar por definitivo el plan de trabajo, revisar el feed reciente para detectar
   ediciones sospechosas hechas por otras sesiones.
-- **Verificar que un cambio bulk se aplicó**: por ejemplo, después de
+- **Verificar que un cambio masivo se aplicó**: por ejemplo, después de
   usar "Aplicar todo" en el panel de divergencias, revisar que las
   materias hayan quedado con los flags correctos.
 - **Reconstruir el contexto** de una decisión pasada: por qué se creó
@@ -74,7 +75,7 @@ El sistema registra automáticamente los cambios sobre estas entidades:
   También alta y baja.
 - **Dictados por ciclo (bridge)**: alta y baja del vínculo entre un
   dictado y un ciclo.
-- **Sedes**: modificación del flag "es sede default para materias
+- **Sedes**: modificación del flag "es sede por defecto para materias
   comunes". También alta y baja.
 
 **Cronogramas (pre-plan)**
@@ -103,17 +104,19 @@ dejan rastro individual** en el historial:
 - **Corridas del asignador**: no emiten un evento por cada horario
   reasignado. En su lugar, cada corrida óptima que efectivamente
   cambia alguna asignación genera **una sola fila agregada** en el
-  historial (entidad `LPRunDB`, action `created`, origin `lp:run`)
-  con el detalle de reasignaciones (`horario_id`, `aula_previa`,
-  `aula_nueva`) en el `new_value`. Las corridas idempotentes (mismos
+  historial (tipo «Corrida del asignador», acción creación, origen técnico
+  `lp:run`) con el detalle de reasignaciones (`horario_id`, `aula_previa`,
+  `aula_nueva`) en el valor nuevo. Las corridas idempotentes (mismos
   parámetros, sin cambios en el patrón) NO emiten evento. La fila de
   `LPRunDB` sigue guardando la solución completa, tolerancias y
   métricas por su lado.
-- Ediciones sobre la serie histórica de inscriptos.
+- Ediciones sobre la serie histórica de inscriptos (ni guardados, ni
+  importaciones, ni asociaciones de códigos).
+- Alta, baja y edición de ciclos.
 - Ediciones sobre los overrides manuales del forecast (el "Total
   esperado (manual)" del plan).
 - Ediciones sobre aulas del catálogo y sedes (excepto el flag "es
-  sede default" de sedes).
+  sede por defecto" de sedes).
 - Cambios directos hechos por scripts o comandos de línea (por
   ejemplo, reinicializar la base entera con `load_initial_data
   --reset` no queda registrado).
@@ -123,8 +126,8 @@ dejan rastro individual** en el historial:
 
 > **Regla mental**: el historial audita **cambios individuales del
 > catálogo, del plan y del cronograma**. Las corridas del asignador
-> (bulk operations) se auditan aparte via LPRun (una fila por
-> corrida) para mantener el historial legible.
+> (operaciones masivas) se auditan con una sola fila agregada por
+> corrida para mantener el historial legible.
 
 ### Estructura de un evento
 
@@ -132,18 +135,23 @@ Cada fila del historial tiene los siguientes datos:
 
 - **Acción**: si fue una creación (➕), una edición (✏️) o un borrado
   (🗑️).
-- **Tipo de entidad**: si fue una Materia, Carrera, Dictado, Sede, etc.
+- **Tipo de entidad**: se muestra en el filtro del feed con estos
+  nombres: Materia, Carrera, Dictado, Dictado en ciclo, Sede, Horario,
+  Comisión, Plan de cursada, Cronograma, Entrada de cronograma y
+  Corrida del asignador.
 - **Etiqueta de la entidad**: identificación humana (nombre + código o
   similar), preservada aunque después la entidad se borre.
 - **Campo**: qué campo cambió (sólo para ediciones).
-- **Valor viejo → valor nuevo**: sólo para ediciones.
-- **Cuándo**: timestamp del cambio, en formato relativo ("hace unos
+- **Valor viejo → valor nuevo**: sólo para ediciones. Los valores
+  lógicos se muestran como `Sí` / `No`; un valor vacío, como un guion largo.
+- **Cuándo**: fecha y hora del cambio, en formato relativo ("hace unos
   segundos", "hace 5 min", "hace 3 h", "hace 4 días") o fecha absoluta
   para eventos viejos.
-- **Origen**: desde qué página o proceso se hizo (por ejemplo, "Ciclos",
-  "Validación", "Planes", "auto" para hooks internos).
-- **Razón (reason)**: descripción en texto libre del contexto. Aparece
-  cuando la operación fue un bulk (aplicar todo, promover a regla,
+- **Origen**: desde qué página o proceso se hizo (por ejemplo, "UI
+  Ciclos", "UI Validación", "UI Planes", "sistema" para los cambios
+  automáticos).
+- **Razón**: descripción en texto libre del contexto. Aparece
+  cuando la operación fue masiva (aplicar todo, promover a regla,
   etc.) o una acción explícita del usuario. Puede estar vacía para
   cambios sin contexto declarado.
 
@@ -157,70 +165,90 @@ Cada fila del historial tiene los siguientes datos:
 ### Origen del cambio
 
 Cada evento incluye un **origen** que indica de dónde vino el cambio.
-Los orígenes que vas a ver son:
+Los orígenes que vas a ver (con la etiqueta que muestra la pantalla) son:
 
-- **auto**: hook automático (cambio hecho desde una página que no
-  declara contexto explícito, como Materias o Carreras).
-- **ui:ciclos**: desde la página de Ciclos, en general desde el panel
-  de divergencias o desde acciones bulk.
-- **ui:validacion**: desde la página de Validación (aceptar materias
-  del cronograma, bulk desactivar).
-- **ui:planes**: desde la página de Planes (edición del flag virtual de
-  un horario, o cambio de carrera asignada de una comisión).
+- **sistema**: cambio automático (hecho desde una página que no declara
+  contexto explícito, como Materias o Carreras).
+- **UI Ciclos**: desde la página de Ciclos, en general desde el panel
+  de divergencias o desde acciones masivas.
+- **UI Validación**: desde la validación (aceptar materias del
+  cronograma, desactivar en bloque).
+- **UI Planes**: desde la edición de un plan (por ejemplo, el flag
+  virtual de un horario o el cambio de carrera asignada de una
+  comisión).
 - **script**: cambio hecho desde línea de comandos.
 
-> **Aclaración**: aunque en la UI aparezcan las etiquetas "Materias" y
-> "Carreras" como orígenes posibles, en la práctica las páginas de
-> Materias y de Carreras no marcan contexto explícito, por lo que sus
-> cambios quedan con origen `auto`. Es una limitación conocida.
+> **Aclaración**: el filtro puede incluir también las etiquetas "UI
+> Materias" y "UI Carreras", pero en la práctica esas páginas no marcan
+> contexto explícito, por lo que sus cambios quedan con origen
+> «sistema». Es una limitación conocida.
 
 ---
 
 ## Recorrido rápido de la página
 
-La página se divide en dos tabs:
+Debajo del título «Historial de cambios» y de una breve descripción, la
+página se divide en dos pestañas:
 
-### Tab 1 — 🌐 Feed global
+### Pestaña 1: 🌐 Feed global
 
 Muestra los cambios más recientes de todo el sistema, en orden
 cronológico descendente.
 
 Controles superiores:
 
-- **Últimos N días**: cutoff temporal (default 30, mínimo 1, máximo
-  365). Sólo se muestran eventos ocurridos en esa ventana.
-- **Máx. eventos**: cap de resultados (default 100, mínimo 10, máximo
-  500). Si hay más eventos en la ventana, se muestran los más
-  recientes.
+Dentro del recuadro «🔎 Filtros del feed»:
 
-Filtros adicionales in-widget:
+- **Días hacia atrás**: ventana temporal (por defecto 30, mínimo 1,
+  máximo 365). Sólo se muestran eventos ocurridos en esa ventana.
+- **Máximo de eventos a mostrar**: tope de resultados (por defecto 100,
+  mínimo 10, máximo 500, de a 10). Si hay más eventos en la ventana, se
+  muestran los más recientes.
 
-- **Tipo de entidad**: multiselect. Sólo aparecen los tipos que
+Debajo del recuadro aparecen dos filtros más:
+
+- **Tipo de entidad**: selección múltiple. Sólo aparecen los tipos que
   efectivamente hay en la ventana.
-- **Origen**: multiselect. Sólo aparecen los orígenes presentes en la
-  ventana.
+- **Origen**: selección múltiple. Sólo aparecen los orígenes presentes
+  en la ventana.
 
-> **Cuidado con la interacción entre "Últimos N días" y "Máx. eventos"**:
+Un contador indica «Mostrando X de Y eventos de los últimos N días». Si
+no hay ningún evento en la ventana, en cambio, la pestaña muestra sólo el
+aviso «Sin cambios en los últimos N días» y no ofrece estos filtros.
+
+> **Cuidado con la interacción entre "Días hacia atrás" y "Máximo de eventos a mostrar"**:
 > el sistema primero trae hasta N eventos y después filtra por
-> antigüedad. Si en las últimas horas hubo muchísimos cambios y el cap
+> antigüedad. Si en las últimas horas hubo muchísimos cambios y el tope
 > de eventos es bajo, es posible que el filtro por antigüedad no traiga
 > eventos "viejos" de días anteriores porque quedaron cortados antes.
-> Si sospechás que estás perdiendo eventos viejos, subí "Máx. eventos"
-> a 500.
+> Si sospechás que estás perdiendo eventos viejos, subí "Máximo de
+> eventos a mostrar" a 500.
 
-Cada evento se muestra como una fila timeline con toda la información
-descripta arriba.
+Cada evento se muestra como una fila de una línea de tiempo con la
+información descripta arriba.
 
-### Tab 2 — 🔎 Por entidad
+![Pestaña Feed global con el recuadro de filtros, los selectores de tipo y origen y los eventos más recientes](../capturas/historial/feed_global.png)
+
+En la captura, los dos controles numéricos («Días hacia atrás» y «Máximo de eventos a mostrar») están en el recuadro «Filtros del feed»; debajo aparecen los selectores «Tipo de entidad» y «Origen», el contador de eventos mostrados y la lista, con el evento más reciente arriba.
+
+### Pestaña 2: 🔎 Por entidad
 
 Te permite consultar el historial completo de una entidad puntual.
 
-- **Selector de tipo**: `Materia`, `Carrera`, `Dictado`, `Sede`.
-- **Selector de entidad**: se filtra por tipo. Ejemplo: si elegís
-  "Materia", te aparecen todas las materias del sistema.
+- **Tipo de entidad**: `Materia`, `Carrera`, `Dictado`, `Sede`.
+- **Seleccioná una entidad**: se filtra por tipo. Ejemplo: si elegís
+  "Materia", te aparecen todas las materias del sistema (código y
+  nombre); los dictados se listan con su código y la materia entre
+  paréntesis.
 
-Al seleccionar una entidad, se muestran hasta **50 eventos** de esa
-entidad, ordenados del más reciente al más viejo.
+Al seleccionar una entidad, un texto indica «Últimos N cambio(s)» y se
+muestran hasta **50 eventos** de esa entidad, del más reciente al más
+viejo. Si la entidad no tiene cambios, aparece «Sin cambios registrados
+para esta entidad.».
+
+![Pestaña Por entidad con una materia seleccionada y sus cambios registrados](../capturas/historial/historial_por_entidad.png)
+
+Arriba se elige el tipo y después la entidad concreta; los eventos de más de 30 días, como los de la captura, se muestran con su fecha en lugar del tiempo relativo. Un valor previo vacío se ve como un guion largo.
 
 > **Limitación**: si la entidad tiene más de 50 eventos, los más viejos
 > quedan truncados sin indicador visual de "hay más". El límite no es
@@ -234,82 +262,85 @@ entidad, ordenados del más reciente al más viejo.
 ### Ver los cambios recientes en el sistema (feed global)
 
 1. Entrá a **📜 Historial**.
-2. Quedate en el tab **🌐 Feed global** (viene seleccionado por
-   default).
-3. Ajustá "Últimos N días" al rango que te interese (por default 30).
-4. Si querés más resolución, subí "Máx. eventos" a 500.
-5. Scrolleá el feed para ver los eventos.
+2. Quedate en la pestaña **🌐 Feed global** (viene seleccionada por
+   defecto).
+3. Ajustá "Días hacia atrás" al rango que te interese (por defecto 30).
+4. Si querés más resolución, subí "Máximo de eventos a mostrar" a 500.
+5. Recorré el feed para ver los eventos.
 
 ### Ver el historial completo de una materia / carrera / dictado / sede
 
 1. Entrá a **📜 Historial**.
-2. Andá al tab **🔎 Por entidad**.
-3. En el selector de tipo, elegí `Materia`, `Carrera`, `Dictado` o
+2. Andá a la pestaña **🔎 Por entidad**.
+3. En «Tipo de entidad», elegí `Materia`, `Carrera`, `Dictado` o
    `Sede`.
-4. En el selector de entidad, elegí la entidad específica.
+4. En «Seleccioná una entidad», elegí la entidad específica.
 5. Vas a ver hasta 50 eventos.
 
 ### Filtrar por tipo de entidad o por origen
 
-En el tab **🌐 Feed global**:
+En la pestaña **🌐 Feed global**:
 
-1. Ajustá los filtros "Últimos N días" y "Máx. eventos" para definir la
-   ventana.
-2. En los multiselect de "Tipo de entidad" y "Origen" que aparecen bajo
-   los controles, elegí los que te interesan.
+1. Ajustá "Días hacia atrás" y "Máximo de eventos a mostrar" para
+   definir la ventana.
+2. En los selectores de "Tipo de entidad" y "Origen" que aparecen bajo
+   el recuadro de filtros, dejá los que te interesan (por defecto están
+   todos tildados).
 3. El feed se actualiza automáticamente con la selección.
+
+![Feed global filtrado para mostrar sólo los cambios sobre materias](../capturas/historial/feed_filtrado_por_tipo.png)
+
+En la captura se dejó sólo «Materia» en «Tipo de entidad»: el contador pasa a indicar cuántos de los eventos de la ventana cumplen el filtro, y cada edición muestra el campo, el valor anterior y el nuevo. El contador indica «Mostrando 2 de 100 eventos…».
 
 > Ojo: los filtros muestran solo los tipos y orígenes presentes en la
 > ventana actual. Si un tipo no aparece en la lista, es porque en los
 > últimos N días no hubo eventos de ese tipo (o quedaron cortados por
-> el cap de eventos).
+> el tope de eventos).
 
 ### Interpretar un evento
 
-Cada fila del feed tiene:
+Cada fila del feed tiene, de arriba hacia abajo:
 
-- **Icono de acción**:
-  - ➕ = creación de una entidad.
-  - ✏️ = edición de un campo.
-  - 🗑️ = borrado de una entidad.
-- **Detalle**:
-  - Para ediciones: `campo: viejo → nuevo`. Ejemplo:
-    `virtual: false → true`.
-  - Para creaciones: `**creada**`.
-  - Para borrados: `**borrada**`.
-- **Timestamp relativo**: "hace 5 min", "hace 3 h", "hace 4 días", o
-  fecha absoluta si el evento es más viejo que 30 días.
-- **Origen**: entre corchetes, con etiqueta humana ("Ciclos",
-  "Validación", "Planes", etc.).
-- **Etiqueta de la entidad**: nombre/código de la entidad afectada.
-- **Razón**: en cursiva, texto libre que explica el contexto (por
+- **Icono de acción y detalle**:
+  - ➕ **creada**: creación de una entidad.
+  - ✏️ **campo**: `viejo` → `nuevo`: edición de un campo. Ejemplo:
+    **virtual**: `No` → `Sí`.
+  - 🗑️ **borrada**: borrado de una entidad.
+- **Cuándo y origen**, en una línea gris: "hace 5 min · origen:
+  sistema". El tiempo es relativo ("hace unos segundos", "hace 5 min",
+  "hace 3 h", "hace 4 días") o fecha absoluta si el evento es más viejo
+  que 30 días.
+- **Etiqueta de la entidad** (🏷️): nombre y código de la entidad
+  afectada.
+- **Razón** (💬), en cursiva: texto libre que explica el contexto (por
   ejemplo, "Bulk promover: crear-en-regla en 4 materia(s) desde el
   panel de divergencias del ciclo 2026-1C"). Puede estar vacía.
 
-**Ejemplo real**:
+**Ejemplo real** (como se ve en la captura del feed):
 
 ```
-✏️ Dictado IA1.1-2026-1C
-   virtual: false → true
-   hace 2 h · [Ciclos]
+✏️ virtual: No → Sí
+   hace 1 min · origen: sistema
+   🏷️ A17 - Teoría de Control
 ```
 
-Este evento significa que hace dos horas, alguien marcó el dictado de
-"IA 1.1" del ciclo 2026-1C como virtual, desde la página de Ciclos.
+Este evento significa que hace un minuto se marcó como virtual la
+materia «A17 - Teoría de Control», con origen «sistema» (cambio hecho
+desde una página que no declara contexto).
 
 **Ejemplo con razón explícita**:
 
 ```
-✏️ Materia IA 2.3 - Bases de Datos
-   dicta_recursado: false → true
-   hace 15 min · [Ciclos]
-   Bulk promover: crear-en-regla en 4 materia(s) desde el panel de
+✏️ dicta_recursado: No → Sí
+   hace 15 min · origen: UI Ciclos
+   🏷️ IA 2.3 - Bases de Datos
+   💬 Bulk promover: crear-en-regla en 4 materia(s) desde el panel de
    divergencias del ciclo 2026-1C
 ```
 
 Este evento significa que hace 15 minutos, desde el panel de
 divergencias del ciclo 2026-1C, se activó el flag `dicta_recursado` de
-IA 2.3 como parte de una acción bulk sobre 4 materias.
+IA 2.3 como parte de una acción masiva sobre 4 materias.
 
 ---
 
@@ -320,17 +351,16 @@ IA 2.3 como parte de una acción bulk sobre 4 materias.
 Posibles causas:
 
 - **El cambio no se audita**: revisá la sección "Qué NO se registra"
-  arriba. Si es una edición sobre planes, cronogramas, comisiones (a
-  menos que sea carrera asignada), horarios (a menos que sea virtual
-  desde la grilla del plan), inscriptos o forecast, el historial no
-  guarda ese cambio.
+  arriba. Si es una edición sobre ciclos, aulas, inscriptos, overrides
+  manuales del forecast o una reasignación individual del asignador,
+  el historial no guarda ese cambio.
 - **El campo no está trackeado**: aunque la entidad esté auditada, sólo
   algunos campos específicos generan eventos. Por ejemplo, el nombre y
   el código de una materia no están trackeados.
-- **La ventana temporal no lo incluye**: subí "Últimos N días" hasta
+- **La ventana temporal no lo incluye**: subí "Días hacia atrás" hasta
   365 si buscás algo viejo.
-- **El cap de eventos lo cortó**: subí "Máx. eventos" a 500 y ajustá
-  los filtros para reducir el ruido.
+- **El tope de eventos lo cortó**: subí "Máximo de eventos a mostrar" a
+  500 y ajustá los filtros para reducir el ruido.
 
 ### El evento dice "hace 3 h" pero yo lo hice hace unos minutos
 
@@ -341,10 +371,10 @@ UTC actual, por lo que la diferencia horaria no debería afectar. Si
 ves un desfasaje mayor a segundos/minutos, capaz que el reloj del
 sistema anda mal.
 
-### La página muestra "no hay eventos"
+### La página muestra "Sin cambios en los últimos N días"
 
 - Verificá que la ventana temporal cubra el período que buscás
-  ("Últimos N días").
+  ("Días hacia atrás").
 - Verificá que los filtros por tipo y origen no estén excluyendo todo.
 - Si acabás de iniciar el sistema por primera vez, es normal: el
   historial arranca vacío y se llena a medida que se hacen cambios.
@@ -362,19 +392,20 @@ usar cualquier cliente SQLite (por ejemplo, DB Browser for SQLite).
 
 ### ¿Se guarda absolutamente todo?
 
-**No**. El historial guarda **catálogo y política**, no **operación**.
-En concreto:
+**No**. El historial guarda cambios del **catálogo, del plan y del
+cronograma**, pero sólo de ciertos campos. En concreto:
 
-- **Sí se guarda**: cambios sobre materias (algunos campos), carreras
-  (algunos campos), dictados (algunos campos), sedes (algunos campos),
-  vínculos dictado-ciclo, virtualidad de horarios editada desde la
-  grilla del plan, carrera asignada de comisiones.
-- **No se guarda**: todo lo relacionado con planes de cursada,
-  cronogramas, horarios (edición general), comisiones (excepto carrera
-  asignada), inscriptos, overrides manuales del forecast, aulas (excepto
-  flag default), corridas del asignador, ciclos (creación y edición),
-  cambios por script CLI, y algunos campos de materias como el nombre y
-  el código.
+- **Sí se guarda**: cambios sobre materias, carreras, dictados y sedes
+  (algunos campos), vínculos dictado-ciclo, planes de cursada (nombre,
+  descripción, ciclo, método de forecast por defecto), comisiones,
+  horarios del plan, cronogramas y sus entradas (los campos listados
+  arriba), y una fila agregada por cada corrida del asignador que
+  cambia alguna asignación.
+- **No se guarda**: ciclos (creación y edición), inscriptos, overrides
+  manuales del forecast, aulas (excepto el flag de sede por defecto),
+  cambios por script de línea de comandos, campos no listados (por
+  ejemplo, el nombre y el código de una materia) y las reasignaciones
+  individuales de horarios hechas por el asignador.
 
 Si necesitás trazabilidad de operaciones que no están cubiertas, hacé
 backup periódico de `data/database.db`.
@@ -400,9 +431,9 @@ automático de un hook interno. Si querés atribuir cambios a personas
 distintas, hoy hay que coordinarlo con un mecanismo externo (por
 ejemplo, ponerse de acuerdo en usar el sistema por turnos).
 
-### ¿Por qué hay eventos con origen "auto" y sin razón?
+### ¿Por qué hay eventos con origen "sistema" y sin razón?
 
-Los eventos con origen `auto` son los que se generan por el mecanismo
+Los eventos con origen «sistema» son los que se generan por el mecanismo
 automático interno cuando se toca un campo trackeado sin declarar
 contexto explícito. Típicamente vienen de las páginas de Materias y
 Carreras, que no envuelven sus operaciones en un contexto de auditoría.
@@ -411,10 +442,10 @@ descripción libre de por qué.
 
 ### El historial de una entidad se corta en 50 eventos, ¿cómo veo más?
 
-El tab "Por entidad" tiene un límite fijo de 50 eventos por entidad.
+La pestaña "Por entidad" tiene un límite fijo de 50 eventos por entidad.
 No es configurable desde la UI. Alternativas:
 
-- Usar el tab **Feed global** con "Máx. eventos" en 500 y filtrar por
+- Usar la pestaña **Feed global** con "Máximo de eventos a mostrar" en 500 y filtrar por
   tipo de entidad + búsqueda visual.
 - Consultar la base de datos directamente.
 
@@ -436,11 +467,11 @@ asignación (`virtual`, `active`, `dicta_recursado`, `optativa`,
 
 ### ¿Aparece "Comisión" o "Horario" en los tipos de entidad?
 
-En el tab **Por entidad** el selector sólo ofrece `Materia`, `Carrera`,
-`Dictado` y `Sede`. No aparecen `Comisión` ni `Horario` aunque haya
-eventos de esos tipos (los pocos que sí se emiten explícitamente,
-como el cambio de "carrera asignada" o virtualidad de horario). Para
-verlos, andá al tab **Feed global** y filtrá por tipo de entidad.
+En la pestaña **Por entidad** el selector sólo ofrece `Materia`,
+`Carrera`, `Dictado` y `Sede`. No aparecen `Comisión`, `Horario`,
+`Plan de cursada` ni `Cronograma`, aunque haya eventos de esos tipos.
+Para verlos, andá a la pestaña **Feed global** y filtrá por tipo de
+entidad.
 
 ---
 
@@ -450,18 +481,18 @@ verlos, andá al tab **Feed global** y filtrá por tipo de entidad.
   sistema. Es lo que se muestra en esta página.
 - **Evento**: una fila del registro. Corresponde a un cambio puntual
   (creación, edición o borrado) sobre una entidad.
-- **Feed global**: vista del tab 1, con los cambios más recientes de
+- **Feed global**: vista de la pestaña 1, con los cambios más recientes de
   todo el sistema.
-- **Historial por entidad**: vista del tab 2, con los cambios de una
+- **Historial por entidad**: vista de la pestaña 2, con los cambios de una
   entidad puntual (materia, carrera, dictado o sede).
-- **Origen del cambio**: indica de dónde vino la edición (Ciclos,
-  Validación, Planes, o "auto" para hooks automáticos).
-- **Razón (reason)**: descripción en texto libre del contexto. Se
-  completa en operaciones bulk y en acciones explícitas del usuario;
+- **Origen del cambio**: indica de dónde vino la edición (UI Ciclos,
+  UI Validación, UI Planes, o "sistema" para los cambios automáticos).
+- **Razón**: descripción en texto libre del contexto. Se
+  completa en operaciones masivas y en acciones explícitas del usuario;
   puede estar vacía.
 - **Etiqueta de la entidad**: nombre humano de la cosa afectada,
   preservado aunque la entidad se borre después.
-- **Ventana temporal (últimos N días)**: filtro para acotar la cantidad
+- **Ventana temporal (días hacia atrás)**: filtro para acotar la cantidad
   de eventos visibles en el feed global.
-- **Cap de eventos (máx. eventos)**: límite superior de resultados en el
-  feed global. Por default 100; se puede subir hasta 500.
+- **Tope de eventos (máximo de eventos a mostrar)**: límite superior de
+  resultados en el feed global. Por defecto 100; se puede subir hasta 500.

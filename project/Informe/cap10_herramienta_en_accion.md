@@ -3,20 +3,50 @@
 > **Estado: estructura con marcadores.** El contenido depende de los
 > casos de prueba que elijamos presentar. Cada sección indica qué
 > poner y de dónde sacarlo. Extensión orientativa: 6 a 8 páginas,
-> con el detalle paso a paso derivado al Anexo B (manual de usuario).
+> con el detalle paso a paso derivado al Anexo C (manual de usuario).
 
 ## 10.1 Recorrido guiado por la interfaz
 
-> **Para completar:** un recorrido breve que siga el flujo canónico
-> del capítulo 7 (catálogo → ciclo → cronograma → plan de cursada →
-> asignación de aulas), con una captura comentada por etapa (4 a 6
-> capturas en total). La idea no es repetir el manual, sino mostrar
-> cómo se ve el recorrido completo y dónde intervienen las
-> validaciones del capítulo 9.
->
-> Fuentes: manual de usuario (Anexo B), `WORKFLOW.md`. Capturas
-> nuevas, numeradas y tituladas según APA 7 (**Figura N** en negrita,
-> título en cursiva).
+Recorremos las pantallas principales siguiendo el flujo de uso del
+capítulo 7, sobre los datos del primer cuatrimestre de 2026. El
+detalle paso a paso de cada pantalla está en el manual de usuario
+(Anexo C).
+
+**Validación del cronograma.** Una vez cargada la planilla de
+horarios, el sistema la contrasta con la oferta del ciclo. La Figura
+@fig:cap-validar muestra el resumen: cuántas materias esperadas están
+cubiertas y cuántas faltan, el estado de los laboratorios y, por
+carrera, las materias faltantes, las no esperadas y los conflictos
+horarios. Las celdas resaltadas señalan dónde conviene mirar primero.
+
+![Validación de un cronograma contra el ciclo lectivo: cobertura y conflictos por carrera](figuras/capturas/cronograma_validar_resumen.png){#fig:cap-validar width=15cm}
+
+**El plan de cursada.** Generado el plan, sus horarios se ven en una
+grilla semanal que se puede filtrar por carrera, año y cuatrimestre.
+En la Figura @fig:cap-plan, cada bloque indica la materia, la
+comisión, las carreras que la comparten y, después de correr el
+asignador, la sede y el aula asignadas.
+
+![Grilla semanal de un plan de cursada para Ingeniería Industrial, segundo año, con las aulas asignadas](figuras/capturas/plan_cursada_grilla.png){#fig:cap-plan width=15cm}
+
+**La corrida del asignador.** Cada corrida termina con un veredicto
+en lenguaje llano y con sus indicadores principales: horarios
+asignados, horarios sobreocupados y subutilizados, costo de la
+solución y tiempo de resolución (Figura @fig:cap-veredicto).
+
+![Veredicto de una corrida del asignador de aulas](figuras/capturas/asignador_veredicto.png){#fig:cap-veredicto width=15cm}
+
+**El mapa de saturación.** Para cada sede, el mapa de la Figura
+@fig:cap-mapa muestra, en franjas de quince minutos, cuántas aulas de
+cada tipo están ocupadas sobre el total disponible. Los colores
+permiten ver de un vistazo las franjas ajustadas, que son las que
+limitan cualquier cambio posterior.
+
+![Mapa de saturación de aulas por franja horaria en la sede Pellegrini](figuras/capturas/mapa_saturacion.png){#fig:cap-mapa width=13cm}
+
+> **Para completar:** si se quiere, sumar una captura de la carga del
+> catálogo o del calendario del cronograma (están en
+> `figuras/capturas/`).
 
 ## 10.2 Caso de estudio integral
 
