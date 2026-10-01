@@ -111,7 +111,7 @@ demás se aplican de manera puntual en los capítulos siguientes
 
 ### 2.1.2 Chiavenato: tipología por complejidad
 
-Chiavenato (2006) clasifica a las organizaciones a partir de tres
+Chiavenato [1] clasifica a las organizaciones a partir de tres
 dimensiones concurrentes:
 
 - **Diferenciación horizontal**: cantidad de unidades funcionales
@@ -148,7 +148,7 @@ académica de la facultad enfrenta cada cuatrimestre.
 
 ### 2.1.3 Mintzberg: partes y mecanismos de coordinación
 
-Donde Chiavenato mira dimensiones, Mintzberg (1979) mira **partes** y
+Donde Chiavenato mira dimensiones, Mintzberg [6] mira **partes** y
 **mecanismos**. Toda organización, sostiene el autor, se descompone
 en cinco partes fundamentales:
 
@@ -181,7 +181,7 @@ núcleo operativo y el mecanismo de coordinación principal es la
 normalización de habilidades. "La burocracia profesional cuenta para
 su coordinación con la normalización de las destrezas y con el
 parámetro de diseño correspondiente, la preparación y el
-adoctrinamiento" (Mintzberg, 1979).
+adoctrinamiento" [6].
 
 Una universidad encuadra sin ambigüedad en esa configuración. Los
 docentes constituyen el núcleo operativo; la coordinación de su
@@ -233,7 +233,7 @@ particularidades tiene su operación. El paso siguiente es preguntar
 **cómo se traduce esa comprensión a un sistema de software fiel al
 dominio real**. Para eso tomamos como marco al *diseño guiado por el
 dominio* (en inglés, *Domain-Driven Design* o DDD), formulado por
-Eric Evans (2003).
+Eric Evans [3].
 
 ### 2.2.1 La premisa fundamental
 
