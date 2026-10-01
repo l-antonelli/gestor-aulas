@@ -58,20 +58,34 @@ Este anexo no cubre:
 
 ### 2.2 Separación de capas
 
-El proyecto adopta una separación estricta entre el **modelo de dominio** (`src/domain/`) y el **modelo de persistencia** (`src/database/models.py`).
+El sistema se organiza en tres capas de software sobre el motor
+SQLite. Los servicios nunca escriben SQL: trabajan con las entidades
+del dominio, que son clases de Python declaradas con Pydantic y
+SQLModel, y es SQLModel quien las traduce a filas.
 
 ```mermaid
 flowchart TD
-    UI["<b>Capa de UI (Streamlit)</b><br/><code>src/ui/ + app/pages/</code>"]
-    SVC["<b>Capa de servicios (lógica de negocio)</b><br/><code>src/services/*</code>"]
-    DOM["<b>Capa de dominio (entidades puras)</b><br/><code>src/domain/*</code> (Pydantic frozen)"]
-    PER["<b>Capa de persistencia (SQLModel)</b><br/><code>src/database/models.py<br/>src/database/crud.py<br/>src/database/converters.py</code>"]
-    SQL["<b>Motor SQLite</b><br/><code>data/database.db</code>"]
+    UI["<b>Interfaz (Streamlit)</b><br/><code>app/pages/ + src/ui/</code>"]
+    SVC["<b>Servicios (reglas del dominio)</b><br/><code>src/services/*</code>"]
+    ENT["<b>Entidades del dominio</b><br/><code>src/database/models.py</code> (SQLModel)<br/><code>src/domain/*</code> (Pydantic)"]
+    SQL[("<b>Motor SQLite</b><br/><code>data/database.db</code>")]
 
-    UI --> SVC --> DOM --> PER --> SQL
+    UI -->|invoca| SVC
+    SVC -->|crea, consulta y modifica| ENT
+    ENT -->|SQLModel traduce a filas| SQL
 ```
 
-**Conversión entre capas**: los servicios operan sobre modelos de dominio (livianos, inmutables, aptos para experimentación y pruebas) y traducen a modelos de persistencia sólo en el límite con la base. Las funciones `to_db()` y `to_domain()` en `src/database/converters.py` implementan ese mapeo.
+**Dos formas de las entidades**: las clases de `src/database/models.py`
+son a la vez modelos de Pydantic (validan sus campos) y el mapeo de
+cada tabla; la mayoría de los servicios las consulta y modifica
+directamente mediante la sesión de SQLModel. Las clases de
+`src/domain/` son versiones inmutables de las entidades principales
+(materia, aula, sede, carrera, comisión, horario), con validadores de
+invariantes; las usan los servicios genéricos de altas, bajas y
+modificaciones (`src/services/crud_services.py`), que las convierten a
+y desde las clases de tabla con `to_db()` y `to_domain()`
+(`src/database/converters.py`) y se apoyan en el CRUD genérico de
+`src/database/crud.py`.
 
 ### 2.3 Motor de conexión
 

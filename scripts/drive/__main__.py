@@ -2,6 +2,7 @@
 "Proyecto de ingeniería / Consolidado".
 
 Uso:
+    python -m scripts.drive traer            # trae al repo las ediciones hechas a mano en el Doc (correr ANTES de trabajar)
     python -m scripts.drive informe          # informe completo (pautas I-32), actualiza el Doc compartido
                                              # (se frena si alguien editó texto en el Doc; --forzar lo pisa)
     python -m scripts.drive previa           # lo mismo, pero sólo genera un PDF para revisar
@@ -24,6 +25,7 @@ import sys
 from pathlib import Path
 
 from scripts.drive import composio as cx
+from scripts.drive import sincronizar as sync
 from scripts.exportar_informe_docx import (
     PANDOC,
     RAIZ,
@@ -190,15 +192,72 @@ def informe(*opciones: str) -> None:
                 "✗ El Doc tiene ediciones de texto posteriores a la última publicación. "
                 "Traelas al repo antes de regenerar, o usá `informe --forzar` para pisarlas.")
     final = _armar_informe(inf)
+    # Armar el informe tarda unos minutos: se vuelve a verificar justo
+    # antes de subir, por si alguien editó el Doc mientras tanto.
+    if inf.get("doc_id") and inf.get("huella_publicada") and "--forzar" not in opciones:
+        if _huella(cx.texto_doc(inf["doc_id"])) != inf["huella_publicada"]:
+            raise SystemExit("✗ Alguien editó el Doc mientras se armaba el informe; no se publicó.")
     inf["doc_id"] = cx.docx_a_gdoc(final, est["carpetas"]["Informe"], "Informe", inf.get("doc_id"))
-    inf["huella_publicada"] = _huella(cx.texto_doc(inf["doc_id"]))
+    publicado = cx.texto_doc(inf["doc_id"])
+    inf["huella_publicada"] = _huella(publicado)
+    PUBLICADO.write_text(publicado, encoding="utf-8")
     _guardar(est)
     pdf = cx.exportar_pdf(inf["doc_id"], base / "Informe.pdf")
     print(f"✓ Informe actualizado: https://docs.google.com/document/d/{inf['doc_id']}/edit")
     print(f"  PDF para revisar: {pdf.relative_to(RAIZ)}")
 
 
-COMANDOS = {"informe": informe, "previa": previa, "docs": docs, "archivos": archivos, "estructura": estructura}
+PUBLICADO = DIST / "informe_docx" / "publicado.txt"
+
+
+def _texto_publicado(inf: dict) -> str:
+    """Texto del Doc tal como quedó en la última publicación: la copia
+    local si coincide con la huella; si no, la revisión del Doc que la
+    tenga."""
+    if PUBLICADO.exists() and _huella(PUBLICADO.read_text(encoding="utf-8")) == inf["huella_publicada"]:
+        return PUBLICADO.read_text(encoding="utf-8")
+    revs = cx.proxy(f"https://www.googleapis.com/drive/v3/files/{inf['doc_id']}/revisions"
+                    "?fields=revisions(id,exportLinks)&pageSize=200").get("revisions", [])
+    for r in reversed(revs):
+        texto = cx.texto_doc(None, r["exportLinks"]["text/plain"])
+        if _huella(texto) == inf["huella_publicada"]:
+            PUBLICADO.write_text(texto, encoding="utf-8")
+            return texto
+    raise SystemExit("✗ No encontré el texto de la última publicación (ni copia local ni revisión del Doc).")
+
+
+def traer(*opciones: str) -> None:
+    """Trae al repo las ediciones hechas a mano en el Doc desde la última
+    publicación. Las que se ubican sin ambigüedad se aplican a los .md; el
+    resto se lista para pasarlas a mano. Si quedan todas aplicadas (o con
+    `--rebasar`, una vez pasadas a mano), el estado actual del Doc pasa a
+    ser la base de la protección de `informe`."""
+    from scripts.exportar_informe_docx import DIR_INFORME, ORDEN_INFORME
+    est = _estado()
+    inf = est["informe"]
+    actual = cx.texto_doc(inf["doc_id"])
+    if _huella(actual) == inf["huella_publicada"]:
+        print("✓ El Doc no tiene ediciones desde la última publicación.")
+        return
+    eds = sync.ediciones(_texto_publicado(inf), actual)
+    if "--rebasar" not in opciones:
+        fuentes = {n: (DIR_INFORME / n).read_text(encoding="utf-8") for n in ORDEN_INFORME}
+        cambiados, pendientes = sync.aplicar_todas(eds, fuentes)
+        for nombre, texto in cambiados.items():
+            (DIR_INFORME / nombre).write_text(texto, encoding="utf-8")
+        print(f"✓ {len(eds) - len(pendientes)} edición(es) aplicada(s) en: {', '.join(sorted(cambiados)) or 'ninguno'}")
+        if pendientes:
+            print(f"✗ {len(pendientes)} para pasar a mano (después: `traer --rebasar`):")
+            for e in pendientes:
+                print("   -", e)
+            return
+    inf["huella_publicada"] = _huella(actual)
+    PUBLICADO.write_text(actual, encoding="utf-8")
+    _guardar(est)
+    print("✓ Base actualizada: `informe` ya puede publicar.")
+
+
+COMANDOS = {"traer": traer, "informe": informe, "previa": previa, "docs": docs, "archivos": archivos, "estructura": estructura}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMANDOS:

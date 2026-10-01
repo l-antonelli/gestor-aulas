@@ -66,7 +66,7 @@ tiempos razonables.
 
 #### 3.8.1.3 De vuelta al planteo de la sección 3.4
 
-En §3.4.2 identificamos los cuatro ingredientes de un problema de
+En §3.4.2 identificamos los cuatro componentes de un problema de
 asignación de recursos bajo restricciones. En el programa lineal
 se traducen así:
 
@@ -375,11 +375,11 @@ infactible, recurrimos al *teorema de Hall* (§3.2.4.3). Se arma un
 grafo bipartito con los horarios de un lado, las aulas del otro y
 una arista por cada par compatible. Existe una asignación que le
 da un aula distinta a cada horario si y sólo si todo subconjunto
-de horarios tiene, en conjunto, al menos tantas aulas vecinas
+de horarios tiene, entre todos, al menos tantas aulas compatibles
 como horarios.
 
 Cuando la condición falla, el sistema informa el subconjunto de
-horarios que la viola junto con sus aulas vecinas. La lectura es
+horarios que la viola junto con las aulas compatibles con ellos. La lectura es
 directa: "estas materias compiten por estas aulas y no alcanzan".
 La verificación se hace por momento de simultaneidad y por sede.
 

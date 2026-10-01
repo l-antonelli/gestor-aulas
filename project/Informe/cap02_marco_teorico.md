@@ -300,9 +300,11 @@ clase.
 
 Un *apareamiento* (*matching*) es un subconjunto de aristas en el que
 ningún vértice aparece más de una vez. Un apareamiento **satura** a
-`X` si cubre a todos sus vértices. La *vecindad* `N(S)` de un
-subconjunto `S ⊆ X` es el conjunto de vértices de `Y` unidos por
-alguna arista con algún vértice de `S`.
+`X` si cubre a todos sus vértices. Para un subconjunto `S ⊆ X`,
+`N(S)` es el conjunto de vértices de `Y` unidos por alguna arista con
+algún vértice de `S` (en teoría de grafos se lo llama *vecindad* de
+`S`). En nuestro caso, `N(S)` son las **aulas compatibles** con al
+menos una de las clases de `S`.
 
 En nuestro problema, `X` es el conjunto de clases que se dictan en un
 mismo instante, `Y` el de aulas disponibles en ese instante, y existe
@@ -363,8 +365,8 @@ hora y hay tres aulas disponibles `a, b, c`:
 | `h₃` | `{a, b, c}` |
 
 El conteo global cierra (3 clases, 3 aulas). Sin embargo, para
-`S = {h₁, h₂}` la vecindad es `N(S) = {a}`, de tamaño `1 < 2`: la
-condición de Hall falla y no hay asignación posible, porque `h₁` y
+`S = {h₁, h₂}` las aulas compatibles son `N(S) = {a}`, una sola para
+dos clases: la condición de Hall falla y no hay asignación posible, porque `h₁` y
 `h₂` compiten por la única aula que ambas admiten. Las dos
 herramientas son complementarias: el palomar detecta los casos
 evidentes mirando totales; Hall, los más sutiles mirando subconjuntos.

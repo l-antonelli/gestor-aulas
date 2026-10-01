@@ -43,9 +43,7 @@ web interactivas sin escribir directamente el código propio de los
 navegadores. Cada pantalla se describe como un programa corto que
 se vuelve a ejecutar ante cada interacción, y la biblioteca se
 encarga de dibujar formularios, tablas y gráficos, lo que da una
-velocidad de desarrollo alta. Las alternativas que separan la
-interfaz del procesamiento exigían mantener dos piezas comunicadas
-entre sí, un costo que el proyecto no necesitaba pagar.
+velocidad de desarrollo alta.
 
 #### 3.7.1.2 SQLite y SQLModel para la persistencia
 
@@ -221,22 +219,21 @@ un sistema es la *arquitectura en capas*: se agrupan las
 responsabilidades en niveles y cada nivel sólo se apoya en los que
 están debajo, nunca al revés. Así, un cambio en la presentación no
 obliga a tocar las reglas del negocio, y las reglas se pueden
-verificar sin pasar por la pantalla. El sistema se organiza en
-cuatro capas, como muestra la Figura @fig:arquitectura.
+verificar sin pasar por la pantalla. El sistema se organiza en tres
+capas de software apoyadas sobre la base de datos, como muestra la
+Figura @fig:arquitectura.
 
 <!-- figura: Arquitectura en capas del sistema {#fig:arquitectura} -->
 ```mermaid
 flowchart TD
     UI["<b>Interfaz</b><br/>pantallas y componentes reutilizables"]
     SVC["<b>Servicios</b><br/>reglas del dominio agrupadas por área"]
-    MOD["<b>Entidades del dominio</b><br/>materias, aulas, comisiones, horarios"]
-    PER["<b>Persistencia</b><br/>altas, bajas, modificaciones y consultas"]
+    MOD["<b>Entidades del dominio</b><br/>clases de Pydantic y SQLModel:<br/>materias, aulas, comisiones, horarios"]
     DB[("<b>Base de datos</b><br/>archivo SQLite")]
 
     UI -->|invoca| SVC
-    SVC -->|opera sobre| MOD
-    SVC -->|guarda y lee mediante| PER
-    PER -->|traduce a filas de| DB
+    SVC -->|crea, consulta y modifica| MOD
+    MOD -->|SQLModel las traduce a filas| DB
 ```
 
 - **Interfaz.** Reúne las pantallas de cada área funcional
@@ -250,12 +247,14 @@ flowchart TD
   asignador de aulas.
 - **Entidades del dominio.** Son las clases que representan los
   conceptos de las secciones 3.5 y 3.6, con sus verificaciones de
-  campo e invariantes (§3.7.1.4). Los servicios razonan sobre ellas,
-  no sobre tablas.
-- **Persistencia.** Resuelve las operaciones básicas (crear,
-  consultar, modificar y borrar) y, mediante SQLModel, traduce cada
-  entidad a filas de la base y viceversa. Es la única capa que
-  conoce el motor relacional.
+  campo e invariantes (§3.7.1.4). Los servicios trabajan sólo con
+  ellas: crean, consultan, modifican y borran entidades, nunca
+  escriben consultas ni tocan tablas. Como cada entidad está
+  declarada con SQLModel, sabe guardarse y leerse: SQLModel la
+  traduce a filas de la base y viceversa, y las operaciones que se
+  repiten para todas (altas, bajas y modificaciones) se reúnen en un
+  servicio genérico (§3.7.1.4). Por eso las entidades son la única
+  pieza que conoce el motor relacional.
 
 La regla central es que **sólo la capa de servicios expresa reglas
 del dominio**. La interfaz recolecta lo que ingresa el usuario, se
