@@ -116,8 +116,8 @@ EJ_HORARIOS = [
     ("h₃", "Física I", "laboratorio", 8, 10, 25),
     ("h₄", "Álgebra y Geometría", "teoría", 10, 12, 45),
 ]
-EJ_SOLUCION = {"h₁": "a₂", "h₂": "a₁", "h₃": "a₃", "h₄": "a₂"}
-EJ_AULAS = [("a₁", "teórica", 40), ("a₂", "teórica", 80), ("a₃", "laboratorio de Física", 30)]
+EJ_SOLUCION = {"h₁": "B", "h₂": "A", "h₃": "L", "h₄": "B"}
+EJ_AULAS = [("A", "teórica", 40), ("B", "teórica", 80), ("L", "laboratorio de Física", 30)]
 
 
 def ejemplo_lp() -> None:

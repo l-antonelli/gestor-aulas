@@ -269,7 +269,9 @@ misma sede.
 
 Para ver cómo queda escrito el programa, tomamos un caso mínimo:
 cuatro horarios del lunes por la mañana y tres aulas de una misma
-sede. Las Tablas @tab:ej-horarios y @tab:ej-aulas resumen los datos, y la
+sede. Los horarios se numeran (`h₁` a `h₄`) y las aulas se nombran
+con letras: dos teóricas, **A** y **B**, y un laboratorio, **L**. Las
+Tablas @tab:ej-horarios y @tab:ej-aulas resumen los datos, y la
 Figura @fig:ej-lp los muestra sobre la línea de tiempo.
 
 <!-- tabla: Horarios del ejemplo {#tab:ej-horarios} -->
@@ -283,70 +285,106 @@ Figura @fig:ej-lp los muestra sobre la línea de tiempo.
 <!-- tabla: Aulas del ejemplo {#tab:ej-aulas} -->
 | Aula | Tipo | Capacidad |
 | :---: | --- | :---: |
-| `a₁` | teórica | 40 |
-| `a₂` | teórica | 80 |
-| `a₃` | laboratorio de Física | 30 |
+| A | teórica | 40 |
+| B | teórica | 80 |
+| L | laboratorio de Física | 30 |
 
 ![Ejemplo del programa lineal: horarios, grupos de simultaneidad y asignación óptima](figuras/ejemplo_lp.png){#fig:ej-lp width=15cm}
 
-Escribimos `x_ij` en lugar de `x[h_i, a_j]`. Como las clases de teoría
-sólo admiten aulas teóricas y el laboratorio sólo admite `a₃`, la
-compatibilidad (R2) deja siete variables de las doce posibles:
-`x₁₁, x₁₂, x₂₁, x₂₂, x₃₃, x₄₁` y `x₄₂`. Se usan los pesos por defecto
-(`λ_sobre = 10`, `λ_sub = 1`), sin tolerancia para la sobreocupación
-y con una tolerancia del 20 % para la subocupación: un aula recién
-cuenta como subocupada cuando sobra más de una quinta parte de su
-capacidad.
+**Las variables.** Cada variable responde una pregunta de sí o no:
+$x_{1A}$ vale 1 si el horario `h₁` va al aula A, y 0 si no. Como las
+clases de teoría sólo pueden ir a aulas teóricas y el laboratorio
+sólo a L (R2), hacen falta siete variables: $x_{1A}$, $x_{1B}$,
+$x_{2A}$, $x_{2B}$, $x_{3L}$, $x_{4A}$ y $x_{4B}$. Además, para cada
+horario hay dos medidas de qué tan mal le queda el aula: $\text{sobre}_i$,
+cuántos alumnos quedan sin lugar, y $\text{sub}_i$, cuántos asientos
+sobran más allá de lo aceptable.
 
-**Función objetivo.**
+**Cuánto vacío se tolera.** Se usan los valores por defecto: no se
+tolera ningún alumno sin lugar, pero sí que quede vacío hasta un 20 %
+del aula. En un aula de 80 lugares se aceptan 16 asientos vacíos sin
+penalización; recién lo que sobra por encima de eso cuenta como
+subocupación.
+
+**Función objetivo.** *Sumar, con peso 10, los alumnos que quedan sin
+lugar y, con peso 1, los asientos vacíos de más, y hacer esa suma lo
+más chica posible.* El peso 10 dice que un alumno sin lugar es diez
+veces peor que un asiento vacío.
 
 $$\min \; 10 \,(\text{sobre}_1 + \text{sobre}_2 + \text{sobre}_3 + \text{sobre}_4) \;+\; (\text{sub}_1 + \text{sub}_2 + \text{sub}_3 + \text{sub}_4)$$
 
-**R1. Cada horario en exactamente un aula.**
+**R1. Cada horario en exactamente un aula.** *De las aulas posibles
+para cada horario, se elige una y sólo una.* Por ejemplo, para `h₁`
+la suma $x_{1A} + x_{1B}$ tiene que dar 1: va a A o va a B, nunca a
+las dos ni a ninguna.
 
-$$x_{11} + x_{12} = 1, \qquad x_{21} + x_{22} = 1, \qquad x_{33} = 1, \qquad x_{41} + x_{42} = 1$$
+$$x_{1A} + x_{1B} = 1, \qquad x_{2A} + x_{2B} = 1, \qquad x_{3L} = 1, \qquad x_{4A} + x_{4B} = 1$$
 
-**R3. Sin superposición.** Entre las 9 y las 10 se dictan a la vez
-`h₁`, `h₂` y `h₃`; entre las 10 y las 11, `h₂` y `h₄` (`h₁` termina
-justo cuando empieza `h₄`, por lo que no se superponen). Para cada
-grupo y cada aula teórica:
+**R3. Sin superposición.** *Dos horarios que se dictan a la vez no
+pueden estar en la misma aula.* Entre las 9 y las 10 se dictan a la
+vez `h₁`, `h₂` y `h₃`; entre las 10 y las 11, `h₂` y `h₄` (`h₁`
+termina justo cuando empieza `h₄`, así que esos dos sí pueden
+compartir aula). Por ejemplo, $x_{1A} + x_{2A} \le 1$ dice que, de
+`h₁` y `h₂`, a lo sumo uno ocupa el aula A:
 
-$$x_{11} + x_{21} \le 1, \qquad x_{12} + x_{22} \le 1, \qquad x_{21} + x_{41} \le 1, \qquad x_{22} + x_{42} \le 1$$
+$$x_{1A} + x_{2A} \le 1, \qquad x_{1B} + x_{2B} \le 1, \qquad x_{2A} + x_{4A} \le 1, \qquad x_{2B} + x_{4B} \le 1$$
 
-En `a₃` sólo puede ir `h₃`, así que su restricción se cumple sola.
+En L sólo puede ir `h₃`, así que no hace falta escribir nada para esa
+aula.
 
-**R6. Sobreocupación y subocupación.** Para cada horario, el exceso
-de inscriptos sobre la capacidad del aula asignada y la capacidad
-sobrante más allá de la tolerancia, una fórmula por horario:
+**R6. Alumnos sin lugar y asientos vacíos de más.** *Para cada
+horario, los alumnos sin lugar son los inscriptos menos la capacidad
+del aula que le toca; los asientos vacíos de más son la capacidad
+menos los inscriptos, descontando el 20 % tolerado.* Como no se sabe
+de antemano qué aula le toca, la capacidad se escribe con las
+variables: para `h₁`, $40\,x_{1A} + 80\,x_{1B}$ vale 40 si va a A y
+80 si va a B. Para los asientos vacíos se usa la capacidad que
+cuenta, el 80 % del aula (32 en A, 64 en B y 24 en L). Si la cuenta da
+negativa, la medida queda en cero.
 
-$$\text{sobre}_1 \ge 70 - 40\,x_{11} - 80\,x_{12}, \qquad \text{sub}_1 \ge 32\,x_{11} + 64\,x_{12} - 70$$
+$$\text{sobre}_1 \ge 70 - (40\,x_{1A} + 80\,x_{1B}), \qquad \text{sub}_1 \ge (32\,x_{1A} + 64\,x_{1B}) - 70$$
 
-$$\text{sobre}_2 \ge 35 - 40\,x_{21} - 80\,x_{22}, \qquad \text{sub}_2 \ge 32\,x_{21} + 64\,x_{22} - 35$$
+$$\text{sobre}_2 \ge 35 - (40\,x_{2A} + 80\,x_{2B}), \qquad \text{sub}_2 \ge (32\,x_{2A} + 64\,x_{2B}) - 35$$
 
-$$\text{sobre}_3 \ge 25 - 30\,x_{33}, \qquad \text{sub}_3 \ge 24\,x_{33} - 25$$
+$$\text{sobre}_3 \ge 25 - 30\,x_{3L}, \qquad \text{sub}_3 \ge 24\,x_{3L} - 25$$
 
-$$\text{sobre}_4 \ge 45 - 40\,x_{41} - 80\,x_{42}, \qquad \text{sub}_4 \ge 32\,x_{41} + 64\,x_{42} - 45$$
+$$\text{sobre}_4 \ge 45 - (40\,x_{4A} + 80\,x_{4B}), \qquad \text{sub}_4 \ge (32\,x_{4A} + 64\,x_{4B}) - 45$$
 
-con todas las `x` binarias y `sobre`, `sub` no negativas. El resto
-de las restricciones no interviene: los tipos de clase están
+El resto de las restricciones no interviene: los tipos de clase están
 declarados (R4 y R5 se cumplen con los datos), hay una sola sede (R8,
-R10, R11 y R12) y no hay aulas fijadas ni redistribución de
-matrícula (R7 y R9).
+R10, R11 y R12) y no hay aulas fijadas ni redistribución de matrícula
+(R7 y R9).
 
-**La solución.** Como `h₂` se superpone con `h₁` y con `h₄`, tiene
-que ir a un aula distinta de la de ambos; `h₁` y `h₄` pueden
-compartir aula porque no se superponen. Quedan entonces dos
-alternativas:
+**La solución.** `h₃` va a L, que es su única opción, y cabe sin
+problemas. Para las teorías, como `h₂` se dicta a la vez que `h₁` y
+que `h₄`, tiene que ir a un aula distinta de la de ambos, mientras
+que `h₁` y `h₄`, que no se superponen, pueden compartir la otra. Quedan
+entonces dos alternativas, que las Tablas @tab:ej-alt1 y @tab:ej-alt2
+detallan. En cada una, los asientos vacíos de más son los que sobran
+menos los tolerados (el 20 % del aula: 8 en A y 16 en B).
 
-- `h₂` en `a₁` y `h₁`, `h₄` en `a₂`. Nadie queda sin lugar; sólo `h₄`
-  queda holgado (45 inscriptos en un aula de 80, `sub₄ = 64 − 45 =
-  19`). Costo: **19**.
-- `h₂` en `a₂` y `h₁`, `h₄` en `a₁`. Faltan 30 lugares para `h₁` y 5
-  para `h₄`, y `h₂` queda holgado (`sub₂ = 29`). Costo:
-  10 · (30 + 5) + 29 = **379**.
+<!-- tabla: Alternativa 1: h₂ en A, y h₁ y h₄ en B {#tab:ej-alt1} -->
+| Horario | Aula | Inscriptos | Alumnos sin lugar | Asientos vacíos de más | Suma al costo |
+| :---------: | :--------: | :-----------: | :-------------: | :-------------: | :-----------: |
+| `h₁` | B (80) | 70 | 0 | 10 − 16 → 0 | 0 |
+| `h₂` | A (40) | 35 | 0 | 5 − 8 → 0 | 0 |
+| `h₄` | B (80) | 45 | 0 | 35 − 16 = 19 | 19 |
+| **Total** | | | | | **19** |
 
-El resolutor elige la primera. El ejemplo muestra el criterio del
-objetivo en pequeño: se acepta un aula grande a medio llenar antes
+<!-- tabla: Alternativa 2: h₂ en B, y h₁ y h₄ en A {#tab:ej-alt2} -->
+| Horario | Aula | Inscriptos | Alumnos sin lugar | Asientos vacíos de más | Suma al costo |
+| :---------: | :--------: | :-----------: | :-------------: | :-------------: | :-----------: |
+| `h₁` | A (40) | 70 | 70 − 40 = 30 | 0 | 10 · 30 = 300 |
+| `h₂` | B (80) | 35 | 0 | 45 − 16 = 29 | 29 |
+| `h₄` | A (40) | 45 | 45 − 40 = 5 | 0 | 10 · 5 = 50 |
+| **Total** | | | | | **379** |
+
+En la primera alternativa nadie queda sin lugar y el único costo son
+los 19 asientos vacíos de más de `h₄`. En la segunda, `h₁` y `h₄` no
+entran en el aula chica: 35 alumnos sin lugar, que con peso 10 suman
+350, más los 29 asientos vacíos de más de `h₂`. El resolutor elige la
+primera, con costo 19 contra 379. El ejemplo muestra en pequeño el
+criterio del objetivo: se acepta un aula grande a medio llenar antes
 que dejar alumnos sin lugar. En un cuatrimestre real el razonamiento
 es el mismo, pero con cientos de horarios y miles de variables.
 
@@ -394,8 +432,8 @@ curso, alcanza con decir "de todos ellos, a lo sumo uno ocupa esta
 aula". A ese conjunto de horarios en curso a la vez lo llamamos
 *grupo de simultaneidad*, y es *maximal* cuando no está contenido en
 otro más grande. En el ejemplo de §3.8.2.6, de 9 a 10 están en curso
-`h₁`, `h₂` y `h₃`, y una sola desigualdad por aula,
-`x₁ₐ + x₂ₐ + x₃ₐ ≤ 1`, reemplaza a las tres de los pares.
+`h₁`, `h₂` y `h₃`: para cada aula alcanza con una sola desigualdad
+que sume las variables de los tres, en lugar de una por cada par.
 
 Las dos formas admiten las mismas asignaciones, pero la agrupada
 genera muchas menos restricciones (cuando los horarios son intervalos
