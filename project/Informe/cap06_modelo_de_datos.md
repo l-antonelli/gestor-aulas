@@ -100,7 +100,7 @@ Cada relación de la sección 3.5 se codifica según su multiplicidad.
   específico hasta encontrar el primero que tenga un valor
   definido.
 
-### 3.6.4 Decisiones de diseño del modelo de datos
+### 3.6.4 Diseño del modelo de datos
 
 Las decisiones que siguen son las que agregan algo al modelo
 conceptual o lo matizan.

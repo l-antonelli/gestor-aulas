@@ -285,10 +285,10 @@ información más precisa.
 
 Un cuatrimestre de la FCEIA involucra varios cientos de horarios
 semanales y varias decenas de aulas. En el primer cuatrimestre de
-2026, por ejemplo, hay 546 horarios presenciales y 53 aulas. Si
+2026, por ejemplo, hay aproximadamente 546 horarios presenciales semanales y 53 aulas. Si
 cualquier combinación fuera admisible, cada horario podría ir a
 cualquiera de las 53 aulas, y la cantidad de asignaciones posibles
-sería 53 multiplicado por sí mismo 546 veces (`53^546`): un número
+sería `53^546`: un número
 de más de 900 cifras. Para dar una idea, la cantidad de átomos del
 universo observable se estima en un número de unas 80 cifras.
 Ninguna enumeración exhaustiva puede recorrer algo así.
@@ -311,7 +311,7 @@ una.
 
 #### 3.4.7.2 Efecto cascada
 
-El segundo rasgo, ligado a lo observado en la sección 3.3, es el
+El segundo aspecto, ligado a lo observado en la sección 3.3, es el
 **efecto cascada**: un cambio local puede obligar a reajustar
 muchas asignaciones en apariencia independientes. Supongamos que un
 aula deja de estar disponible, por ejemplo porque entra en

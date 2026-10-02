@@ -392,7 +392,7 @@ $$x_{1A} + x_{2A} \le 1, \qquad x_{1B} + x_{2B} \le 1, \qquad x_{2A} + x_{4A} \l
 En L sólo puede ir `h₃`, así que no hace falta escribir nada para esa
 aula.
 
-**R6. Alumnos sin lugar y asientos vacíos de más.** *Para cada
+**R6. Sobre y subocupación.** *Para cada
 horario, los alumnos sin lugar son los inscriptos menos la capacidad
 del aula que le toca; los asientos vacíos de más son la capacidad
 menos los inscriptos, descontando el 20 % tolerado.* Como no se sabe
@@ -482,6 +482,19 @@ directa: "estas materias compiten por estas aulas y no alcanzan".
 La verificación se hace por momento de simultaneidad y por sede.
 
 #### 3.8.3.3 Grupos de simultaneidad
+
+Este concepto surge de la naturaleza de cronograma del problema. En
+un problema de asignación clásico, como asignar tareas a máquinas de
+una sola vez, cada recurso recibe a lo sumo una tarea y la
+restricción se escribe directo. Acá interviene el tiempo: un aula
+puede recibir muchos horarios a lo largo de la semana, siempre que en
+ningún momento tenga dos clases a la vez. Y los horarios se pisan de
+maneras variadas: tienen distintas duraciones y se solapan en tramos
+distintos, de modo que un horario puede coincidir con uno a primera
+hora y con otro más tarde. El sistema trabaja con el tiempo
+discretizado (la granularidad de §3.4.3.1), pero lo que tiene que
+garantizar es eso: que en todo momento cada aula esté asignada a una
+sola clase.
 
 R3 impide que dos horarios superpuestos compartan aula. Escribirla
 par por par funciona, pero si veinte horarios coinciden a la misma

@@ -163,8 +163,7 @@ en las restricciones R8 y R10 del programa lineal (sección 3.8).
 
 La mayoría de las relaciones del modelo son simples, de uno a muchos:
 una sede tiene muchas aulas, un ciclo tiene varios cronogramas y
-planes de cursada, una comisión tiene varios horarios semanales y
-cada horario genera muchas clases. Pero, como anticipamos en §3.2.4.1 y
+planes de cursada, una comisión tiene varias clases semanales. Pero, como anticipamos en §3.2.4.1 y
 en el diagnóstico de §3.3.4, en la asignación de aulas las relaciones
 muchos-a-muchos son la norma más que la excepción. Cada una se
 resuelve con una entidad intermedia del dominio de la solución
@@ -203,7 +202,7 @@ familia.
   escenarios de comparación.
 - Toda aula pertenece a exactamente una sede.
 
-#### 3.5.5.2 Regla de virtualidad jerárquica
+#### 3.5.5.2 Virtualidad
 
 Una clase *virtual* se dicta a distancia y no consume aula. La
 virtualidad puede declararse en tres niveles: en la **materia** (se
@@ -215,7 +214,7 @@ se toma el del dictado, y si tampoco, el de la materia. La invariante
 asociada es que **los horarios efectivamente virtuales no participan
 de la asignación**: se excluyen antes de armar el programa lineal.
 
-#### 3.5.5.3 Regla de sedes admisibles por grupo de materias
+#### 3.5.5.3 Sedes por grupo de materias
 
 Cada materia tiene un conjunto de **sedes admisibles** que surge de su
 grupo (§3.5.3.4) y del criterio con que ese grupo se resuelve:
@@ -247,7 +246,7 @@ Un mismo alumno tiene entonces clases en las dos sedes durante la
 semana, y esa interacción es la que obliga a cuidar los traslados
 (§3.5.5.7) y a decidir qué tan firme es la sede de cada grupo.
 
-#### 3.5.5.4 Regla de recursado
+#### 3.5.5.4 Recursado
 
 Algunas carreras ofrecen materias también en el cuatrimestre opuesto
 al que les corresponde, para facilitar el recursado. La política se
@@ -257,19 +256,19 @@ virtualidad: la **carrera** indica si ofrece recursado y la
 La invariante asociada es que **al generar los dictados de un ciclo
 sólo se crean los que la regla de recursado permite**.
 
-#### 3.5.5.5 Regla de materias anuales
+#### 3.5.5.5 Materias anuales
 
 Una materia anual se dicta a lo largo de los dos cuatrimestres del
-año. En la práctica, su dictado se crea con el primer cuatrimestre y,
-al generar los dictados del segundo, el sistema reutiliza ese mismo
-dictado en lugar de crear otro: la materia queda activa en los dos
-cuatrimestres, con los mismos horarios, sin que haya que cargarla
-dos veces. El asignador, en cambio, resuelve cada cuatrimestre por
-separado. La invariante es que **todo dictado se vincula con tantos
-ciclos como indica la periodicidad de su materia**: uno si es
-cuatrimestral, los dos del mismo año si es anual.
+año. Lo único que la distingue es que, al generar los dictados de
+cada cuatrimestre, queda activa por defecto en los dos. Por lo demás
+se trata exactamente igual que cualquier otra materia: sus horarios
+se cargan en el cronograma de cada cuatrimestre y el asignador
+resuelve cada cuatrimestre por separado. La invariante es que **todo
+dictado se vincula con tantos ciclos como indica la periodicidad de
+su materia**: uno si es cuatrimestral, los dos del mismo año si es
+anual.
 
-#### 3.5.5.6 Regla de coherencia teoría-laboratorio
+#### 3.5.5.6 Horas de teoría y laboratorio por materia
 
 En cada comisión, la suma de las duraciones de los horarios de teoría
 debe coincidir con las horas de teoría declaradas por la materia, y
@@ -301,10 +300,7 @@ dominio e indicamos dónde se las trata:
   una comisión deben caer en la misma sede, para que quien la dicta
   no tenga que trasladarse entre sedes durante la semana
   (restricción R12).
-- **Flexibilidad por calendario de exámenes.** En los períodos de
-  exámenes debe poder generarse una variante transitoria de la
-  asignación sin perder la de base. Queda fuera del programa lineal y
-  se maneja en la operatoria (§3.4.6.2).
+
 
 ### 3.5.6 Diagrama UML del dominio
 

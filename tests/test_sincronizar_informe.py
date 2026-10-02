@@ -64,9 +64,16 @@ def test_tolera_marcas_de_formato_en_el_contexto():
 
 
 def test_no_aplica_si_el_fragmento_editado_tiene_formato_adentro():
-    fuentes = {"cap.md": "sabe que la **regla central** importa."}
+    fuentes = {"cap.md": "sabe que la **regla** central importa."}
     e = Edicion(antes="regla central", despues="regla principal", izq="sabe que la", der="importa.")
     assert aplicar(e, fuentes) is None
+
+
+def test_conserva_el_formato_que_rodea_al_fragmento_editado():
+    fuentes = {"cap.md": "sabe que la **regla central** importa."}
+    e = Edicion(antes="regla central", despues="regla principal", izq="sabe que la", der="importa.")
+    _, texto = aplicar(e, fuentes)
+    assert texto == "sabe que la **regla principal** importa."
 
 
 def test_no_aplica_si_el_fragmento_es_ambiguo():
@@ -90,3 +97,26 @@ def test_aplicar_todas_acumula_cambios_y_separa_las_pendientes():
     nuevos, pendientes = aplicar_todas(eds, fuentes)
     assert nuevos == {"a.md": "uno DOS tres cuatro cinco", "b.md": "seis SIETE ocho"}
     assert [p.antes for p in pendientes] == ["nueve"]
+
+
+def test_varias_ediciones_en_un_parrafo_se_aplican_todas_o_ninguna():
+    # Caso real: el título de R6 cambió en dos lugares del mismo párrafo.
+    # Antes se aplicaba sólo una parte y quedaba "Sobre y asientos vacíos".
+    viejo = "R6. Alumnos sin lugar y asientos vacíos de más. Para cada horario, los alumnos"
+    nuevo = "R6. Sobre y subocupación. Para cada horario, los alumnos"
+    fuentes = {"c.md": "**R6. Alumnos sin lugar y asientos vacíos de más.** *Para cada\nhorario, los alumnos"}
+    eds = ediciones(viejo, nuevo)
+    cambiados, pendientes = aplicar_todas(eds, fuentes)
+    if pendientes:
+        assert cambiados == {}  # nada a medias
+    else:
+        assert cambiados["c.md"] == "**R6. Sobre y subocupación.** *Para cada\nhorario, los alumnos"
+
+
+def test_dos_cambios_separados_en_un_parrafo_quedan_completos():
+    viejo = "La regla de coherencia teoria y laboratorio se aplica a cada comision del plan."
+    nuevo = "La regla de horas de teoria y laboratorio se aplica a cada comision del cronograma."
+    fuentes = {"c.md": "La regla de coherencia teoria y laboratorio se aplica\na cada comision del plan."}
+    cambiados, pendientes = aplicar_todas(ediciones(viejo, nuevo), fuentes)
+    assert pendientes == []
+    assert cambiados["c.md"] == "La regla de horas de teoria y laboratorio se aplica\na cada comision del cronograma."
