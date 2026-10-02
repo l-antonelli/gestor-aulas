@@ -128,6 +128,19 @@ def aplicar(e: Edicion, fuentes: dict[str, str]) -> tuple[str, str] | None:
     return archivo, nuevo
 
 
+def ya_aplicada(e: Edicion, fuentes: dict[str, str]) -> bool:
+    """True si los fuentes ya tienen el texto como quedó en el Doc
+    (contexto + texto nuevo + contexto), por ejemplo porque un `traer`
+    anterior ya la pasó al repo."""
+    if e.parrafo_nuevo:
+        return False
+    palabras = e.izq.split() + e.despues.split() + e.der.split()
+    if not (e.izq or e.der) or not palabras:
+        return False
+    patron = re.compile(_patron(palabras))
+    return sum(len(patron.findall(t)) for t in fuentes.values()) == 1
+
+
 def aplicar_todas(eds: list[Edicion], fuentes: dict[str, str]) -> tuple[dict[str, str], list[Edicion]]:
     """Aplica las ediciones en orden sobre una copia de los fuentes.
     Devuelve los fuentes modificados (sólo los que cambiaron) y las
@@ -147,6 +160,8 @@ def aplicar_todas(eds: list[Edicion], fuentes: dict[str, str]) -> tuple[dict[str
         tentativo = dict(actuales)
         tocados = set()
         for e in grupo:
+            if ya_aplicada(e, tentativo):
+                continue
             r = aplicar(e, tentativo)
             if r is None:
                 break

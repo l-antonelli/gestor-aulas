@@ -15,7 +15,8 @@
   "Desarrollo/Sesiones": "1Ykwg9DjbQkrBIrgp33FhFW7qHxtif4C6",
   "Desarrollo/Auditorias": "1SVJnIkiPORgXXLmduKcRJJBvDhru97zx",
   "Desarrollo/Auditorias/backups": "1PTm8_4fVZm0n-DR2AOGM5qZGTn81LQgB",
-  "Anexo D": "1chE2Si3TqEiAoKsVnKezCm6R1PrwGptv"
+  "Anexo D": "1chE2Si3TqEiAoKsVnKezCm6R1PrwGptv",
+  "Anexo F": "1YMOiK_v1L8NI97Chl1gksCB_7ZEiu6Rq"
  },
  "documentos": {
   "Documentacion Tecnica/README": "1Uy7HowGIpOXsuAdRskIwsjbD4txu7K1clZPuxTDbc6I",
@@ -77,6 +78,7 @@
    "doc_id": "1hv0wt6oU1xjolsZYcTPeUHISwGQ-qWPtxqWsJjD17VA",
    "tab_id": "t.bnr5sejeug33"
   },
-  "huella_publicada": "275f15e0ba8f379942e8bbd401dabfba56fc3b68554ebb99da59014527521f5b"
+  "huella_publicada": "8eddddbf3cd2f1816cb55fb278dc7cd96daf54e606ba874a59ed1b30daef385f",
+  "huella_traida": "8eddddbf3cd2f1816cb55fb278dc7cd96daf54e606ba874a59ed1b30daef385f"
  }
 }

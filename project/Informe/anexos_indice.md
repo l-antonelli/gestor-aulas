@@ -18,3 +18,7 @@ se los menciona en el texto.
   herramienta: cuarto año de Ingeniería Industrial y tercer año de
   Ingeniería Eléctrica. Fuente: `anexos/Anexo_D_Cronogramas/`.
 - **Anexo E. Videos instructivos** (pendiente).
+- **Anexo F. Aplicación.** Versión 0.13.0 del sistema, lista para usar
+  en macOS o Windows sin instalar nada: se descomprime y se abre con
+  `start.command` o `start.bat` (ver Anexo C). También disponible en
+  https://github.com/l-antonelli/gestor-aulas/releases/tag/v0.13.0.

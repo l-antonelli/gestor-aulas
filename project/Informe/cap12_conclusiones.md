@@ -27,8 +27,7 @@ No es difícil ver cómo una institución que congrega tantas personas
 todos los días para realizar tantas actividades distintas puede
 rápidamente transformarse en un entorno muy dinámico y complicado de
 seguir día a día. Cientos de materias que se dictan, miles de alumnos
-que concurren a clases, una cantidad finita de aulas para repartir en
-una franja horaria limitada. Sólo la naturaleza combinatoria del
+que concurren a clases, una cantidad finita de aulas para repartir. Sólo la naturaleza combinatoria del
 problema hace que un mínimo cambio en los supuestos o en alguna
 configuración o criterio desencadene rápidamente la necesidad de
 muchos otros ajustes, debido a restricciones cruzadas y a la
@@ -63,17 +62,6 @@ solución (que las aulas asignadas sean compatibles con lo que
 requiere cada clase, que el esquema de asignación sea factible de
 cursar para los alumnos que están al día, etc.).
 
-La implementación del Gestor de Aulas representa un salto cualitativo
-para la FCEIA, al modernizar los procesos organizativos
-institucionales. Esta transición permite dejar atrás una
-planificación operativa fragmentada, caracterizada por la dependencia
-del esfuerzo manual y el uso de planillas dispersas, para consolidar
-un modelo centralizado, transparente y auditable. Frente a los
-desafíos de la problemática actual de gestión, esta solución trasciende
-la mera distribución de espacios físicos: se convierte en un motor
-analítico que transforma datos operativos aislados en conocimiento
-estratégico para la toma de decisiones fundamentadas.
-
 La administración eficiente, equitativa e integral de los recursos en
 una institución de educación superior exige altos estándares de
 certeza y previsibilidad. La consolidación de un sistema estructurado
@@ -91,7 +79,7 @@ y robusto posibilita:
   saturación por sede, edificio y franja horaria. Esto facilita
   resolver superposiciones y conflictos logísticos de manera
   proactiva, antes del inicio del ciclo académico.
-- **Garantizar la trazabilidad y la memoria institucional.** El
+- **Garantizar la trazabilidad.** El
   registro detallado en el historial resguarda el fundamento y el
   contexto de cada modificación del catálogo y de las políticas de
   planificación. Este mecanismo reduce la dependencia del
@@ -133,10 +121,6 @@ cultura de rigor organizativo y operativo:
   sistema opera de forma local y sin autenticación centralizada,
   resulta crucial instituir rutinas periódicas de copia de seguridad
   de la base de datos.
-- **Coordinación del equipo de usuarios.** Es indispensable formalizar
-  acuerdos y protocolos internos que delimiten roles, momentos y
-  permisos de edición, para evitar que las modificaciones de un
-  usuario sobrescriban el trabajo de otro.
 
 ## 4.5 Configuración recomendada del asignador
 
@@ -166,7 +150,7 @@ el asignador:
 
 El sistema deja abiertas varias líneas de continuidad:
 
-- **Excepciones por fecha** sobre el patrón semanal, para feriados,
+- **Excepciones por fecha** sobre el horario semanal, para feriados,
   semanas de exámenes o cambios puntuales.
 - **Corridas incrementales** durante el cuatrimestre, que reasignen sólo
   lo afectado por un cambio y respeten el resto de la asignación.
@@ -175,8 +159,6 @@ El sistema deja abiertas varias líneas de continuidad:
   aprobaron las correlativas.
 - **Penalizar los traslados entre sedes**, además de prohibir los que no
   dan el margen, para preferir los días con menos cambios de sede.
-- **Días operativos por sede**, que complementen el horario propio que
-  ya admite cada sede.
 - **Extensión a otros recursos**, como las mesas de examen o los
   laboratorios de investigación.
 - **Integración con el SIU Guaraní**, para tomar de ahí las comisiones y

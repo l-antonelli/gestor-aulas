@@ -352,7 +352,7 @@ classDiagram
     HorarioSemanal "*" -- "0..1" Aula : se asigna
 ```
 
-### 3.5.7 Recapitulación
+### 3.5.7 Resumen
 
 Quedan fijadas las entidades, sus relaciones y las reglas de negocio
 como invariantes. La sección siguiente traduce este modelo a un

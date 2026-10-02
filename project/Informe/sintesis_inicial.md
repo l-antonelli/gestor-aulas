@@ -8,9 +8,9 @@ mantiene constante, aparecen limitaciones que deben ser tenidas en
 cuenta para realizar una correcta gestión del espacio.
 
 Históricamente, la institución ha dependido de procesos de
-planificación manuales, discrecionales y altamente fragmentados. Las
-asignaciones de espacios físicos se ejecutaban sin conocer la nómina
-real de inscriptos y apoyándose en información no estructurada.
+planificación manuales y distribuidos. Las
+asignaciones de espacios físicos se ejecutaban sin conocer la cantidad
+real de inscriptos y apoyándose en información no estructurada y no estandarizada.
 
 El objetivo principal es el desarrollo e implementación de una
 solución informática centralizada, de uso sencillo, capaz de

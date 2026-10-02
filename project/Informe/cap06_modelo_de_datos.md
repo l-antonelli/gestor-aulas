@@ -208,7 +208,7 @@ dominio. Distinguimos tres niveles:
 El criterio general es declarar cada regla en el nivel más bajo
 posible, para que ninguna capa superior pueda omitirla.
 
-### 3.6.6 Recapitulación
+### 3.6.6 Resumen
 
 El modelo conceptual queda traducido a una base relacional cuya
 consistencia se protege en el motor, en el sistema y antes de cada

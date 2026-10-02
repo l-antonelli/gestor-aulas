@@ -18,7 +18,7 @@ como muestra la Figura @fig:cadena.
 flowchart LR
     C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>BPMN"]
     C2["<b>Diseño guiado<br/>por el dominio (DDD)</b><br/><br/>Entidades, invariantes,<br/>lenguaje ubicuo"]
-    C3["<b>Investigación de operaciones<br/>y matemática aplicada</b><br/><br/>Programación lineal entera,<br/>teoría de grafos,<br/>combinatoria"]
+    C3["<b>Investigación operativa<br/>y matemática aplicada</b><br/><br/>Programación lineal entera,<br/>teoría de grafos,<br/>combinatoria"]
 
     P1(("Modelo<br/>conceptual<br/>del dominio"))
     P2(("Modelo<br/>operativo<br/>computacional"))
@@ -38,8 +38,7 @@ permiten **entender el dominio** y producir un *modelo conceptual*
 fiel de la organización, sus actores y sus procesos. El diseño guiado
 por el dominio toma ese modelo y le da forma de *modelo operativo
 computacional*: entidades, reglas e invariantes que viven en el
-software. Sobre ese modelo, finalmente, la investigación de
-operaciones y la matemática aplicada permiten **tomar decisiones
+software. Sobre ese modelo, finalmente, la investigación operativa y la matemática aplicada permiten **tomar decisiones
 óptimas**. La sección sigue ese mismo orden.
 
 ### 3.2.1 Marco organizacional y de análisis de sistemas
@@ -77,7 +76,7 @@ profesional*. De estas caracterizaciones se desprende que la dificultad
 operativa principal es la **multiplicidad de actores, actividades y
 recursos que deben articularse en tiempo y espacio**, y que los
 docentes coordinan su trabajo a partir de su formación previa, gozando
-de una autonomía muy superior a la de un operario industrial típico.
+de una autonomía muy superior a la de un operario industrial típico. Puntualmente en el caso de nuestra casa de estudio, los profesores a menudo ejercen su profesión de manera privada por lo cual coordinan los horarios de sus actividades en la facultad en función de ellas. Puntualmente en el caso de nuestra casa de estudio, los profesores a menudo ejercen su profesión de manera privada por lo cual coordinan los horarios de sus actividades en la facultad en función de ellas.
 
 #### 3.2.1.3 Implicancias para el diseño de una solución
 
@@ -144,11 +143,11 @@ computacional**: entidades, invariantes y vocabulario que viven en el
 software y permiten que las técnicas de optimización actúen sobre un
 modelo integrado, consistente y con sus reglas garantizadas.
 
-### 3.2.3 Marco técnico: investigación de operaciones
+### 3.2.3 Marco técnico: investigación Operativa
 
 En la asignación de aulas, la decisión es qué aula asignar a cada
 clase, sujeta a un conjunto de restricciones. Para tomarla de forma
-fundada recurrimos a la *investigación de operaciones*, la rama de la
+fundada recurrimos a la *investigación operativa*, la rama de la
 matemática aplicada que estudia el uso de modelos matemáticos para la
 toma de decisiones en sistemas complejos.
 
@@ -209,7 +208,7 @@ la **relajación lineal**, es decir, el mismo problema permitiendo que
 las binarias tomen cualquier valor entre `0` y `1`; como admite más
 soluciones, su óptimo es una **cota** del óptimo entero. Si esa
 solución resulta entera, se terminó. Si no, se elige una variable
-fraccionaria y se parte el problema en dos subproblemas (uno con la
+no entera y se parte el problema en dos subproblemas (uno con la
 variable fijada en `0` y otro en `1`), que se tratan de la misma
 manera. En cada nodo del árbol resultante se **poda**: si la cota de
 un subproblema es peor que la mejor solución entera ya encontrada,
@@ -255,7 +254,7 @@ de asignación de aulas.
 
 #### 3.2.3.6 Bibliografía
 
-Como referencia de investigación de operaciones tomamos el material
+Como referencia de investigación operativa tomamos el material
 de las cátedras de Operativa 1 y Operativa 2 de la Escuela de
 Ingeniería Industrial (FCEIA-UNR), en particular el libro de Morán
 para la programación lineal, la programación entera y la ramificación
@@ -380,14 +379,14 @@ grafos bipartitos, apareamientos y el teorema de Hall se toman de la
 bibliografía estándar de teoría de grafos, detallada al final del
 informe.
 
-### 3.2.5 Recapitulación
+### 3.2.5 Resumen
 
 Esta sección dejó disponibles tres cuerpos de herramientas: del
 instrumental de la ingeniería industrial (Mintzberg y Chiavenato), la
 caracterización de la FCEIA como burocracia profesional compleja y el
 modelo conceptual del dominio; de Evans, el diseño guiado por el
 dominio y el modelo operativo computacional que traduce conceptos en
-entidades y reglas en invariantes; de la investigación de operaciones
+entidades y reglas en invariantes; de la investigación operativa
 y la teoría de grafos, la programación lineal entera, la ramificación
 y acotación, y los criterios combinatorios de factibilidad (palomar y
 Hall). Cada eslabón habilita al siguiente: sin modelo conceptual no

@@ -3,27 +3,24 @@
 La sección 3.3 describió cómo se asignan hoy las aulas en la FCEIA:
 quién decide, cuándo, con qué información y con qué resultado. Esta
 sección traduce esa descripción a un enunciado preciso, en el marco
-de la investigación de operaciones presentado en §3.2.3, de modo que
+de la investigación operativa presentado en §3.2.3, de modo que
 más adelante pueda modelarse como un programa lineal entero sin
 sorpresas. Para eso fijamos qué datos tenemos, qué decidimos, qué
 reglas debe respetar la decisión y con qué criterio se compara una
 asignación con otra.
 
-### 3.4.1 Formulación coloquial
+### 3.4.1 Definición coloquial
 
 ::: revisar
 <!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
 
-Antes de pasar a la formulación formal, conviene contar el problema
-tal como se lo plantean cada cuatrimestre las Escuelas, la Secretaría
-Académica y la Secretaría Técnica. Nos va a servir de referencia:
-cuando más adelante el problema esté escrito con símbolos, vamos a
+Antes de pasar a la definición formal, conviene contar el problema
+tal como se lo plantean cada cuatrimestre el personal de la facultad. Nos va a servir de referencia. Cuando más adelante el problema esté escrito con símbolos, vamos a
 poder volver acá y comprobar que no se perdió nada en el camino.
 
 Al empezar el cuatrimestre, la Secretaría Técnica tiene dos listas en
 la mano. Por un lado, las **clases** que hay que dictar cada semana,
-con su día y su horario: la grilla que la Secretaría Académica armó a
-partir de lo que propusieron las Escuelas. Por otro, las **aulas**
+con su día y su horario y por otro, las **aulas**
 disponibles, cada una con su tipo y su capacidad. El trabajo es
 decidir en qué aula va cada clase sin romper ninguna regla:
 
@@ -38,7 +35,7 @@ decidir en qué aula va cada clase sin romper ninguna regla:
 
 Y entre todas las formas de repartir las aulas que cumplen esas
 reglas, se busca la que mejor las aprovecha: que nadie se quede sin
-lugar y que no se gaste un aula grande en una clase chica.
+lugar y que no quede reservada un aula grande en una clase chica.
 
 Así contado parece poco, pero ya están todas las piezas del problema:
 hay cosas que se asignan (las clases) y lugares donde asignarlas (las
@@ -52,7 +49,7 @@ a cada una.
 
 #### 3.4.2.1 Qué es un problema de asignación de recursos
 
-La investigación de operaciones estudia una familia de problemas,
+La investigación operativa estudia una familia de problemas,
 los **problemas de asignación de recursos bajo restricciones**, que
 sirve de marco general para situaciones como la descripta. Es una
 herramienta habitual del ingeniero porque permite formalizar con un
@@ -333,7 +330,7 @@ un modelo formal recalcula la cascada completa en segundos, mientras
 que una persona la resuelve por aproximaciones sucesivas y con
 riesgo de inconsistencias.
 
-### 3.4.8 Recapitulación
+### 3.4.8 Resumen
 
 El problema queda definido como una asignación de horarios semanales
 a aulas bajo restricciones duras y blandas, combinatoriamente grande y

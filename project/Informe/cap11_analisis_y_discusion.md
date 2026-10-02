@@ -120,11 +120,6 @@ principales en forma de directivas de uso.
    libertad al asignador; muchas fijaciones, o fijaciones
    incompatibles entre sí, pueden impedir que exista una solución.
 
-8. **Un plan activo por ciclo y los demás como escenarios.** Los
-   planes adicionales sirven para comparar alternativas sin tocar el
-   plan con el que se trabaja; el que se comunica es siempre el
-   activo.
-
 ### 3.11.5 Cumplimiento de los objetivos del anteproyecto
 
 La Tabla @tab:objetivos recorre los objetivos específicos del

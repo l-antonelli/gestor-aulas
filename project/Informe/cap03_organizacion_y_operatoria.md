@@ -395,7 +395,7 @@ sentido de Evans, §3.2.2) es condición necesaria para que la
 asignación deje de depender de conciliaciones informales, y es el
 trabajo que encara la sección 3.5.
 
-### 3.3.5 Recapitulación
+### 3.3.5 Resumen
 
 La asignación de aulas es hoy manual, costosa de replanificar y se
 apoya en datos dispersos y sin criterio común. La sección siguiente

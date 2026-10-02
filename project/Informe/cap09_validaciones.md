@@ -19,7 +19,7 @@ Las validaciones no son un agregado defensivo que se suma cuando
 algo falla, sino una parte de la solución. Tres motivos sostienen
 esa decisión:
 
-- **Los datos del dominio son numerosos y cambian.** Un ciclo
+- **Los datos son muchos y cambian.** Un ciclo
   lectivo tiene cientos de horarios repartidos entre decenas de
   comisiones, dictados anuales que conviven con cuatrimestrales y
   aulas que cambian. Si nadie las busca, las inconsistencias
@@ -134,7 +134,7 @@ generado.
 Cada problema apareció en el paso en que podía resolverse, con un
 mensaje que indicaba qué corregir.
 
-### 3.9.6 Recapitulación
+### 3.9.6 Resumen
 
 Las validaciones, escalonadas en capas y con tres severidades,
 convierten al asignador en un asistente confiable que avisa cuando un

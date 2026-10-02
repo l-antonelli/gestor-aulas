@@ -120,3 +120,13 @@ def test_dos_cambios_separados_en_un_parrafo_quedan_completos():
     cambiados, pendientes = aplicar_todas(ediciones(viejo, nuevo), fuentes)
     assert pendientes == []
     assert cambiados["c.md"] == "La regla de horas de teoria y laboratorio se aplica\na cada comision del cronograma."
+
+
+def test_una_edicion_ya_aplicada_no_queda_pendiente():
+    # Correr `traer` dos veces: la segunda no debe listar como pendiente
+    # lo que la primera ya pasó al repo.
+    fuentes = {"c.md": "la investigacion operativa estudia\nproblemas de asignacion."}
+    e = Edicion(antes="de operaciones", despues="operativa", izq="la investigacion", der="estudia problemas de")
+    cambiados, pendientes = aplicar_todas([e], fuentes)
+    assert pendientes == []
+    assert cambiados == {}
