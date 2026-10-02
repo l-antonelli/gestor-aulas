@@ -238,6 +238,15 @@ preocupaciones de la operatoria: las sedes propias de cada carrera
 habituales de las materias comunes (a través de los grupos
 transversales).
 
+Un caso real lo muestra. El tercer año de Ingeniería Mecánica cursa,
+en el primer cuatrimestre, materias específicas de la carrera
+(Termodinámica, Mecánica Racional, entre otras), cuyo grupo tiene a
+la Siberia como sede, y además Métodos Numéricos, una materia común
+de Formación Básica que se dicta para varias carreras en Pellegrini.
+Un mismo alumno tiene entonces clases en las dos sedes durante la
+semana, y esa interacción es la que obliga a cuidar los traslados
+(§3.5.5.7) y a decidir qué tan firme es la sede de cada grupo.
+
 #### 3.5.5.4 Regla de recursado
 
 Algunas carreras ofrecen materias también en el cuatrimestre opuesto

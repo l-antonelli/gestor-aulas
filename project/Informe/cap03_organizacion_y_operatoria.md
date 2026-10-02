@@ -21,7 +21,7 @@ La actividad se ordena en **ciclos lectivos** de dos
 planificación: qué materias se dictan, con qué comisiones, en qué
 horarios y en qué aulas. Este trabajo se ocupa de la última.
 
-#### 3.3.1.2 Sedes: Pellegrini y Centro Universitario Rosario
+#### 3.3.1.2 Sedes: Pellegrini y Siberia
 
 La FCEIA funciona en dos sedes:
 
@@ -31,15 +31,17 @@ La FCEIA funciona en dos sedes:
   Agrimensura, Ingeniería Industrial, Ciencias Exactas y Naturales,
   y de Posgrado. Concentra la mayor parte del dictado, en
   aulas compartidas por materias de distintas carreras.
-- **Centro Universitario Rosario (CUR)** (Riobamba 250 bis). Es un
-  predio de la UNR donde la FCEIA tiene edificios propios para las
+- **Centro Universitario Rosario (CUR)** (Riobamba 250 bis),
+  conocido como **la Siberia**, nombre que usamos en el resto del
+  informe. Es un predio de la UNR donde la FCEIA tiene edificios propios para las
   Escuelas de Ingeniería Mecánica, Civil, Eléctrica y Electrónica
   y varios laboratorios. Allí se dictan típicamente las materias
   del ciclo superior de esas Escuelas.
 
 La sede importa para la asignación
 por dos motivos: un alumno no puede trasladarse instantáneamente de
-una sede a otra entre dos clases del mismo día, y algunos
+una sede a otra entre dos clases del mismo día (el viaje entre
+Pellegrini y la Siberia lleva bastante más que un recreo), y algunos
 laboratorios existen en una sola sede, de modo que el tipo de aula
 que requiere una materia puede determinar dónde se dicta.
 

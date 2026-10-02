@@ -233,6 +233,13 @@ siempre que el conjunto no esté vacío. La excepción son los
 laboratorios declarados compatibles con la materia, que se
 admiten aunque estén en otra sede.
 
+*Ejemplo.* Retomemos el tercer año de Ingeniería Mecánica (§3.5.5.3).
+Si el grupo de Formación Básica está en modo duro con Pellegrini como
+sede, los horarios de Métodos Numéricos sólo tienen variables para
+aulas de Pellegrini; si el grupo de Mecánica está en modo duro con la
+Siberia, los de Termodinámica sólo tienen variables para aulas de la
+Siberia.
+
 **R9. Aulas fijadas manualmente.** Si el usuario fijó el aula
 de un horario y pidió respetar esas decisiones, se impone
 `x[h, pin(h)] = 1`.
@@ -241,6 +248,13 @@ de un horario y pidió respetar esas decisiones, se impone
 modo BLANDO, todas las sedes son admisibles (R8 no se aplica),
 pero cada horario asignado fuera de la sede preferida suma
 `λ_sede_pref` al objetivo (§3.8.2.4).
+
+*Ejemplo.* Si el grupo de Mecánica pasa a modo blando con la Siberia
+como preferida, un horario de Termodinámica puede ir a Pellegrini
+cuando la Siberia está saturada en esa franja, pero cada vez que eso
+ocurre el objetivo suma 5 (el peso por defecto). El asignador lo hace
+sólo si así evita un costo mayor, por ejemplo dejar alumnos sin
+lugar.
 
 **R11. Continuidad de sede entre horarios consecutivos.** Para
 cada par `(h₁, h₂) ∈ P_R11` y cada par de sedes distintas
@@ -255,6 +269,19 @@ Junto con R1, equivale a "si `h₁` se dicta en `s₁`, `h₂` no
 puede dictarse en `s₂`": el alumno que sale de una clase llega a
 tiempo a la siguiente.
 
+*Ejemplo.* Con sólo dos sedes, la restricción dice simplemente que
+dos clases consecutivas del mismo alumno no pueden quedar una en
+Pellegrini y la otra en la Siberia. Es justamente el caso de tercer
+año de Mecánica: si Métodos Numéricos termina a las 10:00 en
+Pellegrini y Termodinámica empieza a las 10:15, con el margen por
+defecto de 30 minutos las dos tienen que dictarse en la misma sede,
+y como Métodos Numéricos está atada a Pellegrini, Termodinámica
+también. Si el grupo de Mecánica estuviera en modo duro en la
+Siberia, el problema no tendría solución: la verificación previa lo
+detecta (§3.8.4) y el usuario puede mover uno de los horarios,
+achicar el margen o pasar el grupo a modo blando, aceptando la
+penalización de R10.
+
 Aparte de este caso, el mismo margen se aplica a un caso puntual:
 dos horarios consecutivos de una misma comisión en el mismo día,
 algo que rara vez ocurre. Si se exige R12, ese caso ya queda
@@ -263,7 +290,10 @@ cubierto.
 **R12. Misma sede por comisión.** Es la regla que mira al
 docente. Cuando el usuario la exige, las variables `y[c, s]`
 obligan a que todos los horarios de una comisión se dicten en la
-misma sede.
+misma sede. *Ejemplo:* si una comisión de Termodinámica tiene clases
+el lunes y el jueves, las dos van a la Siberia o las dos a
+Pellegrini, para que quien la dicta no cambie de sede durante la
+semana.
 
 #### 3.8.2.6 Un ejemplo pequeño
 

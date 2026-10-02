@@ -121,7 +121,7 @@ el cronograma y se pueden ajustar automáticamente.
 #### 3.4.3.2 El recurso: el aula
 
 El **aula** es el recurso que se asigna. Cada aula pertenece a una
-**sede** (Pellegrini o Centro Universitario Rosario), tiene un
+**sede** (Pellegrini o la Siberia), tiene un
 **tipo** dentro de la tipología de §3.3.1.3 (aula teórica,
 laboratorio, anfiteatro) y una **capacidad**, es decir, la cantidad
 máxima de alumnos que alberga en condiciones adecuadas.
@@ -192,8 +192,7 @@ No responden a límites físicos sino a decisiones de la facultad:
   de materias que cursa un mismo alumno (las del mismo año de una
   carrera), no pueden dictarse en sedes distintas si el intervalo
   entre ellas es menor a un margen (por defecto, 30 minutos), porque
-  el traslado entre Pellegrini y el Centro Universitario Rosario deja
-  de ser viable.
+  el traslado entre Pellegrini y la Siberia deja de ser viable.
 - **Una sede por comisión.** Opcionalmente, todos los horarios de
   una comisión se dictan en la misma sede, para que el docente no
   tenga que trasladarse durante la semana.
