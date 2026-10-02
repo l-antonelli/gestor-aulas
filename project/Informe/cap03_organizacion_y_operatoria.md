@@ -138,8 +138,7 @@ sus propios documentos de trabajo. Los actores que intervienen son:
   Administra los períodos de inscripción a asignaturas y comisiones
   y realiza la carga y actualización final de las aulas asignadas
   en la plataforma.
-- **Bedelías.** Reciben la matriz definitiva de horarios y aulas
-  para la apertura y control diario de los recintos.
+
 - **Cátedras y docentes.** Definen la modalidad concreta de
   dictado de cada materia (cantidad de comisiones, horarios,
   necesidad de laboratorio) dentro del marco fijado por la Escuela
@@ -346,36 +345,7 @@ depurarlos puede equivocarse de forma concreta: asignar dos aulas chicas donde c
 programar una misma clase en dos horarios incompatibles por tomar
 sus dos códigos como materias distintas.
 
-#### 3.3.4.3 Codificación no estandarizada de comisiones
-
-::: revisar
-<!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
-
-El problema análogo se replica a nivel comisiones. **No existe una
-regla unificada** para la asignación del identificador de comisión
-dentro de una materia. Las convenciones varían por cuatrimestre y
-por materia: en algunas se usan números de una cifra (1, 2, 3),
-en otras de tres cifras con patrones específicos (por ejemplo, en
-"Cálculo" se usan 110, 120, 130 en el primer cuatrimestre y 510,
-520, 530 en el segundo, lógica que no se replica en materias con
-comportamiento similar), y en otras se emplea texto libre.
-
-En SIU Guaraní, además, el campo "comisión" es de tipo texto y en
-la mayoría de los casos se completa con una abreviación del
-nombre de la asignatura (por ejemplo, `Calc1_Mañ`) en lugar de un
-identificador estable. Esto transforma al campo en un dato de
-utilidad marginal para el cruce automatizado entre la información
-académica y la administrativa.
-
-La consecuencia sobre el proceso de asignación es directa: al no
-poder asociar con certeza el número real de inscriptos con la
-comisión correcta, cualquier estimación de la demanda por comisión
-queda comprometida, y el motor de asignación (manual o
-automatizado) puede terminar tomando decisiones sobre datos
-implícitamente inconsistentes.
-:::
-
-#### 3.3.4.4 Digitalización parcial de planes y horarios
+#### 3.3.4.3 Digitalización parcial de planes y horarios
 
 Otro foco de fricción es **cómo está publicada la información**. Los
 planes de estudio están en la web de la
@@ -395,7 +365,7 @@ memoria institucional) sin garantía de que coincidan. Una grilla
 armada sobre una versión desactualizada puede violar la
 reglamentación académica vigente sin que nadie lo advierta.
 
-#### 3.3.4.5 Inventario incompleto de aulas
+#### 3.3.4.4 Inventario incompleto de aulas
 
 Del lado del recurso pasa algo análogo: el inventario de aulas tiene
 información **incompleta o desactualizada** sobre capacidades reales
@@ -407,7 +377,7 @@ Si el inventario no está bien relevado, incluso el mejor método de
 asignación produce soluciones correctas en los papeles pero
 inviables en la práctica.
 
-#### 3.3.4.6 Conceptos coloquialmente definidos
+#### 3.3.4.5 Conceptos coloquialmente definidos
 
 Por último, muchos de los conceptos que estructuran el proceso
 tienen definiciones coloquiales pero no formales. Todos saben, en

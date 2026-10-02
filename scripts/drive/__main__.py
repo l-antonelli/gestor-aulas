@@ -239,6 +239,15 @@ def traer(*opciones: str) -> None:
     if _huella(actual) == inf["huella_publicada"]:
         print("✓ El Doc no tiene ediciones desde la última publicación.")
         return
+    if "--rebasar" in opciones:
+        # Sólo se rebasa sobre el mismo estado del Doc que se revisó en el
+        # último `traer`: si se editó algo después, esas ediciones todavía
+        # no están en el repo y rebasar las daría por traídas (y la próxima
+        # publicación las pisaría).
+        if inf.get("huella_traida") != _huella(actual):
+            raise SystemExit(
+                "✗ El Doc cambió desde el último `traer`. Corré `traer` de nuevo "
+                "antes de rebasar: hay ediciones que todavía no están en el repo.")
     eds = sync.ediciones(_texto_publicado(inf), actual)
     if "--rebasar" not in opciones:
         fuentes = {n: (DIR_INFORME / n).read_text(encoding="utf-8") for n in ORDEN_INFORME}
@@ -247,6 +256,8 @@ def traer(*opciones: str) -> None:
             (DIR_INFORME / nombre).write_text(texto, encoding="utf-8")
         print(f"✓ {len(eds) - len(pendientes)} edición(es) aplicada(s) en: {', '.join(sorted(cambiados)) or 'ninguno'}")
         if pendientes:
+            inf["huella_traida"] = _huella(actual)
+            _guardar(est)
             print(f"✗ {len(pendientes)} para pasar a mano (después: `traer --rebasar`):")
             for e in pendientes:
                 print("   -", e)

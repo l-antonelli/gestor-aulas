@@ -70,44 +70,33 @@ razonan sobre la cursada real; cuando no, el modelo resuelve con
 corrección un problema distinto del que se tiene. Resumimos los
 principales en forma de directivas de uso.
 
+![Carga de una materia con una teoría común y tres grupos de laboratorio](figuras/a6_vs_a6p.png){#fig:a6 width=14cm}
+
 1. **Cada comisión es un único esquema semanal que el alumno cursa
    completo.** El sistema entiende que quien está en una comisión
    asiste a todos sus horarios, y que de cada materia el alumno cursa
    una sola comisión. Por eso las materias deben definirse según cómo
-   se organiza efectivamente su cursada. Un caso frecuente es el de
-   una materia, digamos A6, con una teoría común y el laboratorio
+   se organiza efectivamente su cursada. Un caso frecuente es el de una materia, A6, con una teoría común y el laboratorio
    dividido en tres grupos: si los cuatro horarios se cargan bajo el
    código A6, en una sola comisión, el sistema concluye que cada
    alumno debe asistir a los tres laboratorios. La forma correcta es
    separar la práctica en una materia propia, A6P, con tres
    comisiones de un laboratorio cada una, como muestra la Figura
-   @fig:a6. Así cada alumno cursa la teoría y uno solo de los grupos,
-   y tanto la verificación de superposiciones como el reparto entre
-   teoría y laboratorio (R4) se calculan sobre la carga real.
+   @fig:a6.
 
-   ![Carga de una materia con una teoría común y tres grupos de laboratorio](figuras/a6_vs_a6p.png){#fig:a6 width=14cm}
-
-2. **Representación Gráfica.**
-
-   ::: revisar
-   **Para completar a mano:** describir el caso de Representación
-   Gráfica, que presenta una situación análoga a la anterior, y cómo
-   conviene cargarla.
-   :::
-
-3. **Las horas de la materia deben coincidir con las del
+2. **Las horas de la materia deben coincidir con las del
    cronograma.** Las horas de teoría y de laboratorio declaradas en
    la materia son la referencia contra la que se verifica cada
    comisión. Si el catálogo está desactualizado, el sistema marca
    como error un cronograma correcto, o deja pasar uno incorrecto.
 
-4. **El inventario de aulas es la oferta del problema.** El asignador
+3. **El inventario de aulas es la oferta del problema.** El asignador
    sólo usa las aulas cargadas, con la capacidad, el tipo y la sede
    que figuran en el sistema. Un laboratorio que no se declaró
    compatible con una materia no se le asigna nunca, aunque en la
    práctica sirva.
 
-5. **Cada materia, en el grupo de materias que le corresponde.** El
+4. **Cada materia, en el grupo de materias que le corresponde.** El
    grupo determina en qué sedes puede dictarse. Conviene reservar el
    modo duro para las reglas institucionales firmes y usar el modo
    blando cuando la sede es sólo una preferencia: un modo duro
@@ -115,23 +104,23 @@ principales en forma de directivas de uso.
    problema. Es el caso típico de las carreras de la Siberia, cuyos
    alumnos cursan comunes en Pellegrini (§3.8.2.5).
 
-6. **Los inscriptos esperados son un pronóstico.** Se estiman a partir
+5. **Los inscriptos esperados son un pronóstico.** Se estiman a partir
    de la serie histórica, que sólo es útil si las inscripciones de
    años anteriores quedaron vinculadas a la materia correcta (con su
    código actual o mediante un código equivalente registrado).
    Cuando se sabe algo que la serie no refleja (un cambio de plan,
    una cohorte excepcional), conviene reemplazar el valor estimado.
 
-7. **Las excepciones, justificadas y revisadas.** Ignorar un conflicto
+6. **Las excepciones, justificadas y revisadas.** Ignorar un conflicto
    horario es legítimo cuando se sabe que las materias involucradas
    no comparten alumnos, pero cada excepción debería tener un motivo
    y revisarse en cada cuatrimestre.
 
-8. **Fijar aulas a mano, con moderación.** Cada aula fijada le quita
+7. **Fijar aulas a mano, con moderación.** Cada aula fijada le quita
    libertad al asignador; muchas fijaciones, o fijaciones
    incompatibles entre sí, pueden impedir que exista una solución.
 
-9. **Un plan activo por ciclo y los demás como escenarios.** Los
+8. **Un plan activo por ciclo y los demás como escenarios.** Los
    planes adicionales sirven para comparar alternativas sin tocar el
    plan con el que se trabaja; el que se comunica es siempre el
    activo.

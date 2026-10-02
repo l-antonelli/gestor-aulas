@@ -8,7 +8,7 @@ Todo proyecto de ingeniería industrial surge de un problema detectado
 o una oportunidad de mejora. Este proyecto en particular busca
 resolver una necesidad para la facultad sobre un aspecto que es
 fundamental para la satisfacción de los alumnos, docentes y personal
-no docente: la asignación de aulas para el dictado de las cátedras.
+no docente: la asignación de aulas para el dictado de las materias.
 La propuesta busca brindar una respuesta a las siguientes preguntas:
 
 - ¿Qué aula asignar a qué materia?

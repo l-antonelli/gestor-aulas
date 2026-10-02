@@ -64,10 +64,7 @@ este trabajo:
   pasos, responsables, entradas y salidas de cada actividad. En la
   sección 3.3 se aplican al proceso actual de asignación de aulas.]{.revisar}
 
-- **Ingeniería de métodos y mejora continua**: análisis de valor,
-  cinco porqués o el ciclo planificar-hacer-verificar-actuar, para
-  identificar desperdicios y oportunidades de simplificación. Aquí
-  motivan el diagnóstico del proceso manual actual.
+
 - **Análisis de sistemas**: tratar al conjunto como una entidad con
   entradas, salidas, componentes e interacciones, requisito previo a
   cualquier modelo formal.

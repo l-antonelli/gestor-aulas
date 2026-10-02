@@ -234,7 +234,7 @@ $$
 y análogamente para `sub[h]`. Como el objetivo las minimiza, en
 el óptimo toman exactamente el valor del exceso o del faltante.
 
-**R7. Redistribución de la matrícula.** Cuando está habilitada,
+**R7. Redistribución de Alumnos entre Comisiones.** Cuando está habilitada,
 los inscriptos esperados de cada comisión dejan de ser un dato y
 pasan a ser el total del dictado multiplicado por `α[k]`; las
 proporciones de cada dictado deben sumar 1.

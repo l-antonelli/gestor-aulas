@@ -14,35 +14,38 @@ asignación con otra.
 ::: revisar
 <!-- Sección a cargo de Pablo Galliano (comentario @maguitopg en la revisión del 2026-09-30): se deja tal cual, resaltada para revisar. -->
 
-Antes de sumergirnos en la formulación formal, conviene enunciar el
-problema en la lengua en la que se plantea todos los cuatrimestres
-entre las Escuelas, la Secretaría Académica y la Secretaría Técnica
-de la facultad. Este enunciado nos va a servir de referencia para
-verificar, más adelante, que la formulación formal no pierda
-ninguna pieza del original.
+Antes de pasar a la formulación formal, conviene contar el problema
+tal como se lo plantean cada cuatrimestre las Escuelas, la Secretaría
+Académica y la Secretaría Técnica. Nos va a servir de referencia:
+cuando más adelante el problema esté escrito con símbolos, vamos a
+poder volver acá y comprobar que no se perdió nada en el camino.
 
-> Al comienzo de cada cuatrimestre, la Secretaría Técnica de la
-> facultad dispone de una lista de **clases** que hay que dictar en
-> cada franja horaria de la semana (grilla horaria ya consolidada
-> por la Secretaría Académica a partir de las propuestas de las
-> Escuelas), y una lista de **aulas** de distintos tipos y
-> capacidades. Tiene que decidir, para cada clase, en qué aula se
-> va a dictar, respetando las reglas: que dos clases al mismo
-> tiempo no compartan aula, que el tipo de aula sea compatible con
-> el tipo de clase, que la capacidad del aula sea razonable
-> respecto de la cantidad de alumnos, que se cumpla la carga de
-> teoría y de laboratorio declarada por cada materia, y que la
-> asignación respete las sedes admisibles para cada carrera. Entre
-> todas las asignaciones que cumplen las reglas, quiere elegir una
-> que aproveche bien las aulas: sin dejar afuera alumnos por falta
-> de capacidad, y sin desperdiciar aulas grandes en clases chicas.
+Al empezar el cuatrimestre, la Secretaría Técnica tiene dos listas en
+la mano. Por un lado, las **clases** que hay que dictar cada semana,
+con su día y su horario: la grilla que la Secretaría Académica armó a
+partir de lo que propusieron las Escuelas. Por otro, las **aulas**
+disponibles, cada una con su tipo y su capacidad. El trabajo es
+decidir en qué aula va cada clase sin romper ninguna regla:
 
-Esta descripción es informal pero identifica ya todos los elementos
-del problema: hay entidades (clases, aulas), hay una decisión (la
-asignación), hay restricciones que la decisión debe respetar y hay
-un criterio para comparar dos decisiones válidas entre sí. Las
-próximas secciones van dando nombre y contorno preciso a cada uno
-de estos elementos.
+- dos clases que se dictan a la misma hora no pueden compartir aula;
+- el aula tiene que servir para ese tipo de clase (un laboratorio,
+  por ejemplo, necesita un laboratorio compatible);
+- el aula tiene que tener un tamaño razonable para la cantidad de
+  alumnos;
+- cada materia tiene que completar las horas de teoría y de
+  laboratorio que declara;
+- cada clase tiene que dictarse en una sede admitida para su materia.
+
+Y entre todas las formas de repartir las aulas que cumplen esas
+reglas, se busca la que mejor las aprovecha: que nadie se quede sin
+lugar y que no se gaste un aula grande en una clase chica.
+
+Así contado parece poco, pero ya están todas las piezas del problema:
+hay cosas que se asignan (las clases) y lugares donde asignarlas (las
+aulas), una decisión que tomar, reglas que esa decisión tiene que
+respetar y un criterio para elegir entre dos soluciones que las
+respetan. Las secciones que siguen le ponen nombre y límites precisos
+a cada una.
 :::
 
 ### 3.4.2 Encuadre: el problema como asignación de recursos bajo restricciones

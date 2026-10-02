@@ -17,5 +17,4 @@ se los menciona en el texto.
   cuatrimestre de 2026 con las aulas asignadas, exportados desde la
   herramienta: cuarto año de Ingeniería Industrial y tercer año de
   Ingeniería Eléctrica. Fuente: `anexos/Anexo_D_Cronogramas/`.
-
-> **Para completar:** consolidar el Anexo B como documento propio.
+- **Anexo E. Videos instructivos** (pendiente).
