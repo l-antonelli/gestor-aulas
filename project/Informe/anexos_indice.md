@@ -16,6 +16,6 @@ se los menciona en el texto.
 - **Anexo D. Cronogramas del caso ensayado.** Cronogramas del primer
   cuatrimestre de 2026 con las aulas asignadas, exportados desde la
   herramienta: cuarto año de Ingeniería Industrial y tercer año de
-  Ingeniería Electrónica. Fuente: `anexos/Anexo_D_Cronogramas/`.
+  Ingeniería Eléctrica. Fuente: `anexos/Anexo_D_Cronogramas/`.
 
 > **Para completar:** consolidar el Anexo B como documento propio.

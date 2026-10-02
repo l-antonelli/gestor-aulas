@@ -51,9 +51,9 @@ ninguno sin asignar.
 Para ver el resultado en detalle tomamos dos años de cursada del
 primer cuatrimestre: cuarto año de Ingeniería Industrial, que se
 dicta íntegramente en Pellegrini, y tercer año de Ingeniería
-Electrónica, una carrera de la Siberia cuyos alumnos cursan buena
-parte de las materias en Pellegrini. Las Tablas @tab:caso-industrial y
-@tab:caso-electronica muestran sus horarios con el aula asignada; los
+Eléctrica, una carrera de la Siberia cuyos alumnos cursan materias
+comunes en Pellegrini. Las Tablas @tab:caso-industrial y
+@tab:caso-electrica muestran sus horarios con el aula asignada; los
 cronogramas completos, exportados desde la herramienta, están en el
 Anexo D.
 
@@ -78,40 +78,39 @@ de 71. La única excepción es Comercialización, con 121 inscriptos en
 un aula de 112: el exceso está dentro de la tolerancia del 10 % de la
 configuración, por eso el asignador la acepta.
 
-<!-- tabla: Aulas asignadas a tercer año de Ingeniería Electrónica {#tab:caso-electronica} -->
+<!-- tabla: Aulas asignadas a tercer año de Ingeniería Eléctrica {#tab:caso-electrica} -->
 | Día | Horario | Materia | Sede | Aula (capacidad) | Inscriptos |
 | ----------- | :---------------: | ------------------------ | :-----------: | :-----------------: | :----------: |
-| Lunes | 08:00 a 11:00 | Informática Aplicada | Pellegrini | AULA-13 (63) | 61 |
-| Lunes | 11:15 a 12:45 | Física de los Dispositivos Electrónicos | Pellegrini | AULA-22 (42) | 28 |
-| Lunes | 17:00 a 20:00 | Física de los Dispositivos Electrónicos (lab.) | Pellegrini | LAB-003 (50) | 28 |
-| Martes | 08:30 a 11:30 | Física de los Dispositivos Electrónicos (lab.) | Pellegrini | LAB-003 (50) | 28 |
-| Martes | 15:30 a 18:00 | Laboratorio de Electromagnetismo | Siberia | MEC-Aula-05 (82) | 67 |
-| Miércoles | 17:00 a 20:00 | Sistemas y Señales I | Pellegrini | AULA-26 (45) | 38 |
-| Jueves | 08:30 a 11:30 | Física de los Dispositivos Electrónicos | Pellegrini | AULA-22 (42) | 28 |
-| Jueves | 15:30 a 18:00 | Laboratorio de Electromagnetismo | Siberia | Civil-ECA-Aula-01 (66) | 67 |
-| Viernes | 08:00 a 11:00 | Informática Aplicada (lab.) | Pellegrini | LAB-004 (50) | 61 |
-| Viernes | 15:00 a 17:00 | Sistemas y Señales I | Pellegrini | AULA-16 (40) | 38 |
-| Viernes | 17:00 a 20:00 | Informática Aplicada (lab.) | Pellegrini | LAB-004 (50) | 61 |
+| Lunes | 10:30 a 13:00 | Matemática Aplicada | Pellegrini | AULA-23 (40) | 27 |
+| Lunes | 17:00 a 20:00 | Materiales Eléctricos | Siberia | REACTOR-Aula-01 (25) | 10 |
+| Martes | 13:45 a 17:45 | Electromagnetismo Aplicado | Siberia | ETA-Aula-12 (28) | 8 |
+| Miércoles | 09:30 a 12:00 | Matemática Aplicada | Pellegrini | AULA-23 (40) | 27 |
+| Miércoles | 17:00 a 20:00 | Materiales Eléctricos | Siberia | REACTOR-Aula-01 (25) | 10 |
+| Jueves | 13:00 a 16:00 | Economía y Costos (comisión 1) | Siberia | MEC-Aula-01 (54) | 33 |
+| Jueves | 13:45 a 17:45 | Electromagnetismo Aplicado | Siberia | ETA-Aula-11 (22) | 8 |
+| Jueves | 18:00 a 21:00 | Economía y Costos (comisión 2) | Siberia | ETA-Aula-08 (47) | 33 |
 
 *Nota.* Se omiten los horarios de Probabilidad y Estadística, materia
-común con tres comisiones entre las que cada alumno elige una; están
-en el cronograma completo del Anexo D.
+común con tres comisiones en Pellegrini entre las que cada alumno
+elige una; están en el cronograma completo del Anexo D.
 
-Tercer año de Electrónica muestra el caso del traslado. El martes y el
-jueves los alumnos tienen una clase a la mañana en Pellegrini y
-Laboratorio de Electromagnetismo a la tarde en la Siberia: entre una y
-otra hay cuatro horas, mucho más que el margen de 30 minutos, así que
-el traslado es posible y el asignador lo admite. Si esas dos clases
-estuvieran a menos de media hora, la restricción R11 las obligaría a
-compartir sede. El resto de la semana se cursa en Pellegrini, lo que
-es posible porque el grupo de Electrónica está en modo blando.
+Tercer año de Eléctrica muestra el caso del traslado. El lunes y el
+miércoles los alumnos cursan a la mañana Matemática Aplicada en
+Pellegrini y a la tarde Materiales Eléctricos en la Siberia: entre una
+y otra hay varias horas, mucho más que el margen de 30 minutos, así
+que el traslado es posible y el asignador lo admite. Si esas dos
+clases estuvieran a menos de media hora, la restricción R11 las
+obligaría a compartir sede, y como Matemática Aplicada es una común de
+Formación Básica, atada a Pellegrini, la de la carrera tendría que
+dictarse también ahí; es posible porque el grupo de Eléctrica está en
+modo blando. El jueves, en cambio, las dos comisiones de Economía y
+Costos permiten que el alumno elija la que no se superpone con
+Electromagnetismo Aplicado.
 
-La tabla muestra además la sobreocupación que el asignador no puede
-evitar: los laboratorios de Informática Aplicada tienen 61 inscriptos
-esperados y el único laboratorio compatible tiene 50 lugares. Ninguna
-asignación lo resuelve; la solución pasa por abrir una segunda
-comisión de laboratorio, una decisión que el sistema señala pero que
-corresponde a la operatoria.
+La tabla muestra además cómo el asignador ajusta el aula a la
+matrícula: Materiales Eléctricos, con 10 inscriptos, va a un aula de
+25 lugares, y Electromagnetismo Aplicado, con 8, a aulas de 22 y 28,
+lo que deja libres las aulas más grandes de la Siberia.
 
 ### 3.10.3 Cómo quedó ocupada la facultad
 
@@ -129,7 +128,7 @@ se cuentan sólo en esos horarios).
 | Horarios con lugares de sobra | 292 (5.422 asientos vacíos en total) |
 | Ocupación mediana de las aulas | 77 % |
 | Horarios fuera de su sede preferida | 34 |
-| Comisiones con traslado entre sedes | 0 |
+
 | Aulas usadas | 49 de 53 |
 | Asientos en aulas libres en la franja más ocupada | 963 de 2.871 |
 

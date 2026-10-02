@@ -280,7 +280,11 @@ def asientos_libres_caso() -> None:
                 color=color, lw=1.3, label=etiqueta)
     _ejes_semana(ax, len(d["real"]["franjas"]["Total"]))
     ax.set_ylabel("Asientos en aulas libres")
-    ax.set_ylim(bottom=0)
+    # Eje ajustado al rango de los datos (sin el cero) para que se vea
+    # la diferencia entre las dos curvas.
+    valores = d["recomendada"]["franjas"]["Total"] + d["sin_sub"]["franjas"]["Total"]
+    margen = (max(valores) - min(valores)) * 0.05
+    ax.set_ylim(min(valores) - margen, max(valores) + margen)
     ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
     _guardar(fig, "caso_asientos_libres.png")
 

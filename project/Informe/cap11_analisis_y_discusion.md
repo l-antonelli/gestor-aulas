@@ -18,7 +18,8 @@ confirmó que cada año de cada carrera tiene al menos un camino de
 cursada sin superposiciones ni traslados imposibles. Lo que el modelo
 no puede resolver es la falta física de aulas: cuando una comisión no
 entra en ningún aula compatible, como los laboratorios de Informática
-Aplicada (§3.10.2), el asignador minimiza el exceso y lo informa, pero
+Aplicada de Electrónica (61 inscriptos esperados y un único laboratorio
+compatible de 50 lugares), el asignador minimiza el exceso y lo informa, pero
 la solución está en la operatoria, por ejemplo abrir otra comisión.
 
 ### 3.11.2 Comparación con el proceso actual
