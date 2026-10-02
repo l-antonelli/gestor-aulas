@@ -1,44 +1,65 @@
 ## 3.11 Análisis y discusión
 
-> **Estado: estructura con marcadores.** Se completa con los
-> resultados de la sección 3.10. Extensión orientativa: 5 a 7 páginas.
+### 3.11.1 Desempeño del asignador sobre datos reales
 
-### 3.11.1 Métricas de la solución sobre datos reales
+El caso ensayado confirma que el modelo es resoluble en la práctica.
+El programa lineal del cuatrimestre tiene 13.697 variables, 12.429 de
+ellas binarias, y 6.952 restricciones (§3.4.7.1). Todas las corridas
+de §3.10.4 terminaron en la solución óptima, en tiempos de entre 24 y
+64 segundos según la configuración, y en todas quedaron con aula los
+546 horarios presenciales.
 
-> **Para completar:** métricas de la corrida del caso de estudio
-> (10.2), en una tabla numerada:
->
-> - tiempo de resolución y tamaño del modelo (variables y
->   restricciones);
-> - sobreocupación y subocupación agregadas, y su distribución por
->   aula o por franja;
-> - cobertura: horarios asignados sobre el total, horarios virtuales
->   y sin aula;
-> - ocupación por sede y por tipo de aula;
-> - cumplimiento de las restricciones de política (sedes admisibles,
->   laboratorios, camino de cursada).
->
-> Fuente: métricas de calidad del asignador y detalle de la corrida
-> (`LPRunDB`).
+Las reglas de política se cumplen por construcción. Ningún horario de
+un grupo en modo duro quedó fuera de sus sedes admitidas (R8), salvo
+en laboratorios declarados compatibles, los
+laboratorios sólo se asignaron a materias declaradas compatibles, ninguna
+comisión quedó repartida entre sedes (R12) y la validación del plan
+confirmó que cada año de cada carrera tiene al menos un camino de
+cursada sin superposiciones ni traslados imposibles. Lo que el modelo
+no puede resolver es la falta física de aulas: cuando una comisión no
+entra en ningún aula compatible, como los laboratorios de Informática
+Aplicada (§3.10.2), el asignador minimiza el exceso y lo informa, pero
+la solución está en la operatoria, por ejemplo abrir otra comisión.
 
 ### 3.11.2 Comparación con el proceso actual
 
-> **Para completar:** comparación con el proceso manual descrito en
-> la sección 3.3. Si se cuenta con la asignación real de un
-> cuatrimestre, comparar cuantitativamente (ocupación, conflictos
-> detectados); si no, comparar de forma cualitativa: tiempos,
-> trazabilidad, detección temprana de conflictos y capacidad de
-> simular escenarios.
+No contamos con la asignación manual de un cuatrimestre completo en
+formato comparable, por lo que la comparación es cualitativa, frente al
+proceso descripto en la sección 3.3:
+
+- **Tiempo.** Lo que hoy se resuelve con un proceso manual repartido
+  entre varias áreas y apoyado en planillas (§3.3.2), el asignador lo
+  resuelve en menos de un minuto, y volver a correrlo ante un cambio
+  cuesta lo mismo.
+- **Calidad verificable.** La asignación manual no tiene una medida de
+  qué tan buena es. El sistema informa, para cada corrida, cuántos
+  alumnos quedan sin lugar, cuántos asientos sobran y qué horarios
+  salen de su sede, y garantiza que no haya dos clases en un aula a la
+  vez.
+- **Detección temprana.** La validación del cronograma señala antes de
+  asignar las materias faltantes, los horarios que se superponen dentro
+  de un año y los que no respetan la grilla; en el caso ensayado,
+  detectó 29 materias esperadas que el cronograma no traía.
+- **Escenarios.** Comparar configuraciones, como en §3.10.4, es
+  impracticable a mano y lleva minutos con el sistema.
+- **Trazabilidad.** Cada corrida queda registrada con su configuración y
+  su resultado, y los cambios del catálogo quedan en el historial.
 
 ### 3.11.3 Limitaciones del modelo y del sistema
 
-> **Para completar:** limitaciones conocidas, por ejemplo:
->
-> - trabajo sobre el patrón semanal (sin excepciones puntuales por
->   fecha);
-> - dependencia de la calidad del inventario de aulas y del catálogo;
-> - pronóstico de inscriptos con métodos simples;
-> - uso local, sin gestión de usuarios concurrentes.
+- **Patrón semanal.** El sistema asigna el patrón de la semana; las
+  excepciones puntuales por fecha (un feriado, un examen) quedan fuera.
+- **Calidad de los datos.** El resultado es tan bueno como el
+  inventario de aulas, el catálogo de materias y los cronogramas que se
+  cargan (§3.11.4).
+- **Pronóstico de inscriptos.** Los métodos de pronóstico son simples y
+  dependen de una serie histórica a veces corta; un error en el
+  pronóstico se traslada a la asignación.
+- **Falta física de aulas.** El modelo reparte la capacidad que existe;
+  si una comisión no entra en ningún aula compatible, lo informa pero no
+  lo resuelve.
+- **Uso local.** El sistema está pensado para un único usuario a la vez,
+  sin gestión de usuarios ni permisos.
 
 ### 3.11.4 Criterios de uso y buenas prácticas
 
@@ -116,8 +137,21 @@ principales en forma de directivas de uso.
 
 ### 3.11.5 Cumplimiento de los objetivos del anteproyecto
 
-> **Para completar:** recorrer uno por uno los objetivos específicos
-> del anteproyecto y señalar, para cada uno, en qué sección o
-> resultado se verifica su cumplimiento (o por qué se cumplió
-> parcialmente). Una tabla objetivo / evidencia / grado de
-> cumplimiento funciona bien.
+La Tabla @tab:objetivos recorre los objetivos específicos del
+anteproyecto y señala dónde se verifica su cumplimiento.
+
+<!-- tabla: Cumplimiento de los objetivos específicos del anteproyecto {#tab:objetivos} -->
+| Objetivo específico | Dónde se verifica |
+| ---------------------------------------------- | ---------------------------------------- |
+| Modelizar la problemática, sus variables y restricciones | Definición del problema (3.4) y modelo conceptual (3.5) |
+| Definir distintas reglas y restricciones de asignación | Reglas del dominio (3.5.5) y restricciones R1 a R12 (3.8.2.5) |
+| Proponer modelos y técnicas de optimización basados en esas reglas | Programa lineal entero, verificación previa y diagnóstico (3.8) |
+| Desarrollar el soporte informático para registrar los datos e implementar las técnicas | Modelo de datos (3.6), arquitectura (3.7) y validaciones (3.9) |
+| Generar distintos esquemas de asignación según los modelos propuestos y compararlos | Caso ensayado y escenarios (3.10) |
+
+Los cinco objetivos se cumplieron. El objetivo general, optimizar la
+asignación de aulas para mejorar el uso de la capacidad instalada, se
+verifica en el caso ensayado: todos los horarios quedan con aula, la
+sobreocupación se reduce a la que impone la falta física de aulas y la
+configuración recomendada deja una holgura de casi mil asientos aun en
+la franja más ocupada.

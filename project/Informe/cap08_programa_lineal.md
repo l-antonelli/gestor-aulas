@@ -513,7 +513,7 @@ genera muchas menos restricciones (cuando los horarios son intervalos
 de tiempo, los grupos maximales son a lo sumo tantos como horarios,
 según Golumbic [5]) y le da al resolutor una relajación más ajustada
 (§3.2.3.3), así que tiene que ramificar menos. En programación lineal
-entera se las conoce como *desigualdades de clique*, y Wolsey [12]
+entera se las conoce como *desigualdades de clique*, y Wolsey [13]
 muestra que superan a las formuladas por pares. El Anexo B compara
 ambas sobre casos de prueba.
 

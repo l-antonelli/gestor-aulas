@@ -31,7 +31,9 @@
 11. Morán, Rogelio A. A., *Pautas metodológicas para la realización de
    Trabajos Finales*, Rosario: Departamento de Optimización y Control,
    FCEIA-UNR, 2000.
-12. Wolsey, Laurence A., *Integer Programming*, Nueva York: John Wiley
+12. Organización Internacional de Normalización, *ISO 9001:2015.
+   Sistemas de gestión de la calidad. Requisitos*, Ginebra: ISO, 2015.
+13. Wolsey, Laurence A., *Integer Programming*, Nueva York: John Wiley
    & Sons, 1998.
 
 > **Para completar:**
@@ -43,4 +45,3 @@
 >   (sección 3.2.4);
 > - la documentación de las herramientas usadas (PuLP, CBC, SQLModel,
 >   Streamlit), si se citan en la sección 3.7;
-> - la norma o el marco de gestión de calidad citado en 12.3.

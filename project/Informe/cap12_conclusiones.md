@@ -1,22 +1,27 @@
 # 4. Conclusiones
 
-> **Estado: estructura con material del borrador.** Las secciones
-> 12.2 a 12.4 traen el texto de las conclusiones del borrador del
-> informe, para revisar e integrar. Falta redactar 12.1 y 12.5.
-
 ## 4.1 Síntesis del recorrido
 
-> **Para completar:** cómo se articula la doble mirada del proyecto
-> (ingeniería industrial e ingeniería de software) en el resultado:
-> del análisis de la organización y el problema (secciones 3.1 a 3.4), a
-> la modelización (5 y 6), la solución (7 a 9) y su validación con
-> datos reales (10 y 11).
+El proyecto partió de una premisa: para resolver bien un problema
+primero hay que entenderlo. Desde la ingeniería industrial analizamos
+la facultad como organización y su proceso actual de asignación de
+aulas (secciones 3.1 a 3.3), y de ese análisis surgió la definición del
+problema como una asignación de recursos bajo restricciones (sección
+3.4). Desde la ingeniería de software llevamos ese entendimiento a un
+modelo del dominio y a un modelo de datos (secciones 3.5 y 3.6), sobre
+los que se construyó la solución: una aplicación (sección 3.7) cuyo
+núcleo es un programa lineal entero con verificación previa y
+diagnóstico de la infactibilidad (sección 3.8), rodeado de validaciones
+que garantizan que los datos que recibe son consistentes (sección 3.9).
+
+El caso ensayado sobre el primer cuatrimestre de 2026 (secciones 3.10 y
+3.11) mostró que la solución funciona con datos reales: asigna todos los
+horarios presenciales de la facultad en menos de un minuto, respeta las
+reglas de sedes, laboratorios y traslados, y permite comparar
+configuraciones para elegir la que mejor responde a los criterios de la
+institución.
 
 ## 4.2 El valor de la información en la gestión académica
-
-> **Del borrador, a revisar.** Al pasarlo se corrigieron tildes y
-> erratas evidentes ("cientos de maneras que se dictan" por "cientos
-> de materias"); falta revisar la redacción de conjunto.
 
 No es difícil ver cómo una institución que congrega tantas personas
 todos los días para realizar tantas actividades distintas puede
@@ -95,10 +100,9 @@ y robusto posibilita:
 
 ## 4.3 Principios de gestión de calidad
 
-> **Del borrador, a revisar.**
-
 El diseño funcional y la adopción de esta plataforma están alineados
-con los principios rectores de la gestión de calidad:
+con los principios rectores de la gestión de calidad que recoge la
+norma ISO 9001 [12]:
 
 - **Toma de decisiones basada en evidencia.** La oferta académica, la
   aprobación de nuevas comisiones y la asignación de modalidades
@@ -114,12 +118,7 @@ con los principios rectores de la gestión de calidad:
   cupos de las comisiones promueve una dinámica iterativa que eleva
   progresivamente la calidad del servicio educativo.
 
-> **Para completar:** citar la norma o el marco de referencia (por
-> ejemplo, los principios de ISO 9001) en la bibliografía.
-
 ## 4.4 Factores clave para el éxito de la solución
-
-> **Del borrador, a revisar.**
 
 Para maximizar el valor de la plataforma y asegurar su
 sostenibilidad, el soporte tecnológico debe ir acompañado de una
@@ -139,13 +138,46 @@ cultura de rigor organizativo y operativo:
   permisos de edición, para evitar que las modificaciones de un
   usuario sobrescriban el trabajo de otro.
 
-## 4.5 Trabajos futuros
+## 4.5 Configuración recomendada del asignador
 
-> **Para completar:** líneas de continuidad, por ejemplo:
->
-> - excepciones puntuales por fecha sobre el patrón semanal;
-> - corridas incrementales del asignador durante el cuatrimestre;
-> - un módulo de pronóstico de inscripción más sofisticado;
-> - extensión a otros recursos (mesas de examen, laboratorios de
->   investigación);
-> - integración con el SIU Guaraní.
+Los escenarios de §3.10.4 dejan una recomendación concreta para usar
+el asignador:
+
+- **Grupos de materias.** Mantener la configuración de sedes de los
+  grupos tal como está: modo duro para las materias que se dictan
+  siempre en una sede, como las comunes de Formación Básica en
+  Pellegrini, y modo blando para las carreras de la Siberia, cuyos
+  alumnos también cursan esas comunes y quedan acoplados a Pellegrini
+  por el margen de traslado.
+- **Sin tolerancia de sobreocupación.** Una tolerancia del 10 % parece
+  inofensiva, pero el asignador la aprovecha y, sumada, deja más de mil
+  alumnos sin lugar. Sin tolerancia, la cifra baja un 22 %.
+- **Castigar la subocupación, con una tolerancia moderada.** Sin ese
+  castigo, el asignador ocupa aulas grandes con grupos chicos y reduce
+  un 30 % la capacidad libre en los momentos de más demanda. Un peso
+  bajo (1) con una tolerancia del 20 % reserva las aulas grandes para
+  quien las necesita.
+- **Pesos de sobreocupación y sede.** Un peso de sobreocupación de 25 y
+  uno de sede preferida de 15 dan un buen equilibrio: priorizan que
+  todos entren y que cada carrera curse en su sede, sin forzar ninguna
+  de las dos cosas.
+
+## 4.6 Trabajos futuros
+
+El sistema deja abiertas varias líneas de continuidad:
+
+- **Excepciones por fecha** sobre el patrón semanal, para feriados,
+  semanas de exámenes o cambios puntuales.
+- **Corridas incrementales** durante el cuatrimestre, que reasignen sólo
+  lo afectado por un cambio y respeten el resto de la asignación.
+- **Un pronóstico de inscripción más sofisticado**, que combine la serie
+  histórica con datos de la cohorte, como la cantidad de alumnos que
+  aprobaron las correlativas.
+- **Penalizar los traslados entre sedes**, además de prohibir los que no
+  dan el margen, para preferir los días con menos cambios de sede.
+- **Días operativos por sede**, que complementen el horario propio que
+  ya admite cada sede.
+- **Extensión a otros recursos**, como las mesas de examen o los
+  laboratorios de investigación.
+- **Integración con el SIU Guaraní**, para tomar de ahí las comisiones y
+  las inscripciones sin cargarlas a mano.

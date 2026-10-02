@@ -56,9 +56,20 @@ function Figure(fig)
   return out
 end
 
+-- Celdas de tabla con estilo "Celda" (alineado a la izquierda): el
+-- cuerpo va justificado, pero en una celda angosta el justificado deja
+-- espacios enormes entre palabras.
+local function celdas_a_la_izquierda(tbl)
+  return pandoc.walk_block(tbl, {
+    Plain = function(pl) return pandoc.Div({pandoc.Para(pl.content)}, {["custom-style"] = "Celda"}) end,
+    Para = function(pa) return pandoc.Div({pa}, {["custom-style"] = "Celda"}) end,
+  })
+end
+
 function Table(tbl)
+  tbl = celdas_a_la_izquierda(tbl)
   if #tbl.caption.long == 0 then
-    return nil
+    return tbl
   end
   ntab = ntab + 1
   local titulo = pandoc.utils.blocks_to_inlines(tbl.caption.long)

@@ -155,6 +155,12 @@ def main():
     ley.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     ley.paragraph_format.keep_with_next = True
     ley.paragraph_format.space_after = Pt(0)
+    celda = estilos.add_style("Celda", WD_STYLE_TYPE.PARAGRAPH)
+    celda.base_style = est("Normal")
+    _fuente(celda, 9)
+    celda.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    celda.paragraph_format.space_before = Pt(1)
+    celda.paragraph_format.space_after = Pt(1)
     nota = estilos.add_style("Nota de figura", WD_STYLE_TYPE.PARAGRAPH)
     nota.base_style = est("Normal")
     _fuente(nota, 9)

@@ -244,6 +244,56 @@ def ramificacion_acotacion() -> None:
     _guardar(fig, "ramificacion_acotacion.png")
 
 
+DIAS_CASO = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+
+
+def _datos_caso() -> dict:
+    import json
+    return json.loads((DESTINO / "datos" / "caso_1C2026.json").read_text())
+
+
+def ocupacion_caso() -> None:
+    """Porcentaje de asientos teóricos ocupados por sede, franja a franja,
+    en el plan del 1C 2026."""
+    d = _datos_caso()
+    totales = d["asientos_por_sede"]
+    fig, ax = plt.subplots(figsize=(7.4, 3.0))
+    for sede, color in (("Pellegrini", AZUL), ("Siberia", NARANJA)):
+        libres = d["real"]["franjas"][sede]
+        ocup = [100 * (1 - x / totales[sede]) for x in libres]
+        ax.plot(range(len(ocup)), ocup, color=color, lw=1.4, label=sede)
+    _ejes_semana(ax, len(d["real"]["franjas"]["Total"]))
+    ax.set_ylabel("Asientos ocupados (%)")
+    ax.set_ylim(0, 100)
+    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
+    _guardar(fig, "caso_ocupacion.png")
+
+
+def asientos_libres_caso() -> None:
+    """Asientos en aulas libres por franja: configuración recomendada
+    contra la que no castiga la subocupación."""
+    d = _datos_caso()
+    fig, ax = plt.subplots(figsize=(7.4, 3.0))
+    for clave, etiqueta, color in (("recomendada", "Configuración recomendada", VERDE),
+                                   ("sin_sub", "Sin castigo de subocupación", ROJO)):
+        ax.plot(range(len(d[clave]["franjas"]["Total"])), d[clave]["franjas"]["Total"],
+                color=color, lw=1.3, label=etiqueta)
+    _ejes_semana(ax, len(d["real"]["franjas"]["Total"]))
+    ax.set_ylabel("Asientos en aulas libres")
+    ax.set_ylim(bottom=0)
+    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
+    _guardar(fig, "caso_asientos_libres.png")
+
+
+def _ejes_semana(ax, n: int) -> None:
+    por_dia = n // len(DIAS_CASO)
+    for i in range(1, len(DIAS_CASO)):
+        ax.axvline(i * por_dia, color="#cccccc", lw=0.8)
+    ax.set_xticks([i * por_dia + por_dia / 2 for i in range(len(DIAS_CASO))], DIAS_CASO)
+    ax.tick_params(axis="x", length=0)
+    ax.set_xlim(0, n)
+
+
 if __name__ == "__main__":
     grafo_bipartito()
     palomar()
@@ -251,3 +301,5 @@ if __name__ == "__main__":
     efecto_cascada()
     a6_vs_a6p()
     ramificacion_acotacion()
+    ocupacion_caso()
+    asientos_libres_caso()

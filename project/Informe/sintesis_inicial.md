@@ -1,10 +1,5 @@
 # 2. Síntesis inicial
 
-> **Pautas:** una página; el problema, los objetivos y una síntesis
-> de las conclusiones. Se escribe al final. El texto de abajo es el
-> del borrador y todavía no incluye la síntesis de conclusiones, que
-> depende de los resultados de las secciones 3.10 y 3.11.
-
 El contexto del país y el desarrollo de nuevas tecnologías generan la
 necesidad de evolucionar y, como tal, se deben renovar los planes de
 estudio y ampliar el catálogo de carreras. Esto generalmente resulta
@@ -29,6 +24,12 @@ Dado que se trata de un proyecto académico, la problemática se aborda
 con técnicas de optimización desarrolladas en la carrera de
 Ingeniería Industrial.
 
-> **Para completar:** síntesis de las conclusiones (tres o cuatro
-> oraciones con los resultados principales de la sección 3.11 y el
-> aporte de la sección 4).
+Ensayada sobre el primer cuatrimestre de 2026, la solución asigna los
+546 horarios presenciales de la facultad en menos de un minuto,
+respetando las reglas de sedes, laboratorios y traslados. La
+comparación de configuraciones muestra que castigar la subocupación
+preserva la capacidad libre para los momentos de más demanda y que
+eliminar la tolerancia de sobreocupación reduce un 22 % los alumnos
+sin lugar. Más allá del resultado numérico, el trabajo deja una base
+de información ordenada y consistente sobre la que la facultad puede
+planificar, simular y justificar sus decisiones.
