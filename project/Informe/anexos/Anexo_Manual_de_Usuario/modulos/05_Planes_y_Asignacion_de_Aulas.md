@@ -538,9 +538,6 @@ Los pasos concretos:
        igualen las horas declaradas de la materia; los horarios
        virtuales cuentan para esas sumas aunque no ocupen aula.
        Apagada, sólo se valida el laboratorio (modo heredado).
-     - **Peso de intersede blando (λ intersede)**: penalización extra
-       por cada par de horarios contiguos de una comisión en sedes
-       distintas; complementa al margen (que es una regla dura).
      - **Redistribuir pesos entre comisiones (experimental)**: ver
        más abajo.
 5. Apretá **"🚀 Asignar aulas"**.
@@ -552,11 +549,11 @@ Los pasos concretos:
 λ over 10, λ under 1, tolerancia de sobre-ocupación 0,00, tolerancia
 de sub-utilización 0,20, λ sede 5, margen entre sedes 30 minutos,
 "Forzar misma sede por comisión" apagado, tiempo máximo 300 segundos,
-"R4 estricta" encendida, λ intersede 0 y "Redistribuir pesos" apagado.
+"R4 estricta" encendida y "Redistribuir pesos" apagado.
 **Cuando el plan ya tiene una corrida, el formulario se precarga con
 los valores de la última corrida**, así que lo que ves puede ser
 distinto (en las capturas, λ over 25, tolerancia de sobre-ocupación
-0,10, de sub-utilización 0,35 y λ intersede 7).
+0,10 y de sub-utilización 0,35).
 
 ![Configuración del asignador: alcance temporal y ajuste de capacidad](../capturas/planes/aulas_correr_parametros.png)
 

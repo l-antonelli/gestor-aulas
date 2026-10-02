@@ -90,7 +90,8 @@ principales en forma de directivas de uso.
    modo duro para las reglas institucionales firmes y usar el modo
    blando cuando la sede es sólo una preferencia: un modo duro
    innecesario reduce las alternativas y puede volver infactible el
-   problema.
+   problema. Es el caso típico de las carreras de la Siberia, cuyos
+   alumnos cursan comunes en Pellegrini (§3.8.2.5).
 
 6. **Los inscriptos esperados son un pronóstico.** Se estiman a partir
    de la serie histórica, que sólo es útil si las inscripciones de

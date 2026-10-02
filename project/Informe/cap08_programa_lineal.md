@@ -169,6 +169,22 @@ que la sobreocupación (los alumnos no entran en el aula) es un
 problema físico más grave que la subocupación (un aula grande
 desaprovechada), que es un problema económico.
 
+Los pesos no son un detalle técnico: expresan un criterio, y cambiar
+su proporción cambia qué solución se considera mejor. Supongamos que
+una comisión de Termodinámica, del grupo de Mecánica con la Siberia
+como sede preferida, espera 60 inscriptos, y que en su franja la
+Siberia sólo tiene libre un aula de 50, mientras que en Pellegrini
+hay una de 70. Dejarla en la Siberia cuesta 10 alumnos sin lugar,
+es decir, 10 · 10 = 100; mandarla a Pellegrini cuesta sólo la
+penalización por salir de la sede preferida, que con el peso por
+defecto es 5. Con los valores por defecto el asignador la manda a
+Pellegrini: prefiere que todos entren aunque cambien de sede. Si en
+cambio el usuario sube `λ_sede_pref` a 150, salir de la Siberia pasa
+a costar más que los 10 alumnos sin lugar, y el asignador la deja en
+la Siberia, aunque quede apretada. Un peso de sede alto frente al de
+sobreocupación dice, en criollo, "prefiero que estén apretados en su
+sede antes que repartidos en otra".
+
 #### 3.8.2.5 Restricciones
 
 Cada restricción traduce una regla de la sección 3.5. Las numeramos
@@ -281,6 +297,20 @@ Siberia, el problema no tendría solución: la verificación previa lo
 detecta (§3.8.4) y el usuario puede mover uno de los horarios,
 achicar el margen o pasar el grupo a modo blando, aceptando la
 penalización de R10.
+
+Este acople explica por qué los grupos de las carreras que se dictan
+en la Siberia (Mecánica, Civil, Eléctrica y Electrónica) difícilmente
+puedan configurarse en modo duro. Sus alumnos cursan, en varios años
+de la carrera, materias comunes que se dictan sí o sí en Pellegrini, y
+alcanza con que una de esas comunes quede a menos del margen de una
+específica para que las dos tengan que compartir sede. Con el grupo
+de la carrera en modo duro en la Siberia y la común atada a
+Pellegrini, esa combinación no tiene solución. Lo mismo vale, a la
+inversa, para cualquier carrera de Pellegrini que comparta año con
+materias de la Siberia. Por eso, para estos grupos el modo blando es
+la elección natural: la Siberia queda como preferencia, y el asignador
+sólo la abandona cuando el margen o la capacidad lo obligan, pagando
+la penalización correspondiente.
 
 Aparte de este caso, el mismo margen se aplica a un caso puntual:
 dos horarios consecutivos de una misma comisión en el mismo día,

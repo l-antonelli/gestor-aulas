@@ -647,8 +647,6 @@ def _cargar_defaults_desde_ultima_corrida(
             f"{key_ns}_lsede": float(ra.get("lambda_sede_pref", 5.0)),
             f"{key_ns}_margen_intersede":
                 int(ra.get("margen_min_intersede_minutos", 30)),
-            f"{key_ns}_lambda_intersede":
-                float(ra.get("lambda_intersede", 0.0)),
             f"{key_ns}_forzar_misma_sede":
                 bool(ra.get("forzar_misma_sede_por_comision", False)),
             f"{key_ns}_strict_r5": bool(ra.get("strict_r5", True)),
@@ -973,21 +971,10 @@ def _render_config_form(
                 key=f"{key_ns}_strict_r5",
             )
 
-            lambda_intersede_val = st.number_input(
-                "Peso de intersede blando (λ intersede)",
-                min_value=0.0, value=0.0, step=1.0,
-                help=(
-                    "Peso adicional al objetivo por cada par de "
-                    "horarios contiguos de una misma comisión que "
-                    "quedan en sedes distintas. Complementa el "
-                    "margen intersede (dura). Con 0 (default) sólo "
-                    "aplica la restricción dura. Con λ > 0, el LP "
-                    "va a preferir soluciones que además minimicen "
-                    "los cambios de sede dentro del día — útil para "
-                    "reducir traslados innecesarios."
-                ),
-                key=f"{key_ns}_lambda_intersede",
-            )
+            # `lambda_intersede` (peso blando por cambiar de sede entre
+            # horarios consecutivos) no está implementado en el modelo:
+            # no se ofrece en la interfaz y la corrida siempre lo deja
+            # en 0. Ver LPConfig.lambda_intersede.
 
             activar_alpha = st.toggle(
                 "Redistribuir pesos entre comisiones (experimental)",
@@ -1015,7 +1002,7 @@ def _render_config_form(
         tol_over=float(tol_over),
         tol_under=float(tol_under),
         margen_min_intersede_minutos=int(margen_intersede),
-        lambda_intersede=float(lambda_intersede_val),
+        lambda_intersede=0.0,
         strict_r5=bool(strict_r5),
         timeout_seconds=int(timeout),
         respetar_ediciones_manuales=bool(respetar),

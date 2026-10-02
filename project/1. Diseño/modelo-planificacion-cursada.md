@@ -827,7 +827,7 @@ Entidades planteadas y diferidas:
 | Alumno, Profesor, Inscripción, Asistencia | Modelo de personas | Cuando se implemente la gestión de inscripciones y de personal docente. |
 | Reserva de aula | Bloqueo puntual (mantenimiento, evento) | Requiere una tabla `AulaIndisponibleDB(aula_id, fecha, hora_inicio, hora_fin)` que el LP consultaría. |
 | Ventana operativa por sede | Sedes con horarios distintos | Requiere migrar `ConfiguracionHoraria` de global a por-sede. |
-| R11 blanda | Costo por cambio de sede en pares en riesgo | Cableado en `LPConfig.lambda_intersede` pero no activo (default 0). Reservado para variante blanda futura. |
+| R11 blanda | Costo por cambio de sede en pares en riesgo | **No implementado.** `LPConfig.lambda_intersede` vale siempre 0 y no se ofrece en la interfaz. Reservado para una variante blanda futura. |
 
 ---
 

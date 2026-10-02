@@ -151,7 +151,7 @@ prioridad — a usar con criterio.
 | **Estricto R4 (`strict_r5`)** | On | Valida horas de teoría y horas de laboratorio por separado (ver R4 en el planteo). Con Off, sólo valida laboratorio (modo legacy). |
 | **Respetar ediciones manuales** | On | Fija como restricción dura las aulas marcadas manualmente. Con Off, el LP reasigna libremente incluso las aulas con pin manual (§ 6). |
 | **Redistribuir inscriptos entre comisiones (`activar_alpha`)** | Off | Activa R7: variables `α[k]` que reasignan la matrícula entre comisiones del mismo dictado. Experimental. |
-| **Peso intersede blanda (`λ_intersede`)** | 0 | Cableado en el modelo pero no activo hoy. Reservado para una variante blanda de R11. |
+| **Peso intersede blanda (`λ_intersede`)** | 0 | **No implementado.** No se muestra en la interfaz y la corrida siempre lo deja en 0. Reservado para una variante blanda de R11. |
 
 ### 2.5 Botones
 

@@ -96,8 +96,9 @@ class LPConfig:
     # Peso del término blando de intersede (R11 blanda). Con
     # `lambda_intersede = 0` (default) la restricción es puramente
     # dura. Con λ > 0 se agrega un costo por par contiguo en sedes
-    # distintas (además de la restricción dura). Reservado para
-    # futuras iteraciones — hoy solo se cablea la infraestructura.
+    # distintas (además de la restricción dura). NO IMPLEMENTADO: el
+    # modelo no agrega ese término y la interfaz no lo ofrece; queda
+    # reservado para una iteración futura.
     lambda_intersede: float = 0.0
     # R12 — Forzar misma sede para todos los horarios de una comisión.
     # Cuando True, se introduce y[c, s] ∈ {0, 1} para cada comisión ×

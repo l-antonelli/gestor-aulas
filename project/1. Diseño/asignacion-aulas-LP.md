@@ -158,7 +158,7 @@ Todos los conjuntos se computan una sola vez al inicio de la corrida, dentro de 
 | `λ_over` | Peso de la sobre-ocupación en el objetivo. Default 10. | `LPConfig.lambda_over`. |
 | `λ_under` | Peso de la sub-ocupación en el objetivo. Default 1. | `LPConfig.lambda_under`. |
 | `λ_sede_pref` | Peso del término blando de preferencia de sede (R10). Aplica sólo a horarios cuyo grupo corre en modo BLANDO. Default 5. | `LPConfig.lambda_sede_pref`. |
-| `λ_intersede` | Peso del término blando de intersede (variante blanda de R11, hoy no activa por default). Default 0. | `LPConfig.lambda_intersede`. |
+| `λ_intersede` | **No implementado.** Peso del término blando de intersede (variante blanda de R11). No se ofrece en la interfaz y vale siempre 0. | `LPConfig.lambda_intersede`. |
 | `margen_min_intersede_minutos` | Umbral en minutos para considerar dos horarios contiguos "en riesgo" de traslado imposible. Default 30. Con 0 se desactiva R11. | `LPConfig.margen_min_intersede_minutos`. |
 | `forzar_misma_sede_por_comision ∈ {False, True}` | Toggle que activa R12 (todos los horarios de una comisión en la misma sede). | `LPConfig.forzar_misma_sede_por_comision`. |
 | `strict_r5 ∈ {False, True}` | Modo de R4. Con `True` (default) valida horas de teoría y de laboratorio y admite virtuales al modelo con marca `no_ocupa_aula`. Con `False` (legacy) sólo valida laboratorio y filtra virtuales. | `LPConfig.strict_r5`. |
@@ -479,7 +479,7 @@ La función objetivo agrega tres términos con pesos distintos:
 
 La asimetría `λ_over = 10 · λ_under` codifica que sobre-ocupación es más grave que sub-ocupación. La razón operativa es que sobre-ocupación es un problema físico (alumnos no entran al aula) mientras que sub-ocupación es un problema económico (aula desaprovechada).
 
-El término blando de intersede (`λ_intersede`) está cableado en el código pero no se activa por default: con `λ_intersede = 0` no aparece en el objetivo. Se dejó como preparación para una posible variante blanda de R11.
+El término blando de intersede (`λ_intersede`) **no está implementado**: no aparece en el objetivo, la interfaz no lo ofrece y la corrida lo deja siempre en 0. Queda reservado para una posible variante blanda de R11.
 
 ## 7. Chequeo estructural pre-solve
 

@@ -805,9 +805,11 @@ externas (moto / mocks / DB en memoria).
 - **Ventanas operativas por sede**. Hoy `ConfiguracionHoraria` es
   global. Si se abren sedes con horarios distintos, agregar
   `hora_apertura / cierre` a `SedeDB`.
-- **R11 blanda**. `lambda_intersede` está cableado en el modelo
-  pero no activo (default 0). Reservado para una variante blanda
-  de R11 que penalice cambios de sede pero no los prohíba.
+- **R11 blanda (no implementada)**. `lambda_intersede` existe en
+  `LPConfig` pero el modelo no agrega el término y la interfaz no lo
+  ofrece (vale siempre 0; test en
+  `tests/test_asignacion_panel_parametros.py`). Reservado para una
+  variante blanda de R11 que penalice cambios de sede sin prohibirlos.
 - **Combinaciones IIS de a tres o más**. Hoy sólo se prueban
   pares (grupo DURO → BLANDO + R12 / margen). Combinaciones de
   tres serían explosivas; se dejó fuera del alcance.
