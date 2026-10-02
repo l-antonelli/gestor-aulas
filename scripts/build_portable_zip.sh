@@ -135,6 +135,9 @@ rsync -a \
     --exclude='project/Informe/borradores/' \
     --exclude='data/*.backup*' \
     --exclude='data/database.db.backup-*' \
+    --exclude='data/database_backup_*' \
+    --exclude='data/*.bak*' \
+    --exclude='.remember/' \
     "$REPO_ROOT/" "$STAGE/"
 
 # ------------------------------------------------------------------
