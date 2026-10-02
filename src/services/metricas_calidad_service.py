@@ -202,11 +202,14 @@ def compute_metricas_calidad(
     metricas.cobertura.n_horarios_total = len(horarios)
 
     # Aulas y sedes.
-    aulas_db = list(session.exec(select(AulaDB)).all())
-    aula_sede_id: dict[str, str] = {a.id: a.sede_id for a in aulas_db}
-    aula_nombre: dict[str, str] = {a.id: a.codigo_aula for a in aulas_db}
-    aula_capacidad: dict[str, int] = {a.id: a.capacidad for a in aulas_db}
-    aula_tipo: dict[str, str] = {a.id: a.tipo for a in aulas_db}
+    # El catálogo (oferta) son las aulas activas; los datos de todas se
+    # conservan para describir horarios que siguen en un aula desactivada.
+    aulas_todas = list(session.exec(select(AulaDB)).all())
+    aulas_db = [a for a in aulas_todas if a.activa]
+    aula_sede_id: dict[str, str] = {a.id: a.sede_id for a in aulas_todas}
+    aula_nombre: dict[str, str] = {a.id: a.codigo_aula for a in aulas_todas}
+    aula_capacidad: dict[str, int] = {a.id: a.capacidad for a in aulas_todas}
+    aula_tipo: dict[str, str] = {a.id: a.tipo for a in aulas_todas}
 
     sedes = list(session.exec(select(SedeDB)).all())
     sede_nombre: dict[str, str] = {s.id: s.nombre for s in sedes}
@@ -340,8 +343,9 @@ def compute_metricas_calidad(
     # -------------------------------------------------------------------------
     metricas.aulas.n_aulas_catalogo = len(aulas_db)
     aulas_usadas: dict[str, int] = {}  # aula_id -> cantidad de horarios activos
+    ids_activas = {a.id for a in aulas_db}
     for h in horarios:
-        if h.aula_id:
+        if h.aula_id and h.aula_id in ids_activas:
             aulas_usadas[h.aula_id] = aulas_usadas.get(h.aula_id, 0) + 1
     metricas.aulas.n_aulas_usadas = len(aulas_usadas)
     metricas.aulas.n_aulas_ociosas = (

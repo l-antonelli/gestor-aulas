@@ -250,7 +250,8 @@ def _recompute_heatmap_por_sede_live(
         return None
 
     # Aulas + sedes.
-    aulas_db = list(session.exec(select(AulaDB)).all())
+    # Sólo las aulas activas forman parte de la oferta.
+    aulas_db = [a for a in session.exec(select(AulaDB)).all() if a.activa]
     aulas = [
         AulaSlot(id=a.id, tipo=a.tipo, capacidad=a.capacidad)
         for a in aulas_db
@@ -389,7 +390,8 @@ def _compute_heatmap_ocupacion_live(
 
     # Catálogo de aulas por sede + categoría (teorica agrupa
     # 'teorica' + 'anfiteatro', igual que el mapa de saturación).
-    aulas_db = list(session.exec(select(_Aula)).all())
+    # El catálogo de la oferta son sólo las aulas activas.
+    aulas_db = [a for a in session.exec(select(_Aula)).all() if a.activa]
     aula_meta = {a.id: a for a in aulas_db}
     aulas_por_sede_cat: dict[str, dict[str, list[str]]] = {}
     for a in aulas_db:

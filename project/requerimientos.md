@@ -43,6 +43,7 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
 | RF-CAT-02 | CRUD de materias con horas de teoría/laboratorio, virtual, marca de recursado por materia. | ✅ | `1. Diseño/modelo-planificacion-cursada.md` |
 | RF-CAT-03 | Carga inicial desde Excel (`scripts/load_initial_data.py`). | ✅ | `2. Desarrollo/CARGA_DATOS_INICIALES.md` |
 | RF-CAT-04 | CRUD de aulas asociadas a sede, con tipo (teorica/practica/laboratorio/anfiteatro) y capacidad. | ✅ | `app/pages/2_🏛️_Aulas.py` |
+| RF-CAT-12 | **Aulas desactivadas** (2026-10-02). Un aula puede marcarse como inactiva (`AulaDB.activa = False`) sin borrarla. El asignador no la incluye en el modelo, la verificación previa y las métricas no la cuentan como oferta y la reasignación manual no la ofrece ni la acepta. Los planes que ya la tienen asignada la conservan hasta la próxima corrida del asignador; si un horario estaba fijado a mano en ella, la verificación previa lo informa como fijación inválida (R9). | ✅ | `src/database/models.py:AulaDB`, `src/services/asignacion_aulas_service.py:build_inputs`, `tests/test_aulas_inactivas.py` |
 | RF-CAT-05 | CRUD de sedes (renombrar, fusionar, borrar si no tiene aulas). | ✅ | `app/pages/2_🏛️_Aulas.py` |
 | RF-CAT-06 | Compatibilidad M:N materia ↔ laboratorio (`MateriaLaboratorioDB`). | ✅ | `1. Diseño/modelo-planificacion-cursada.md` |
 | RF-CAT-07 | Versionado de planes de estudio por carrera (`PlanCarreraVersionDB`). | ✅ | `1. Diseño/modelo-planificacion-cursada.md` |

@@ -259,6 +259,26 @@ aparece una sección adicional debajo del formulario, llamada
 Esta lista es la que el asignador consulta cuando tiene que asignar
 aula a un patrón semanal de tipo laboratorio.
 
+### Desactivar un aula (sin borrarla)
+
+Si un aula deja de estar disponible (obras, cambio de destino) pero
+algún plan ya la tiene asignada, conviene desactivarla en lugar de
+borrarla.
+
+1. Andá a **👁️ Ver detalle**, elegí el aula.
+2. En el formulario de edición, destildá **Activa** y apretá
+   **Guardar cambios**.
+3. Verificación: en **📋 Listado** la columna **Activa** dice "No
+   (desactivada)".
+
+Un aula desactivada no la usa el asignador ni se ofrece al cambiar un
+aula a mano. Los planes que ya la tienen asignada la conservan hasta
+que se vuelva a correr el asignador, que reubica esos horarios. Si un
+horario estaba fijado a mano en esa aula, la verificación de
+factibilidad lo avisa como una fijación que ya no es válida: liberala
+desde el panel de asignaciones manuales protegidas. Para volver a
+usarla, tildá de nuevo **Activa**.
+
 ### Eliminar un aula
 
 1. Andá a **👁️ Ver detalle**, elegí el aula.

@@ -225,13 +225,16 @@ def check_factibilidad_estructural(
         ))
         return reporte
 
-    aulas_db = list(session.exec(select(AulaDB)).all())
+    # La oferta son sólo las aulas activas; los datos de todas se
+    # conservan para nombrar un aula desactivada que tenga un pin.
+    aulas_todas = list(session.exec(select(AulaDB)).all())
+    aulas_db = [a for a in aulas_todas if a.activa]
     aulas_slots = [
         AulaSlot(id=a.id, tipo=a.tipo, capacidad=a.capacidad)
         for a in aulas_db
     ]
-    aula_by_id = {a.id: a for a in aulas_db}
-    aula_sede_id = {a.id: a.sede_id for a in aulas_db}
+    aula_by_id = {a.id: a for a in aulas_todas}
+    aula_sede_id = {a.id: a.sede_id for a in aulas_todas}
     aulas_lab_ids_total = {a.id for a in aulas_db if a.tipo == "laboratorio"}
 
     sedes_db = list(session.exec(select(SedeDB)).all())

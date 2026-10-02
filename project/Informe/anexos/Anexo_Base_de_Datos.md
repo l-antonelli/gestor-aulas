@@ -298,6 +298,7 @@ Datos base estables y de larga vigencia.
 | `capacidad` | `int` | `gt=0` | un guion largo | Capacidad nominal (número de asientos). |
 | `tipo` | `str` | un guion largo | `"teorica"` | Tipo: `"teorica"`, `"laboratorio"`, etc. |
 | `descripcion` | `str` | un guion largo | `""` | Descripción libre (equipamiento, etc.). |
+| `activa` | `bool` | `index=True` | `True` | Si es `False`, el aula está desactivada: el asignador no la usa ni se ofrece en la reasignación manual, pero se conserva para los planes que ya la tienen asignada. |
 
 **Invariantes**:
 

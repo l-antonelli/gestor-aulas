@@ -428,6 +428,10 @@ class AulaDB(SQLModel, table=True):
     capacidad: int = Field(gt=0)
     tipo: str = Field(default="teorica")
     descripcion: str = Field(default="")
+    # Un aula desactivada no la usa el asignador ni se ofrece en la
+    # reasignación manual, pero se conserva para los planes que ya la
+    # tienen asignada (en lugar de borrarla).
+    activa: bool = Field(default=True, index=True)
 
     # Relationships (none currently active)
 

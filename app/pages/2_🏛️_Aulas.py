@@ -91,11 +91,16 @@ def _render_tab_listado(session) -> None:
             "Nombre": a.nombre,
             "Capacidad": a.capacidad,
             "Tipo": a.tipo,
+            "Activa": "Sí" if a.activa else "No (desactivada)",
         }
         for a in aulas
     ]
     st.dataframe(rows, width="stretch", hide_index=True)
-    st.caption(f"Total: {len(aulas)} aula(s).")
+    n_inactivas = sum(1 for a in aulas if not a.activa)
+    st.caption(
+        f"Total: {len(aulas)} aula(s)"
+        + (f", {n_inactivas} desactivada(s): el asignador no las usa." if n_inactivas else ".")
+    )
 
 
 # =============================================================================
@@ -307,6 +312,17 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
             key=f"{key_prefix}_desc",
             height=100,
         )
+        new_activa = st.checkbox(
+            "Activa",
+            value=bool(aula.activa),
+            key=f"{key_prefix}_activa",
+            help=(
+                "Un aula desactivada no la usa el asignador ni se ofrece "
+                "al cambiar un aula a mano, pero no se borra: los planes "
+                "que ya la tienen asignada la conservan hasta la próxima "
+                "corrida del asignador."
+            ),
+        )
 
     changed = (
         new_nombre.strip() != aula.nombre
@@ -315,6 +331,7 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
         or int(new_capacidad) != aula.capacidad
         or new_tipo != aula.tipo
         or (new_descripcion or "") != (aula.descripcion or "")
+        or bool(new_activa) != bool(aula.activa)
     )
     if not changed:
         st.caption("Sin cambios.")
@@ -342,6 +359,7 @@ def _render_aula_edit_form(session, aula: AulaDB, key_prefix: str) -> None:
         aula.capacidad = int(new_capacidad)
         aula.tipo = new_tipo
         aula.descripcion = new_descripcion or ""
+        aula.activa = bool(new_activa)
         session.add(aula)
         session.commit()
         st.toast(f"Aula '{aula.codigo_aula}' actualizada.")

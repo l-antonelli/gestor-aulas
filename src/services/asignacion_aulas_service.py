@@ -223,7 +223,8 @@ def build_inputs(
     if plan is None:
         raise ValueError(f"Plan '{plan_id}' no encontrado")
 
-    aulas_db = list(session.exec(select(AulaDB)).all())
+    # Las aulas desactivadas no entran al modelo (ver AulaDB.activa).
+    aulas_db = list(session.exec(select(AulaDB).where(AulaDB.activa == True)).all())  # noqa: E712
     aulas = [
         AulaSlot(id=a.id, tipo=a.tipo, capacidad=a.capacidad)
         for a in aulas_db
@@ -2570,6 +2571,13 @@ def _validar_aula_para_horario(
     res = ValidationResult(ok=True)
     tipo_clase = tipo_objetivo if tipo_objetivo is not None else horario.tipo_clase
 
+    if not aula.activa:
+        res.ok = False
+        res.errores.append(
+            f"El aula '{aula.nombre}' está desactivada: no se puede asignar."
+        )
+        return res
+
     # Compatibilidad tipo<->aula.
     if tipo_clase == "laboratorio":
         comision = session.get(ComisionDB, horario.comision_id)
@@ -2764,7 +2772,8 @@ def get_aulas_disponibles_para_horario(
     materia_codigo = comision.materia_codigo if comision else None
 
     aulas_db = list(session.exec(
-        select(AulaDB).order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
+        select(AulaDB).where(AulaDB.activa == True)  # noqa: E712 (las desactivadas no se ofrecen)
+        .order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
     ).all())
 
     # Filtrado por tipo.
@@ -2996,7 +3005,8 @@ def get_aulas_todas_para_horario(
     materia_codigo = comision.materia_codigo if comision else None
 
     aulas_db = list(session.exec(
-        select(AulaDB).order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
+        select(AulaDB).where(AulaDB.activa == True)  # noqa: E712 (las desactivadas no se ofrecen)
+        .order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
     ).all())
 
     # Filtrado por tipo.

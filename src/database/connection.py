@@ -192,6 +192,9 @@ def _run_migrations(eng):
         # `details_json["horarios_fuera_config"]`. Warning, no
         # bloqueante.
         "ALTER TABLE schedule_validations ADD COLUMN n_horarios_fuera_config INTEGER NOT NULL DEFAULT 0",
+        # Aulas desactivadas (2026-10-02): el asignador no las usa, pero
+        # se conservan para los planes que ya las tienen asignadas.
+        "ALTER TABLE aulas ADD COLUMN activa BOOLEAN NOT NULL DEFAULT 1",
     ]
     with eng.connect() as conn:
         for sql in migrations:
