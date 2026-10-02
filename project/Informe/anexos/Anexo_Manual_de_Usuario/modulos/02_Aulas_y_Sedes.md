@@ -135,6 +135,25 @@ Grupos de materias**: cada grupo tiene su modo (DURO o BLANDO) y su lista
 de sedes, y cada materia pertenece a exactamente un grupo. Lo único que
 tenés que hacer en esta página es que las sedes existan antes de armar esas listas.
 
+### Configurar el horario de una sede
+
+Por defecto todas las sedes usan el horario general. Si una sede abre
+más tarde o cierra más temprano, se le puede cargar un horario propio.
+
+1. En la solapa **📍 Sedes**, abrí **"🕒 Horario de la sede"**.
+2. Elegí la sede, tildá **Horario propio** y cargá la **Apertura** y el
+   **Cierre**.
+3. Apretá **Guardar horario**. La apertura tiene que ser anterior al
+   cierre.
+4. Verificación: en la tabla de sedes, la columna **Horario** muestra
+   la franja cargada ("General" si usa el horario general).
+
+Con horario propio, el asignador no pone en las aulas de esa sede
+ningún horario que empiece antes de la apertura o termine después del
+cierre, y esas aulas tampoco se ofrecen al cambiar un aula a mano para
+esos horarios. Para volver al horario general, destildá **Horario
+propio** y guardá.
+
 ### Fusionar dos sedes
 
 Sirve para consolidar cuando alguien creó una sede con el nombre mal

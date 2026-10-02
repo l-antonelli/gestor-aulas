@@ -290,6 +290,12 @@ class SedeDB(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     nombre: str = Field(min_length=1, unique=True, index=True)
     es_default_comunes: bool = Field(default=False, index=True)
+    # Horario operativo propio de la sede (2026-10-02). Vacío = sin
+    # restricción adicional (rige la configuración horaria general).
+    # Si está cargado, un horario que empieza antes de la apertura o
+    # termina después del cierre no puede ir a un aula de esta sede.
+    hora_apertura: Optional[time] = Field(default=None)
+    hora_cierre: Optional[time] = Field(default=None)
 
 
 class CarreraSedeDB(SQLModel, table=True):

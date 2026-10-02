@@ -21,11 +21,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import time
+from typing import Optional
 
 
 # =============================================================================
 # Datos mínimos requeridos para el cálculo
 # =============================================================================
+
+
+def dentro_del_horario_de_sede(
+    hora_inicio: time,
+    hora_fin: time,
+    apertura: Optional[time],
+    cierre: Optional[time],
+) -> bool:
+    """True si un horario cae dentro del horario operativo de una sede.
+
+    Un límite vacío (None) no restringe: una sede sin horario propio
+    admite cualquier horario (rige la configuración general).
+    """
+    if apertura is not None and hora_inicio < apertura:
+        return False
+    if cierre is not None and hora_fin > cierre:
+        return False
+    return True
 
 @dataclass(frozen=True)
 class HorarioSlot:

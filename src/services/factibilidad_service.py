@@ -268,6 +268,20 @@ def check_factibilidad_estructural(
         labs_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas_slots:
             compat[(h.id, a.id)] = compute_compat(h, a, labs_m)
+    # Horario operativo por sede (idéntico a build_inputs).
+    from src.database.models import SedeDB as _SedeHorario
+    from src.services.asignacion_aulas_helpers import dentro_del_horario_de_sede
+    _sedes_horario = {
+        s.id: (s.hora_apertura, s.hora_cierre)
+        for s in session.exec(select(_SedeHorario)).all()
+        if s.hora_apertura is not None or s.hora_cierre is not None
+    }
+    if _sedes_horario:
+        for h in horarios_slots:
+            for a in aulas_slots:
+                lim = _sedes_horario.get(aula_sede_id.get(a.id))
+                if lim and not dentro_del_horario_de_sede(h.hora_inicio, h.hora_fin, *lim):
+                    compat[(h.id, a.id)] = False
     for h in horarios_slots:
         admis = _sedes_admis_del_horario(h.id)
         if admis is None:

@@ -526,10 +526,18 @@ def _render_tab_sedes(session) -> None:
     for a in aulas_all:
         n_aulas_por_sede[a.sede_id] = n_aulas_por_sede.get(a.sede_id, 0) + 1
 
+    def _horario(sd: SedeDB) -> str:
+        if sd.hora_apertura is None and sd.hora_cierre is None:
+            return "General"
+        ap = sd.hora_apertura.strftime("%H:%M") if sd.hora_apertura else "—"
+        ci = sd.hora_cierre.strftime("%H:%M") if sd.hora_cierre else "—"
+        return f"{ap} a {ci}"
+
     rows = [
         {
             "Sede": s.nombre,
             "Aulas": n_aulas_por_sede.get(s.id, 0),
+            "Horario": _horario(s),
         }
         for s in sedes
     ]
@@ -567,6 +575,54 @@ def _render_tab_sedes(session) -> None:
 
     if not sedes:
         return
+
+    # Horario operativo por sede
+    with st.expander("🕒 Horario de la sede"):
+        st.caption(
+            "Por defecto una sede usa el **horario general** de la "
+            "configuración horaria. Si cargás un horario propio, el "
+            "asignador no pone en sus aulas ningún horario que empiece "
+            "antes de la apertura o termine después del cierre, y "
+            "tampoco se ofrecen al cambiar un aula a mano."
+        )
+        hs_id = st.selectbox(
+            "Sede",
+            options=[s.id for s in sedes],
+            format_func=lambda x: next(s.nombre for s in sedes if s.id == x),
+            key="sede_horario_select",
+        )
+        hs = next((s for s in sedes if s.id == hs_id), None)
+        if hs is not None:
+            propio = st.checkbox(
+                "Horario propio",
+                value=hs.hora_apertura is not None or hs.hora_cierre is not None,
+                key=f"sede_horario_propio_{hs.id}",
+            )
+            from datetime import time as _time
+            c1, c2 = st.columns(2)
+            with c1:
+                ap = st.time_input(
+                    "Apertura", value=hs.hora_apertura or _time(7, 0),
+                    step=900, disabled=not propio, key=f"sede_ap_{hs.id}",
+                )
+            with c2:
+                ci = st.time_input(
+                    "Cierre", value=hs.hora_cierre or _time(23, 0),
+                    step=900, disabled=not propio, key=f"sede_ci_{hs.id}",
+                )
+            if st.button("Guardar horario", type="primary", key=f"sede_horario_btn_{hs.id}"):
+                if propio and ap >= ci:
+                    st.error("La apertura tiene que ser anterior al cierre.")
+                else:
+                    hs.hora_apertura = ap if propio else None
+                    hs.hora_cierre = ci if propio else None
+                    session.add(hs)
+                    session.commit()
+                    st.toast(
+                        f"Horario de {hs.nombre}: "
+                        + (f"{ap.strftime('%H:%M')} a {ci.strftime('%H:%M')}." if propio else "el general.")
+                    )
+                    st.rerun()
 
     # Renombrar / borrar sede
     with st.expander("✏️ Renombrar / borrar sede"):

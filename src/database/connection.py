@@ -195,6 +195,9 @@ def _run_migrations(eng):
         # Aulas desactivadas (2026-10-02): el asignador no las usa, pero
         # se conservan para los planes que ya las tienen asignadas.
         "ALTER TABLE aulas ADD COLUMN activa BOOLEAN NOT NULL DEFAULT 1",
+        # Horario operativo por sede (2026-10-02): vacío = sin restricción.
+        "ALTER TABLE sedes ADD COLUMN hora_apertura TIME DEFAULT NULL",
+        "ALTER TABLE sedes ADD COLUMN hora_cierre TIME DEFAULT NULL",
     ]
     with eng.connect() as conn:
         for sql in migrations:

@@ -269,10 +269,13 @@ Datos base estables y de larga vigencia.
 |---------|------|-------------|-------------------|-------------|
 | `id` | `str` | PK, UUID | `uuid4()` | Identificador opaco. |
 | `nombre` | `str` | `unique=True`, `index=True`, `min_length=1` | un guion largo | Nombre único globalmente. |
+| `hora_apertura` | `Optional[time]` | un guion largo | `None` | Apertura propia de la sede. Vacía = sin restricción (rige el horario general). |
+| `hora_cierre` | `Optional[time]` | un guion largo | `None` | Cierre propio de la sede. Vacío = sin restricción. |
 
 **Invariantes**:
 
 - **INV-SEDE-1**: `nombre` es único globalmente (restricción física).
+- **INV-SEDE-2**: si la sede tiene horario propio, ningún horario que empiece antes de `hora_apertura` o termine después de `hora_cierre` se asigna a sus aulas (lo garantizan el asignador y la reasignación manual; la interfaz exige apertura anterior al cierre).
 
 **Relaciones**:
 

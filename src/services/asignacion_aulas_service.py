@@ -42,6 +42,7 @@ from src.database.models import (
     MateriaDB,
     MateriaLaboratorioDB,
     PlanificacionCursadaDB,
+    SedeDB,
 )
 from src.services.asignacion_aulas_helpers import (
     AulaSlot,
@@ -49,6 +50,7 @@ from src.services.asignacion_aulas_helpers import (
     InfeasibilityDiagnosis,
     ValidationResult,
     compute_compat,
+    dentro_del_horario_de_sede,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
     validar_particion_factible,
@@ -423,6 +425,20 @@ def build_inputs(
         lab_aulas_m = materia_lab_map.get(h.materia_codigo, set())
         for a in aulas:
             compat[(h.id, a.id)] = compute_compat(h, a, lab_aulas_m)
+
+    # Horario operativo por sede: un aula de una sede cerrada en la
+    # franja del horario no es compatible (vale también para labs).
+    _sedes_horario = {
+        s.id: (s.hora_apertura, s.hora_cierre)
+        for s in session.exec(select(SedeDB)).all()
+        if s.hora_apertura is not None or s.hora_cierre is not None
+    }
+    if _sedes_horario:
+        for h in horarios:
+            for a in aulas:
+                lim = _sedes_horario.get(aula_sede_id.get(a.id))
+                if lim and not dentro_del_horario_de_sede(h.hora_inicio, h.hora_fin, *lim):
+                    compat[(h.id, a.id)] = False
 
     # R8 — Restricción de sede vía Grupo de Materias.
     #
@@ -2553,6 +2569,30 @@ def aplicar_alpha_propuesto(
 # =============================================================================
 
 
+def _fmt_franja_sede(sede: SedeDB) -> str:
+    ap = sede.hora_apertura.strftime("%H:%M") if sede.hora_apertura else "sin apertura"
+    ci = sede.hora_cierre.strftime("%H:%M") if sede.hora_cierre else "sin cierre"
+    return f"{ap} a {ci}"
+
+
+def _filtrar_por_horario_de_sede(
+    session: Session, aulas: list[AulaDB], horario: HorarioDB,
+) -> list[AulaDB]:
+    """Quita las aulas de sedes cerradas en la franja del horario."""
+    limites = {
+        s.id: (s.hora_apertura, s.hora_cierre)
+        for s in session.exec(select(SedeDB)).all()
+        if s.hora_apertura is not None or s.hora_cierre is not None
+    }
+    if not limites:
+        return aulas
+    return [
+        a for a in aulas
+        if a.sede_id not in limites
+        or dentro_del_horario_de_sede(horario.hora_inicio, horario.hora_fin, *limites[a.sede_id])
+    ]
+
+
 def _validar_aula_para_horario(
     session: Session,
     horario: HorarioDB,
@@ -2575,6 +2615,17 @@ def _validar_aula_para_horario(
         res.ok = False
         res.errores.append(
             f"El aula '{aula.nombre}' está desactivada: no se puede asignar."
+        )
+        return res
+
+    sede = session.get(SedeDB, aula.sede_id)
+    if sede is not None and not dentro_del_horario_de_sede(
+        horario.hora_inicio, horario.hora_fin, sede.hora_apertura, sede.hora_cierre,
+    ):
+        res.ok = False
+        res.errores.append(
+            f"El aula '{aula.nombre}' está fuera del horario de la sede "
+            f"{sede.nombre} ({_fmt_franja_sede(sede)})."
         )
         return res
 
@@ -2775,6 +2826,7 @@ def get_aulas_disponibles_para_horario(
         select(AulaDB).where(AulaDB.activa == True)  # noqa: E712 (las desactivadas no se ofrecen)
         .order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
     ).all())
+    aulas_db = _filtrar_por_horario_de_sede(session, aulas_db, horario)
 
     # Filtrado por tipo.
     compat: list[AulaDB] = []
@@ -3008,6 +3060,7 @@ def get_aulas_todas_para_horario(
         select(AulaDB).where(AulaDB.activa == True)  # noqa: E712 (las desactivadas no se ofrecen)
         .order_by(AulaDB.capacidad)  # type: ignore[attr-defined]
     ).all())
+    aulas_db = _filtrar_por_horario_de_sede(session, aulas_db, horario)
 
     # Filtrado por tipo.
     compat: list[AulaDB] = []
