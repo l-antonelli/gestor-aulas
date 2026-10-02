@@ -57,12 +57,12 @@ este trabajo:
 - **Teoría de las organizaciones**: un vocabulario para describir cómo
   se estructura una organización y cómo se coordina su operación
   (Mintzberg y Chiavenato, presentados en la introducción).
-- **Análisis y modelado de procesos**: diagramas de flujo, cursogramas,
+- [**Análisis y modelado de procesos**: diagramas de flujo, cursogramas,
   la notación BPMN (Modelo y Notación de Procesos de Negocio, del
   inglés *Business Process Model and Notation*) y los diagramas SIPOC
   (proveedor, entrada, proceso, salida, cliente) hacen visibles los
   pasos, responsables, entradas y salidas de cada actividad. En la
-  sección 3.3 se aplican al proceso actual de asignación de aulas.
+  sección 3.3 se aplican al proceso actual de asignación de aulas.]{.revisar}
 
 - **Ingeniería de métodos y mejora continua**: análisis de valor,
   cinco porqués o el ciclo planificar-hacer-verificar-actuar, para

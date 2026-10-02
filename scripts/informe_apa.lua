@@ -19,6 +19,14 @@ local function resaltar(bloques)
   }).content
 end
 
+-- `[texto]{.revisar}`: lo mismo para un fragmento dentro de un párrafo o
+-- de un ítem de lista, sin romper la lista.
+function Span(sp)
+  if sp.classes:includes("revisar") then
+    return pandoc.Span(sp.content, {["custom-style"] = "Resaltado"})
+  end
+end
+
 function Div(d)
   if d.classes:includes("revisar") then
     return resaltar(d.content)
