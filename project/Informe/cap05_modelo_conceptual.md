@@ -194,7 +194,7 @@ familia.
 
 #### 3.5.5.1 Reglas estructurales
 
-- Todo horario semanal pertenece a exactamente una comisión.
+- Toda clase pertenece a exactamente una comisión.
 - Toda comisión pertenece a exactamente una materia y a un plan de
   cursada.
 - Todo dictado pertenece a una materia y se vincula con uno o dos
@@ -205,7 +205,7 @@ familia.
 
 #### 3.5.5.2 Regla de virtualidad jerárquica
 
-Un horario *virtual* se dicta a distancia y no consume aula. La
+Una clase *virtual* se dicta a distancia y no consume aula. La
 virtualidad puede declararse en tres niveles: en la **materia** (se
 dicta virtual por diseño), en el **dictado** (es virtual sólo ese
 cuatrimestre) o en el **horario semanal** (un encuentro puntual de

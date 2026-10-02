@@ -82,8 +82,7 @@ severidades, y esa distinción ordena el trabajo del usuario:
   materias en el grupo "sin clasificar" (§3.6.4.4): el asignador
   puede correr igual, pero la clasificación debería completarse.
 - **Informativa**: comunica algo que ocurrió sin exigir acción,
-  como la eliminación automática de una excepción que dejó de
-  aplicar.
+  como que un horario haya quedado asignado a mano a un aula de una sede distinta de la que su materia tiene configurada por el grupo.
 
 La interfaz distingue las severidades por color (rojo, amarillo y
 azul) y las lista en ese orden. Los mensajes son específicos y

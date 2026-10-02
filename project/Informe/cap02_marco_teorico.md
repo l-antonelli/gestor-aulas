@@ -16,7 +16,7 @@ como muestra la Figura @fig:cadena.
 <!-- figura: Cadena de disciplinas que articula el proyecto {#fig:cadena} -->
 ```mermaid
 flowchart LR
-    C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>estudio del trabajo, BPMN"]
+    C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>BPMN"]
     C2["<b>Diseño guiado<br/>por el dominio (DDD)</b><br/><br/>Entidades, invariantes,<br/>lenguaje ubicuo"]
     C3["<b>Investigación de operaciones<br/>y matemática aplicada</b><br/><br/>Programación lineal entera,<br/>teoría de grafos,<br/>combinatoria"]
 
@@ -63,10 +63,7 @@ este trabajo:
   (proveedor, entrada, proceso, salida, cliente) hacen visibles los
   pasos, responsables, entradas y salidas de cada actividad. En la
   sección 3.3 se aplican al proceso actual de asignación de aulas.
-- **Estudio del trabajo y medición**: descomposición de tareas en
-  operaciones elementales, medición de tiempos e identificación de
-  cuellos de botella; la base cuantitativa para caracterizar volumen,
-  ritmo y capacidad.
+
 - **Ingeniería de métodos y mejora continua**: análisis de valor,
   cinco porqués o el ciclo planificar-hacer-verificar-actuar, para
   identificar desperdicios y oportunidades de simplificación. Aquí

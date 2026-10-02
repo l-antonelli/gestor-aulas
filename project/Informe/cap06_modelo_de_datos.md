@@ -117,7 +117,7 @@ pueden convivir varias versiones vigentes, una por cada cohorte de
 estudiantes, y siempre se puede reconstruir el plan que se le
 prometió a una cohorte aunque luego haya cambiado.
 
-#### 3.6.4.2 Comisión con dos posibles pertenencias
+#### 3.6.4.2 Comisiones
 
 La comisión es una entidad con tabla propia, porque el usuario
 necesita editar sus atributos (nombre, cupo, carrera a la que se
@@ -171,7 +171,12 @@ corrida del asignador se elige cuál aplicar.
 
 El usuario puede marcar pares de materias cuyo solapamiento
 horario se acepta deliberadamente, por ejemplo porque en la
-práctica no comparten alumnos. Cada excepción se guarda asociada a
+práctica no comparten alumnos. Un caso real es el de la Tecnicatura
+Universitaria en Inteligencia Artificial: "Matemática" e
+"Introducción a la Matemática" figuran en planes de estudio
+distintos de la carrera y son, en la práctica, la misma materia;
+ningún alumno cursa las dos, así que su superposición horaria no es
+un conflicto. Cada excepción se guarda asociada a
 un cronograma o a un plan de cursada. Cuando las materias del par
 dejan de coincidir, la excepción pierde sentido y el sistema la
 descarta en la siguiente validación, informándolo al usuario.

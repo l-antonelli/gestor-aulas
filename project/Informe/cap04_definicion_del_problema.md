@@ -101,7 +101,7 @@ del cuatrimestre en el mismo día y rango horario. Un horario semanal
 corresponde a una comisión de una materia, tiene un día, una hora de
 inicio y una de fin, y es de teoría o de laboratorio (tipo que puede
 venir fijado por el cronograma o quedar por decidir). La sección 3.5
-formaliza esta noción.
+formaliza esta noción. De acá en adelante usamos indistintamente *clase* y *horario*: en este sistema, que no trabaja con fechas, son lo mismo.
 
 La elección es una cuestión de economía: un cuatrimestre tiene
 cientos de horarios semanales pero miles de clases con fecha. Como
@@ -221,7 +221,7 @@ restricciones blandas:
 - **Aulas no desaprovechadas.** Poner 30 alumnos en un anfiteatro
   para 200 es admisible pero indeseable: se penaliza, con menos
   peso que la sobreocupación, para reservar las aulas grandes a
-  quienes las necesitan.
+  quienes las puedan necesitar a futuro y no asignarlas innecesariamente a clases que no las aprovechen.
 
 ### 3.4.5 Criterio de calidad
 
@@ -284,11 +284,21 @@ información más precisa.
 #### 3.4.7.1 Naturaleza combinatoria
 
 Un cuatrimestre de la FCEIA involucra varios cientos de horarios
-semanales y varias decenas de aulas. Si cualquier combinación fuera
-admisible, la cantidad de asignaciones posibles sería del orden de
-`aulas^horarios`: un número astronómico, muchos órdenes de magnitud
-mayor que la cantidad de átomos del universo observable, que vuelve
-imposible cualquier enumeración exhaustiva.
+semanales y varias decenas de aulas. En el primer cuatrimestre de
+2026, por ejemplo, hay 546 horarios presenciales y 53 aulas. Si
+cualquier combinación fuera admisible, cada horario podría ir a
+cualquiera de las 53 aulas, y la cantidad de asignaciones posibles
+sería 53 multiplicado por sí mismo 546 veces (`53^546`): un número
+de más de 900 cifras. Para dar una idea, la cantidad de átomos del
+universo observable se estima en un número de unas 80 cifras.
+Ninguna enumeración exhaustiva puede recorrer algo así.
+
+El programa lineal de ese mismo cuatrimestre (sección 3.8) tiene
+13.697 variables, de las cuales 12.429 son binarias (casi todas
+indican si un horario va a un aula compatible), y 6.952
+restricciones. Es un modelo imposible de resolver a mano, pero de un
+tamaño que un resolutor moderno maneja sin problemas: la corrida de
+ese cuatrimestre tardó menos de un minuto.
 
 Las restricciones de §3.4.4 descartan la mayoría de esas
 combinaciones, pero lo que queda sigue siendo demasiado para
