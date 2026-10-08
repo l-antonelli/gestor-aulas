@@ -124,31 +124,46 @@ la estructura fijada en [`Informe/estructura.md`](./Informe/estructura.md).
 - [`Informe/intro.md`](./Informe/intro.md) — Borrador de la
   introducción.
 
-### Capítulos redactados
+### Partes del informe
 
-| Capítulo | Archivo | Estado |
-|---|---|---|
-| 2 — Marco teórico | [`Informe/cap02_marco_teorico.md`](./Informe/cap02_marco_teorico.md) | ✅ Redactado. |
-| 3 — La organización y su operatoria | [`Informe/cap03_organizacion_y_operatoria.md`](./Informe/cap03_organizacion_y_operatoria.md) | ✅ Redactado. |
-| 4 — Definición del problema | [`Informe/cap04_definicion_del_problema.md`](./Informe/cap04_definicion_del_problema.md) | ✅ Redactado. |
-| 5 — Modelo conceptual | [`Informe/cap05_modelo_conceptual.md`](./Informe/cap05_modelo_conceptual.md) | ✅ Redactado. |
-| 6 — Modelo de datos | [`Informe/cap06_modelo_de_datos.md`](./Informe/cap06_modelo_de_datos.md) | ✅ Redactado. |
-| 7 — Arquitectura de la solución | [`Informe/cap07_arquitectura.md`](./Informe/cap07_arquitectura.md) | ✅ Redactado. |
-| 8 — El problema como programa lineal entero | [`Informe/cap08_programa_lineal.md`](./Informe/cap08_programa_lineal.md) | ✅ Redactado. |
-| 9 — Validaciones y garantías de consistencia | [`Informe/cap09_validaciones.md`](./Informe/cap09_validaciones.md) | ✅ Redactado. |
-| 1 — Introducción | — | ⏳ Pendiente (se redacta al final). |
-| 10 — La herramienta en acción | — | ⏳ Pendiente (requiere capturas de UI). |
-| 11 — Análisis y discusión | — | ⏳ Pendiente. |
-| 12 — Conclusiones | — | ⏳ Pendiente. |
+El informe completo se arma con `python -m scripts.drive informe`
+(orden en `ORDEN_INFORME` de `scripts/exportar_informe_docx.py`) y se
+publica en el Google Doc "Informe". El usuario lo edita a mano en el
+Doc; antes de tocar los fuentes se corre `python -m scripts.drive
+traer` (ver `CLAUDE.md`, 8.b).
+
+| Parte | Archivo |
+|---|---|
+| Carátula, advertencia e índice | [`Informe/preliminares.md`](./Informe/preliminares.md) |
+| 1. Prólogo | [`Informe/prologo.md`](./Informe/prologo.md) |
+| 2. Síntesis inicial | [`Informe/sintesis_inicial.md`](./Informe/sintesis_inicial.md) |
+| 3. Desarrollo · 3.1 Introducción | [`Informe/intro.md`](./Informe/intro.md) |
+| 3.2 Marco teórico | [`Informe/cap02_marco_teorico.md`](./Informe/cap02_marco_teorico.md) |
+| 3.3 La organización y su operatoria | [`Informe/cap03_organizacion_y_operatoria.md`](./Informe/cap03_organizacion_y_operatoria.md) |
+| 3.4 Definición del problema | [`Informe/cap04_definicion_del_problema.md`](./Informe/cap04_definicion_del_problema.md) |
+| 3.5 El modelo conceptual | [`Informe/cap05_modelo_conceptual.md`](./Informe/cap05_modelo_conceptual.md) |
+| 3.6 Del dominio al modelo de datos | [`Informe/cap06_modelo_de_datos.md`](./Informe/cap06_modelo_de_datos.md) |
+| 3.7 Arquitectura de la solución | [`Informe/cap07_arquitectura.md`](./Informe/cap07_arquitectura.md) |
+| 3.8 El problema de asignación como programa lineal entero | [`Informe/cap08_programa_lineal.md`](./Informe/cap08_programa_lineal.md) |
+| 3.9 Validaciones y garantías de consistencia | [`Informe/cap09_validaciones.md`](./Informe/cap09_validaciones.md) |
+| 3.10 Caso ensayado: primer cuatrimestre de 2026 | [`Informe/cap10_herramienta_en_accion.md`](./Informe/cap10_herramienta_en_accion.md) |
+| 3.11 Análisis y discusión | [`Informe/cap11_analisis_y_discusion.md`](./Informe/cap11_analisis_y_discusion.md) |
+| 4. Conclusiones | [`Informe/cap12_conclusiones.md`](./Informe/cap12_conclusiones.md) |
+| 5. Bibliografía | [`Informe/bibliografia.md`](./Informe/bibliografia.md) |
+| 6. Anexos (índice) | [`Informe/anexos_indice.md`](./Informe/anexos_indice.md) |
 
 ### Anexos
 
-| Anexo | Contenido | Estado |
-|---|---|---|
-| [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md) | **Referencia técnica exhaustiva** de la base de datos: ficha por tabla, invariantes, migraciones, políticas de borrado, snapshots, change log. | ✅ Redactado. |
-| [`Informe/anexos/Anexo_Manual_de_Usuario/`](./Informe/anexos/Anexo_Manual_de_Usuario/) | **Manual de usuario completo**: introducción, primeros pasos, flujos operativos (setup inicial, armar un ciclo, reasignación de aulas, verificación pre-inicio) y módulos (materias, aulas, carreras, ciclos, planes, cronogramas, inscriptos, historial). | ✅ Redactado (pendiente pasada final tras revisión de UI). |
-| Anexo — Matriz de requerimientos | — | ⏳ Pendiente. Derivar de [`requerimientos.md`](./requerimientos.md). |
-| Anexo E — Desarrollo formal del programa lineal | — | ⏳ Pendiente. Consolidación del planteo formal del capítulo 8 con derivaciones exhaustivas. Fuente: [`1. Diseño/asignacion-aulas-LP.md`](./1.%20Diseño/asignacion-aulas-LP.md), [`2. Desarrollo/asignador_guia_operativa.md`](./2.%20Desarrollo/asignador_guia_operativa.md), [`2. Desarrollo/asignador_implementacion.md`](./2.%20Desarrollo/asignador_implementacion.md). |
+Se entregan como documentos separados en Drive (*Informe / Anexos*).
+
+| Anexo | Fuente |
+|---|---|
+| A. Documentación técnica (resumen técnico con remisiones al repositorio) | [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md) |
+| B. Desarrollo formal del programa lineal | [`1. Diseño/asignacion-aulas-LP.md`](./1.%20Diseño/asignacion-aulas-LP.md), [`2. Desarrollo/asignador_implementacion.md`](./2.%20Desarrollo/asignador_implementacion.md), [`2. Desarrollo/asignador_guia_operativa.md`](./2.%20Desarrollo/asignador_guia_operativa.md) |
+| C. Manual de usuario | [`Informe/anexos/Anexo_Manual_de_Usuario/`](./Informe/anexos/Anexo_Manual_de_Usuario/) |
+| D. Cronogramas del caso ensayado | [`Informe/anexos/Anexo_D_Cronogramas/`](./Informe/anexos/Anexo_D_Cronogramas/) |
+| E. Videos instructivos | Pendiente. |
+| F. Aplicación (ZIP portable de la versión 0.13.0) | [Release v0.13.0](https://github.com/l-antonelli/gestor-aulas/releases/tag/v0.13.0) |
 
 ### Material de soporte
 
@@ -211,7 +226,7 @@ la estructura fijada en [`Informe/estructura.md`](./Informe/estructura.md).
 **¿Cómo funciona el modelo de datos?**
 1. Vista general: [`1. Diseño/modelo-planificacion-cursada.md`](./1.%20Diseño/modelo-planificacion-cursada.md).
 2. Diagrama UML: [`1. Diseño/diagrama-entidades.md`](./1.%20Diseño/diagrama-entidades.md).
-3. Referencia exhaustiva por tabla: [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md).
+3. Resumen técnico (Anexo A): [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md).
 
 **¿Cómo se opera un ciclo lectivo?**
 1. Runbook operativo: [`2. Desarrollo/CICLOS_Y_DICTADOS.md`](./2.%20Desarrollo/CICLOS_Y_DICTADOS.md).

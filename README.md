@@ -13,7 +13,7 @@ cuando el cronograma no lo predetermina, el tipo de la clase. La
 aplicación es una interfaz web en Streamlit con toda la operatoria
 para gestionar el ciclo lectivo completo: carreras, materias,
 grupos de materias, planes de estudio versionados, cronogramas,
-comisiones, forecast de inscriptos y auditoría.
+comisiones, pronóstico de inscriptos y registro de cambios.
 
 ---
 
@@ -33,7 +33,7 @@ No hace falta instalar Python, ni saber usar la terminal, ni correr
 ### Paso a paso
 
 1. Entrar a la [**página de releases del proyecto**](https://github.com/l-antonelli/gestor-aulas/releases/latest).
-2. Descargar el asset **`gestor-aulas-vX.Y.Z-portable.zip`** (el que
+2. Descargar el archivo **`gestor-aulas-vX.Y.Z-portable.zip`** (el que
    dice "portable" en el nombre — trae los binarios listos para
    arrancar sin instalar nada).
 3. **Descomprimir el ZIP** en una carpeta cómoda (Escritorio,
@@ -52,7 +52,7 @@ No hace falta instalar Python, ni saber usar la terminal, ni correr
    <http://localhost:8501>. Si no se abre, pegar esa URL a mano.
 8. Para **cerrar** la aplicación: cerrar la ventana de terminal.
 
-Todas las instrucciones detalladas y el troubleshooting típico
+Todas las instrucciones detalladas y la solución de los problemas típicos
 están en el archivo `LEEME.txt` dentro del ZIP.
 
 ---
@@ -80,7 +80,7 @@ Para actualizar a una versión etiquetada:
 
 ```bash
 git fetch --tags
-git checkout v0.9.2   # o la versión más reciente
+git checkout v0.13.0   # o la versión más reciente
 ```
 
 ### Instalar dependencias
@@ -98,7 +98,7 @@ uv sync
 ```
 
 `uv sync` lee `pyproject.toml` + `uv.lock`, baja Python 3.11 si no
-está y arma un `.venv` con todas las dependencias pineadas al lock.
+está y arma un `.venv` con las versiones exactas de `uv.lock`.
 
 **Opción B — con `venv` + `pip`** (para quien no quiere instalar
 `uv`):
@@ -131,8 +131,10 @@ uv run pytest tests/     # con uv
 pytest tests/            # con el venv activado
 ```
 
-Todos los tests corren en verde y no requieren infraestructura
-externa (usan una base SQLite temporal en memoria).
+Los tests no requieren infraestructura externa: usan una base SQLite
+temporal en memoria. Hay un grupo conocido de tests del asignador
+(alrededor de 20) que fallan porque sus datos de prueba quedaron
+desalineados con el modelo actual; el resto pasa.
 
 ### Reinicializar la base de datos
 
@@ -187,20 +189,20 @@ gestor-aulas/
 ├── src/                        Código de la aplicación
 │   ├── database/               Modelos ORM y conexión
 │   ├── services/               Lógica de dominio
-│   ├── ui/                     Componentes reutilizables de UI
-│   └── domain/                 Entidades puras
+│   ├── ui/                     Componentes reutilizables de la interfaz
+│   └── domain/                 Entidades inmutables con validadores
 ├── data/                       Datos
 │   ├── database.db             Base SQLite (incluida en el repo)
 │   └── input/                  Excel de entrada
-├── scripts/                    Scripts CLI (load, audit, build ZIP)
-├── tests/                      Suite de tests
+├── scripts/                    Carga inicial, ZIP portable, informe y Drive
+├── tests/                      Tests automatizados
 ├── project/                    Documentación del proyecto
 │   └── README.md               Índice maestro de la documentación
 ├── start.command               Lanzador macOS (sólo en el ZIP portable)
 ├── start.bat                   Lanzador Windows (sólo en el ZIP portable)
 ├── LEEME.txt                   Instrucciones para el usuario final
 ├── pyproject.toml              Configuración del proyecto y dependencias
-├── uv.lock                     Lock file de versiones
+├── uv.lock                     Versiones exactas de las dependencias
 └── requirements.txt            Dependencias en formato pip (opcional)
 ```
 
@@ -217,11 +219,12 @@ maestro y remite a:
   y modelado conceptual inicial.
 - **Diseño de la solución** (`project/1. Diseño/`): modelo de datos,
   arquitectura, planteo formal del programa lineal.
-- **Detalles técnicos** (`project/2. Desarrollo/`): runbooks, guías
-  operativas del asignador, validaciones, ciclos y dictados,
+- **Detalles técnicos** (`project/2. Desarrollo/`): implementación y
+  guía operativa del asignador, validaciones, ciclos y dictados,
   distribución.
-- **Informe académico** (`project/Informe/`): capítulos redactados,
-  anexo de base de datos, manual de usuario.
+- **Informe académico** (`project/Informe/`): secciones del informe y
+  anexos (documentación técnica, manual de usuario, cronogramas del
+  caso ensayado).
 
 Referencias rápidas para arrancar:
 
