@@ -217,3 +217,5 @@ project/Informe/borradores/
 # y ZIP generado — no se commitean al repo, se suben como asset de release.
 bin/
 dist/
+# Instrucciones locales del asistente (no se versionan)
+CLAUDE.md
