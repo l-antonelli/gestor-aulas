@@ -1616,6 +1616,57 @@ def compute_pares_intersede_riesgo(
     return sorted(pares_set)
 
 
+def grupos_curriculares_por_horario(
+    session,
+    ciclo_id: Optional[str],
+    horarios: list[HorarioSlot],
+) -> dict[str, set[tuple[str, int, str]]]:
+    """horario_id → claves ``(carrera, año, cuatri)`` de los alumnos que
+    cursan la materia del horario, para los pares de R11 del alumno.
+
+    Lee ``PlanEstudioDB`` de las versiones de plan asociadas al ciclo,
+    sólo materias obligatorias, filtra por el cuatrimestre del ciclo y
+    suma las anuales de la misma carrera y año (mismo criterio que la
+    verificación del camino de cursada). La usan el asignador y la
+    verificación previa, para que las dos revisen los mismos pares.
+    """
+    from sqlmodel import select
+
+    from src.database.models import CicloDB, CicloPlanVersionDB, PlanEstudioDB
+
+    if not ciclo_id:
+        return {}
+    pv_ids = list(session.exec(
+        select(CicloPlanVersionDB.plan_version_id)
+        .where(CicloPlanVersionDB.ciclo_id == ciclo_id)
+    ).all())
+    if not pv_ids:
+        return {}
+    ciclo = session.get(CicloDB, ciclo_id)
+    cuatri_ciclo = f"{ciclo.numero}C" if ciclo else None
+    filas = session.exec(
+        select(PlanEstudioDB).where(
+            PlanEstudioDB.plan_version_id.in_(pv_ids)  # type: ignore[attr-defined]
+        )
+    ).all()
+    grupos_plan: dict[tuple[str, int, str], set[str]] = {}
+    for pe in filas:
+        if pe.anio_plan is None or pe.cuatrimestre_plan is None or pe.optativa:
+            continue
+        clave = (pe.carrera_codigo, pe.anio_plan, pe.cuatrimestre_plan)
+        grupos_plan.setdefault(clave, set()).add(pe.materia_codigo)
+    grupos_de_materia: dict[str, set[tuple[str, int, str]]] = {}
+    for (car, an, cu), mats in grupos_plan.items():
+        if cuatri_ciclo and cu != cuatri_ciclo:
+            continue
+        for mc in mats | grupos_plan.get((car, an, "Anual"), set()):
+            grupos_de_materia.setdefault(mc, set()).add((car, an, cu))
+    return {
+        h.id: gs for h in horarios
+        if (gs := grupos_de_materia.get(h.materia_codigo))
+    }
+
+
 def compute_heatmap_total_sin_sede(
     horarios: list[HorarioSlot],
     aulas: list[AulaSlot],

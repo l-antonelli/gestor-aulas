@@ -30,6 +30,7 @@ from datetime import date
 from typing import Optional
 
 import pulp
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from src.database.models import (
@@ -529,80 +530,15 @@ def build_inputs(
     #   (a) traslado del profesor: dos horarios de la misma comisión.
     #   (b) traslado del alumno: dos horarios de materias distintas
     #       del mismo grupo curricular (carrera, año, cuatri).
-    # Para (b) construimos el mapping horario_id → set de claves
-    # (carrera, año, cuatri) leyendo PlanEstudioDB de las versiones
-    # de plan asociadas al ciclo, filtrando por cuatri del ciclo y
-    # enriqueciendo con anuales del mismo carrera+año (idéntico al
-    # criterio del pre-check camino cursada). Sólo se computa si
-    # hay margen > 0; sino sería trabajo desperdiciado.
-    grupos_curriculares_de_horario: dict[
-        str, set[tuple[str, int, str]]
-    ] = {}
-    if config.margen_min_intersede_minutos > 0 and plan.ciclo_id:
-        from src.database.models import (
-            CicloPlanVersionDB as _CicloPlanVersionDB,
-            PlanEstudioDB as _PlanEstudioDB,
-        )
-        _pv_ids = list(session.exec(
-            select(_CicloPlanVersionDB.plan_version_id)
-            .where(_CicloPlanVersionDB.ciclo_id == plan.ciclo_id)
-        ).all())
-        if _pv_ids:
-            _ciclo_obj = session.get(CicloDB, plan.ciclo_id)
-            _cuatri_ciclo = (
-                f"{_ciclo_obj.numero}C" if _ciclo_obj else None
-            )
-            _pe_rows = list(session.exec(
-                select(_PlanEstudioDB).where(
-                    _PlanEstudioDB.plan_version_id.in_(_pv_ids)  # type: ignore[attr-defined]
-                )
-            ).all())
-            # (carrera, anio, cuatri) → set[materia_codigo]. Sólo
-            # obligatorias — las optativas no forman parte del
-            # camino de cursada.
-            _grupos_plan: dict[
-                tuple[str, int, str], set[str]
-            ] = {}
-            for _pe in _pe_rows:
-                if (
-                    _pe.anio_plan is None
-                    or _pe.cuatrimestre_plan is None
-                    or _pe.optativa
-                ):
-                    continue
-                _k = (
-                    _pe.carrera_codigo,
-                    _pe.anio_plan,
-                    _pe.cuatrimestre_plan,
-                )
-                _grupos_plan.setdefault(_k, set()).add(_pe.materia_codigo)
-            # Filtrar por cuatri del ciclo y enriquecer con anuales.
-            _grupos_enriquecidos: dict[
-                tuple[str, int, str], set[str]
-            ] = {}
-            for (_car, _an, _cu), _mats in _grupos_plan.items():
-                if _cuatri_ciclo and _cu != _cuatri_ciclo:
-                    continue
-                _enriched = set(_mats)
-                _anual_key = (_car, _an, "Anual")
-                if _anual_key in _grupos_plan:
-                    _enriched |= _grupos_plan[_anual_key]
-                _grupos_enriquecidos[(_car, _an, _cu)] = _enriched
-            # Invertir: materia_codigo → set de grupos donde figura.
-            _grupos_de_materia: dict[
-                str, set[tuple[str, int, str]]
-            ] = {}
-            for _gk, _mats in _grupos_enriquecidos.items():
-                for _mc in _mats:
-                    _grupos_de_materia.setdefault(_mc, set()).add(_gk)
-            # Mapeo horario → grupos curriculares.
-            for _h in horarios:
-                _gs = _grupos_de_materia.get(_h.materia_codigo)
-                if _gs:
-                    grupos_curriculares_de_horario[_h.id] = _gs
-
+    # Para (b) hace falta saber qué grupos curriculares cursan cada
+    # horario. Sólo se computa si hay margen > 0.
     from src.services.asignacion_aulas_helpers import (
         compute_pares_intersede_riesgo,
+        grupos_curriculares_por_horario,
+    )
+    grupos_curriculares_de_horario = (
+        grupos_curriculares_por_horario(session, plan.ciclo_id, horarios)
+        if config.margen_min_intersede_minutos > 0 else {}
     )
     pares_intersede_riesgo = compute_pares_intersede_riesgo(
         horarios=horarios,
@@ -1239,6 +1175,23 @@ def solve(
     )
 
 
+def es_factible(prob: pulp.LpProblem, config: LPConfig) -> bool:
+    """True si el modelo admite alguna asignación.
+
+    Para el diagnóstico de infactibilidad sólo importa si existe una
+    solución, no cuál es la mejor: con el objetivo nulo, la primera
+    solución entera que encuentra el resolutor ya es óptima y se detiene
+    ahí, en lugar de seguir mejorando hasta el tiempo límite. Modifica
+    ``prob``.
+    """
+    prob.setObjective(pulp.LpAffineExpression())
+    solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=config.timeout_seconds)
+    try:
+        return prob.solve(solver) == 1
+    except Exception:  # pragma: no cover
+        return False
+
+
 # =============================================================================
 # Wrapper end-to-end (sin persistencia)
 # =============================================================================
@@ -1677,8 +1630,8 @@ def persist_run(
                 "demanda"
             ),
             "R11": (
-                "margen intersede impide combinar horarios contiguos "
-                "de la misma comisión entre sedes distintas"
+                "el margen entre sedes impide ubicar en sedes distintas "
+                "horarios seguidos que cursan los mismos alumnos"
             ),
             "R12": (
                 "obligar misma sede por comisión no es compatible con "
@@ -1920,13 +1873,17 @@ def _run_iis_relajacion(
             "admisibles si están mal clasificadas."
         ),
         "R11": (
-            "El **margen intersede** (traslados entre sedes) impide "
-            "combinar comisiones simultáneas de la misma comisión "
-            "con horarios contiguos. Acciones:\n"
+            "El **margen entre sedes** impide ubicar en sedes distintas "
+            "dos horarios seguidos que cursan los mismos alumnos (dos "
+            "materias del mismo año de una carrera, o dos horarios de "
+            "una misma comisión), y las sedes admisibles no dejan "
+            "ponerlos en la misma. Acciones:\n"
+            "- **Pasar a modo blando** el grupo de alguna de las dos "
+            "materias, para que pueda dictarse en la sede de la otra.\n"
             "- **Bajar el margen** en el panel del asignador (0 "
             "desactiva la restricción).\n"
-            "- **Separar los horarios** con más gap en el cronograma "
-            "para que quepa un traslado."
+            "- **Separar los horarios** en el cronograma para que "
+            "quepa el traslado."
         ),
         "R12": (
             "**Forzar misma sede por comisión** (toggle del panel) "
@@ -1968,9 +1925,8 @@ def _run_iis_relajacion(
         reglas_del_modelo.append("R12")
 
     for ri in reglas_del_modelo:
-        prob_r, vars_r = build_model(inputs, config, relax={ri})
-        sol_r = solve(prob_r, vars_r, config)
-        feas = sol_r.status == "optimal"
+        prob_r, _ = build_model(inputs, config, relax={ri})
+        feas = es_factible(prob_r, config)
         item: dict = {
             "feasible_relajado": feas,
             "es_falso_positivo": False,
@@ -2096,9 +2052,8 @@ def _run_iis_relajacion(
             inputs_r10 = build_inputs(
                 session, plan_id, config, relax_r10=True,
             )
-            prob_r10, vars_r10 = build_model(inputs_r10, config)
-            sol_r10 = solve(prob_r10, vars_r10, config)
-            feas_r10 = sol_r10.status == "optimal"
+            prob_r10, _ = build_model(inputs_r10, config)
+            feas_r10 = es_factible(prob_r10, config)
             item_r10: dict = {
                 "feasible_relajado": feas_r10,
                 "es_falso_positivo": False,
@@ -2122,14 +2077,18 @@ def _run_iis_relajacion(
                 if grupos_rescate:
                     item_r10["grupos_rescate"] = grupos_rescate
             detalles["R8"] = item_r10
-        except Exception:  # pragma: no cover
-            # Si algo falla al reconstruir, marcamos R8 como no probado.
+        except Exception as exc:  # pragma: no cover
+            # Si algo falla, R8 queda como no probado y el motivo se
+            # registra (antes se ocultaba y el diagnóstico no podía
+            # señalar ningún grupo).
+            import logging
+            logging.getLogger(__name__).exception("Falló la prueba de relajación de R8")
             detalles["R8"] = {
                 "feasible_relajado": False,
                 "es_falso_positivo": False,
                 "explicacion": (
-                    "No se pudo probar la relajación de R8 (error al "
-                    "reconstruir inputs)."
+                    "No se pudo probar la relajación de R8 "
+                    f"({type(exc).__name__}: {exc})."
                 ),
             }
 
@@ -2277,9 +2236,8 @@ def _iss_combinaciones_rescate(
                     cfg_eje, modos_por_grupo=nuevos_modos,
                 )
                 inputs_p = build_inputs(session, plan_id, cfg_prueba)
-                prob_p, vars_p = build_model(inputs_p, cfg_prueba)
-                sol_p = solve(prob_p, vars_p, cfg_prueba)
-                if sol_p.status == "optimal":
+                prob_p, _ = build_model(inputs_p, cfg_prueba)
+                if es_factible(prob_p, cfg_prueba):
                     resultados.append({
                         "grupo_id": g.id,
                         "grupo_nombre": g.nombre,
@@ -2365,9 +2323,8 @@ def _iss_r10_grupos_rescate(
             nuevos_modos[g.id] = "BLANDO"
             cfg_test = replace(base_config, modos_por_grupo=nuevos_modos)
             inputs_test = build_inputs(session, plan_id, cfg_test)
-            prob_test, vars_test = build_model(inputs_test, cfg_test)
-            sol_test = solve(prob_test, vars_test, cfg_test)
-            if sol_test.status == "optimal":
+            prob_test, _ = build_model(inputs_test, cfg_test)
+            if es_factible(prob_test, cfg_test):
                 resultados.append({
                     "grupo_id": g.id,
                     "grupo_nombre": g.nombre,
@@ -2422,6 +2379,7 @@ def run_lp(
             reporte_estructural = check_factibilidad_estructural(
                 session, plan_id,
                 margen_min_intersede_minutos=cfg.margen_min_intersede_minutos,
+                modos_por_grupo=cfg.modos_por_grupo,
             )
             if not reporte_estructural.factible:
                 skip_solve = True

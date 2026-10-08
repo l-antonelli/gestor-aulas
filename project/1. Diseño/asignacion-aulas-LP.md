@@ -530,6 +530,10 @@ Para cada terna `(carrera, año, cuatri)` del ciclo del plan, verifica que exist
 
 **Auto-limpieza.** Cuando el plan de estudio cambia y una materia deja de coexistir con la otra en algún grupo curricular, la excepción registrada en `IgnoredConflictDB` queda huérfana y se limpia automáticamente en la próxima validación del plan (`cleanup_stale_ignored_pairs`). Se reporta la limpieza al usuario para que sepa qué pares dejaron de aplicar.
 
+### 7.6 R11 — Pares en riesgo sin sede común
+
+Para cada par `(h1, h2) ∈ P_R11` (los mismos pares que usa el modelo: misma comisión, o materias distintas del mismo `(carrera, año, cuatri)`), calcula las sedes en las que cada horario tiene al menos un aula compatible, con las sedes admisibles según los modos de la corrida. Si los dos conjuntos son disjuntos, R11 no se puede cumplir y se emite un bloqueo que indica quién se traslada (la comisión o los alumnos de qué año y carrera). Es una condición necesaria: detecta el choque de sedes par por par, pero no las cadenas de pares que sólo se vuelven imposibles en conjunto (eso lo encuentra el resolutor).
+
 ## 8. Diagnóstico por relajación selectiva (IIS)
 
 Cuando el solver reporta `infeasible` y el chequeo estructural pre-solve no detectó ninguna causa conocida (o las causas detectadas son insuficientes), se dispara un diagnóstico por relajación selectiva. El objetivo es identificar qué restricciones son las responsables de la infactibilidad y proponer acciones concretas.
@@ -548,6 +552,8 @@ Se prueban las siguientes restricciones, una a la vez, y se re-corre el modelo:
 - **R12**: forzar misma sede por comisión (sólo si estaba activo).
 
 Para cada regla que arregla el modelo al relajarse, se registra `feasible_relajado = True`.
+
+Cada prueba busca sólo factibilidad (`es_factible`): se anula la función objetivo antes de resolver, así la primera solución entera que encuentra el resolutor ya es óptima y se detiene. Al diagnóstico no le interesa la mejor asignación sino si existe alguna, y sin optimizar cada prueba tarda segundos en lugar de llegar al tiempo límite.
 
 ### 8.2 Filtros de falsos positivos
 
@@ -688,7 +694,7 @@ La extensión de R11 a pares intercomisión del mismo grupo curricular refleja q
 
 El chequeo de camino de cursada verifica **existencia** de una combinación viable, no la fuerza. En modelo LP, forzarlo requeriría variables adicionales por alumno hipotético — algo que aumentaría dramáticamente el tamaño del modelo sin beneficio directo: si existe al menos una combinación viable, cualquier alumno concreto podrá elegirla al inscribirse. El LP mismo no elige comisiones por alumno.
 
-Por eso R11-camino se implementa como **pre-check estructural**: si no existe combinación viable, se aborta antes del solve. Si existe, el LP asigna aulas libremente y cada alumno elige su combinación de manera independiente.
+Por eso R11-camino se implementa como **pre-check estructural**: si no existe combinación viable, se aborta antes del solve. Si existe, el LP asigna aulas y cada alumno elige su combinación de manera independiente. El modelo, de todos modos, aplica R11 a **todos** los pares en riesgo del grupo curricular, no sólo a los de una combinación cursable: es una restricción más fuerte que la del chequeo, que puede volver infactible un plan en el que los alumnos sí tendrían un camino (típicamente, con grupos de la Siberia en modo duro). Aplicarla sólo a una combinación elegida requeriría las variables de elección de comisión descriptas arriba; queda como extensión (`2. Desarrollo/asignador_implementacion.md` § 12).
 
 ### 11.5 Por qué IIS con análisis combinado
 

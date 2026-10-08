@@ -380,12 +380,21 @@ Familias implementadas:
    necesaria por materia no existe (subset-sum).
 4. **R9** — Pin manual apunta a un aula ya no compatible.
 5. **R11** — Par de horarios en riesgo sin sede común factible.
+   Revisa los mismos pares que el modelo: los de una misma comisión
+   y los de materias distintas del mismo `(carrera, año, cuatri)`,
+   con el mapeo de `grupos_curriculares_por_horario` (helpers), que
+   comparte con `build_inputs`. El título del bloqueo dice quién se
+   traslada ("Comisión X" o "Alumnos de 1.º año de Ingeniería …").
 6. **R11-camino** — No existe combinación de comisiones viable
    para algún grupo curricular (§ 2.2, `check_camino_cursada`).
 7. **compat-pigeonhole** — Pigeonhole por celda del mapa
    (unión de labs compatibles < demanda simultánea).
 8. **compat-hall** — Hall violator por celda: existe subconjunto
    `T` de materias del que sólo alcanzan `|N(T)| < |T|` labs.
+
+Las sedes admisibles de cada materia se calculan con los modos de
+la corrida (`modos_por_grupo`, que `run_lp` le pasa al chequeo); sin
+modos, cada grupo usa su modo por defecto.
 
 La familia 1 usa `diagnose_infeasibility` de los helpers puros;
 las demás se computan directamente en `factibilidad_service`. El
@@ -394,8 +403,20 @@ y `resumen_por_regla: dict[str, int]`.
 
 ### 4.2 IIS por relajación selectiva
 
-Cuando el solver reporta `infeasible` y el pre-solve no detectó
-bloqueos que expliquen la causa, se dispara `_run_iis_relajacion`.
+Cuando la corrida da `infeasible` (por el solver o por bloqueos
+del chequeo estructural) y las cotas de capacidad de
+`diagnose_infeasibility` no explican la causa, se dispara
+`_run_iis_relajacion`.
+
+**Sólo factibilidad** — Cada prueba del diagnóstico (relajaciones,
+grupos que conviene pasar a blando, combinaciones) usa
+`es_factible(prob, config)`: anula el objetivo antes de resolver, de
+modo que el resolutor se detiene en la primera solución entera en
+lugar de optimizar hasta el tiempo límite. Del resultado sólo se usa
+si existe solución. En el caso real del primer cuatrimestre de 2026
+con los grupos de la Siberia en modo duro, el diagnóstico completo
+(18 pruebas) bajó de unos 300 s a unos 60 s; la mitad de ese tiempo
+es reconstruir los inputs de cada prueba desde la base.
 
 **Relajación individual** — Se prueba, una a la vez, saltar cada
 una de las restricciones candidatas: R3, R4, R5, R8, R11, R12.
@@ -802,14 +823,21 @@ externas (moto / mocks / DB en memoria).
 - **Disponibilidad parcial de aulas** (exámenes, refacciones,
   eventos). No modelado. Se podría agregar
   `AulaIndisponibleDB(aula_id, fecha, hora_inicio, hora_fin)`.
-- **Ventanas operativas por sede**. Hoy `ConfiguracionHoraria` es
-  global. Si se abren sedes con horarios distintos, agregar
-  `hora_apertura / cierre` a `SedeDB`.
 - **R11 blanda (no implementada)**. `lambda_intersede` existe en
   `LPConfig` pero el modelo no agrega el término y la interfaz no lo
   ofrece (vale siempre 0; test en
   `tests/test_asignacion_panel_parametros.py`). Reservado para una
   variante blanda de R11 que penalice cambios de sede sin prohibirlos.
+- **R11 sólo sobre combinaciones cursables**. R11 exige misma sede
+  para todo par de horarios seguidos de materias distintas del mismo
+  `(carrera, año, cuatri)`, aunque el alumno pueda elegir otra
+  comisión y nunca cursar ese par. Es más estricta que el chequeo
+  R11-camino, que sólo pide que exista una combinación cursable. Con
+  grupos de la Siberia en modo duro, eso vuelve infactible un plan en
+  el que los alumnos sí tendrían un camino. Una variante que aplique
+  R11 sólo a los pares de una combinación elegida (con variables de
+  elección de comisión por grupo curricular) achicaría ese margen,
+  a costa de un modelo bastante más grande.
 - **Combinaciones IIS de a tres o más**. Hoy sólo se prueban
   pares (grupo DURO → BLANDO + R12 / margen). Combinaciones de
   tres serían explosivas; se dejó fuera del alcance.

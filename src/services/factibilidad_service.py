@@ -41,6 +41,7 @@ from sqlmodel import Session, select
 
 from src.database.models import (
     AulaDB,
+    CarreraDB,
     ComisionDB,
     DictadoCicloDB,
     DictadoDB,
@@ -56,6 +57,7 @@ from src.services.asignacion_aulas_helpers import (
     check_lab_compatibilidad_en_celda,
     compute_compat,
     compute_pares_intersede_riesgo,
+    grupos_curriculares_por_horario,
     compute_simultaneidad_groups,
     diagnose_infeasibility,
     validar_particion_factible,
@@ -111,8 +113,13 @@ def check_factibilidad_estructural(
     plan_id: str,
     *,
     margen_min_intersede_minutos: int = 30,
+    modos_por_grupo: Optional[dict[str, str]] = None,
 ) -> ReporteFactibilidad:
     """Analiza el plan y devuelve un reporte con bloqueos estructurales.
+
+    ``modos_por_grupo`` son los modos (DURO/BLANDO) de la corrida, para
+    que las sedes admisibles sean las mismas que usa el asignador; sin
+    él se asume modo duro para todos los grupos (el más restrictivo).
 
     `factible=True` significa que el chequeo no encontró bloqueos
     estructurales conocidos — el LP todavía puede resultar infactible
@@ -251,7 +258,7 @@ def check_factibilidad_estructural(
     # interviene en la resolución (idem LP en R8). Ver
     # `asignacion_aulas_service.build_inputs`.
     sedes_admis_mat: dict[str, Optional[set[str]]] = {
-        mc: sedes_admisibles_set_por_materia(session, mc)
+        mc: sedes_admisibles_set_por_materia(session, mc, modos_por_grupo)
         for mc in mat_codes
     }
 
@@ -560,10 +567,20 @@ def check_factibilidad_estructural(
     # =========================================================================
     # 4. R11 · Sedes consecutivas sin sede común admisible.
     # =========================================================================
+    # Los mismos pares que el asignador: los de una misma comisión y los
+    # de materias distintas que cursan los alumnos de un mismo año.
+    grupos_de_horario = (
+        grupos_curriculares_por_horario(session, plan.ciclo_id, horarios_slots)
+        if margen_min_intersede_minutos > 0 else {}
+    )
+    carrera_nombre = {
+        c.codigo: c.nombre for c in session.exec(select(CarreraDB)).all()
+    } if grupos_de_horario else {}
     pares_riesgo = compute_pares_intersede_riesgo(
         horarios=horarios_slots,
         comision_de_horario=comision_de_horario,
         margen_min_intersede_minutos=margen_min_intersede_minutos,
+        grupos_curriculares_de_horario=grupos_de_horario or None,
     )
     horario_slot_by_id = {h.id: h for h in horarios_slots}
     aulas_por_sede_lab_y_teo: dict[str, set[str]] = {}
@@ -581,6 +598,8 @@ def check_factibilidad_estructural(
         h2 = horario_slot_by_id.get(h2_id)
         if h1 is None or h2 is None:
             continue
+        if (h2.hora_inicio, h2.hora_fin) < (h1.hora_inicio, h1.hora_fin):
+            h1_id, h2_id, h1, h2 = h2_id, h1_id, h2, h1
         # Sedes en las que cada uno tiene al menos un aula compatible.
         sedes_h1: set[str] = {
             sd for a in aulas_slots
@@ -595,18 +614,30 @@ def check_factibilidad_estructural(
         interseccion = sedes_h1 & sedes_h2
         if not interseccion:
             cid = comision_de_horario.get(h1_id)
-            com = com_by_id.get(cid) if cid else None
-            com_lbl = com.nombre if com else "?"
+            if cid == comision_de_horario.get(h2_id):
+                com = com_by_id.get(cid) if cid else None
+                quien = f"Comisión {com.nombre if com else '?'}"
+            else:
+                # Par de materias distintas: lo cursan los alumnos de
+                # estos años.
+                comunes = sorted(
+                    grupos_de_horario.get(h1_id, set())
+                    & grupos_de_horario.get(h2_id, set())
+                )
+                quien = "Alumnos de " + (", ".join(
+                    f"{anio}.º año de {carrera_nombre.get(car, car)}"
+                    for car, anio, _cu in comunes
+                ) or "?")
             reporte.bloqueos.append(Bloqueo(
                 codigo_regla="R11",
                 severidad="bloqueante",
                 titulo=(
-                    f"Comisión {com_lbl} · {h1.materia_codigo}/"
+                    f"{quien} · {h1.materia_codigo}/"
                     f"{h2.materia_codigo}: sin sede común entre "
                     f"horarios contiguos ({h1.dia})"
                 ),
                 detalle=(
-                    f"- **Comisión**: {com_lbl}\n"
+                    f"- **Quién se traslada**: {quien}\n"
                     f"- **Día**: {h1.dia}\n"
                     f"- **Horario 1**: {h1.materia_codigo} "
                     f"{h1.hora_inicio.strftime('%H:%M')}–"
@@ -644,7 +675,7 @@ def check_factibilidad_estructural(
     # una combinación de comisiones (una por materia obligatoria) tal
     # que todos los pares contiguos del mismo día respeten el margen
     # intersede — considerando las sedes admisibles del grupo de cada
-    # materia (unión: dura ∪ blanda, ver `resolver_sedes_admisibles_por_materia`).
+    # materia según los modos de la corrida (``modos_por_grupo``).
     #
     # Complementa R11 (que actúa por-comisión) capturando problemas
     # que sólo emergen a nivel del "camino que cursa un alumno". Ej.:
@@ -664,6 +695,7 @@ def check_factibilidad_estructural(
         reporte=reporte,
         mat_nombre=mat_nombre,
         sede_nombre=sede_nombre,
+        modos_por_grupo=modos_por_grupo,
     )
 
     # -------------------------------------------------------------------------
@@ -699,6 +731,7 @@ def _add_bloqueos_camino_cursada(
     reporte: ReporteFactibilidad,
     mat_nombre: dict[str, str],
     sede_nombre: dict[str, str],
+    modos_por_grupo: Optional[dict[str, str]] = None,
 ) -> None:
     """Chequea R11-camino y agrega bloqueos/advertencias al reporte.
 
@@ -798,13 +831,11 @@ def _add_bloqueos_camino_cursada(
     def _sedes_de_materia(mc: str) -> Optional[set[str]]:
         if mc in sedes_admis_materia:
             return sedes_admis_materia[mc]
-        sedes_ord, modo = resolver_sedes_admisibles_por_materia(session, mc)
-        # DURO con lista no vacía → set restrictivo. En cualquier otro
-        # caso (DURO vacío, BLANDO) → None = "cualquier sede vale".
-        if modo == "DURO" and sedes_ord:
-            result: Optional[set[str]] = set(sedes_ord)
-        else:
-            result = None
+        # Mismo criterio que el asignador: DURO con lista no vacía →
+        # set restrictivo; DURO vacío o BLANDO → None ("cualquier sede").
+        result: Optional[set[str]] = sedes_admisibles_set_por_materia(
+            session, mc, modos_por_grupo,
+        )
         sedes_admis_materia[mc] = result
         return result
 

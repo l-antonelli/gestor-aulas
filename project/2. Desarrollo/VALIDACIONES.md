@@ -399,9 +399,15 @@ Familias implementadas:
   teóricas / labs).
 - **R4** — Partición teoría / laboratorio infactible.
 - **R9** — Pin manual apunta a un aula ya no compatible.
-- **R11** — Par de horarios en riesgo sin sede común factible.
+- **R11** — Par de horarios en riesgo sin sede común factible. Son
+  los mismos pares que usa el modelo: misma comisión, o materias
+  distintas del mismo `(carrera, año, cuatri)`
+  (`grupos_curriculares_por_horario`).
 - **R11-camino** — No existe combinación de comisiones viable
   para algún grupo curricular (ver § 2.5).
+
+Las sedes admisibles se calculan con los modos de la corrida
+(`modos_por_grupo`).
 - **compat-pigeonhole** — Pigeonhole por celda del mapa (unión de
   labs compatibles < demanda simultánea).
 - **compat-hall** — Hall violator: subconjunto `T` con
@@ -445,12 +451,13 @@ cursar sin conflictos horarios ni traslados imposibles entre sedes.
 coloca FB12 y una específica contigua sin margen suficiente, el
 alumno no puede cursar ambas → bloqueo `R11-camino`.
 
-**Diferencia con R11 en el LP**: R11 (por-comisión) sólo cubre pares
-de horarios de la **misma comisión** o de materias distintas del
-mismo grupo curricular donde ambos horarios están en el modelo. El
-chequeo camino garantiza que, aún después de que el LP asigne,
-exista al menos una elección de comisiones que el alumno pueda
-sostener. Ver `1. Diseño/asignacion-aulas-LP.md` § 4 (R11-camino).
+**Diferencia con R11**: R11 (en el modelo y en el chequeo
+estructural) exige sede común para **todo** par de horarios seguidos
+de una misma comisión o de materias distintas del mismo grupo
+curricular. R11-camino es más débil: sólo pide que exista al menos
+una elección de comisiones que el alumno pueda sostener. Un plan
+puede pasar R11-camino y fallar R11 (ver "R11 sólo sobre
+combinaciones cursables" en `asignador_implementacion.md` § 12). Ver `1. Diseño/asignacion-aulas-LP.md` § 4 (R11-camino).
 
 **Excepciones ignoradas**: los pares en `IgnoredConflictDB` se
 saltan del chequeo de solapamiento (§ 2.3). El chequeo de intersede
