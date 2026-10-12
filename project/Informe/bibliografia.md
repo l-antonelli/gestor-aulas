@@ -8,39 +8,43 @@
 
 1. Chiavenato, Idalberto, *Introducción a la teoría general de la
    administración*, 7.ª ed., México: McGraw-Hill, 2006.
-2. Eco, Umberto, *Cómo se hace una tesis*, Buenos Aires: Ed. Gedisa
-   S.A., 1982.
-3. Evans, Eric, *Domain-Driven Design: Tackling Complexity in the
+2. Evans, Eric, *Domain-Driven Design: Tackling Complexity in the
    Heart of Software*, Boston: Addison-Wesley, 2003.
-4. Facultad de Ciencias Exactas, Ingeniería y Agrimensura, *Sedes*,
+3. Facultad de Ciencias Exactas, Ingeniería y Agrimensura, *Sedes*,
    Rosario: Universidad Nacional de Rosario, s. f.
    https://web.fceia.unr.edu.ar/es/institucional/la-facultad/17-sedes.html
-5. Golumbic, Martin Charles, *Algorithmic Graph Theory and Perfect
+4. Golumbic, Martin Charles, *Algorithmic Graph Theory and Perfect
    Graphs*, Nueva York: Academic Press, 1980.
-6. Mattion, Aldo B., *El Proyecto de Ingeniería*, Buenos Aires: El
-   Ateneo, 1992.
-7. Mintzberg, Henry, *La estructuración de las organizaciones*,
+5. Mintzberg, Henry, *La estructuración de las organizaciones*,
    Barcelona: Ariel, 2012 (ed. original: *The Structuring of
    Organizations*, Prentice-Hall, 1979).
-8. Mintzberg, Henry, *Diseño de organizaciones eficientes*, Buenos
+6. Mintzberg, Henry, *Diseño de organizaciones eficientes*, Buenos
    Aires: El Ateneo, 2000.
-9. Miró Julià, José, *Cómo escribir un texto académico*, Palma de
+7. Miró Julià, José, *Cómo escribir un texto académico*, Palma de
    Mallorca: Universidad de las Islas Baleares, 2011.
-10. Miró Julià, José, *Manual de escritura técnica*, Palma de Mallorca:
+8. Miró Julià, José, *Manual de escritura técnica*, Palma de Mallorca:
    Universidad de las Islas Baleares, 2010.
-11. Morán, Rogelio A. A., *Pautas metodológicas para la realización de
+9. Morán, Rogelio A. A., *Pautas metodológicas para la realización de
    Trabajos Finales*, Rosario: Departamento de Optimización y Control,
    FCEIA-UNR, 2000.
-12. Organización Internacional de Normalización, *ISO 9001:2015.
-   Sistemas de gestión de la calidad. Requisitos*, Ginebra: ISO, 2015.
-13. Wolsey, Laurence A., *Integer Programming*, Nueva York: John Wiley
+10. Wolsey, Laurence A., *Integer Programming*, Nueva York: John Wiley
    & Sons, 1998.
+11. Farias, Maria Elena, *Modelo del dominio - Atributos*, Rosario:
+   Universidad Nacional de Rosario, s. f.
+12. Farias, Maria Elena, *Sistemas de Información Modelo del Dominio*,
+   Rosario: Universidad Nacional de Rosario, s. F.
+13. Porta, Enrique, *Reglas de Negocio - Introducción a la Práctica
+   Profesional*, Argentina: Universidad Tecnológica Nacional, 2008.
+14. Morán, Rogelio A. A., *Pronósticos de demanda para la planificación
+   y programación de la producción y la gestión de existencias*,
+   Rosario: Departamento de Optimización y Control, FCEIA-UNR, 2017.
+15. Morán, Rogelio A. A., *Introducción a la Investigación Operativa*,
+   Rosario: Departamento de Optimización y Control, FCEIA-UNR, 2007.
 
 > **Para completar:**
 >
 > - el libro de Morán de Investigación Operativa usado en Operativa 1
->   y 2 (citado en la sección 3.2.3.6) y el material *Introducción a la
->   Investigación Operativa* de la cátedra;
+>   y 2 (citado en la sección 3.2.3.6) y el material de la cátedra;
 > - la referencia del teorema de Hall
 >   (sección 3.2.4);
 > - la documentación de las herramientas usadas (PuLP, CBC, SQLModel,

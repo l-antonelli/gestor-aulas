@@ -308,6 +308,7 @@ TITULO_TABLA = re.compile(r"^<!-- tabla: (.+?) -->\s*$", re.MULTILINE)
 # imagen) y el texto la cita como "Figura @fig:clave". Al armar el
 # informe, @fig:clave pasa a ser el número que le da el filtro.
 ID_REFERENCIA = re.compile(r"\s*\{#((?:fig|tab):[\w-]+)\}\s*$")
+ATRIBUTOS_FIGURA = re.compile(r"\s*\{(#fig:[\w-]+(?:\s+\w+=\"[^\"]*\")*)\}\s*$")
 REFERENCIA = re.compile(r"@((?:fig|tab):[\w-]+)")
 LINEA_FIGURA = re.compile(r"^\s*!\[[^\]]+\]\([^)]+\)(\{[^}]*\})?\s*$")
 FORMULA_BLOQUE = re.compile(r"^\$\$(.*?)\$\$[ \t]*$", re.MULTILINE | re.DOTALL)
@@ -319,6 +320,16 @@ FIN_SECCION_SIN_NUMERAR = """
 <w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:pPr></w:p>
 ```
 """
+
+
+def _atributos_figura(titulo: str) -> tuple[str, str]:
+    """Separa el título de un diagrama de sus atributos entre llaves:
+    `Título {#fig:clave nota="…"}` → ("Título", '#fig:clave nota="…"').
+    La nota es la que va debajo de la figura (ver informe_apa.lua)."""
+    m = ATRIBUTOS_FIGURA.search(titulo)
+    if not m:
+        return titulo.strip(), ""
+    return titulo[:m.start()].strip(), m.group(1).strip()
 
 
 def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> str:
@@ -338,11 +349,9 @@ def _preparar_capitulo(md: Path, dir_diagramas: Path, n_formula: list[int]) -> s
         # En el informe la figura lleva rótulo, título y nota: con más de
         # 19 cm de alto no entran juntos en una página A4 y Google Docs
         # la parte en tres páginas.
-        titulo, clave = m.group(1), ""
-        rotulo = ID_REFERENCIA.search(titulo)
-        if rotulo:
-            titulo, clave = titulo[:rotulo.start()], f"#{rotulo.group(1)} "
-        return f"\n![{titulo}]({png}){{{clave}width={_ancho_diagrama(svg, ALTO_FIGURA_INFORME_CM)}}}\n"
+        titulo, atributos = _atributos_figura(m.group(1))
+        atributos = f"{atributos} " if atributos else ""
+        return f"\n![{titulo}]({png}){{{atributos}width={_ancho_diagrama(svg, ALTO_FIGURA_INFORME_CM)}}}\n"
 
     texto = FIGURA_CON_TITULO.sub(figura, texto)
     if BLOQUE_MERMAID.search(texto):

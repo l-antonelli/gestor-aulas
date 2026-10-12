@@ -16,7 +16,9 @@ Escuela de Ingeniería Industrial
 
 Autores: Antonelli Luciano, Galliano Pablo
 
-Directores: Carlos I. Danino, Daniela A. Gómez
+Director: Ing. Carlos I. Danino
+
+Subdirectora: Lic. Daniela A. Gómez
 
 Nº de proyecto: 057-25
 

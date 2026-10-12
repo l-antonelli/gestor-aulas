@@ -1,11 +1,10 @@
 ## 3.4 Definición del problema
 
-La sección 3.3 describió cómo se asignan hoy las aulas en la FCEIA:
+La sección 3.3 describió cómo se asignan hoy las aulas:
 quién decide, cuándo, con qué información y con qué resultado. Esta
 sección traduce esa descripción a un enunciado preciso, en el marco
-de la investigación operativa presentado en §3.2.3, de modo que
-más adelante pueda modelarse como un programa lineal entero sin
-sorpresas. Para eso fijamos qué datos tenemos, qué decidimos, qué
+de la investigación operativa presentado en 3.2.3, de modo que
+más adelante pueda modelarse como un programa lineal entero. Para eso fijamos qué datos tenemos, qué decidimos, qué
 reglas debe respetar la decisión y con qué criterio se compara una
 asignación con otra.
 
@@ -16,7 +15,7 @@ asignación con otra.
 
 Antes de pasar a la definición formal, conviene contar el problema
 tal como se lo plantean cada cuatrimestre el personal de la facultad. Nos va a servir de referencia. Cuando más adelante el problema esté escrito con símbolos, vamos a
-poder volver acá y comprobar que no se perdió nada en el camino.
+poder volver acá y comprobar que no nos faltó nada por considerar.
 
 Al empezar el cuatrimestre, la Secretaría Técnica tiene dos listas en
 la mano. Por un lado, las **clases** que hay que dictar cada semana,
@@ -71,13 +70,13 @@ producción. Todos se caracterizan por:
 Lo que cambia de un caso a otro son las entidades concretas y las
 reglas específicas; la estructura lógica es la misma. Esta familia
 admite formulaciones matemáticas estándar, en particular como
-programas lineales enteros (§3.2.3), de modo que encuadrar en ella la
+programas lineales enteros (3.2.3), de modo que encuadrar en ella la
 asignación de aulas nos permite aprovechar métodos ya desarrollados
 en lugar de inventarlos desde cero.
 
 #### 3.4.2.2 Ubicación del problema de asignación de aulas dentro de la familia
 
-La Tabla @tab:familia muestra cómo se instancia cada elemento del marco en
+La Tabla @tab:familia muestra cómo se define cada elemento del marco en
 nuestro problema.
 
 <!-- tabla: Ubicación del problema dentro de la familia de problemas de asignación {#tab:familia} -->
@@ -108,10 +107,10 @@ cientos de horarios semanales pero miles de clases con fecha. Como
 el patrón se repite, resolver una vez por horario equivale a
 resolver una vez por clase, con un modelo mucho más chico.
 
-Como la facultad no tiene una grilla común (§3.3.1.4), el sistema la
+Como la facultad no tiene una grilla común (3.3.1.4), el sistema la
 impone: los horarios deben empezar y terminar en múltiplos de una
 granularidad configurable (por defecto, 15 minutos) y caer dentro de
-la franja operativa de la semana (de 7 a 23, de lunes a sábado).
+la franja operativa de la semana (de 7:30 a 23, de lunes a viernes).
 Encuadrar los horarios en una grilla evita choques por unos pocos
 minutos entre clases que, de otro modo, podrían compartir aula, y
 reduce el riesgo de que el problema resulte infactible por esa sola
@@ -122,14 +121,14 @@ el cronograma y se pueden ajustar automáticamente.
 
 El **aula** es el recurso que se asigna. Cada aula pertenece a una
 **sede** (Pellegrini o la Siberia), tiene un
-**tipo** dentro de la tipología de §3.3.1.3 (aula teórica,
+**tipo** dentro de la tipología de 3.3.1.3 (aula teórica,
 laboratorio, anfiteatro) y una **capacidad**, es decir, la cantidad
 máxima de alumnos que alberga en condiciones adecuadas.
 
 Asumimos que las aulas están disponibles durante todo el horario de
 funcionamiento de la facultad, típicamente de 8 a 23 h. Las
 indisponibilidades por exámenes, actos, refacciones o reservas
-externas quedan fuera del alcance (§3.4.6).
+externas quedan fuera del alcance (3.4.6).
 
 #### 3.4.3.3 La decisión: la asignación
 
@@ -139,13 +138,13 @@ conviene destacar. Es **acoplada**: como un aula recibe varios
 horarios que no se superponen, decidir sobre un horario condiciona
 a los demás, y no se puede resolver horario por horario en forma
 independiente. Y es **discreta**: cada horario está o no está en
-cada aula, sin gradaciones. Ambos rasgos la ubican en el terreno de
-la programación lineal entera (§3.2.3).
+cada aula. Ambos rasgos la ubican en el terreno de
+la programación lineal entera (3.2.3).
 
 ### 3.4.4 Restricciones
 
 Las restricciones son las reglas que toda asignación debe respetar.
-En §3.2.3.5 distinguimos las restricciones **duras**, cuyo
+En 3.2.3.5 distinguimos las restricciones **duras**, cuyo
 incumplimiento descarta la solución, de las **blandas**, que se
 pueden violar a cambio de una penalización. Acá las enunciamos en
 términos del dominio; su expresión matemática se desarrolla en la
@@ -153,8 +152,7 @@ sección 3.8.
 
 #### 3.4.4.1 Restricciones estructurales
 
-Reflejan la naturaleza física del problema y no admiten
-negociación:
+Requerimientos básicos para la cursada:
 
 - **Un aula por horario.** Cada horario semanal recibe exactamente
   un aula: ni queda sin aula ni ocupa dos.
@@ -183,30 +181,13 @@ No responden a límites físicos sino a decisiones de la facultad:
 - **Carga horaria.** Las horas semanales de teoría y de laboratorio
   de cada comisión deben coincidir con las que fija el plan de
   estudios para la materia.
-- **Trayectorias académicas.** Las materias del mismo año y
-  carrera, que un alumno cursaría en paralelo, no deben
-  superponerse. Como cada alumno cursa una sola comisión por
-  materia, alcanza con que exista al menos una combinación de
-  comisiones compatible.
-- **Traslados entre sedes.** Dos clases consecutivas del mismo día,
-  de materias que cursa un mismo alumno (las del mismo año de una
-  carrera), no pueden dictarse en sedes distintas si el intervalo
-  entre ellas es menor a un margen (por defecto, 30 minutos), porque
-  el traslado entre Pellegrini y la Siberia deja de ser viable.
 - **Una sede por comisión.** Opcionalmente, todos los horarios de
   una comisión se dictan en la misma sede, para que el docente no
   tenga que trasladarse durante la semana.
-- **Cursada posible.** Para cada carrera, año y cuatrimestre debe
-  existir al menos una combinación de comisiones, una por materia
-  obligatoria, que un alumno pueda cursar sin superposiciones ni
-  traslados imposibles. El sistema la verifica antes de asignar.
-
-La facultad enuncia además dos políticas que este trabajo no
-incorpora como restricciones del modelo y que se retoman en §3.4.6:
-que los ingresantes no cambien de sede dentro de un mismo día de
-cursada, para facilitar su adaptación, y que durante los períodos
-de exámenes se puedan generar variantes transitorias de la
-asignación sin perder la de base.
+- **Cursada.** Para cada carrera, año y cuatrimestre debe existir al
+  menos una combinación de comisiones que un alumno regular al dia
+  pueda cursar sin superposiciones ni traslados de una sede a otra en
+  menos del margen establecido (por defecto 30min).
 
 #### 3.4.4.3 Restricciones que expresan preferencias operativas
 
@@ -218,7 +199,7 @@ restricciones blandas:
   inscriptos esperados. Como la inscripción sigue abierta después
   del inicio de clases, ese número es una estimación, y el sistema
   debe poder asignar aun cuando algún horario quede sobreocupado.
-- **Aulas no desaprovechadas.** Poner 30 alumnos en un anfiteatro
+- **Aulas no desaprovechadas.** Poner 30 alumnos en un aula
   para 200 es admisible pero indeseable: se penaliza, con menos
   peso que la sobreocupación, para reservar las aulas grandes a
   quienes las puedan necesitar a futuro y no asignarlas innecesariamente a clases que no las aprovechen.
@@ -239,23 +220,16 @@ los horarios, con una ponderación **asimétrica**: dejar alumnos
 afuera es peor que dejar bancos vacíos. Los pesos son parámetros
 configurables y se presentan en la sección 3.8.
 
-Tratar la capacidad como restricción blanda es una decisión
-deliberada. Si fuera dura, bastaría con una comisión mal
-pronosticada para que el problema no tuviera solución; como blanda,
-el sistema siempre propone una asignación, señalando la
-sobreocupación, que las áreas responsables pueden ajustar luego con
-información más precisa.
-
-### 3.4.6 Alcance y no-alcance
+### 3.4.6 Alcance
 
 #### 3.4.6.1 Dentro del alcance
 
 - La asignación de aulas al **patrón semanal** de cada cuatrimestre
-  de la FCEIA, respetando las restricciones de §3.4.4 y optimizando
-  el criterio de §3.4.5.
+  de la FCEIA, respetando las restricciones de 3.4.4 y optimizando
+  el criterio de 3.4.5.
 - El **diagnóstico previo**: detectar y comunicar cuándo el problema
   no tiene solución por razones estructurales, antes de resolverlo
-  (§3.2.4 y sección 3.8).
+  (3.2.4 y sección 3.8).
 - La **reasignación durante el cuatrimestre** cuando cambian las
   comisiones o los horarios, conservando las decisiones que las
   áreas responsables quieran mantener.
@@ -266,18 +240,10 @@ información más precisa.
 
 - **Cambios para una fecha puntual**, como una clase que un martes
   determinado se muda de aula sin alterar el patrón semanal.
-- **Indisponibilidades temporales de aulas** por exámenes, actos,
-  refacciones o uso de otras dependencias.
 - **Mesas de examen**, que son un proceso distinto, con sus propias
   reglas y actores.
-- **Estabilidad de sede para ingresantes**, que requiere modelar la
-  cursada típica de primer año y queda como línea de continuación.
 - **Otros recursos** que la facultad coordina, como proyectores,
   personal auxiliar o salas de reunión.
-- **Pronóstico de inscripción** a partir del historial: el sistema
-  recibe los inscriptos esperados como dato.
-- **Coordinación entre cuatrimestres**: cada uno se resuelve por
-  separado y las materias anuales se manejan operativamente.
 
 ### 3.4.7 Naturaleza combinatoria y efecto cascada
 
@@ -291,21 +257,16 @@ cualquiera de las 53 aulas, y la cantidad de asignaciones posibles
 sería `53^546`: un número
 de más de 900 cifras. Para dar una idea, la cantidad de átomos del
 universo observable se estima en un número de unas 80 cifras.
-Ninguna enumeración exhaustiva puede recorrer algo así.
 
 El programa lineal de ese mismo cuatrimestre (sección 3.8) tiene
 13.697 variables, de las cuales 12.429 son binarias (casi todas
 indican si un horario va a un aula compatible), y 6.952
 restricciones. Es un modelo imposible de resolver a mano, pero de un
-tamaño que un resolutor moderno maneja sin problemas: la corrida de
-ese cuatrimestre tardó menos de un minuto.
+tamaño que un resolutor moderno maneja sin problemas.
 
-Las restricciones de §3.4.4 descartan la mayoría de esas
+Las restricciones descartan la mayoría de esas
 combinaciones, pero lo que queda sigue siendo demasiado para
-explorarlo a mano. Es el argumento cuantitativo detrás de lo
-afirmado en §3.3.3.3: la asignación óptima manual está fuera del
-alcance humano. La programación lineal entera (§3.2.3.2) está pensada
-justamente para estos casos: la técnica de ramificación y acotación
+explorarlo a mano. La técnica de ramificación y acotación
 descarta subconjuntos enteros de soluciones sin recorrerlas una por
 una.
 
@@ -313,26 +274,19 @@ una.
 
 El segundo aspecto, ligado a lo observado en la sección 3.3, es el
 **efecto cascada**: un cambio local puede obligar a reajustar
-muchas asignaciones en apariencia independientes. Supongamos que un
+muchas otras asignaciones. Supongamos que un
 aula deja de estar disponible, por ejemplo porque entra en
 mantenimiento, y que el horario que tenía asignado sólo entra en
-aulas que ya están ocupadas en esa franja. Para ubicarlo hay que
+aulas que ya están ocupadas. Para ubicarlo hay que
 desplazar a otro horario, que a su vez necesita un aula libre, y así
-sucesivamente, como muestra la Figura @fig:cascada. Cuanto
-menos holgura de aulas libres haya en cada franja, más larga puede
+sucesivamente. Cuanto
+menos holgura de aulas libres haya más larga puede
 ser la cadena.
 
-![Efecto cascada: un aula en mantenimiento obliga a reacomodar tres horarios](figuras/efecto_cascada.png){#fig:cascada width=13cm}
+![Efecto cascada: un aula en mantenimiento obliga a reacomodar tres horarios](figuras/efecto_cascada.png){#fig:cascada nota="Diagrama de elaboración propia." width=13cm}
 
 Por eso replanificar no es sólo atender el cambio puntual: hay que
 verificar que todo el resto siga siendo consistente. Un sistema con
 un modelo formal recalcula la cascada completa en segundos, mientras
 que una persona la resuelve por aproximaciones sucesivas y con
 riesgo de inconsistencias.
-
-### 3.4.8 Resumen
-
-El problema queda definido como una asignación de horarios semanales
-a aulas bajo restricciones duras y blandas, combinatoriamente grande y
-con efecto cascada. La sección siguiente construye sobre esta
-definición el modelo del dominio.

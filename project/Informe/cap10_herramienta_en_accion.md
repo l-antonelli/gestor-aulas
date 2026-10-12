@@ -1,8 +1,9 @@
-## 3.10 Caso ensayado: primer cuatrimestre de 2026
+## 3.10 Caso de Estudio: primer cuatrimestre de 2026
 
 Para comprobar que la solución funciona con datos reales, la ensayamos
-sobre el primer cuatrimestre de 2026, con el cronograma consolidado
-que entregó la facultad. Esta sección muestra cómo quedó el plan, cómo
+sobre el primer cuatrimestre de 2026, con el cronograma que
+consolidamos en base a los distintos registros provistos por la
+facultad (las planillas publicadas en la página web). Esta sección muestra cómo quedó el plan, cómo
 se configuró el asignador, cómo quedaron asignadas las aulas en dos
 años de cursada y cómo cambia el resultado si se cambian los pesos.
 El uso de la interfaz se describe en el manual de usuario (Anexo C).
@@ -19,13 +20,13 @@ sobre la serie histórica.
 
 La Tabla @tab:caso-config resume la configuración con la que se corrió
 el asignador. Los modos de los grupos de materias responden a lo
-discutido en §3.8.2.5: las materias comunes de Formación Básica, que
+discutido en 3.8.2.5: las materias comunes de Formación Básica, que
 se dictan sí o sí en Pellegrini, quedan en modo duro, y los grupos de
 las carreras de la Siberia (Civil, Eléctrica, Electrónica y Mecánica)
 quedan en modo blando, porque sus alumnos también cursan esas comunes
 y un modo duro haría infactible el problema. Esa configuración de
 grupos es parte de la definición del caso y no se toca en los
-escenarios de §3.10.4.
+escenarios de 3.10.4.
 
 <!-- tabla: Configuración del asignador en el caso ensayado {#tab:caso-config} -->
 | Parámetro | Valor |
@@ -44,13 +45,13 @@ El asignador encontró la solución óptima en menos de un minuto (Figura
 @fig:cap-veredicto): los 546 horarios presenciales quedaron con aula,
 ninguno sin asignar.
 
-![Veredicto de la corrida del asignador en el caso ensayado](figuras/capturas/asignador_veredicto.png){#fig:cap-veredicto width=15cm}
+![Veredicto de la corrida del asignador en el caso ensayado](figuras/capturas/asignador_veredicto.png){#fig:cap-veredicto nota="Imagen tomada del aplicativo." width=15cm}
 
-### 3.10.2 Dos años de cursada
+### 3.10.2 Dos ejemplos de cursada
 
 Para ver el resultado en detalle tomamos dos años de cursada del
 primer cuatrimestre: cuarto año de Ingeniería Industrial, que se
-dicta íntegramente en Pellegrini, y tercer año de Ingeniería
+dicta todo en Pellegrini, y tercer año de Ingeniería
 Eléctrica, una carrera de la Siberia cuyos alumnos cursan materias
 comunes en Pellegrini. Las Tablas @tab:caso-industrial y
 @tab:caso-electrica muestran sus horarios con el aula asignada; los
@@ -76,7 +77,7 @@ ajustada a su matrícula: Costos y Control de Gestión, con 157
 inscriptos, va al aula de 181 lugares, y Legislación, con 64, a una
 de 71. La única excepción es Comercialización, con 121 inscriptos en
 un aula de 112: el exceso está dentro de la tolerancia del 10 % de la
-configuración, por eso el asignador la acepta.
+configuración, cosa que no se penaliza.
 
 <!-- tabla: Aulas asignadas a tercer año de Ingeniería Eléctrica {#tab:caso-electrica} -->
 | Día | Horario | Materia | Sede | Aula (capacidad) | Inscriptos |
@@ -141,7 +142,7 @@ a las 18. Incluso en la franja más cargada de
 la semana quedan casi mil asientos en aulas libres, la holgura
 disponible para cambios durante el cuatrimestre.
 
-![Asientos teóricos ocupados por sede a lo largo de la semana en el caso ensayado](figuras/caso_ocupacion.png){#fig:caso-ocupacion width=15cm}
+![Asientos teóricos ocupados por sede a lo largo de la semana en el caso ensayado](figuras/caso_ocupacion.png){#fig:caso-ocupacion nota="" width=15cm}
 
 ### 3.10.4 El mismo caso con otros parámetros
 
@@ -175,7 +176,7 @@ para absorber cambios. La Figura @fig:caso-libres lo muestra franja a
 franja: la diferencia se concentra justamente en los momentos de más
 demanda.
 
-![Asientos en aulas libres por franja con la configuración recomendada y sin castigo de subocupación](figuras/caso_asientos_libres.png){#fig:caso-libres width=15cm}
+![Asientos en aulas libres por franja con la configuración recomendada y sin castigo de subocupación](figuras/caso_asientos_libres.png){#fig:caso-libres nota="" width=15cm}
 
 **Pesos de subocupación y de sede más altos.** Multiplicar por cinco el
 peso de la subocupación casi no cambia el resultado: con la tolerancia
@@ -187,8 +188,7 @@ sede, con un costo mínimo en el resto de las métricas.
 resultado no es un peso sino las tolerancias. La configuración del
 caso tolera un 10 % de sobreocupación, y el asignador aprovecha ese
 margen: deja pasar muchos excesos chicos que, sumados, son más de mil
-alumnos sin lugar. Sin tolerancia de sobreocupación y con una de
-subocupación del 20 %, manteniendo los demás pesos, los alumnos sin
-lugar bajan un 22 % (de 1.116 a 872), los horarios sobreocupados pasan
+alumnos. Sin tolerancia de sobreocupación y con una de
+subocupación del 20 %, manteniendo los demás pesos, los alumnos “sin lugar” bajan un 22 % (de 1.116 a 872), los horarios sobreocupados pasan
 de 104 a 26, los asientos vacíos bajan un 10 % y la holgura en la
-franja más ocupada se mantiene. La corrida, además, tarda la mitad.
+franja más ocupada se mantiene.

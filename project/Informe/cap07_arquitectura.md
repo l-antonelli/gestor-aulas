@@ -1,18 +1,16 @@
 ## 3.7 Arquitectura de la solución
 
-Las secciones 3.5 y 3.6 fijaron qué se modela y cómo se guarda. Esta
+Esta
 sección explica sobre qué se construye la solución: qué
 tecnologías la sostienen y por qué se eligieron, y cómo se reparten
 las responsabilidades dentro del sistema.
 
-### 3.7.1 Pila tecnológica
+### 3.7.1 Stack (pila) tecnológica
 
-El sistema es una *aplicación web* que se usa desde el navegador,
-escrita íntegramente en Python y con una base de datos local. La
-Tabla @tab:pila resume las tecnologías que la componen y el papel de
-cada una.
+El sistema es una *aplicación web* que corre localmente desde el navegador, escrita en Python y con una base de datos local. La
+Tabla @tab:pila resume las tecnologías que la componen y el papel que juegan.
 
-<!-- tabla: Pila tecnológica de la solución {#tab:pila} -->
+<!-- tabla: Stack tecnológico de la solución {#tab:pila} -->
 | Capa | Tecnología | Rol |
 | --- | --- | --- |
 | Interfaz de usuario | Streamlit | Presenta la aplicación en el navegador: formularios, tablas y gráficos. |
@@ -20,30 +18,23 @@ cada una.
 | Validación de datos | Pydantic | Verifica que los datos que circulan por el sistema tengan la forma esperada. |
 | Mapeo objeto-relacional | SQLModel | Traduce las entidades del modelo a tablas de la base y viceversa. |
 | Motor de base de datos | SQLite | Guarda todo el estado del sistema en un único archivo local. |
-| Optimización | PuLP | Permite escribir el programa lineal con una notación cercana a la matemática. |
+| Optimización | PuLP | Permite escribir el programa lineal con una notación similar a la notación matemática. |
 | Resolutor | CBC | Resuelve el programa lineal entero; es libre y de código abierto. |
 | Visualización | Altair y componentes de Streamlit | Gráficos de saturación, tablas de resultados y calendarios semanales. |
 
 #### 3.7.1.1 Python y Streamlit
 
-Python es la decisión que condiciona al resto de la pila. Lo
-elegimos por dos razones. La primera es que cuenta con un
+Python es la decisión que condiciona al resto del stack. Lo elegimos por varias razones. La primera es que cuenta con un
 ecosistema maduro de optimización y análisis de datos, de modo que
 el programa lineal, los pronósticos de inscriptos y los reportes se
 apoyan en herramientas disponibles en el mismo lenguaje. La segunda
 es que permite construir también la interfaz sin cambiar de
 lenguaje, lo que mantiene una única base de código y simplifica su
-mantenimiento. Lenguajes como Java o JavaScript se descartaron: el
-primero tiene un ecosistema de optimización libre más limitado y el
-segundo es fuerte en interfaces pero débil en optimización
-combinatoria.
+mantenimiento. La última es que se contaba con mucha experiencia previa en este lenguaje como también las tecnologías que se describen a continuación.
 
 Streamlit es una biblioteca de Python para construir aplicaciones
 web interactivas sin escribir directamente el código propio de los
-navegadores. Cada pantalla se describe como un programa corto que
-se vuelve a ejecutar ante cada interacción, y la biblioteca se
-encarga de dibujar formularios, tablas y gráficos, lo que da una
-velocidad de desarrollo alta.
+navegadores. Es común entre equipos de data science para prototipado rápido de soluciones.
 
 #### 3.7.1.2 SQLite y SQLModel para la persistencia
 
@@ -63,7 +54,7 @@ sola vez y usar esa misma definición para validar los datos, para
 guardarlos en la base y para pasarlos entre las distintas partes
 del sistema. Además abstrae el motor, de modo que si el sistema
 pasara a un uso multiusuario, cambiar SQLite por PostgreSQL
-requeriría modificaciones acotadas.
+requeriría modificaciones menores.
 
 #### 3.7.1.3 PuLP y CBC para el programa lineal
 
@@ -79,15 +70,11 @@ matemático, porque en un proyecto académico la cercanía con la
 formulación formal facilita la comprensión del modelo que desarrolla
 la sección 3.8.
 
-Los gráficos se generan con Altair, que se integra de manera
-directa con Streamlit.
-
 #### 3.7.1.4 De las reglas al código
 
 Las secciones anteriores describieron en lenguaje llano las entidades
 del dominio y sus reglas. Esta sección muestra, con fragmentos
-abreviados del código del sistema (sin comentarios y con los mensajes
-traducidos), cómo se plasma esa descripción y por qué la pila elegida
+abreviados del código del sistema, cómo se plasma esa descripción y por qué el stack elegido
 ahorra trabajo. Intervienen cuatro mecanismos.
 
 **Una sola declaración por entidad.** Con SQLModel, cada entidad se
@@ -184,7 +171,7 @@ horario_crud = CRUDBase(HorarioDB)
 
 Sobre esta base, los servicios agregan lo propio de cada entidad: que
 una comisión pertenezca a un cronograma o a un plan pero no a ambos
-(§3.6.4.2), o que al borrar un plan se borren sus comisiones y horarios.
+(3.6.4.2), o que al borrar un plan se borren sus comisiones y horarios.
 
 **El programa lineal, casi igual que en el papel.** PuLP permite
 escribir las restricciones de la sección 3.8 con una notación muy
@@ -210,7 +197,7 @@ prob += (
 
 Esta cercanía entre la formulación y el código es la que permite
 verificar, restricción por restricción, que el sistema resuelve el
-problema que se planteó.
+problema que se planteó. Para más detalles se puede consultar el código fuente en el Anexo B.
 
 ### 3.7.2 Separación en capas
 
@@ -223,7 +210,7 @@ verificar sin pasar por la pantalla. El sistema se organiza en tres
 capas de software apoyadas sobre la base de datos, como muestra la
 Figura @fig:arquitectura.
 
-<!-- figura: Arquitectura en capas del sistema {#fig:arquitectura} -->
+<!-- figura: Arquitectura en capas del sistema {#fig:arquitectura nota="Diagrama de elaboración propia."} -->
 ```mermaid
 flowchart TD
     UI["<b>Interfaz</b><br/>pantallas y componentes reutilizables"]
@@ -247,13 +234,13 @@ flowchart TD
   asignador de aulas.
 - **Entidades del dominio.** Son las clases que representan los
   conceptos de las secciones 3.5 y 3.6, con sus verificaciones de
-  campo e invariantes (§3.7.1.4). Los servicios trabajan sólo con
+  campo e invariantes (3.7.1.4). Los servicios trabajan sólo con
   ellas: crean, consultan, modifican y borran entidades, nunca
   escriben consultas ni tocan tablas. Como cada entidad está
   declarada con SQLModel, sabe guardarse y leerse: SQLModel la
   traduce a filas de la base y viceversa, y las operaciones que se
   repiten para todas (altas, bajas y modificaciones) se reúnen en un
-  servicio genérico (§3.7.1.4). Por eso las entidades son la única
+  servicio genérico (3.7.1.4). Por eso las entidades son la única
   pieza que conoce el motor relacional.
 
 La regla central es que **sólo la capa de servicios expresa reglas
@@ -262,5 +249,4 @@ lo pasa a un servicio y muestra la respuesta; cuando una pantalla
 advierte, por ejemplo, que las horas de teoría más las de
 laboratorio no suman las horas semanales de la materia, esa
 verificación la hace un servicio. Esta disciplina es la que permite
-probar la lógica del sistema de manera automática, sin depender de
-la interfaz.
+probar la lógica del sistema de manera automática.

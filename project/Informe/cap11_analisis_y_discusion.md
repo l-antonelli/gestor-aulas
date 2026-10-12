@@ -1,11 +1,10 @@
-## 3.11 Análisis y discusión
+## 3.11 Análisis
 
 ### 3.11.1 Desempeño del asignador sobre datos reales
 
 El caso ensayado confirma que el modelo es resoluble en la práctica.
 El programa lineal del cuatrimestre tiene 13.697 variables, 12.429 de
-ellas binarias, y 6.952 restricciones (§3.4.7.1). Todas las corridas
-de §3.10.4 terminaron en la solución óptima, en tiempos de entre 24 y
+ellas binarias, y 6.952 restricciones (3.4.7.1). Todas las corridas de 3.10.4 terminaron en la solución óptima, en tiempos de entre 24 y
 64 segundos según la configuración, y en todas quedaron con aula los
 546 horarios presenciales.
 
@@ -29,7 +28,7 @@ formato comparable, por lo que la comparación es cualitativa, frente al
 proceso descripto en la sección 3.3:
 
 - **Tiempo.** Lo que hoy se resuelve con un proceso manual repartido
-  entre varias áreas y apoyado en planillas (§3.3.2), el asignador lo
+  entre varias áreas y apoyado en planillas (3.3.2), el asignador lo
   resuelve en menos de un minuto, y volver a correrlo ante un cambio
   cuesta lo mismo.
 - **Calidad verificable.** La asignación manual no tiene una medida de
@@ -41,7 +40,7 @@ proceso descripto en la sección 3.3:
   asignar las materias faltantes, los horarios que se superponen dentro
   de un año y los que no respetan la grilla; en el caso ensayado,
   detectó 29 materias esperadas que el cronograma no traía.
-- **Escenarios.** Comparar configuraciones, como en §3.10.4, es
+- **Escenarios.** Comparar configuraciones, como en 3.10.4, es
   impracticable a mano y lleva minutos con el sistema.
 - **Trazabilidad.** Cada corrida queda registrada con su configuración y
   su resultado, y los cambios del catálogo quedan en el historial.
@@ -52,7 +51,7 @@ proceso descripto en la sección 3.3:
   excepciones puntuales por fecha (un feriado, un examen) quedan fuera.
 - **Calidad de los datos.** El resultado es tan bueno como el
   inventario de aulas, el catálogo de materias y los cronogramas que se
-  cargan (§3.11.4).
+  cargan (3.11.4).
 - **Pronóstico de inscriptos.** Los métodos de pronóstico son simples y
   dependen de una serie histórica a veces corta; un error en el
   pronóstico se traslada a la asignación.
@@ -102,14 +101,13 @@ principales en forma de directivas de uso.
    blando cuando la sede es sólo una preferencia: un modo duro
    innecesario reduce las alternativas y puede volver infactible el
    problema. Es el caso típico de las carreras de la Siberia, cuyos
-   alumnos cursan comunes en Pellegrini (§3.8.2.5).
+   alumnos cursan comunes en Pellegrini (3.8.2.5).
 
 5. **Los inscriptos esperados son un pronóstico.** Se estiman a partir
    de la serie histórica, que sólo es útil si las inscripciones de
    años anteriores quedaron vinculadas a la materia correcta (con su
    código actual o mediante un código equivalente registrado).
-   Cuando se sabe algo que la serie no refleja (un cambio de plan,
-   una cohorte excepcional), conviene reemplazar el valor estimado.
+   Cuando se sabe algo que la serie no refleja (un cambio de plan por ejemplo), conviene reemplazar el valor estimado.
 
 6. **Las excepciones, justificadas y revisadas.** Ignorar un conflicto
    horario es legítimo cuando se sabe que las materias involucradas
@@ -119,24 +117,3 @@ principales en forma de directivas de uso.
 7. **Fijar aulas a mano, con moderación.** Cada aula fijada le quita
    libertad al asignador; muchas fijaciones, o fijaciones
    incompatibles entre sí, pueden impedir que exista una solución.
-
-### 3.11.5 Cumplimiento de los objetivos del anteproyecto
-
-La Tabla @tab:objetivos recorre los objetivos específicos del
-anteproyecto y señala dónde se verifica su cumplimiento.
-
-<!-- tabla: Cumplimiento de los objetivos específicos del anteproyecto {#tab:objetivos} -->
-| Objetivo específico | Dónde se verifica |
-| ---------------------------------------------- | ---------------------------------------- |
-| Modelizar la problemática, sus variables y restricciones | Definición del problema (3.4) y modelo conceptual (3.5) |
-| Definir distintas reglas y restricciones de asignación | Reglas del dominio (3.5.5) y restricciones R1 a R12 (3.8.2.5) |
-| Proponer modelos y técnicas de optimización basados en esas reglas | Programa lineal entero, verificación previa y diagnóstico (3.8) |
-| Desarrollar el soporte informático para registrar los datos e implementar las técnicas | Modelo de datos (3.6), arquitectura (3.7) y validaciones (3.9) |
-| Generar distintos esquemas de asignación según los modelos propuestos y compararlos | Caso ensayado y escenarios (3.10) |
-
-Los cinco objetivos se cumplieron. El objetivo general, optimizar la
-asignación de aulas para mejorar el uso de la capacidad instalada, se
-verifica en el caso ensayado: todos los horarios quedan con aula, la
-sobreocupación se reduce a la que impone la falta física de aulas y la
-configuración recomendada deja una holgura de casi mil asientos aun en
-la franja más ocupada.

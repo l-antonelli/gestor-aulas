@@ -8,10 +8,7 @@ sección presentamos cómo se resuelve efectivamente el problema:
 lo modelamos como un programa lineal entero, explicamos cómo se
 diagnostica cuando no tiene solución y cómo se le comunica el
 resultado al usuario. En el cuerpo damos el modelo con la
-profundidad necesaria para seguir el argumento; las derivaciones
-completas, las formulaciones alternativas descartadas y los
-análisis de complejidad están en el **Anexo B, Desarrollo formal
-del programa lineal**.
+profundidad necesaria para seguir el argumento.
 
 ### 3.8.1 De la operatoria al modelo
 
@@ -25,7 +22,7 @@ sistemática.
 
 #### 3.8.1.1 Por qué programación lineal entera
 
-En §3.2.3 presentamos la programación lineal entera como la
+En 3.2.3 presentamos la programación lineal entera como la
 herramienta clásica de la investigación operativa para problemas
 de asignación combinatoria con restricciones estructuradas. Encaja
 con nuestro problema por tres razones:
@@ -52,8 +49,8 @@ El programa lineal decide, simultáneamente:
 2. **El tipo de los horarios que el cronograma dejó abierto.**
    Cuando el usuario no definió si un horario es de teoría o de
    laboratorio, lo resuelve el modelo.
-3. **Una redistribución de la matrícula esperada entre las
-   comisiones de un mismo dictado**, si el usuario la habilita y
+3. **Una redistribución de los inscriptos entre las comisiones de
+   una materia**, si el usuario la habilita y
    si mejora el aprovechamiento de las aulas.
 
 Todo lo demás queda **fuera**: el modelo no decide qué comisiones
@@ -64,9 +61,9 @@ preferencias personales de los docentes. Estos límites son
 deliberados: un modelo acotado se resuelve con garantías y en
 tiempos razonables.
 
-#### 3.8.1.3 De vuelta al planteo de la sección 3.4
+#### 3.8.1.3 Componentes del Problema
 
-En §3.4.2 identificamos los cuatro componentes de un problema de
+En 3.4.2 identificamos los cuatro componentes de un problema de
 asignación de recursos bajo restricciones. En el programa lineal
 se traducen así:
 
@@ -79,7 +76,7 @@ se traducen así:
   subocupación y alejamiento de la sede preferida, con pesos
   ajustables.
 
-### 3.8.2 Formulación matemática resumida
+### 3.8.2 Expresión Matematica
 
 Presentamos el programa lineal en su forma habitual: conjuntos,
 parámetros, variables, función objetivo y restricciones. La
@@ -102,8 +99,8 @@ convención usual de la investigación operativa.
 - `G`: grupos de materias; cada materia `m` pertenece a un único
   grupo `grupo(m)`.
 - `Sim`: *grupos maximales de simultaneidad*, es decir, conjuntos
-  de horarios que se dictan al mismo tiempo el mismo día (§3.8.3.3).
-- `P_R11`: pares de horarios consecutivos de materias distintas
+  de horarios que se dictan al mismo tiempo el mismo día (3.8.3.3).
+- `P_R11`: pares de horarios consecutivos de materias
   de un mismo año y cuatrimestre de una carrera, separados por
   menos tiempo que el margen fijado.
 
@@ -167,7 +164,7 @@ Los pesos por defecto son `λ_sobre = 10`, `λ_sub = 1` y
 `λ_sede_pref = 5`. La asimetría entre los dos primeros expresa
 que la sobreocupación (los alumnos no entran en el aula) es un
 problema físico más grave que la subocupación (un aula grande
-desaprovechada), que es un problema económico.
+desaprovechada), que es un problema menor.
 
 Los pesos no son un detalle técnico: expresan un criterio, y cambiar
 su proporción cambia qué solución se considera mejor. Supongamos que
@@ -181,9 +178,9 @@ defecto es 5. Con los valores por defecto el asignador la manda a
 Pellegrini: prefiere que todos entren aunque cambien de sede. Si en
 cambio el usuario sube `λ_sede_pref` a 150, salir de la Siberia pasa
 a costar más que los 10 alumnos sin lugar, y el asignador la deja en
-la Siberia, aunque quede apretada. Un peso de sede alto frente al de
+la Siberia, aunque quede apretada. Un peso de sede alto comparado al de
 sobreocupación dice, en criollo, "prefiero que estén apretados en su
-sede antes que repartidos en otra".
+sede antes que cómodos en otra".
 
 #### 3.8.2.5 Restricciones
 
@@ -197,7 +194,7 @@ exactamente un aula.
 $$\sum_{a \in A} x[h, a] = 1 \qquad \forall h \in H \setminus H_\emptyset$$
 
 **R2. Compatibilidad entre tipo de aula y tipo de clase.** Las
-clases teóricas van a aulas teóricas o anfiteatros; los
+clases teóricas van a aulas teóricas; los
 laboratorios, a laboratorios compatibles con la materia. Se
 cumple por construcción: las variables `x[h, a]` de pares
 incompatibles directamente no existen.
@@ -209,7 +206,7 @@ para cada grupo `S ∈ Sim` y cada aula `a`,
 
 $$\sum_{h \in S} x[h, a] \le 1$$
 
-Las ventajas de esta formulación se explican en §3.8.3.3.
+Las ventajas de esta formulación se explican en 3.8.3.3.
 
 **R4. Reparto entre teoría y laboratorio.** En cada comisión con
 horas de teoría y de laboratorio, la suma de las duraciones de
@@ -232,12 +229,14 @@ $$
 $$
 
 y análogamente para `sub[h]`. Como el objetivo las minimiza, en
-el óptimo toman exactamente el valor del exceso o del faltante.
+el óptimo toman exactamente el valor del exceso o del faltante. La desigualdad responde a que se fuerzan los valores negativos a 0.
 
 **R7. Redistribución de Alumnos entre Comisiones.** Cuando está habilitada,
 los inscriptos esperados de cada comisión dejan de ser un dato y
-pasan a ser el total del dictado multiplicado por `α[k]`; las
-proporciones de cada dictado deben sumar 1.
+pasan a ser variable de decisión. Se toma el total de alumnos
+esperados multiplicado por un coeficiente de distribución `α[k]`. La
+sumatoria de los coeficientes α de todas las comisiones k de una
+materia m debe ser 1.
 
 **R8. Sedes admitidas por grupo de materias (modo duro).** Si el
 grupo de la materia está en modo DURO, sólo se admiten aulas de
@@ -249,10 +248,10 @@ siempre que el conjunto no esté vacío. La excepción son los
 laboratorios declarados compatibles con la materia, que se
 admiten aunque estén en otra sede.
 
-*Ejemplo.* Retomemos el tercer año de Ingeniería Mecánica (§3.5.5.3).
+*Ejemplo.* Retomemos el tercer año de Ingeniería Mecánica (3.5.5.3).
 Si el grupo de Formación Básica está en modo duro con Pellegrini como
 sede, los horarios de Métodos Numéricos sólo tienen variables para
-aulas de Pellegrini; si el grupo de Mecánica está en modo duro con la
+aulas de Pellegrini, si el grupo de Mecánica está en modo duro con la
 Siberia, los de Termodinámica sólo tienen variables para aulas de la
 Siberia.
 
@@ -263,7 +262,7 @@ de un horario y pidió respetar esas decisiones, se impone
 **R10. Preferencia de sede (modo blando).** Si el grupo está en
 modo BLANDO, todas las sedes son admisibles (R8 no se aplica),
 pero cada horario asignado fuera de la sede preferida suma
-`λ_sede_pref` al objetivo (§3.8.2.4).
+`λ_sede_pref` al objetivo (3.8.2.4).
 
 *Ejemplo.* Si el grupo de Mecánica pasa a modo blando con la Siberia
 como preferida, un horario de Termodinámica puede ir a Pellegrini
@@ -294,7 +293,7 @@ defecto de 30 minutos las dos tienen que dictarse en la misma sede,
 y como Métodos Numéricos está atada a Pellegrini, Termodinámica
 también. Si el grupo de Mecánica estuviera en modo duro en la
 Siberia, el problema no tendría solución: la verificación previa lo
-detecta (§3.8.4) y el usuario puede mover uno de los horarios,
+detecta (3.8.4) y el usuario puede mover uno de los horarios,
 achicar el margen o pasar el grupo a modo blando, aceptando la
 penalización de R10.
 
@@ -317,15 +316,14 @@ dos horarios consecutivos de una misma comisión en el mismo día,
 algo que rara vez ocurre. Si se exige R12, ese caso ya queda
 cubierto.
 
-**R12. Misma sede por comisión.** Es la regla que mira al
-docente. Cuando el usuario la exige, las variables `y[c, s]`
+**R12. Misma sede por comisión.** Cuando el usuario la exige, las variables `y[c, s]`
 obligan a que todos los horarios de una comisión se dicten en la
 misma sede. *Ejemplo:* si una comisión de Termodinámica tiene clases
 el lunes y el jueves, las dos van a la Siberia o las dos a
 Pellegrini, para que quien la dicta no cambie de sede durante la
 semana.
 
-#### 3.8.2.6 Un ejemplo pequeño
+#### 3.8.2.6 Un ejemplo simple
 
 Para ver cómo queda escrito el programa, tomamos un caso mínimo:
 cuatro horarios del lunes por la mañana y tres aulas de una misma
@@ -349,7 +347,9 @@ Figura @fig:ej-lp los muestra sobre la línea de tiempo.
 | B | teórica | 80 |
 | L | laboratorio de Física | 30 |
 
-![Ejemplo del programa lineal: horarios, grupos de simultaneidad y asignación óptima](figuras/ejemplo_lp.png){#fig:ej-lp width=15cm}
+*Nota:* Capacidad expresada en asientos disponibles.
+
+![Ejemplo del programa lineal: horarios, grupos de simultaneidad y asignación óptima](figuras/ejemplo_lp.png){#fig:ej-lp nota="" width=15cm}
 
 **Las variables.** Cada variable responde una pregunta de sí o no:
 $x_{1A}$ vale 1 si el horario `h₁` va al aula A, y 0 si no. Como las
@@ -450,13 +450,13 @@ es el mismo, pero con cientos de horarios y miles de variables.
 
 ### 3.8.3 Herramientas conceptuales para el diagnóstico
 
-Los resultados matemáticos presentados en la sección 3.2 se usan
+Los resultados presentados en la sección 3.2 se usan
 para diagnosticar el modelo: antes de resolverlo, durante la
 resolución y después de ella.
 
 #### 3.8.3.1 Principio del palomar
 
-El *principio del palomar* (§3.2.4.2) dice que si se reparten
+El *principio del palomar* (3.2.4.2) dice que si se reparten
 `n + 1` objetos en `n` cajas, alguna recibe al menos dos. En el
 asignador funciona como prueba rápida de infactibilidad: si en un
 mismo momento de la semana hay `k` horarios simultáneos y sólo
@@ -464,12 +464,12 @@ mismo momento de la semana hay `k` horarios simultáneos y sólo
 hace falta resolverlo para saberlo. La prueba se hace primero con
 todas las aulas y luego por tipo (teóricas por un lado,
 laboratorios compatibles por otro), como parte de la verificación
-previa (§3.8.4).
+previa (3.8.4).
 
 #### 3.8.3.2 Teorema de Hall y apareamiento bipartito
 
 Cuando el palomar no detecta nada pero el problema igualmente es
-infactible, recurrimos al *teorema de Hall* (§3.2.4.3). Se arma un
+infactible, recurrimos al *teorema de Hall* (3.2.4.3). Se arma un
 grafo bipartito con los horarios de un lado, las aulas del otro y
 una arista por cada par compatible. Existe una asignación que le
 da un aula distinta a cada horario si y sólo si todo subconjunto
@@ -492,7 +492,7 @@ ningún momento tenga dos clases a la vez. Y los horarios se pisan de
 maneras variadas: tienen distintas duraciones y se solapan en tramos
 distintos, de modo que un horario puede coincidir con uno a primera
 hora y con otro más tarde. El sistema trabaja con el tiempo
-discretizado (la granularidad de §3.4.3.1), pero lo que tiene que
+discretizado (la granularidad de 3.4.3.1), pero lo que tiene que
 garantizar es eso: que en todo momento cada aula esté asignada a una
 sola clase.
 
@@ -504,18 +504,17 @@ Hay una forma más simple: si en un instante hay varios horarios en
 curso, alcanza con decir "de todos ellos, a lo sumo uno ocupa esta
 aula". A ese conjunto de horarios en curso a la vez lo llamamos
 *grupo de simultaneidad*, y es *maximal* cuando no está contenido en
-otro más grande. En el ejemplo de §3.8.2.6, de 9 a 10 están en curso
+otro más grande. En el ejemplo de 3.8.2.6, de 9 a 10 están en curso
 `h₁`, `h₂` y `h₃`: para cada aula alcanza con una sola desigualdad
 que sume las variables de los tres, en lugar de una por cada par.
 
 Las dos formas admiten las mismas asignaciones, pero la agrupada
 genera muchas menos restricciones (cuando los horarios son intervalos
 de tiempo, los grupos maximales son a lo sumo tantos como horarios,
-según Golumbic [5]) y le da al resolutor una relajación más ajustada
-(§3.2.3.3), así que tiene que ramificar menos. En programación lineal
-entera se las conoce como *desigualdades de clique*, y Wolsey [13]
-muestra que superan a las formuladas por pares. El Anexo B compara
-ambas sobre casos de prueba.
+según Golumbic [4]) y le da al resolutor una relajación más ajustada
+(3.2.3.3), así que tiene que ramificar menos. En programación lineal
+entera se las conoce como *desigualdades de clique*, y Wolsey [10]
+muestra que superan a las formuladas por pares.
 
 ### 3.8.4 Verificación estructural previa
 
@@ -559,8 +558,7 @@ con los datos vigentes y las opciones que eligió el usuario. Los
 horarios virtuales se separan (cuentan para R4 pero no ocupan aula),
 sólo se crean variables para los pares horario-aula compatibles (con
 lo que R2 y R8 se cumplen de antemano), se calculan los grupos de
-simultaneidad y los pares de horarios consecutivos en riesgo de
-traslado, y se plantean las restricciones que correspondan. El
+simultaneidad y los pares de horarios consecutivos, y se plantean las restricciones que correspondan. El
 resolutor devuelve la solución óptima, la constancia de
 infactibilidad o el aviso de que se agotó el tiempo máximo.
 
@@ -582,20 +580,10 @@ informa primero la que admite la acción más directa del usuario, como
 flexibilizar la sede de un grupo de materias concreto; si ninguna
 alcanza sola, se prueban combinaciones. La técnica aproxima el
 *subsistema irreducible de infactibilidad*, el menor conjunto de
-restricciones cuya combinación impide toda solución (Anexo B).
+restricciones cuya combinación impide toda solución.
 
 Toda corrida termina con un **veredicto** en lenguaje llano: el
 estado final, la causa probable si la hay, los horarios que quedaron
 sin aula y la configuración usada. Así, en lugar de un "infactible"
 opaco, el usuario recibe una recomendación concreta con la que puede
 iterar.
-
-### 3.8.7 Cierre de la sección
-
-La asignación queda formulada como un programa lineal entero cuyas
-restricciones R1 a R12 traducen las reglas de la sección 3.5. La
-verificación previa evita resolver problemas sin solución, y el
-diagnóstico y el veredicto convierten cada corrida en información
-útil para el usuario. La sección siguiente trata las validaciones
-que garantizan que los datos que llegan al modelo cumplen lo que las
-restricciones dan por supuesto.

@@ -1,7 +1,7 @@
 -- Filtro de pandoc para el informe (pautas "El informe escrito", I-32).
 --
 -- Figuras: "Figura N" en negrita y, debajo, el título en cursiva, ARRIBA
--- de la imagen; debajo de la imagen, "Nota. Elaboración propia."
+-- de la imagen; debajo de la imagen, la nota (ver nota_de).
 -- Tablas: "Tabla N" en negrita y el título en cursiva, arriba de la
 -- tabla. Numeración correlativa en todo el documento.
 --
@@ -44,15 +44,31 @@ local function leyenda(rotulo, titulo_inlines)
   }
 end
 
+-- La nota de la figura sale del atributo `nota` de la imagen
+-- (`{#fig:clave nota="Diagrama de elaboración propia."}`); sin atributo,
+-- "Elaboración propia."; con `nota=""`, la figura no lleva nota.
+local function nota_de(fig)
+  local nota
+  pandoc.walk_block(pandoc.Div(fig.content), {
+    Image = function(img) nota = nota or img.attributes["nota"] end,
+  })
+  if nota == nil then return "Elaboración propia." end
+  return nota
+end
+
 function Figure(fig)
   nfig = nfig + 1
   local titulo = pandoc.utils.blocks_to_inlines(fig.caption.long)
   local out = leyenda("Figura " .. nfig, titulo)
   table.insert(out, div(fig.content, "Figura"))
-  table.insert(out, div({pandoc.Para({
-    pandoc.Emph({pandoc.Str("Nota.")}), pandoc.Space(),
-    pandoc.Str("Elaboración"), pandoc.Space(), pandoc.Str("propia."),
-  })}, "Nota de figura"))
+  local nota = nota_de(fig)
+  if nota ~= "" then
+    local inlines = {pandoc.Emph({pandoc.Str("Nota:")}), pandoc.Space()}
+    for _, x in ipairs(pandoc.read(nota, "markdown").blocks[1].content) do
+      table.insert(inlines, x)
+    end
+    table.insert(out, div({pandoc.Para(inlines)}, "Nota de figura"))
+  end
   return out
 end
 
@@ -118,7 +134,8 @@ function CodeBlock(cb)
     pandoc.RawBlock("openxml", recuadro(cb.text)),
     div({pandoc.Para({
       pandoc.Emph({pandoc.Str("Fragmento"), pandoc.Space(), pandoc.Str("de")}), pandoc.Space(),
-      pandoc.Code(fuente), pandoc.Str("."),
+      pandoc.Code(fuente), pandoc.Space(), pandoc.Str("(ver"), pandoc.Space(),
+      pandoc.Str("Anexo"), pandoc.Space(), pandoc.Str("B)"),
     })}, "Nota de figura"),
   }
 end

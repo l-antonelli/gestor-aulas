@@ -5,7 +5,7 @@
 El proyecto partió de una premisa: para resolver bien un problema
 primero hay que entenderlo. Desde la ingeniería industrial analizamos
 la facultad como organización y su proceso actual de asignación de
-aulas (secciones 3.1 a 3.3), y de ese análisis surgió la definición del
+aulas (secciones 3.1 a 3.3), y de ese análisis y el relevamiento constante con las partes interesadas, surgió la definición del
 problema como una asignación de recursos bajo restricciones (sección
 3.4). Desde la ingeniería de software llevamos ese entendimiento a un
 modelo del dominio y a un modelo de datos (secciones 3.5 y 3.6), sobre
@@ -62,7 +62,7 @@ solución (que las aulas asignadas sean compatibles con lo que
 requiere cada clase, que el esquema de asignación sea factible de
 cursar para los alumnos que están al día, etc.).
 
-La administración eficiente, equitativa e integral de los recursos en
+La administración eficiente de los recursos en
 una institución de educación superior exige altos estándares de
 certeza y previsibilidad. La consolidación de un sistema estructurado
 y robusto posibilita:
@@ -103,8 +103,7 @@ norma ISO 9001 [12]:
   variabilidad en la gestión y previniendo errores humanos.
 - **Ciclo de mejora continua.** La posibilidad de crear escenarios en
   borrador, evaluar múltiples configuraciones y ajustar los pesos o
-  cupos de las comisiones promueve una dinámica iterativa que eleva
-  progresivamente la calidad del servicio educativo.
+  cupos de las comisiones promueve una dinámica iterativa que permite elevar progresivamente la calidad del servicio educativo.
 
 ## 4.4 Factores clave para el éxito de la solución
 
@@ -124,7 +123,7 @@ cultura de rigor organizativo y operativo:
 
 ## 4.5 Configuración recomendada del asignador
 
-Los escenarios de §3.10.4 dejan una recomendación concreta para usar
+Los escenarios de 3.10.4 dejan una recomendación concreta para usar
 el asignador:
 
 - **Grupos de materias.** Mantener la configuración de sedes de los
@@ -142,24 +141,6 @@ el asignador:
   bajo (1) con una tolerancia del 20 % reserva las aulas grandes para
   quien las necesita.
 - **Pesos de sobreocupación y sede.** Un peso de sobreocupación de 25 y
-  uno de sede preferida de 15 dan un buen equilibrio: priorizan que
+  uno de sede preferida de al menos 15 dan un buen equilibrio: priorizan que
   todos entren y que cada carrera curse en su sede, sin forzar ninguna
   de las dos cosas.
-
-## 4.6 Trabajos futuros
-
-El sistema deja abiertas varias líneas de continuidad:
-
-- **Excepciones por fecha** sobre el horario semanal, para feriados,
-  semanas de exámenes o cambios puntuales.
-- **Corridas incrementales** durante el cuatrimestre, que reasignen sólo
-  lo afectado por un cambio y respeten el resto de la asignación.
-- **Un pronóstico de inscripción más sofisticado**, que combine la serie
-  histórica con datos de la cohorte, como la cantidad de alumnos que
-  aprobaron las correlativas.
-- **Penalizar los traslados entre sedes**, además de prohibir los que no
-  dan el margen, para preferir los días con menos cambios de sede.
-- **Extensión a otros recursos**, como las mesas de examen o los
-  laboratorios de investigación.
-- **Integración con el SIU Guaraní**, para tomar de ahí las comisiones y
-  las inscripciones sin cargarlas a mano.

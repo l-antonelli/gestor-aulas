@@ -86,7 +86,7 @@ el cual hoy se decide qué clase se dicta en qué aula.
 #### 3.3.2.1 Análisis y modelado de procesos como instrumento
 
 Para describir el proceso usamos el **modelado de procesos**
-presentado en §3.2.1.1: representar quién hace qué, cuándo, con qué
+presentado en 3.2.1.1: representar quién hace qué, cuándo, con qué
 insumos y con qué resultados. Entre las notaciones disponibles
 (diagramas de flujo, cursogramas, notaciones estandarizadas de procesos) elegimos un diagrama de
 flujo simplificado, suficiente para mostrar la estructura del
@@ -105,9 +105,7 @@ sus propios documentos de trabajo. Los actores que intervienen son:
 - **Direcciones de Escuelas académicas.** Cada Escuela (Formación
   Básica, Ingeniería Industrial, Ingeniería Mecánica, Ingeniería
   Civil, Ingeniería Eléctrica, Ingeniería Electrónica, Agrimensura,
-  Ciencias Exactas y Naturales, entre otras) es responsable de
-  diseñar de manera autónoma la grilla horaria de las materias
-  específicas del **Ciclo Superior** de sus carreras. Para eso
+  Ciencias Exactas y Naturales, entre otras) es responsable de establecer los cronogramas de materias específicas del **Ciclo Superior** de sus carreras. Para eso
   analiza la disponibilidad horaria de su cuerpo docente, distribuye
   las comisiones teóricas y prácticas y establece la secuencia de
   dictado.
@@ -115,7 +113,7 @@ sus propios documentos de trabajo. Los actores que intervienen son:
   del **Ciclo Básico** (el tronco común de primer y segundo año de
   las ingenierías: Cálculo, Álgebra, Física y otras materias de
   alta concurrencia). Proyecta la cantidad de comisiones necesarias
-  y las distribuye en los tres turnos de la grilla oficial.
+  y las distribuye como corresponda.
 - **Secretaría Académica.** Recibe las propuestas de las Direcciones
   de Escuelas y del Área de Ingreso, y lleva a cabo la
   **integración, fiscalización y validación institucional**.
@@ -147,7 +145,7 @@ sus propios documentos de trabajo. Los actores que intervienen son:
   comisiones y asisten a las clases en las aulas asignadas.
 - **Sistema SIU Guaraní.** Sistema de gestión académica que
   administra la información de alumnos, inscripciones y
-  comisiones. Detallado en §3.4.
+  comisiones. Detallado en 3.4.
 
 Vale la pena destacar dos rasgos de esta distribución de actores.
 Primero, **la asignación de aulas propiamente dicha es
@@ -156,7 +154,7 @@ grilla horaria consolidada por la Secretaría Académica, que a su
 vez es la agregación de propuestas elaboradas de manera autónoma
 por las Direcciones de Escuelas y el Área de Ingreso. Segundo, esta
 distribución es coherente con el diagnóstico organizacional de
-§2.1: las decisiones operativas están **efectivamente
+2.1: las decisiones operativas están **efectivamente
 descentralizadas** en el núcleo profesional (Escuelas y cátedras) y
 la coordinación central se aplica sobre propuestas ya elaboradas,
 no las produce desde cero.
@@ -169,7 +167,7 @@ El proceso tiene dos momentos:
 - **Planificación inicial.** Antes del inicio de clases, y en
   general antes de conocer la cantidad final de inscriptos, se arma
   el esquema completo de asignación. Se parte del esquema del
-  cuatrimestre anterior y se lo ajusta según los cambios que
+  cuatrimestre anterior y se ajusta según los cambios que
   informan las Escuelas, las cátedras y las autoridades académicas.
 - **Ajustes dinámicos.** Ya iniciadas las clases, el esquema se
   corrige por inscripciones tardías, materias más numerosas de lo
@@ -195,33 +193,7 @@ elaborada para servir de referencia en las secciones que siguen; su
 fidelidad al detalle administrativo concreto no es total pero sí
 suficiente para el análisis.
 
-<!-- figura: Proceso actual de planificación de horarios y asignación de aulas -->
-```mermaid
-flowchart TB
-    A0[Direcciones de Escuelas<br/>diseñan grilla horaria<br/>del Ciclo Superior] --> B
-    A1[Área de Ingreso<br/>diseña grilla horaria<br/>del Ciclo Básico] --> B
-    B[Secretaría Académica<br/>integra propuestas,<br/>valida contra planes de estudio,<br/>detecta superposiciones] --> C{¿Discrepancias<br/>o conflictos?}
-    C -->|Sí| A0
-    C -->|Sí| A1
-    C -->|No| D[Secretaría Académica<br/>consolida y aprueba<br/>grilla horaria general]
-    D --> E[Secretaría Técnica<br/>asigna aulas a clases<br/>según capacidad y equipamiento]
-    E --> F[Secretaría Académica<br/>refrenda cuadro definitivo]
-    F --> G1[Bedelías: apertura<br/>y control diario]
-    F --> G2[Secretaría Estudiantil:<br/>carga aulas en SIU Guaraní,<br/>gestiona inscripciones]
-    F --> G3[Escuelas:<br/>notifican a docentes]
-    G1 --> H[Inicio de clases]
-    G2 --> H
-    G3 --> H
-    H --> I{¿Novedad operativa<br/>durante el cuatrimestre?}
-    I -->|Aula superpoblada,<br/>cambio de comisión,<br/>indisponibilidad puntual,<br/>calendario de exámenes| J[Ajuste dinámico<br/>coordinado entre áreas]
-    J --> I
-    I -->|Fin del cuatrimestre| K[Cierre]
-
-    classDef proc fill:#fffbe6,stroke:#c9a227,color:#000
-    classDef dec fill:#e6f0ff,stroke:#4a6fa5,color:#000
-    class A0,A1,B,D,E,F,G1,G2,G3,H,J,K proc
-    class C,I dec
-```
+![Proceso actual de planificación de horarios y asignación de aulas](figuras/proceso_bpmn.png){#fig:proceso nota="Diagrama de elaboración propia." width=14cm}
 :::
 
 ### 3.3.3 Problemas operativos observados
@@ -300,8 +272,7 @@ de la lista de materiales (qué materias componen cada carrera, en
 qué orden y con qué correlativas) y las **grillas horarias** el de
 la hoja de ruta (qué materia va en qué aula y en qué momento). Si
 esos dos documentos no están bien estructurados y consolidados,
-cualquier asignación posterior queda comprometida de raíz: con datos
-de entrada defectuosos, los resultados también lo son.
+cualquier asignación posterior queda comprometida de raíz: con malos datos de entrada, los resultados también lo son.
 
 #### 3.3.4.1 Las tres fuentes principales
 
@@ -337,11 +308,11 @@ código** en el SIU Guaraní, lo que divide a sus inscriptos en dos o
 más grupos e impide conocer la cantidad real de alumnos que van a
 cursar. "Métodos Numéricos" e "Introducción a la Optimización", que
 pueden compartir un mismo dictado pero figuran como asignaturas
-independientes, ilustran el caso.
+independientes, son un caso.
 
 En consecuencia, cruzar las tres fuentes exige reconstruir a mano
 las equivalencias, y un sistema que consuma estos datos sin
-depurarlos puede equivocarse de forma concreta: asignar dos aulas chicas donde correspondía una mediana, o
+limpiarlos puede equivocarse: asignar dos aulas chicas donde correspondía una mediana, o
 programar una misma clase en dos horarios incompatibles por tomar
 sus dos códigos como materias distintas.
 
@@ -370,7 +341,7 @@ reglamentación académica vigente sin que nadie lo advierta.
 Del lado del recurso pasa algo análogo: el inventario de aulas tiene
 información **incompleta o desactualizada** sobre capacidades reales
 y equipamiento. Aulas sin dato de capacidad, equipamiento declarado
-que ya no existe o aulas nuevas sin relevar comprometen cualquier
+que ya no existe o aulas sin relevar comprometen cualquier
 asignación hecha sobre esos datos.
 
 Si el inventario no está bien relevado, incluso el mejor método de
@@ -390,13 +361,6 @@ cuántas clases se dictan por semana pueden estar contando cosas
 distintas sin saberlo.
 
 Esta dispersión conceptual es la contracara de la dispersión de los
-datos. Fijar un **lenguaje ubicuo** sobre estas entidades (en el
-sentido de Evans, §3.2.2) es condición necesaria para que la
+datos. Fijar un **lenguaje ubicuo** sobre estas entidades (en el sentido de Evans, 3.2.2) es condición necesaria para que la
 asignación deje de depender de conciliaciones informales, y es el
 trabajo que encara la sección 3.5.
-
-### 3.3.5 Resumen
-
-La asignación de aulas es hoy manual, costosa de replanificar y se
-apoya en datos dispersos y sin criterio común. La sección siguiente
-formaliza esta operatoria como problema.

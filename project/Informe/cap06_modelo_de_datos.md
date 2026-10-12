@@ -32,7 +32,6 @@ operaciones del programa en consultas a la base.
 En la mayoría de los casos la correspondencia es directa: cada entidad de la sección 3.5 tiene su propia tabla. Las excepciones son las que vale la pena explicar, y se tratan
 en la sección 3.6.4.
 
-
 Además de estas tablas, la base guarda información que el sistema
 necesita para operar pero que no es una entidad del dominio, como
 el historial de inscripciones que alimenta la estimación de
@@ -47,32 +46,12 @@ y cada línea, una relación entre dos tablas. Usamos la notación de
 *pata de gallo* (*crow's foot*): el extremo que se abre en tres
 trazos indica el lado *muchos* de la relación; la doble barra
 indica *exactamente uno*, y el círculo, que la relación es
-opcional. La Figura @fig:er presenta el modelo implementado, sin los
-atributos de cada tabla, que se detallan en el anexo A.
+opcional. La Figura @fig:er presenta el modelo implementado con los
+atributos principales de cada tabla (sus claves y los datos que usa
+el problema), agrupadas por zona; la leyenda de la figura resume la
+notación y la lista completa de atributos está en el Anexo A.
 
-<!-- figura: Diagrama entidad-relación del modelo implementado {#fig:er} -->
-```mermaid
-erDiagram
-    CARRERA ||--o{ VERSION_DE_PLAN : "tiene"
-    VERSION_DE_PLAN ||--o{ ENTRADA_DE_PLAN : "detalla"
-    MATERIA ||--o{ ENTRADA_DE_PLAN : "aparece en"
-    MATERIA ||--o{ CORRELATIVA : "requiere"
-    GRUPO_DE_MATERIAS ||--|{ MATERIA : "agrupa"
-    GRUPO_DE_MATERIAS ||--o{ SEDE_DE_GRUPO : "admite"
-    SEDE ||--o{ SEDE_DE_GRUPO : "figura en"
-    SEDE ||--o{ AULA : "tiene"
-    MATERIA ||--o{ MATERIA_LABORATORIO : "usa"
-    AULA ||--o{ MATERIA_LABORATORIO : "acepta"
-    CICLO_LECTIVO }o--o{ VERSION_DE_PLAN : "aplica"
-    MATERIA ||--o{ DICTADO : "se dicta en"
-    CICLO_LECTIVO }o--o{ DICTADO : "cubre"
-    CICLO_LECTIVO ||--o{ CRONOGRAMA : "tiene"
-    CRONOGRAMA ||--o{ PLAN_DE_CURSADA : "origina"
-    PLAN_DE_CURSADA ||--o{ COMISION : "agrupa"
-    MATERIA ||--o{ COMISION : "se abre en"
-    COMISION ||--o{ HORARIO_SEMANAL : "programa"
-    AULA |o--o{ HORARIO_SEMANAL : "aloja"
-```
+![Diagrama entidad-relación del modelo implementado](figuras/modelo_er.png){#fig:er nota="Diagrama de elaboración propia." width=14.3cm}
 
 ### 3.6.3 Codificación de las relaciones
 
@@ -122,7 +101,7 @@ prometió a una cohorte aunque luego haya cambiado.
 La comisión es una entidad con tabla propia, porque el usuario
 necesita editar sus atributos (nombre, cupo, carrera a la que se
 destina). Cada comisión pertenece **o bien** a un cronograma **o
-bien** a un plan de cursada, pero nunca a ambos, y la separación
+bien** a un plan de cursada, y la separación
 responde a que cumplen papeles distintos.
 
 El cronograma es la propuesta horaria del cuatrimestre: un borrador
@@ -135,20 +114,16 @@ de cursada. El plan, en cambio, es el escenario con el que se
 trabaja la asignación, y suma lo que el cronograma no tiene:
 
 - **los inscriptos esperados** de cada comisión, a partir del
-  pronóstico de matrícula o de un valor que fija el usuario;
+  pronóstico o de un valor que fija el usuario una vez que conoce el
+  dato
 - **su propia validación**, sobre las comisiones ya ajustadas y con
-  las excepciones que el usuario acepta para ese escenario;
+  las excepciones que el usuario acepta para ese escenario
 - **la corrida del asignador de aulas** y, con ella, las aulas
-  asignadas y las que el usuario fija a mano;
-- **las clases por fecha**, que repiten el patrón semanal a lo largo
-  del ciclo.
+  asignadas y las que el usuario fija a mano
 
 Al generar un plan a partir de un cronograma, sus comisiones se
 copian, de modo que se puede ajustar o descartar un escenario sin
-alterar el cronograma ni los otros planes que salieron de él. La
-regla "o bien una cosa o bien la otra" no se puede declarar en el
-motor, por lo que la garantiza el propio sistema al crear y
-modificar comisiones.
+alterar el cronograma ni los otros planes que salieron de él.
 
 #### 3.6.4.3 Grupo de materias como partición
 
@@ -207,10 +182,3 @@ dominio. Distinguimos tres niveles:
 
 El criterio general es declarar cada regla en el nivel más bajo
 posible, para que ninguna capa superior pueda omitirla.
-
-### 3.6.6 Resumen
-
-El modelo conceptual queda traducido a una base relacional cuya
-consistencia se protege en el motor, en el sistema y antes de cada
-corrida del asignador. La sección 3.7 presenta la arquitectura que la
-usa.

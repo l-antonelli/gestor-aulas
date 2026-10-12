@@ -4,12 +4,12 @@ En las secciones 3.3 y 3.4 la operatoria y el problema quedaron descritos
 al nivel de "qué se hace y qué hay que decidir". Esta sección da el
 paso siguiente: identificar las entidades del dominio, sus relaciones
 y las reglas de negocio que las gobiernan. Es el primer eslabón de la
-cadena introducida en §3.2.5, el **modelo conceptual del dominio**; su
+cadena introducida en 3.2.5, el **modelo conceptual del dominio**; su
 traducción a un esquema de datos queda para la sección 3.6, y su uso
 como piezas del programa lineal, para la sección 3.8.
 
 El objetivo es doble. Por un lado, fijar un **lenguaje ubicuo** en el
-sentido de Evans [3] (§3.2.2): los términos de esta sección son los
+sentido de Evans [2] (3.2.2): los términos de esta sección son los
 mismos que aparecen en la interfaz del sistema y en el resto del
 informe. Por otro, hacer explícitas las **reglas de negocio** que la
 FCEIA aplica en la práctica y que hoy viven mayormente en el criterio
@@ -23,7 +23,7 @@ el dominio completo, el delimitado con las entidades directamente
 relevantes para la asignación, y el dominio de la solución que agrega
 entidades intermedias para resolver relaciones muchos-a-muchos.
 
-<!-- figura: Enfoque de modelado en tres capas {#fig:capas} -->
+<!-- figura: Enfoque de modelado en tres capas {#fig:capas nota="Diagrama de elaboración propia."} -->
 ```mermaid
 flowchart LR
     C1["<b>Dominio del problema<br/>(completo)</b><br/><br/>Todas las entidades reales<br/>que existen en la FCEIA"]
@@ -53,9 +53,9 @@ alcance**:
   entrada del proceso.
 
 Quedan **dentro del alcance** la carrera, el plan de estudios y la
-materia (qué se dicta y con qué requerimientos); la comisión (los
-grupos de dictado); el aula y la sede (los recursos que se asignan);
-el ciclo lectivo (el marco temporal); el cronograma (la entrada del
+materia (qué se dicta y con qué requerimientos), la comisión (los
+grupos de dictado), el aula y la sede (los recursos que se asignan),
+el ciclo lectivo (el marco temporal), el cronograma (la entrada del
 proceso) y la clase (cada encuentro concreto en el calendario).
 
 ### 3.5.3 Las entidades del modelo
@@ -82,9 +82,8 @@ Entre plan y materia hay una relación muchos-a-muchos que resolvemos
 con una entidad del dominio de la solución, la **entrada de plan de
 estudios**: indica en qué año y cuatrimestre del plan se ubica cada
 materia. Las **correlativas**, a su vez, expresan qué materias deben
-haberse cursado antes que otras dentro de una carrera; no intervienen
-en la asignación de aulas, pero sirven para verificar que el
-cronograma sea cursable por un alumno tipo.
+haberse cursado antes que otras dentro de una carrera, no intervienen
+en la asignación de aulas.
 
 #### 3.5.3.2 Los recursos físicos
 
@@ -102,7 +101,7 @@ puede servir a varias materias.
 
 #### 3.5.3.3 La planificación del cuatrimestre
 
-El **ciclo lectivo** es cada cuatrimestre de operación académica y
+El **ciclo lectivo** es cada cuatrimestre operativo y
 contextualiza todo lo demás: en él están vigentes ciertas versiones
 de los planes de estudio, se carga el cronograma y se arma la
 planificación.
@@ -129,17 +128,13 @@ un mismo esquema semanal; una materia puede abrir varias comisiones.
 Cada comisión se compone de **horarios semanales**: franjas
 recurrentes con día, hora de inicio, hora de fin y tipo de clase
 (teoría o laboratorio). El horario semanal es la unidad sobre la que
-se decide el aula, según se justificó en §3.4.3.1. Finalmente, la
-**clase** es cada encuentro concreto en una fecha del calendario; se
-obtiene repitiendo el horario semanal a lo largo del ciclo y hereda
-su aula.
+se decide el aula, según se justificó en 3.4.3.1.
 
 #### 3.5.3.4 El grupo de materias
 
 La pregunta "¿en qué sedes puede dictarse esta materia?" no se
 responde materia por materia, sino por bloques: las materias del
-ciclo básico de las ingenierías comparten un criterio, las del bloque
-troncal de ingeniería otro, las comunes a licenciaturas y
+ciclo básico de las ingenierías comparten un criterio, las comunes a licenciaturas y
 profesorados otro, y las específicas de cada carrera el suyo. El
 **grupo de materias** captura ese criterio. Cada materia pertenece a
 exactamente un grupo, y cada grupo declara dos configuraciones de
@@ -152,19 +147,21 @@ sedes:
   y las demás se aceptan con una penalización.
 
 El criterio con que se resuelve cada grupo se elige en cada corrida
-del asignador. Esto permite, por ejemplo, resolver un mismo plan una
-vez con criterio estricto, para verificar su factibilidad, y otra con
-criterio flexible, para reducir traslados. Las materias que todavía
-no se clasificaron caen en un grupo *sin clasificar*, cuya presencia
-el sistema señala como advertencia. El grupo de materias interviene
-en las restricciones R8 y R10 del programa lineal (sección 3.8).
+del asignador. Las materias que todavía no se clasificaron caen en un
+grupo *sin clasificar* y el sistema lo señala como advertencia. El
+grupo de materias interviene en las restricciones R8 y R10 del
+programa lineal (sección 3.8).
+
+Esto es importante porque como veremos más adelante, según como se
+configuren estos grupos a la hora de correr el asignador, se podrán
+dar lugar a situaciones de infactibilidad.
 
 ### 3.5.4 Relaciones y multiplicidades
 
 La mayoría de las relaciones del modelo son simples, de uno a muchos:
 una sede tiene muchas aulas, un ciclo tiene varios cronogramas y
-planes de cursada, una comisión tiene varias clases semanales. Pero, como anticipamos en §3.2.4.1 y
-en el diagnóstico de §3.3.4, en la asignación de aulas las relaciones
+planes de cursada, una comisión tiene varias clases semanales. Pero, como anticipamos en 3.2.4.1 y
+en el diagnóstico de 3.3.4, en la asignación de aulas las relaciones
 muchos-a-muchos son la norma más que la excepción. Cada una se
 resuelve con una entidad intermedia del dominio de la solución
 (Tabla @tab:relaciones).
@@ -188,7 +185,7 @@ facilita las verificaciones.
 Las **reglas de negocio** son afirmaciones sobre el comportamiento de
 las entidades que no se deducen de sus definiciones y que el sistema
 debe garantizar. Muchas son **invariantes** en el sentido de Evans
-[3] (§3.2.2.2): deben cumplirse en todo momento. Las agrupamos por
+[2] (3.2.2.2): deben cumplirse en todo momento. Las agrupamos por
 familia.
 
 #### 3.5.5.1 Reglas estructurales
@@ -197,7 +194,7 @@ familia.
 - Toda comisión pertenece a exactamente una materia y a un plan de
   cursada.
 - Todo dictado pertenece a una materia y se vincula con uno o dos
-  ciclos (§3.5.5.5).
+  ciclos (3.5.5.5).
 - Cada ciclo tiene a lo sumo un plan de cursada activo; los demás son
   escenarios de comparación.
 - Toda aula pertenece a exactamente una sede.
@@ -217,12 +214,12 @@ de la asignación**: se excluyen antes de armar el programa lineal.
 #### 3.5.5.3 Sedes por grupo de materias
 
 Cada materia tiene un conjunto de **sedes admisibles** que surge de su
-grupo (§3.5.3.4) y del criterio con que ese grupo se resuelve:
+grupo (3.5.3.4) y del criterio con que ese grupo se resuelve:
 
-- con criterio **estricto**, las sedes admisibles son las del
+- con criterio **estricto/duro**, las sedes admisibles son las del
   conjunto duro del grupo; si ese conjunto está vacío (caso reservado
   al grupo sin clasificar), se admiten todas;
-- con criterio **flexible**, se admiten todas las sedes, pero elegir
+- con criterio **flexible/blando**, se admiten todas las sedes, pero elegir
   otra que no sea la primera de la lista tiene un costo;
 - como **excepción**, si la materia tiene un laboratorio compatible
   en una sede fuera de su grupo, esa sede también se admite: la
@@ -244,7 +241,7 @@ la Siberia como sede, y además Métodos Numéricos, una materia común
 de Formación Básica que se dicta para varias carreras en Pellegrini.
 Un mismo alumno tiene entonces clases en las dos sedes durante la
 semana, y esa interacción es la que obliga a cuidar los traslados
-(§3.5.5.7) y a decidir qué tan firme es la sede de cada grupo.
+(3.5.5.7) y a decidir qué tan firme es la sede de cada grupo.
 
 #### 3.5.5.4 Recursado
 
@@ -260,13 +257,10 @@ sólo se crean los que la regla de recursado permite**.
 
 Una materia anual se dicta a lo largo de los dos cuatrimestres del
 año. Lo único que la distingue es que, al generar los dictados de
-cada cuatrimestre, queda activa por defecto en los dos. Por lo demás
+cada cuatrimestre, queda activa por defecto en los dos ya que se dicta todo el año. Por lo demás
 se trata exactamente igual que cualquier otra materia: sus horarios
 se cargan en el cronograma de cada cuatrimestre y el asignador
-resuelve cada cuatrimestre por separado. La invariante es que **todo
-dictado se vincula con tantos ciclos como indica la periodicidad de
-su materia**: uno si es cuatrimestral, los dos del mismo año si es
-anual.
+resuelve cada cuatrimestre por separado.
 
 #### 3.5.5.6 Horas de teoría y laboratorio por materia
 
@@ -280,80 +274,24 @@ resulta infactible.
 #### 3.5.5.7 Reglas de política institucional
 
 La operatoria de la FCEIA impone además políticas ligadas al
-traslado de los alumnos entre sedes y, en un caso, al de los
-docentes. Las enunciamos acá como reglas del
-dominio e indicamos dónde se las trata:
+traslado de los alumnos entre sedes. Las enunciamos acá como reglas
+del dominio e indicamos dónde se las trata:
 
-- **Cursada sin superposiciones.** Para cada carrera, año y
-  cuatrimestre debe existir al menos una combinación de comisiones,
-  una por materia obligatoria, que un alumno pueda cursar sin
-  conflictos horarios ni traslados imposibles entre sedes. Se
-  verifica antes de resolver el programa lineal (secciones 3.8 y 3.9).
+- **Cursada sin superposiciones.** Para un alumno regular y al día de
+  cada carrera, año y cuatrimestre debe existir al menos una
+  combinación de comisiones a las que se pueda anotar sin conflictos
+  horarios. Se verifica antes de resolver el programa lineal
+  (secciones 3.8 y 3.9).
 - **Continuidad de sede para el alumno.** Dos horarios consecutivos
-  de materias distintas de una misma carrera, año y cuatrimestre,
-  separados por menos de un margen configurable (30 minutos por
-  defecto), deben dictarse en la misma sede, para que el alumno
-  pueda pasar de una clase a la siguiente (restricción R11 de la
-  sección 3.8).
-- **Misma sede por comisión.** Es la única regla pensada desde el
-  punto de vista del docente: opcionalmente, todos los horarios de
-  una comisión deben caer en la misma sede, para que quien la dicta
-  no tenga que trasladarse entre sedes durante la semana
-  (restricción R12).
-
-
-### 3.5.6 Diagrama UML del dominio
-
-La Figura @fig:clases-plan resume las entidades y sus relaciones en un
-diagrama de clases UML sin atributos. Cada línea es una asociación y
-los números indican cuántas instancias participan de cada lado (`*`
-significa "muchas"). Las relaciones rotuladas *sedes admisibles* y
-*laboratorios compatibles* se materializan con las entidades
-intermedias de la Tabla @tab:relaciones.
-
-<!-- figura: Diagrama de clases del dominio {#fig:clases-plan} -->
-```mermaid
----
-config:
-  class:
-    hideEmptyMembersBox: true
----
-classDiagram
-    direction TB
-    class Carrera
-    class PlanDeEstudios["Plan de estudios"]
-    class EntradaDePlan["Entrada de plan"]
-    class Materia
-    class GrupoDeMaterias["Grupo de materias"]
-    class Sede
-    class Aula
-    class Dictado
-    class CicloLectivo["Ciclo lectivo"]
-    class Cronograma
-    class PlanDeCursada["Plan de cursada"]
-    class Comision["Comisión"]
-    class HorarioSemanal["Horario semanal"]
-
-    Carrera "1" -- "*" PlanDeEstudios
-    PlanDeEstudios "1" -- "*" EntradaDePlan
-    EntradaDePlan "*" -- "1" Materia
-    Materia "*" -- "1" GrupoDeMaterias : pertenece a
-    GrupoDeMaterias "*" -- "*" Sede : sedes admisibles
-    Sede "1" -- "*" Aula
-    Materia "*" -- "*" Aula : laboratorios compatibles
-    Materia "1" -- "*" Dictado
-    Dictado "*" -- "1..2" CicloLectivo
-    CicloLectivo "1" -- "*" Cronograma
-    CicloLectivo "1" -- "*" PlanDeCursada
-    Cronograma "1" -- "*" PlanDeCursada : origina
-    PlanDeCursada "1" -- "*" Comision
-    Materia "1" -- "*" Comision
-    Comision "1" -- "*" HorarioSemanal
-    HorarioSemanal "*" -- "0..1" Aula : se asigna
-```
-
-### 3.5.7 Resumen
-
-Quedan fijadas las entidades, sus relaciones y las reglas de negocio
-como invariantes. La sección siguiente traduce este modelo a un
-esquema de datos.
+  de una misma carrera, año y cuatrimestre, separados por menos de un
+  margen configurable (30 minutos por defecto), deben dictarse en la
+  misma sede, para que el alumno pueda pasar de una clase a la
+  siguiente (restricción R11 de la sección 3.8). Similarmente, alcanza
+  con que al menos una combinación de comisiones le ofrezca a cada
+  alumno tipo este margen. Las cátedras ya suelen tener estas
+  consideraciones en mente y coordinan entre sí para que asi sea, pero
+  el sistema además lo verifica y asegura en su asignación.
+- **Misma sede por comisión.** todos los horarios de una comisión de
+  una materia deben caer en la misma sede (restricción R12). Esta
+  configuración puede usarse como no. Le puede resultar cómodo al
+  docente que dicta la comisión siempre ir a la misma sede.

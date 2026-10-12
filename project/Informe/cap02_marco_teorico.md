@@ -1,19 +1,12 @@
 ## 3.2 Marco teórico
 
 En la introducción se anticiparon tres cuerpos de ideas sobre los que
-se apoya todo el trabajo: un marco para comprender a la organización
-estudiada, un marco para modelar el dominio en software y un marco
+se apoya todo el trabajo: un marco para comprender a la organización, un marco para modelar
+el dominio en entidades de software y un marco
 matemático para plantear la asignación de aulas como un problema de
-optimización. Esta sección los desarrolla en el orden en que se usan
-más adelante, de modo que cada definición quede disponible cuando
-llegue el momento de aplicarla.
+optimización.
 
-Los tres cuerpos provienen de disciplinas distintas (teoría de la
-organización, ingeniería de software y matemática aplicada), pero se
-articulan porque cada uno produce el insumo que necesita el siguiente,
-como muestra la Figura @fig:cadena.
-
-<!-- figura: Cadena de disciplinas que articula el proyecto {#fig:cadena} -->
+<!-- figura: Cadena de disciplinas que articula el proyecto {#fig:cadena nota="Gráfico de elaboración propia."} -->
 ```mermaid
 flowchart LR
     C1["<b>Teoría de las organizaciones<br/>e ingeniería industrial</b><br/><br/>Mintzberg, Chiavenato,<br/>análisis de procesos,<br/>BPMN"]
@@ -32,7 +25,7 @@ flowchart LR
     class P1,P2,P3 prod
 ```
 
-Leída de izquierda a derecha, la cadena dice lo siguiente: la teoría
+La teoría
 de las organizaciones y las herramientas de la ingeniería industrial
 permiten **entender el dominio** y producir un *modelo conceptual*
 fiel de la organización, sus actores y sus procesos. El diseño guiado
@@ -63,7 +56,6 @@ este trabajo:
   pasos, responsables, entradas y salidas de cada actividad. En la
   sección 3.3 se aplican al proceso actual de asignación de aulas.]{.revisar}
 
-
 - **Análisis de sistemas**: tratar al conjunto como una entidad con
   entradas, salidas, componentes e interacciones, requisito previo a
   cualquier modelo formal.
@@ -71,12 +63,16 @@ este trabajo:
 #### 3.2.1.2 Chiavenato y Mintzberg aplicados a la FCEIA
 
 La introducción ya caracterizó a la FCEIA según Chiavenato [1] como
-*organización compleja* y según Mintzberg [7] como *burocracia
+*organización compleja* y según Mintzberg [5] como *burocracia
 profesional*. De estas caracterizaciones se desprende que la dificultad
 operativa principal es la **multiplicidad de actores, actividades y
 recursos que deben articularse en tiempo y espacio**, y que los
-docentes coordinan su trabajo a partir de su formación previa, gozando
-de una autonomía muy superior a la de un operario industrial típico. Puntualmente en el caso de nuestra casa de estudio, los profesores a menudo ejercen su profesión de manera privada por lo cual coordinan los horarios de sus actividades en la facultad en función de ellas. Puntualmente en el caso de nuestra casa de estudio, los profesores a menudo ejercen su profesión de manera privada por lo cual coordinan los horarios de sus actividades en la facultad en función de ellas.
+docentes coordinan su trabajo a partir de su experiencia, gozando
+de una autonomía muy superior a la de un operario industrial por ejemplo.
+Puntualmente en el caso de nuestra casa de estudio, los profesores a
+menudo ejercen su profesión de manera privada por lo cual coordinan los
+horarios de sus actividades en la facultad en función de su
+disponibilidad.
 
 #### 3.2.1.3 Implicancias para el diseño de una solución
 
@@ -112,7 +108,7 @@ darle una forma más rígida, con entidades y reglas explícitas.
 Para traducir la comprensión de la organización a un sistema de
 software fiel al dominio real tomamos como marco el *diseño guiado
 por el dominio* (DDD, del inglés *Domain-Driven Design*), formulado
-por Evans [3]. Su premisa central es que la distancia entre el modelo
+por Evans [2]. Su premisa central es que la distancia entre el modelo
 mental del experto del dominio y el modelo implementado en el código
 es la principal causa de fracaso de los proyectos de software
 complejos.
@@ -225,7 +221,7 @@ de 14, peor que la que ya se tenía; con `x₂ = 1` la cota es 15. Como
 ninguna de las dos ramas puede mejorar el 13, se descartan sin seguir
 explorando, y el óptimo queda probado: es 13.
 
-![Ramificación y acotación en un problema de minimización pequeño](figuras/ramificacion_acotacion.png){#fig:ramificacion width=13cm}
+![Ramificación y acotación en un problema de minimización pequeño](figuras/ramificacion_acotacion.png){#fig:ramificacion nota="Gráfico de elaboración propia." width=13cm}
 
 #### 3.2.3.4 Resolutores
 
@@ -252,15 +248,6 @@ cuando puede y la cede cuando no queda alternativa. Codificar
 preferencias como penalizaciones del objetivo es central en el modelo
 de asignación de aulas.
 
-#### 3.2.3.6 Bibliografía
-
-Como referencia de investigación operativa tomamos el material
-de las cátedras de Operativa 1 y Operativa 2 de la Escuela de
-Ingeniería Industrial (FCEIA-UNR), en particular el libro de Morán
-para la programación lineal, la programación entera y la ramificación
-y acotación, complementado por el material *Introducción a la
-Investigación Operativa* del mismo curso.
-
 ### 3.2.4 Herramientas combinatorias y de teoría de grafos
 
 Las herramientas anteriores alcanzan para plantear y resolver el
@@ -284,12 +271,7 @@ llamados **aristas**. Un *grafo bipartito* divide sus vértices en dos
 conjuntos disjuntos `X` e `Y`, y toda arista une un vértice de `X` con
 uno de `Y`. Es el modelo natural de los problemas de asignación.
 
-La Figura @fig:bipartito muestra cuatro clases simultáneas y cuatro
-aulas: cada línea une una clase con un aula compatible, y las líneas
-resaltadas forman un apareamiento que le da un aula distinta a cada
-clase.
-
-![Grafo bipartito de compatibilidad entre clases y aulas, con un apareamiento que satura a las clases](figuras/grafo_bipartito.png){#fig:bipartito width=9cm}
+![Grafo bipartito de compatibilidad entre clases y aulas, con un apareamiento que satura a las clases](figuras/grafo_bipartito.png){#fig:bipartito nota="Elaboración propia." width=9cm}
 
 Un *apareamiento* (*matching*) es un subconjunto de aristas en el que
 ningún vértice aparece más de una vez. Un apareamiento **satura** a
@@ -315,7 +297,7 @@ resultados más elementales de la matemática discreta:
 
 Aplicado a nuestro problema: si en una franja horaria hay `n` clases
 simultáneas y sólo `k < n` aulas compatibles disponibles, al menos dos
-clases tendrían que compartir aula, lo que está prohibido. El palomar
+clases tendrían que compartir aula, lo que es imposible. El palomar
 es entonces una **condición necesaria** de factibilidad: si falla, el
 problema es infactible; si se cumple, todavía no hay garantía de que
 exista solución.
@@ -324,7 +306,7 @@ La Figura @fig:palomar lo muestra con cuatro clases
 simultáneas y tres aulas: por más que se las reparta, dos clases
 terminan en la misma aula.
 
-![Principio del palomar: cuatro clases simultáneas y tres aulas](figuras/palomar.png){#fig:palomar width=11cm}
+![Principio del palomar: cuatro clases simultáneas y tres aulas](figuras/palomar.png){#fig:palomar nota="Gráfico de elaboración propia." width=11cm}
 
 #### 3.2.4.3 Teorema de Hall
 
@@ -378,21 +360,3 @@ esta verificación se retoma en la sección 3.8. Los resultados sobre
 grafos bipartitos, apareamientos y el teorema de Hall se toman de la
 bibliografía estándar de teoría de grafos, detallada al final del
 informe.
-
-### 3.2.5 Resumen
-
-Esta sección dejó disponibles tres cuerpos de herramientas: del
-instrumental de la ingeniería industrial (Mintzberg y Chiavenato), la
-caracterización de la FCEIA como burocracia profesional compleja y el
-modelo conceptual del dominio; de Evans, el diseño guiado por el
-dominio y el modelo operativo computacional que traduce conceptos en
-entidades y reglas en invariantes; de la investigación operativa
-y la teoría de grafos, la programación lineal entera, la ramificación
-y acotación, y los criterios combinatorios de factibilidad (palomar y
-Hall). Cada eslabón habilita al siguiente: sin modelo conceptual no
-hay lenguaje ubicuo, sin modelo operativo no hay sobre qué actuar, y
-sin matemática aplicada no hay forma de decidir con fundamento. La
-sección 3.3 aplica el análisis de procesos a la operatoria actual; la
-3.4 define formalmente el problema; las secciones 3.5 y 3.6 construyen
-el modelo del dominio y su modelo de datos, y la 3.8 formula el
-programa lineal entero y la verificación estructural.

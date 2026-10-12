@@ -1,6 +1,6 @@
 ## 3.9 Validaciones y garantías de consistencia
 
-La sección anterior mostró cómo el asignador resuelve la
+Recién mostró cómo el asignador resuelve la
 asignación de aulas como un programa lineal entero. Esa
 formulación supone que los datos que la alimentan son
 consistentes: que cada horario pertenece a una comisión bien
@@ -32,7 +32,7 @@ esa decisión:
   correctos, con un mensaje explícito, es mucho más barato.
 - **La confianza se construye con transparencia.** El usuario no
   necesita conocer el modelo matemático: le alcanza con leer las
-  validaciones para saber qué está bien y qué hay que corregir.
+  validaciones para saber qué está bien y qué hay que corregir. Además, en el momento en el que el programa devuelve errores no tipificados o explicados, el usuario puede perder confianza o motivación para usar la herramienta.
 
 ### 3.9.2 Capas de validación
 
@@ -59,7 +59,7 @@ plan, la existencia de un camino de cursada viable entre sedes
 había marcado como ignoradas y que ya no aplican se eliminan
 solas, y se le informa de la limpieza. Finalmente, antes de
 invocar al resolutor, el asignador ejecuta la *verificación
-previa* descripta en §3.8.4, que detecta sin gastar tiempo de cálculo
+previa* descripta en 3.8.4, que detecta sin gastar tiempo de cálculo
 las combinaciones de datos que hacen imposible el problema: un
 horario sin aula compatible, una franja con más clases que aulas
 según el principio del palomar, la condición de Hall, una fijación
@@ -79,7 +79,7 @@ severidades, y esa distinción ordena el trabajo del usuario:
   generar un plan.
 - **Advertencia**: señala una situación anómala que conviene
   revisar pero que no impide seguir. Por ejemplo, que haya
-  materias en el grupo "sin clasificar" (§3.6.4.4): el asignador
+  materias en el grupo "sin clasificar" (3.6.4.4): el asignador
   puede correr igual, pero la clasificación debería completarse.
 - **Informativa**: comunica algo que ocurrió sin exigir acción,
   como que un horario haya quedado asignado a mano a un aula de una sede distinta de la que su materia tiene configurada por el grupo.
@@ -133,10 +133,3 @@ generado.
 
 Cada problema apareció en el paso en que podía resolverse, con un
 mensaje que indicaba qué corregir.
-
-### 3.9.6 Resumen
-
-Las validaciones, escalonadas en capas y con tres severidades,
-convierten al asignador en un asistente confiable que avisa cuando un
-resultado deja de describir los datos. La sección siguiente muestra
-la herramienta en acción.
