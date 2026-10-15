@@ -219,3 +219,7 @@ bin/
 dist/
 # Instrucciones locales del asistente (no se versionan)
 CLAUDE.md
+
+# Material del informe y diagramas: sólo locales (el informe vive en Google Drive)
+project/Informe/
+project/diagrams/
