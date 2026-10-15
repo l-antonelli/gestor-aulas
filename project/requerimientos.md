@@ -21,8 +21,7 @@ cambia el estado de implementación, ajustar la matriz de cobertura.
   breve, por paréntesis cuando es un inciso lateral, por dos puntos
   cuando introducen una explicación, por punto seguido cuando
   separan ideas independientes, o simplemente reformulando la
-  oración. Esta regla aplica tanto al informe (`project/Informe/**`)
-  como al resto de la documentación del proyecto.
+  oración. Esta regla aplica tanto al informe como al resto de la documentación del proyecto.
 
 ## Convenciones
 

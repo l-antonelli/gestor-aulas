@@ -18,8 +18,6 @@ un rol bien definido en el ciclo de vida del proyecto:
 | [`0. Planteo/`](./0.%20Planteo/) | Comprensión del problema y modelado conceptual inicial. Cómo entendemos el dominio y qué asumimos. | Autores, revisores del anteproyecto. |
 | [`1. Diseño/`](./1.%20Diseño/) | Diseño de la solución: modelo de datos, arquitectura, formulación matemática. | Autores, desarrolladores. |
 | [`2. Desarrollo/`](./2.%20Desarrollo/) | Detalles técnicos de la implementación. Guías operativas, validaciones, runbooks. | Desarrolladores actuales y futuros. |
-| [`Informe/`](./Informe/) | Material del informe académico final: capítulos redactados, anexos, bibliografía. | Comité evaluador, lectores del informe. |
-| [`diagrams/`](./diagrams/) | Diagramas fuente (Draw.io, Mermaid) reutilizados a lo largo del material. | Autores. |
 
 También en la raíz de esta carpeta:
 
@@ -109,81 +107,24 @@ auditoría, pero se conservan como referencia:
 
 ---
 
-## Informe — material del informe académico
+## Informe académico
 
-**Enfoque**: material entregable del informe académico final. Sigue
-la estructura fijada en [`Informe/estructura.md`](./Informe/estructura.md).
+El informe y sus anexos **no se versionan en este repositorio**: se
+redactan y se entregan en Google Docs. Las carpetas `Informe/` y
+`diagrams/` existen sólo en la máquina de los autores y están en
+`.gitignore`; también se generan allí las figuras y el armado del
+informe (`scripts/figuras_informe.py`, `scripts/exportar_informe_docx.py`
+y `python -m scripts.drive`).
 
-### Documento maestro
+Los anexos que complementan esta documentación están en Drive:
 
-- [`Informe/estructura.md`](./Informe/estructura.md) — **Estructura
-  del informe** (v3). Define el esqueleto, la política de anexos,
-  el hilo conductor y el estado de redacción de cada capítulo.
-- [`Informe/idea_controladora.md`](./Informe/idea_controladora.md) —
-  Idea controladora del trabajo.
-- [`Informe/intro.md`](./Informe/intro.md) — Borrador de la
-  introducción.
-
-### Partes del informe
-
-El informe completo se arma con `python -m scripts.drive informe`
-(orden en `ORDEN_INFORME` de `scripts/exportar_informe_docx.py`) y se
-publica en el Google Doc "Informe". El usuario lo edita a mano en el
-Doc; antes de tocar los fuentes se corre `python -m scripts.drive
-traer` (ver `CLAUDE.md`, 8.b).
-
-| Parte | Archivo |
+| Anexo | Contenido |
 |---|---|
-| Carátula, advertencia e índice | [`Informe/preliminares.md`](./Informe/preliminares.md) |
-| 1. Prólogo | [`Informe/prologo.md`](./Informe/prologo.md) |
-| 2. Síntesis inicial | [`Informe/sintesis_inicial.md`](./Informe/sintesis_inicial.md) |
-| 3. Desarrollo · 3.1 Introducción | [`Informe/intro.md`](./Informe/intro.md) |
-| 3.2 Marco teórico | [`Informe/cap02_marco_teorico.md`](./Informe/cap02_marco_teorico.md) |
-| 3.3 La organización y su operatoria | [`Informe/cap03_organizacion_y_operatoria.md`](./Informe/cap03_organizacion_y_operatoria.md) |
-| 3.4 Definición del problema | [`Informe/cap04_definicion_del_problema.md`](./Informe/cap04_definicion_del_problema.md) |
-| 3.5 El modelo conceptual | [`Informe/cap05_modelo_conceptual.md`](./Informe/cap05_modelo_conceptual.md) |
-| 3.6 Del dominio al modelo de datos | [`Informe/cap06_modelo_de_datos.md`](./Informe/cap06_modelo_de_datos.md) |
-| 3.7 Arquitectura de la solución | [`Informe/cap07_arquitectura.md`](./Informe/cap07_arquitectura.md) |
-| 3.8 El problema de asignación como programa lineal entero | [`Informe/cap08_programa_lineal.md`](./Informe/cap08_programa_lineal.md) |
-| 3.9 Validaciones y garantías de consistencia | [`Informe/cap09_validaciones.md`](./Informe/cap09_validaciones.md) |
-| 3.10 Caso ensayado: primer cuatrimestre de 2026 | [`Informe/cap10_herramienta_en_accion.md`](./Informe/cap10_herramienta_en_accion.md) |
-| 3.11 Análisis y discusión | [`Informe/cap11_analisis_y_discusion.md`](./Informe/cap11_analisis_y_discusion.md) |
-| 4. Conclusiones | [`Informe/cap12_conclusiones.md`](./Informe/cap12_conclusiones.md) |
-| 5. Bibliografía | [`Informe/bibliografia.md`](./Informe/bibliografia.md) |
-| 6. Anexos (índice) | [`Informe/anexos_indice.md`](./Informe/anexos_indice.md) |
-
-### Anexos
-
-Se entregan como documentos separados en Drive (*Informe / Anexos*).
-
-| Anexo | Fuente |
-|---|---|
-| A. Documentación técnica (resumen técnico con remisiones al repositorio) | [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md) |
-| B. Desarrollo formal del programa lineal | [`1. Diseño/asignacion-aulas-LP.md`](./1.%20Diseño/asignacion-aulas-LP.md), [`2. Desarrollo/asignador_implementacion.md`](./2.%20Desarrollo/asignador_implementacion.md), [`2. Desarrollo/asignador_guia_operativa.md`](./2.%20Desarrollo/asignador_guia_operativa.md) |
-| C. Manual de usuario | [`Informe/anexos/Anexo_Manual_de_Usuario/`](./Informe/anexos/Anexo_Manual_de_Usuario/) |
-| D. Cronogramas del caso ensayado | [`Informe/anexos/Anexo_D_Cronogramas/`](./Informe/anexos/Anexo_D_Cronogramas/) |
-| E. Videos instructivos | Pendiente. |
-| F. Aplicación (ZIP portable de la versión 0.13.0) | [Release v0.13.0](https://github.com/l-antonelli/gestor-aulas/releases/tag/v0.13.0) |
-
-### Material de soporte
-
-- [`Informe/bibliografia/`](./Informe/bibliografia/) — Bibliografía
-  del informe (libros de investigación operativa, teoría de la
-  organización, etc.).
-- [`Informe/borradores/`](./Informe/borradores/) — Borradores y
-  material de trabajo del informe.
-- [`Informe/pautas informe/`](./Informe/pautas%20informe/) —
-  Pautas y formato exigidos por la cátedra (formato I-32 de la
-  Escuela de Ingeniería Industrial de FCEIA-UNR).
-
----
-
-## Diagramas fuente
-
-- [`diagrams/`](./diagrams/) — Fuente de diagramas (Draw.io,
-  Mermaid) usados a lo largo del material. Los diagramas
-  embebidos en los documentos suelen tener su fuente aquí para
-  ser exportables a formato imprimible.
+| [A. Documentación técnica](https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit) | Resumen técnico del sistema, con remisiones a este repositorio. |
+| B. Desarrollo formal del programa lineal | [`1. Diseño/asignacion-aulas-LP.md`](./1.%20Diseño/asignacion-aulas-LP.md), [`2. Desarrollo/asignador_implementacion.md`](./2.%20Desarrollo/asignador_implementacion.md) y [`2. Desarrollo/asignador_guia_operativa.md`](./2.%20Desarrollo/asignador_guia_operativa.md). |
+| [C. Manual de usuario](https://drive.google.com/drive/folders/1s2bFm00xdUkL2tEWVLMo17t14ThsZzBc) | Flujos y módulos de la aplicación, con capturas. |
+| [D. Cronogramas del caso ensayado](https://drive.google.com/drive/folders/1chE2Si3TqEiAoKsVnKezCm6R1PrwGptv) | Cuarto año de Industrial y tercer año de Eléctrica, con las aulas asignadas. |
+| F. Aplicación | [Release v0.13.0](https://github.com/l-antonelli/gestor-aulas/releases/tag/v0.13.0). |
 
 ---
 
@@ -226,11 +167,11 @@ Se entregan como documentos separados en Drive (*Informe / Anexos*).
 **¿Cómo funciona el modelo de datos?**
 1. Vista general: [`1. Diseño/modelo-planificacion-cursada.md`](./1.%20Diseño/modelo-planificacion-cursada.md).
 2. Diagrama UML: [`1. Diseño/diagrama-entidades.md`](./1.%20Diseño/diagrama-entidades.md).
-3. Resumen técnico (Anexo A): [`Informe/anexos/Anexo_Base_de_Datos.md`](./Informe/anexos/Anexo_Base_de_Datos.md).
+3. Resumen técnico (Anexo A): [documento en Drive](https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit); el detalle por tabla está en `src/database/models.py`.
 
 **¿Cómo se opera un ciclo lectivo?**
 1. Runbook operativo: [`2. Desarrollo/CICLOS_Y_DICTADOS.md`](./2.%20Desarrollo/CICLOS_Y_DICTADOS.md).
-2. Manual de usuario, flujo específico: [`Informe/anexos/Anexo_Manual_de_Usuario/flujos/02_Armar_un_ciclo_lectivo.md`](./Informe/anexos/Anexo_Manual_de_Usuario/flujos/02_Armar_un_ciclo_lectivo.md).
+2. Manual de usuario (flujo «Armar un ciclo lectivo»): [carpeta de Drive](https://drive.google.com/drive/folders/1s2bFm00xdUkL2tEWVLMo17t14ThsZzBc).
 
 **¿Qué valida el sistema y cuándo?**
 - [`2. Desarrollo/VALIDACIONES.md`](./2.%20Desarrollo/VALIDACIONES.md).

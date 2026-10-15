@@ -6,7 +6,7 @@ Este documento refleja el estado actual de las entidades
 implementadas en `src/database/models.py`, sus relaciones y las
 políticas de borrado aplicadas en la capa de servicios. Para la
 descripción detallada de cada tabla (columnas, invariantes,
-operaciones) ver `Informe/anexos/Anexo_Base_de_Datos.md`.
+operaciones) ver `src/database/models.py` y el Anexo A (https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit).
 
 ---
 

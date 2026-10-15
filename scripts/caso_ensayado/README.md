@@ -18,7 +18,7 @@ PYTHONPATH=. .venv/bin/python scripts/caso_ensayado/asientos_libres.py real
 ```
 
 Los datos de las figuras quedaron en
-`project/Informe/figuras/datos/caso_1C2026.json` (las figuras se
+`project/Informe/figuras/datos/caso_1C2026.json` (archivo local, fuera del repositorio; las figuras se
 regeneran con `python -m scripts.figuras_informe`). Los cronogramas del
 Anexo D se exportaron desde la herramienta (Cursada → Horarios →
 Exportar a Excel).

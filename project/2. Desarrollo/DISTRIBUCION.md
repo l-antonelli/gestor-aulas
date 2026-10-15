@@ -169,8 +169,8 @@ Excluidos del ZIP (vs. el repo completo): `tests/`, `pytest.ini`,
 sueltas en la raíz del repo, caches de desarrollo (`.pytest_cache/`,
 `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `.hypothesis/`),
 metadata de editor (`.vscode/`, `.cursor/`, `.claude/`), y las
-subcarpetas de `project/Informe/` con material fuente local
-(bibliografía, pautas de cátedra, borradores).
+carpetas `project/Informe/` y `project/diagrams/` (material local del
+informe, fuera del repositorio).
 
 ### 3.2. Lanzadores
 

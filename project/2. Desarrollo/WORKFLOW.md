@@ -7,7 +7,7 @@
 > equipo de desarrollo o para redactar el informe académico.
 >
 > Para uso operativo por usuarios finales no técnicos, consultar el
-> **manual de usuario** en `project/Informe/anexos/Anexo_Manual_de_Usuario/`, que cubre
+> **manual de usuario** (Anexo C, en Drive: https://drive.google.com/drive/folders/1s2bFm00xdUkL2tEWVLMo17t14ThsZzBc), que cubre
 > los mismos flujos en lenguaje coloquial y con foco en tareas.
 >
 > **Cambios clave a tener en cuenta al leer este documento**:

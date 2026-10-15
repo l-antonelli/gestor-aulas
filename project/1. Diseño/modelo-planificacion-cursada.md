@@ -8,7 +8,7 @@
 > aulas. Está organizado como referencia por entidades: qué guarda
 > cada tabla, qué invariantes preserva y cómo interactúa con las
 > demás. Para el detalle exhaustivo columna por columna, ver
-> [`../Informe/anexos/Anexo_Base_de_Datos.md`](../Informe/anexos/Anexo_Base_de_Datos.md).
+> [Anexo A](https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit) y `src/database/models.py`.
 > Para la vista UML con políticas de borrado, ver
 > [`diagrama-entidades.md`](diagrama-entidades.md).
 >
@@ -554,8 +554,8 @@ asignación por horario, el diagnóstico, el veredicto humano y las
 restricciones activas.
 
 Ver
-[`../Informe/anexos/Anexo_Base_de_Datos.md`](../Informe/anexos/Anexo_Base_de_Datos.md)
-§ 11 para la ficha completa.
+[`src/database/models.py`](../../src/database/models.py) para la ficha
+completa de cada tabla.
 
 #### `ChangeLogDB`
 
@@ -835,7 +835,7 @@ Entidades planteadas y diferidas:
 
 - Planteo formal del LP: [`asignacion-aulas-LP.md`](asignacion-aulas-LP.md).
 - Diagrama UML con políticas de borrado: [`diagrama-entidades.md`](diagrama-entidades.md).
-- Anexo técnico exhaustivo por tabla: [`../Informe/anexos/Anexo_Base_de_Datos.md`](../Informe/anexos/Anexo_Base_de_Datos.md).
+- Resumen técnico y detalle por tabla: [Anexo A](https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit) y `src/database/models.py`.
 - Implementación del asignador: `../2. Desarrollo/asignador.md`.
 - Ciclos, dictados y virtualidad: [`../2. Desarrollo/CICLOS_Y_DICTADOS.md`](../2.%20Desarrollo/CICLOS_Y_DICTADOS.md).
 - Validaciones: [`../2. Desarrollo/VALIDACIONES.md`](../2.%20Desarrollo/VALIDACIONES.md).

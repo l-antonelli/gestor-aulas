@@ -222,9 +222,11 @@ maestro y remite a:
 - **Detalles técnicos** (`project/2. Desarrollo/`): implementación y
   guía operativa del asignador, validaciones, ciclos y dictados,
   distribución.
-- **Informe académico** (`project/Informe/`): secciones del informe y
-  anexos (documentación técnica, manual de usuario, cronogramas del
-  caso ensayado).
+- **Informe académico**: se redacta y se entrega en Google Docs y no
+  forma parte del repositorio. Sus anexos están en Drive:
+  [Anexo A (documentación técnica)](https://docs.google.com/document/d/1qr_M1OzshpZhwC8t4X6t39mmUxy361aooYKe8k9TVaU/edit),
+  [Anexo C (manual de usuario)](https://drive.google.com/drive/folders/1s2bFm00xdUkL2tEWVLMo17t14ThsZzBc) y
+  [Anexo D (cronogramas del caso ensayado)](https://drive.google.com/drive/folders/1chE2Si3TqEiAoKsVnKezCm6R1PrwGptv).
 
 Referencias rápidas para arrancar:
 
@@ -234,8 +236,7 @@ Referencias rápidas para arrancar:
   [`project/2. Desarrollo/asignador_guia_operativa.md`](project/2.%20Desarrollo/asignador_guia_operativa.md).
 - **¿Cómo se distribuye la aplicación?** →
   [`project/2. Desarrollo/DISTRIBUCION.md`](project/2.%20Desarrollo/DISTRIBUCION.md).
-- **Manual de usuario completo** →
-  [`project/Informe/anexos/Anexo_Manual_de_Usuario/README.md`](project/Informe/anexos/Anexo_Manual_de_Usuario/README.md).
+- **Manual de usuario completo** → [carpeta de Drive](https://drive.google.com/drive/folders/1s2bFm00xdUkL2tEWVLMo17t14ThsZzBc).
 
 ---
 
@@ -295,6 +296,6 @@ quedó en otra ubicación, moverlo a `data/`.
 ## Licencia y créditos
 
 Proyecto académico desarrollado en el marco del trabajo final de la
-carrera de Ingeniería Industrial de FCEIA-UNR. Consultar el
-informe en [`project/Informe/`](project/Informe/) para el detalle
-de autores, contexto institucional y bibliografía.
+carrera de Ingeniería Industrial de FCEIA-UNR. El informe académico
+(autores, contexto institucional y bibliografía) se entrega aparte,
+en Google Docs.
