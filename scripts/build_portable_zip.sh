@@ -130,9 +130,8 @@ rsync -a \
     --exclude='requirements.txt' \
     --exclude='requirements-proj.txt' \
     --exclude='migrate_*.py' \
-    --exclude='project/Informe/bibliografia/' \
-    --exclude='project/Informe/pautas informe/' \
-    --exclude='project/Informe/borradores/' \
+    --exclude='project/Informe/' \
+    --exclude='project/diagrams/' \
     --exclude='data/*.backup*' \
     --exclude='data/database.db.backup-*' \
     --exclude='data/database_backup_*' \
